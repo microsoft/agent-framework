@@ -1007,6 +1007,48 @@ def test_sanitize_pending_tool_skip_on_user_followup():
     assert "skipped" in str(tool_results[0].contents[0].result).lower()
 
 
+def test_sanitize_pending_tool_does_not_skip_server_owned_approval_call():
+    """Server-owned approval state means a pending tool call is not abandoned."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="get_weather", arguments="{}")],
+    )
+    user_msg = Message(
+        role="user",
+        contents=[Content.from_text(text="Actually, never mind")],
+    )
+
+    result = _sanitize_tool_history([assistant_msg, user_msg], protected_tool_call_ids={"c1"})
+
+    assert [msg.role for msg in result] == ["assistant", "user"]
+    assert not [msg for msg in result if msg.role == "tool"]
+
+
+def test_sanitize_pending_tool_does_not_skip_current_resume_decision():
+    """A current approval response means the pending tool call is not abandoned."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    function_call = Content.from_function_call(call_id="c1", name="get_weather", arguments="{}")
+    assistant_msg = Message(role="assistant", contents=[function_call])
+    user_msg = Message(
+        role="user",
+        contents=[
+            Content.from_function_approval_response(
+                approved=True,
+                id="c1",
+                function_call=function_call,
+            )
+        ],
+    )
+
+    result = _sanitize_tool_history([assistant_msg, user_msg])
+
+    assert [msg.role for msg in result] == ["assistant", "user"]
+    assert not [msg for msg in result if msg.role == "tool"]
+
+
 def test_sanitize_consecutive_assistant_tool_calls_closes_previous_call():
     """Consecutive assistant tool-call messages are separated by a synthetic tool result."""
     from agent_framework_ag_ui._message_adapters import _sanitize_tool_history

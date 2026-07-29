@@ -108,6 +108,65 @@ def strip_pickle_markers(data: Any) -> Any:
 
 
 # ============================================================================
+# Sub-workflow envelope markers (trust boundary)
+# ============================================================================
+
+# A WorkflowExecutor node runs its inner workflow as a durable child orchestration.
+# The parent wraps the node's input in this envelope so the child orchestrator can
+# tell a trusted sub-orchestration payload (serialized by the parent, post-boundary,
+# via call_sub_orchestrator) apart from untrusted top-level client input.
+SUBWORKFLOW_INPUT_KEY = "__subworkflow_input__"
+
+# When a workflow runs as a sub-workflow, its orchestrator returns this envelope
+# instead of a bare outputs list, so the parent can recover both the inner outputs
+# *and* the inner event timeline (a child orchestration is a separate durable
+# instance; its return value is the only deterministic, replay-safe channel back to
+# the parent). A top-level run still returns a bare list, so the client output path
+# is unchanged. See ``orchestrator._process_subworkflow_result``.
+SUBWORKFLOW_RESULT_KEY = "__subworkflow_result__"
+
+# Alongside the input envelope, the parent passes the child its HITL *address* context
+# (the addressable root instance id, the root workflow name, and the accumulated
+# request-path prefix). This lets an executor inside a nested child build a respond URL
+# that targets the top-level instance with a qualified request id, without the child
+# knowing how its parent refers to it. Like SUBWORKFLOW_INPUT_KEY this is trusted
+# internal data (only call_sub_orchestrator sets it, post trust boundary), so it must
+# be stripped from untrusted top-level input (see strip_subworkflow_markers).
+SUBWORKFLOW_ADDRESS_KEY = "__subworkflow_address__"
+
+
+def strip_subworkflow_markers(data: Any) -> Any:
+    """Remove the reserved sub-workflow envelope keys from untrusted top-level input.
+
+    The orchestrator treats a top-level input dict carrying :data:`SUBWORKFLOW_INPUT_KEY`
+    as a *trusted* child-orchestration payload and reconstructs it with
+    :func:`deserialize_value` (pickle) **without** the usual
+    :func:`strip_pickle_markers` sanitization, because a genuine envelope is only ever
+    built internally (post trust boundary) by ``call_sub_orchestrator``. If untrusted
+    client input could carry that key, an attacker could smuggle a pickle payload
+    straight into ``pickle.loads`` (RCE). The sibling :data:`SUBWORKFLOW_ADDRESS_KEY`
+    is likewise trusted (it sets the root instance id / workflow name a nested executor
+    builds respond URLs against); if a top-level caller could supply it, they could
+    make the app emit URLs pointing at another instance (confused-deputy / info leak).
+
+    Hosts therefore call this on client-supplied workflow input *before* scheduling the
+    orchestration, so the only way the orchestrator ever sees either key is from a real
+    internal child dispatch. Only the top-level keys are removed (the only position the
+    orchestrator interprets them), leaving the rest of the caller's payload untouched.
+    """
+    if not isinstance(data, dict):
+        return data
+    typed = cast(dict[str, Any], data)
+    if SUBWORKFLOW_INPUT_KEY not in typed and SUBWORKFLOW_ADDRESS_KEY not in typed:
+        return typed
+    logger.debug("Stripped reserved sub-workflow envelope key(s) from untrusted input.")
+    cleaned = typed.copy()
+    cleaned.pop(SUBWORKFLOW_INPUT_KEY, None)
+    cleaned.pop(SUBWORKFLOW_ADDRESS_KEY, None)
+    return cleaned
+
+
+# ============================================================================
 # Serialize / Deserialize
 # ============================================================================
 

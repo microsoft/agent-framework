@@ -37,7 +37,7 @@ experimental `FileHistoryProvider`, reading the stored JSONL file back from
 disk, and then continuing the same conversation with another city.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT: Azure AI Foundry project endpoint.
+    FOUNDRY_PROJECT_ENDPOINT: Microsoft Foundry project endpoint.
     FOUNDRY_MODEL: Foundry model deployment name.
 
 Key components:

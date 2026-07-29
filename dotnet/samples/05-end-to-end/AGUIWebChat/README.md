@@ -79,7 +79,7 @@ ChatClientAgent agent = chatClient.AsAIAgent(
     instructions: "You are a helpful assistant.");
 
 // Map AG-UI endpoint
-app.MapAGUI("/ag-ui", agent);
+app.MapAGUIServer("/ag-ui", agent);
 ```
 
 The server exposes the agent via the AG-UI protocol at `http://localhost:5100/ag-ui`.
@@ -93,8 +93,8 @@ string serverUrl = builder.Configuration["AGUI_SERVER_URL"] ?? "http://localhost
 
 builder.Services.AddHttpClient("aguiserver", httpClient => httpClient.BaseAddress = new Uri(serverUrl));
 
-builder.Services.AddChatClient(sp => new AGUIChatClient(
-    sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver"), "ag-ui"));
+builder.Services.AddChatClient(sp => new AGUIChatClient(new(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver"), "ag-ui")));
 ```
 
 The Blazor UI (`Client/Components/Pages/Chat/Chat.razor`) uses the `IChatClient` to:

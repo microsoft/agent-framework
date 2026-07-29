@@ -105,7 +105,12 @@ Use typing as a helper first and suppressions as a last resort:
   (`# pyright: ignore[reportGeneralTypeIssues]`), file-level is allowed if there is a compelling reason for it, that should be documented right beneath the ignore.
   Never change the global suppression flags unless the dev team okays it.
 - **Private usage boundary**: Accessing private members across `agent_framework*` packages can be acceptable for this
-  codebase, but private member usage for non-Agent Framework dependencies should remain flagged.
+  codebase, but private member usage for non-Agent Framework dependencies should remain flagged. Do not make an
+  internal helper public merely to satisfy pyright private-usage checks inside the package; use a targeted
+  `# pyright: ignore[reportPrivateUsage]` when the internal dependency is intentional.
+- **Avoid typing-only wrappers**: Do not introduce trivial pass-through functions solely to satisfy typing or private
+  usage checks. Prefer a targeted ignore, cast, or clearer annotation over an extra one-line function that adds runtime
+  overhead without improving the design.
 
 ## Function Parameter Guidelines
 
@@ -314,7 +319,8 @@ python/
 │   │   ├── pyproject.toml      # Defines [all] extra that includes all connector packages
 │   │   ├── tests/              # Tests for core package
 │   │   └── agent_framework/
-│   │       ├── __init__.py     # Public API exports
+│   │       ├── __init__.py     # Lazy runtime public API exports
+│   │       ├── __init__.pyi    # Public API typing surface for lazy root exports
 │   │       ├── _agents.py      # Agent implementations
 │   │       ├── _clients.py     # Chat client protocols and base classes
 │   │       ├── _tools.py       # Tool definitions
@@ -349,6 +355,17 @@ python/
 ```
 
 ### Lazy Loading Pattern
+
+The root `agent_framework` package is a lazy public API surface. When adding, removing, or moving a root export:
+
+- Add the symbol to `_LAZY_MODULE_EXPORTS` in `agent_framework/__init__.py`.
+- Keep `_LAZY_EXPORTS` derived from `_LAZY_MODULE_EXPORTS`.
+- Keep the explicit runtime `__all__` synchronized; it is required for `from agent_framework import *`.
+- Add the same public symbol to `agent_framework/__init__.pyi` so type checkers and editors see the typed surface.
+- Put runtime deprecation behavior in the owning module using that module's `__getattr__`. Do not add one-off
+  deprecated-symbol branches to root `agent_framework.__getattr__`.
+- Validate root API changes with `uv run poe syntax -P core`, `uv run poe pyright -P core`, and import smoke tests
+  for both `from agent_framework import <symbol>` and `from agent_framework import *`.
 
 Provider folders in the core package use `__getattr__` to lazy load classes from their respective connector packages. This allows users to import from a consistent location while only loading dependencies when needed:
 
@@ -558,6 +575,10 @@ it should define ``__all__`` as well.
 Also avoid identity alias imports in ``__init__`` files. Use ``from ._module import Symbol`` instead of
 ``from ._module import Symbol as Symbol``.
 
+Exception: `.pyi` stubs that describe re-exported public APIs should use identity aliases (for example,
+`from ._agents import Agent as Agent`) so type checkers recognize the symbol as exported. This applies to the
+root `agent_framework/__init__.pyi`, which mirrors the lazy runtime exports from `agent_framework/__init__.py`.
+
 ```python
 # ✅ Preferred - explicit __all__ and named imports
 from ._agents import Agent
@@ -666,6 +687,20 @@ otel_messages.append(_to_otel_message(message)) # this already serializes
 message_data = message.to_dict(exclude_none=True)  # and this does so again!
 logger.info(message_data, extra={...})
 ```
+
+When converting arbitrary values for telemetry, protocol, or event payloads, reuse the optimized framework
+converter instead of adding a package-local recursive serializer:
+
+```python
+from agent_framework._serialization import make_json_safe  # pyright: ignore[reportPrivateUsage]
+
+payload = make_json_safe(value)
+```
+
+Use a model's `to_dict()` directly when its type is known. Use `make_json_safe()` for heterogeneous values that may
+contain framework models, Pydantic models, dataclasses, containers, or primitives. Keep provider-specific conversion
+local when an API requires exact aliases, JSON modes, or opaque JSON strings, and avoid `json.dumps()` followed by
+`json.loads()` unless crossing such a required wire-format boundary.
 
 ## Test Organization
 

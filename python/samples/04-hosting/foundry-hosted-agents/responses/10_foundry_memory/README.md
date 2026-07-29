@@ -1,6 +1,6 @@
 # What this sample demonstrates
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) agent with persistent semantic memory backed by an **Azure AI Foundry Memory Store**, hosted using the **Responses protocol**. The agent remembers facts the user has shared (e.g., dietary preferences, name) across sessions by retrieving and updating memories around every model invocation via `FoundryMemoryProvider`.
+An [Agent Framework](https://github.com/microsoft/agent-framework) agent with persistent semantic memory backed by a **Microsoft Foundry Memory Store**, hosted using the **Responses protocol**. The agent remembers facts the user has shared (e.g., dietary preferences, name) across sessions by retrieving and updating memories around every model invocation via `FoundryMemoryProvider`.
 
 ## How It Works
 
@@ -26,7 +26,7 @@ The agent is hosted using the [Agent Framework](https://github.com/microsoft/age
 
 ## Prerequisites
 
-- An Azure AI Foundry project with:
+- A Microsoft Foundry project with:
   - A deployed chat model (e.g., `gpt-4.1-mini`)
   - A deployed embedding model (e.g., `text-embedding-3-small`) — used by the memory store itself, not by the agent at runtime
 - Azure CLI logged in (`az login`)
@@ -111,7 +111,7 @@ curl -X POST http://localhost:8088/responses -H "Content-Type: application/json"
 
 To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
 
-When deploying, make sure `MEMORY_STORE_NAME` and `FOUNDRY_MEMORY_SCOPE` are set in your `azd` environment so they get injected into the hosted container per [`agent.manifest.yaml`](agent.manifest.yaml):
+When deploying, make sure `MEMORY_STORE_NAME` is set in your `azd` environment so it gets injected into the hosted container per [`agent.manifest.yaml`](agent.manifest.yaml):
 
 ```bash
 azd env set MEMORY_STORE_NAME "agent_framework_memory"

@@ -244,14 +244,18 @@ class CopilotStudioAgent(BaseAgent):
         """Non-streaming implementation of run."""
         if not session:
             session = self.create_session()
-        if not session.service_session_id:
+        service_session_id = session.service_session_id
+        if service_session_id is None:
             session.service_session_id = await self._start_new_conversation()
+            service_session_id = session.service_session_id
+        if not isinstance(service_session_id, str):
+            raise AgentException("CopilotStudioAgent requires service_session_id to be a string")
 
         input_messages = normalize_messages(messages)
 
         question = "\n".join([message.text for message in input_messages])
 
-        activities = self.client.ask_question(question, session.service_session_id)
+        activities = self.client.ask_question(question, service_session_id)
         response_messages: list[Message] = []
         response_id: str | None = None
 
@@ -272,14 +276,18 @@ class CopilotStudioAgent(BaseAgent):
             nonlocal session
             if not session:
                 session = self.create_session()
-            if not session.service_session_id:
+            service_session_id = session.service_session_id
+            if service_session_id is None:
                 session.service_session_id = await self._start_new_conversation()
+                service_session_id = session.service_session_id
+            if not isinstance(service_session_id, str):
+                raise AgentException("CopilotStudioAgent requires service_session_id to be a string")
 
             input_messages = normalize_messages(messages)
 
             question = "\n".join([message.text for message in input_messages])
 
-            activities = self.client.ask_question(question, session.service_session_id)
+            activities = self.client.ask_question(question, service_session_id)
 
             async for message in self._process_activities(activities, streaming=True):
                 yield AgentResponseUpdate(

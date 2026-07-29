@@ -99,7 +99,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         string? id = null,
         string? name = null,
         string? description = null,
-        IList<AITool>? tools = null,
+        IList<AIFunctionDeclaration>? tools = null,
         string? instructions = null,
         JsonSerializerOptions? jsonSerializerOptions = null,
         ILoggerFactory? loggerFactory = null)
@@ -528,9 +528,9 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
-    private static SessionConfig? GetSessionConfig(IList<AITool>? tools, string? instructions)
+    private static SessionConfig? GetSessionConfig(IList<AIFunctionDeclaration>? tools, string? instructions)
     {
-        List<AIFunctionDeclaration>? mappedTools = tools is { Count: > 0 } ? tools.OfType<AIFunctionDeclaration>().ToList() : null;
+        List<AIFunctionDeclaration>? mappedTools = tools is { Count: > 0 } ? tools.ToList() : null;
         SystemMessageConfig? systemMessage = instructions is not null ? new SystemMessageConfig { Mode = SystemMessageMode.Append, Content = instructions } : null;
 
         if (mappedTools is null && systemMessage is null)
@@ -577,12 +577,12 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         // Warn so the developer knows the ApprovalRequiredAIFunction marker(s) will not be automatically gated.
         if (sessionConfig.Hooks?.OnPreToolUse is not null)
         {
-            logger.LogWarning(
-                "A custom 'OnPreToolUse' hook is configured on the SessionConfig, so {Count} approval-required tool(s) ({Tools}) " +
-                "will not be automatically gated by GitHubCopilotAgent. The custom hook is responsible for enforcing approval " +
-                "(for example, by returning a 'deny' or 'ask' PreToolUseHookOutput).",
-                approvalRequiredToolNames.Count,
-                string.Join(", ", approvalRequiredToolNames));
+            if (logger.IsEnabled(LogLevel.Warning))
+            {
+                logger.LogApprovalGatingSkippedDueToCustomHook(
+                    approvalRequiredToolNames.Count,
+                    string.Join(", ", approvalRequiredToolNames));
+            }
             return sessionConfig;
         }
 

@@ -15,7 +15,6 @@ from typing import Any, ClassVar, Literal, TypeVar, cast
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentSession,
     Message,
     SupportsAgentRun,
 )
@@ -569,7 +568,6 @@ class StandardMagenticManager(MagenticManagerBase):
         )
 
         self._agent: SupportsAgentRun = agent
-        self._session: AgentSession = self._agent.create_session()
         self.task_ledger: _MagenticTaskLedger | None = task_ledger
 
         # Prompts may be overridden if needed
@@ -597,8 +595,20 @@ class StandardMagenticManager(MagenticManagerBase):
 
         The agent's run method is called which applies the agent's configured options
         (temperature, seed, instructions, etc.).
+
+        A *fresh* session is created for every call instead of reusing a persistent one.
+        The manager already passes the complete conversation it wants the model to see
+        on each call (see ``plan``, ``replan`` and ``create_progress_ledger``, which all
+        build ``[*magentic_context.chat_history, ...]``). Reusing a single accumulating
+        session would make the agent's history provider (the default
+        ``InMemoryHistoryProvider`` for local sessions) reload every previously sent /
+        received message and prepend it to the input, so the task, facts and plan would
+        be duplicated and compound on every round. A throwaway session keeps each call
+        stateless while still propagating a non-``None`` session, so any context
+        providers configured on the manager agent are still invoked (regression #4371).
         """
-        response: AgentResponse = await self._agent.run(messages, session=self._session)
+        session = self._agent.create_session()
+        response: AgentResponse = await self._agent.run(messages, session=session)
         if not response.messages:
             raise RuntimeError("Agent returned no messages in response.")
         if len(response.messages) > 1:
@@ -743,7 +753,6 @@ class StandardMagenticManager(MagenticManagerBase):
         state: dict[str, Any] = {}
         if self.task_ledger is not None:
             state["task_ledger"] = self.task_ledger.to_dict()
-        state["agent_session"] = self._session.to_dict()
         return state
 
     @override
@@ -754,12 +763,6 @@ class StandardMagenticManager(MagenticManagerBase):
                 self.task_ledger = _MagenticTaskLedger.from_dict(ledger)
             except Exception:  # pragma: no cover - defensive
                 logger.warning("Failed to restore manager task ledger from checkpoint state")
-        session_payload = state.get("agent_session")
-        if session_payload is not None:
-            try:
-                self._session = AgentSession.from_dict(session_payload)
-            except Exception:  # pragma: no cover - defensive
-                logger.warning("Failed to restore manager agent session from checkpoint state")
 
 
 # endregion Magentic Manager

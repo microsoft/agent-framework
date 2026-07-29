@@ -54,6 +54,7 @@ logger = logging.getLogger(__name__)
 
 SPAM_AGENT_NAME = "SpamDetectionAgent"
 EMAIL_AGENT_NAME = "EmailAssistantAgent"
+WORKFLOW_NAME = "email_triage"
 
 SPAM_DETECTION_INSTRUCTIONS = (
     "You are a spam detection assistant that identifies spam emails. "
@@ -119,7 +120,7 @@ def is_spam_detected(message: Any) -> bool:
 
 
 def _create_chat_client() -> FoundryChatClient:
-    """Create an Azure AI Foundry chat client using AzureCliCredential."""
+    """Create a Microsoft Foundry chat client using AzureCliCredential."""
     return FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ["FOUNDRY_MODEL"],
@@ -148,7 +149,7 @@ def create_workflow() -> Workflow:
     email_sender = EmailSenderExecutor(id="email_sender")
 
     return (
-        WorkflowBuilder(start_executor=spam_agent)
+        WorkflowBuilder(name=WORKFLOW_NAME, start_executor=spam_agent)
         .add_switch_case_edge_group(
             spam_agent,
             [

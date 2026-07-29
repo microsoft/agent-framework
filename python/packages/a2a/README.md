@@ -56,3 +56,9 @@ See the [A2A agent examples](../../samples/04-hosting/a2a/) which demonstrate:
 - Sending messages and receiving responses
 - Handling different content types (text, files, data)
 - Streaming responses and real-time interaction
+
+## Security considerations
+
+The hosting example above focuses on protocol wiring and does not add authentication or authorization by itself. Production A2A hosts should protect their HTTP or JSON-RPC entry points with the deployment's normal auth layer and verify that each caller is allowed to access the requested agent, task, or session.
+
+Task, thread, context, and session identifiers used by an A2A host are routing handles, not bearer credentials. Do not rely on client-supplied identifiers alone to select or mutate persisted state; bind them to authenticated user, tenant, or workspace context first.

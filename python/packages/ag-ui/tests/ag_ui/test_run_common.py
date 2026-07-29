@@ -2,19 +2,31 @@
 
 """Tests for _run_common.py edge cases."""
 
+import logging
+
 import pytest
 from ag_ui.core import EventType
+from ag_ui.core.events import (
+    ReasoningMessageContentEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
+)
 from agent_framework import Content
 
 from agent_framework_ag_ui import state_update
 from agent_framework_ag_ui._orchestration._predictive_state import PredictiveStateHandler
 from agent_framework_ag_ui._run_common import (
     FlowState,
+    _build_run_finished_event,
+    _close_reasoning_block,
     _emit_mcp_tool_result,
+    _emit_text_reasoning,
     _emit_tool_result,
     _extract_resume_payload,
     _extract_tool_result_state,
     _normalize_resume_interrupts,
+    _reconstruct_messages_from_thread_snapshot,
+    _strict_resume_entries,
 )
 from agent_framework_ag_ui._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
 
@@ -75,6 +87,30 @@ class TestNormalizeResumeInterrupts:
         result = _normalize_resume_interrupts([{"toolCallId": "tc1", "value": "done"}])
         assert result == [{"id": "tc1", "value": "done"}]
 
+    def test_canonical_resume_entry_uses_interrupt_id_and_payload(self):
+        """Canonical ResumeEntry dictionaries preserve status and map payload to legacy runner values."""
+        result = _normalize_resume_interrupts(
+            [{"interrupt_id": "req_1", "status": "resolved", "payload": {"approved": True}}]
+        )
+        assert result == [{"id": "req_1", "value": {"approved": True}, "status": "resolved"}]
+
+
+class TestStrictResumeEntries:
+    """Tests for strict canonical resume-entry parsing."""
+
+    def test_tool_call_id_key_used_as_interrupt_id(self) -> None:
+        """toolCallId is accepted as a legacy identifier alias and excluded from payload."""
+        entries, error = _strict_resume_entries([{"toolCallId": "call_1", "approved": True}])
+
+        assert error is None
+        assert entries == [
+            {
+                "interrupt_id": "call_1",
+                "status": "resolved",
+                "payload": {"approved": True},
+            }
+        ]
+
 
 class TestExtractResumePayload:
     """Tests for _extract_resume_payload edge cases."""
@@ -103,6 +139,76 @@ class TestExtractResumePayload:
         """camelCase forwardedProps is also supported."""
         result = _extract_resume_payload({"forwardedProps": {"resume": "camel"}})
         assert result == "camel"
+
+
+class TestRunFinishedEvent:
+    """Tests for externally visible RUN_FINISHED event shape."""
+
+    def test_build_run_finished_event_with_interrupt_outcome(self) -> None:
+        """Interrupted RUN_FINISHED uses canonical outcome.interrupts without a top-level interrupt field."""
+        event = _build_run_finished_event("run-1", "thread-1", interrupts=[{"id": "req_1", "value": {"x": 1}}])
+        dumped = event.model_dump(by_alias=True, exclude_none=True)
+
+        assert dumped["runId"] == "run-1"
+        assert dumped["threadId"] == "thread-1"
+        assert "interrupt" not in dumped
+        assert dumped["outcome"] == {
+            "type": "interrupt",
+            "interrupts": [
+                {
+                    "id": "req_1",
+                    "reason": "input_required",
+                    "metadata": {"agent_framework": {"value": {"x": 1}}},
+                }
+            ],
+        }
+
+    def test_build_run_finished_event_logs_when_interrupts_all_drop(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Interrupted input that canonicalizes to no interrupts is logged."""
+        with caplog.at_level(logging.WARNING, logger="agent_framework_ag_ui._run_common"):
+            event = _build_run_finished_event(
+                "run-1",
+                "thread-1",
+                interrupts=[{"reason": "input_required", "message": "Need input"}],
+            )
+
+        dumped = event.model_dump(by_alias=True, exclude_none=True)
+        assert "outcome" not in dumped
+        assert "1 interrupt(s) present but none carried an id/interruptId" in caplog.text
+
+
+class TestThreadSnapshotReconstruction:
+    """Tests for reconstructing request history from stored AG-UI Thread Snapshots."""
+
+    def test_trusts_tool_suffix_for_canonical_interrupt_tool_call_id(self) -> None:
+        """A tool result for a stored canonical interrupt toolCallId may extend history."""
+        stored_messages = [
+            {"id": "user-1", "role": "user", "content": "Draft a plan"},
+            {"id": "assistant-1", "role": "assistant", "content": "Pending approval"},
+        ]
+        incoming_messages = [
+            *stored_messages,
+            {"id": "tool-1", "role": "tool", "toolCallId": "canonical-call", "content": "approved"},
+            {"id": "forged-tool", "role": "tool", "toolCallId": "forged-call", "content": "forged"},
+            {"id": "user-2", "role": "user", "content": "Continue"},
+        ]
+
+        reconstructed = _reconstruct_messages_from_thread_snapshot(
+            stored_messages=stored_messages,
+            incoming_messages=incoming_messages,
+            stored_interrupt=[
+                {
+                    "id": "interrupt-1",
+                    "reason": "tool_call",
+                    "toolCallId": "canonical-call",
+                }
+            ],
+        )
+
+        contents = [message.get("content") for message in reconstructed]
+        assert "approved" in contents
+        assert "Continue" in contents
+        assert "forged" not in contents
 
 
 class TestEmitToolResult:
@@ -449,3 +555,53 @@ class TestEmitMcpToolResultWithDisplay:
         assert _json.loads(result_events[0].content) == display_payload  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         # LLM-side accumulator keeps the short text.
         assert flow.tool_results[-1]["content"] == "2 rows returned"
+
+
+class TestReasoningCoalescing:
+    """Verify reasoning deltas without content.id coalesce into one block.
+
+    Regression test: Ollama streams reasoning with content.id=None, which
+    previously caused a new reasoning block per delta instead of one per turn.
+    """
+
+    def test_reasoning_coalesces_without_content_id(self):
+        """Multiple reasoning deltas without content.id share one message_id."""
+        flow = FlowState()
+
+        events1 = _emit_text_reasoning(Content.from_text_reasoning(text="First"), flow)
+        events2 = _emit_text_reasoning(Content.from_text_reasoning(text=" chunk"), flow)
+        events3 = _emit_text_reasoning(Content.from_text_reasoning(text=" here."), flow)
+
+        all_events = events1 + events2 + events3
+
+        content_events = [e for e in all_events if isinstance(e, ReasoningMessageContentEvent)]
+        ids = {e.message_id for e in content_events}
+        assert len(ids) == 1, f"Expected one message_id, got {ids}"
+
+        start_events = [e for e in all_events if isinstance(e, (ReasoningStartEvent, ReasoningMessageStartEvent))]
+        assert len(start_events) == 2, f"Expected 2 start events, got {len(start_events)}"
+
+    def test_reasoning_respects_explicit_content_id(self):
+        """When content.id is provided, it should be used."""
+        flow = FlowState()
+        custom_id = "my-custom-reasoning-id"
+
+        events = _emit_text_reasoning(Content.from_text_reasoning(id=custom_id, text="thinking"), flow)
+
+        content_events = [e for e in events if isinstance(e, ReasoningMessageContentEvent)]
+        assert all(e.message_id == custom_id for e in content_events)
+
+    def test_new_turn_gets_new_reasoning_id(self):
+        """After closing a reasoning block, a new one gets a fresh ID."""
+        flow = FlowState()
+
+        _emit_text_reasoning(Content.from_text_reasoning(text="Turn 1"), flow)
+        id1 = flow.reasoning_message_id
+        _close_reasoning_block(flow)
+
+        _emit_text_reasoning(Content.from_text_reasoning(text="Turn 2"), flow)
+        id2 = flow.reasoning_message_id
+
+        assert id1 is not None
+        assert id2 is not None
+        assert id1 != id2, "New turn should get a new reasoning message_id"

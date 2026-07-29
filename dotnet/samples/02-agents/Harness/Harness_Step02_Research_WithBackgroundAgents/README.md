@@ -32,7 +32,7 @@ A parent agent receives a list of stock tickers and uses a web-search background
 
 ## Prerequisites
 
-- An Azure AI Foundry endpoint with an OpenAI model deployment
+- A Microsoft Foundry endpoint with an OpenAI model deployment
 - Set the following environment variables:
   - `AZURE_FOUNDRY_OPENAI_ENDPOINT` — Your Foundry OpenAI endpoint URL
   - `FOUNDRY_MODEL` — Model deployment name (defaults to `gpt-5.4`)
@@ -51,3 +51,11 @@ BAC, MSFT, BA
 ```
 
 The parent agent will delegate each ticker lookup to the web search background agent concurrently and present the results in a table.
+
+## Security Considerations
+
+`BackgroundAgentsProvider` delegates work to the agents you supply — the parent sends them text input
+and receives back whatever they produce. A compromised or malicious background agent could exfiltrate
+data it receives, or return adversarial output designed to influence the parent agent via indirect
+prompt injection once its result is retrieved. Only supply background agents you have vetted and trust
+with the data the parent may pass to them.

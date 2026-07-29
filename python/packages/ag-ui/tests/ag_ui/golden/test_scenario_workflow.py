@@ -303,7 +303,7 @@ async def test_workflow_request_info_tool_call_lifecycle() -> None:
 
 
 async def test_workflow_request_info_interrupt_in_run_finished() -> None:
-    """request_info populates RUN_FINISHED.interrupt with the request metadata."""
+    """request_info populates RUN_FINISHED.outcome.interrupts with the request metadata."""
 
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
@@ -317,12 +317,10 @@ async def test_workflow_request_info_interrupt_in_run_finished() -> None:
     wrapper = AgentFrameworkWorkflow(workflow=workflow)
     stream = await _run(wrapper, _payload())
 
-    finished = stream.last("RUN_FINISHED")
-    interrupt = finished.model_dump().get("interrupt")
-    assert isinstance(interrupt, list)
+    interrupt = stream.run_finished_interrupts()
     assert len(interrupt) == 1
     assert interrupt[0]["id"] == "flights-choice"
-    assert interrupt[0]["value"]["agent"] == "flights"
+    assert stream.interrupt_metadata_value(interrupt[0])["agent"] == "flights"
 
 
 async def test_workflow_request_info_emits_interrupt_card_event() -> None:
@@ -515,8 +513,7 @@ async def test_workflow_interrupt_resume_round_trip() -> None:
     stream1.assert_no_run_error()
     stream1.assert_tool_calls_balanced()
 
-    finished1 = stream1.last("RUN_FINISHED")
-    interrupt1 = finished1.model_dump().get("interrupt")
+    interrupt1 = stream1.run_finished_interrupts()
     assert interrupt1, "Expected interrupt"
     assert interrupt1[0]["id"] == "choice-1"
 
@@ -540,12 +537,12 @@ async def test_workflow_interrupt_resume_round_trip() -> None:
 
     # No interrupt after resume
     finished2 = stream2.last("RUN_FINISHED")
-    interrupt2 = finished2.model_dump().get("interrupt")
-    assert not interrupt2
+    dumped2 = finished2.model_dump(by_alias=True, exclude_none=True)
+    assert "outcome" not in dumped2
 
 
 async def test_workflow_forwarded_props_resume() -> None:
-    """CopilotKit-style forwarded_props.command.resume should resume a pending request."""
+    """forwarded_props.command.resume should resume with canonical resume entries."""
 
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
@@ -564,14 +561,16 @@ async def test_workflow_forwarded_props_resume() -> None:
             "thread_id": "thread-fwd",
             "run_id": "run-2",
             "messages": [],
-            "forwarded_props": {"command": {"resume": json.dumps({"name": "A"})}},
+            "forwarded_props": {
+                "command": {"resume": [{"interruptId": "pick", "status": "resolved", "payload": {"name": "A"}}]}
+            },
         },
     )
     stream2.assert_bookends()
     stream2.assert_no_run_error()
 
     finished = stream2.last("RUN_FINISHED")
-    assert not finished.model_dump().get("interrupt")
+    assert "outcome" not in finished.model_dump(by_alias=True, exclude_none=True)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -579,8 +578,8 @@ async def test_workflow_forwarded_props_resume() -> None:
 # ──────────────────────────────────────────────────────────────────────
 
 
-async def test_workflow_empty_turn_preserves_interrupts() -> None:
-    """An empty turn with a pending request still returns the interrupt without errors."""
+async def test_workflow_empty_turn_with_pending_request_emits_run_error() -> None:
+    """An empty turn with a pending request must provide canonical resume entries."""
 
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
@@ -601,18 +600,9 @@ async def test_workflow_empty_turn_preserves_interrupts() -> None:
             "messages": [],
         },
     )
-    stream2.assert_bookends()
-    stream2.assert_no_run_error()
-    stream2.assert_tool_calls_balanced()
-
-    # Should re-emit the pending interrupt
-    finished = stream2.last("RUN_FINISHED")
-    interrupts = finished.model_dump().get("interrupt")
-    assert isinstance(interrupts, list)
-    assert interrupts[0]["id"] == "pick-one"
-
-    # Should have TOOL_CALL events for the pending request
-    stream2.assert_has_type("TOOL_CALL_START")
+    stream2.assert_has_type("RUN_STARTED")
+    run_error = stream2.last("RUN_ERROR")
+    assert run_error.code == "WORKFLOW_RESUME_REQUIRED"
 
 
 async def test_workflow_empty_turn_no_pending_requests() -> None:
@@ -703,10 +693,9 @@ async def test_workflow_approval_flow_round_trip() -> None:
     stream1.assert_bookends()
     stream1.assert_no_run_error()
 
-    finished1 = stream1.last("RUN_FINISHED")
-    interrupt1 = finished1.model_dump().get("interrupt")
+    interrupt1 = stream1.run_finished_interrupts()
     assert interrupt1, "Expected approval interrupt"
-    interrupt_value = interrupt1[0]["value"]
+    interrupt_value = stream1.interrupt_metadata_value(interrupt1[0])
 
     # Turn 2: approve
     stream2 = await _run(
@@ -739,7 +728,7 @@ async def test_workflow_approval_flow_round_trip() -> None:
 
     # No more interrupt
     finished2 = stream2.last("RUN_FINISHED")
-    assert not finished2.model_dump().get("interrupt")
+    assert "outcome" not in finished2.model_dump(by_alias=True, exclude_none=True)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -802,7 +791,7 @@ async def test_workflow_message_list_resume() -> None:
 
 
 async def test_workflow_plain_text_does_not_resume_pending_dict_request() -> None:
-    """Plain text user follow-up should NOT be coerced into a dict response."""
+    """Plain text user follow-up should fail instead of being coerced into a dict response."""
 
     @executor(id="requester")
     async def requester(message: Any, ctx: WorkflowContext) -> None:
@@ -840,14 +829,9 @@ async def test_workflow_plain_text_does_not_resume_pending_dict_request() -> Non
             ],
         },
     )
-    stream2.assert_bookends()
-    stream2.assert_no_run_error()
-
-    # Should still have the interrupt (text was not accepted as dict response)
-    finished = stream2.last("RUN_FINISHED")
-    interrupts = finished.model_dump().get("interrupt")
-    assert isinstance(interrupts, list)
-    assert interrupts[0]["id"] == "flights-choice"
+    stream2.assert_has_type("RUN_STARTED")
+    run_error = stream2.last("RUN_ERROR")
+    assert run_error.code == "WORKFLOW_RESUME_REQUIRED"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -924,7 +908,7 @@ async def test_workflow_sequential_request_info_interrupts() -> None:
     stream1 = await _run(wrapper, _payload(thread_id="thread-seq", run_id="run-1"))
     stream1.assert_bookends()
     stream1.assert_tool_calls_balanced()
-    interrupt1 = stream1.last("RUN_FINISHED").model_dump().get("interrupt")
+    interrupt1 = stream1.run_finished_interrupts()
     assert interrupt1[0]["id"] == "name-req"
 
     # Turn 2: answer name → triggers second executor's request_info
@@ -939,7 +923,7 @@ async def test_workflow_sequential_request_info_interrupts() -> None:
     )
     stream2.assert_has_run_lifecycle()
     stream2.assert_tool_calls_balanced()
-    interrupt2 = stream2.last("RUN_FINISHED").model_dump().get("interrupt")
+    interrupt2 = stream2.run_finished_interrupts()
     assert interrupt2[0]["id"] == "dest-req"
 
     # Turn 3: answer destination → completion
@@ -958,4 +942,4 @@ async def test_workflow_sequential_request_info_interrupts() -> None:
 
     deltas = [e.delta for e in stream3.get("TEXT_MESSAGE_CONTENT")]
     assert any("Alice" in d and "Paris" in d for d in deltas)
-    assert not stream3.last("RUN_FINISHED").model_dump().get("interrupt")
+    assert "outcome" not in stream3.last("RUN_FINISHED").model_dump(by_alias=True, exclude_none=True)

@@ -10,7 +10,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -87,7 +86,6 @@ namespace Microsoft.Agents.AI;
 /// }
 /// </code>
 /// </example>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public abstract class AgentClassSkill<
     [DynamicallyAccessedMembers(
         DynamicallyAccessedMemberTypes.PublicProperties |

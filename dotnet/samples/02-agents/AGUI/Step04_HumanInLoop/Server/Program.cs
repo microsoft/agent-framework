@@ -25,7 +25,7 @@ builder.Services.AddHttpLogging(logging =>
 builder.Services.AddHttpClient().AddLogging();
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.TypeInfoResolverChain.Add(ApprovalJsonContext.Default));
-builder.Services.AddAGUI();
+builder.Services.AddAGUIServer();
 
 // WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
 // make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
@@ -73,5 +73,5 @@ ChatClientAgent baseAgent = openAIChatClient.AsAIAgent(
 // Wrap with ServerFunctionApprovalAgent
 var agent = new ServerFunctionApprovalAgent(baseAgent, jsonOptions.SerializerOptions);
 
-app.MapAGUI("/", agent);
+app.MapAGUIServer("/", agent);
 await app.RunAsync();

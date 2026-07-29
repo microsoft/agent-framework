@@ -354,6 +354,10 @@ def check_sample_env(request: pytest.FixtureRequest) -> None:
         pytest.fail("Test class must have @pytest.mark.sample() marker")
 
     sample_name = cast(str, sample_marker.args[0])  # type: ignore[union-attr]
+    # Samples that host no AI agents need no model credentials (only the DTS emulator).
+    no_llm_samples = {"12_subworkflow_hitl"}
+    if sample_name in no_llm_samples:
+        return
     if sample_name == "06_multi_agent_orchestration_conditionals":
         required_vars = ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_MODEL"]
     else:

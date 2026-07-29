@@ -13,6 +13,9 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.AI.OpenAI" />
+    <!-- AgentServer (pulled transitively via Foundry.Hosting) requires Azure.Core >= 1.59.0.
+         The solution-wide central pin is 1.60.0, which satisfies that floor, so this project
+         references Azure.Core directly (transitive pinning is disabled here) without a version override. -->
     <PackageReference Include="Azure.Core" />
     <PackageReference Include="Azure.Identity" />
     <PackageReference Include="DotNetEnv" />

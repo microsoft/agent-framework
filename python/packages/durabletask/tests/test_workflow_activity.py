@@ -10,11 +10,20 @@ updates (regression guard for the shallow-copy bug, #4500).
 """
 
 import json
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 from agent_framework_durabletask import execute_workflow_activity
-from agent_framework_durabletask._workflows.orchestrator import SOURCE_ORCHESTRATOR
+from agent_framework_durabletask._workflows.orchestrator import SOURCE_HITL_RESPONSE, SOURCE_ORCHESTRATOR
+from agent_framework_durabletask._workflows.serialization import serialize_value
+
+
+@dataclass
+class ApprovalRequest:
+    """Typed request used to select a HITL response handler."""
+
+    prompt: str
 
 
 def _make_executor(executor_id: str, mutate: Any) -> Mock:
@@ -115,6 +124,67 @@ class TestExecuteWorkflowActivityStateDiff:
 
         assert "to_remove" in result["shared_state_deletes"]
         assert "keep" not in result["shared_state_deletes"]
+
+
+def test_hitl_response_handler_receives_typed_original_request() -> None:
+    """Already-serialized HITL requests are decoded before response handler dispatch."""
+    original_request = ApprovalRequest(prompt="Approve this?")
+    hitl_message = {
+        "original_request": serialize_value(original_request),
+        "response": "approved",
+        "response_type": None,
+    }
+    input_data = json.dumps({
+        "message": serialize_value(hitl_message),
+        "shared_state_snapshot": {},
+        "source_executor_ids": [f"{SOURCE_HITL_RESPONSE}_request-1"],
+    })
+
+    handler = AsyncMock()
+    executor = Mock()
+    executor.id = "review-gate"
+    executor._find_response_handler.return_value = handler
+
+    execute_workflow_activity(executor, input_data)
+
+    executor._find_response_handler.assert_called_once_with(original_request, "approved")
+    handler.assert_awaited_once()
+
+
+class TestExecuteWorkflowActivityHostMetadata:
+    """Orchestration metadata is surfaced to executors via the runner context."""
+
+    def test_host_context_surfaced_on_runner_context(self) -> None:
+        """``host_context`` in the activity input is exposed as ``runner_context.host_metadata``."""
+        captured: dict[str, Any] = {}
+
+        async def capture(message: Any, source_executor_ids: Any, state: Any, runner_context: Any) -> None:
+            captured["metadata"] = runner_context.host_metadata
+            state.commit()
+
+        executor = _make_executor("test-exec", capture)
+        input_data = json.dumps({
+            "message": "test",
+            "shared_state_snapshot": {},
+            "source_executor_ids": [SOURCE_ORCHESTRATOR],
+            "host_context": {"instance_id": "abc123", "workflow_name": "content_moderation"},
+        })
+        json.loads(execute_workflow_activity(executor, input_data))
+
+        assert captured["metadata"] == {"instance_id": "abc123", "workflow_name": "content_moderation"}
+
+    def test_absent_host_context_yields_none(self) -> None:
+        """When the input omits ``host_context``, ``host_metadata`` is ``None`` (in-process parity)."""
+        captured: dict[str, Any] = {}
+
+        async def capture(message: Any, source_executor_ids: Any, state: Any, runner_context: Any) -> None:
+            captured["metadata"] = runner_context.host_metadata
+            state.commit()
+
+        executor = _make_executor("test-exec", capture)
+        _run(executor, {})
+
+        assert captured["metadata"] is None
 
 
 if __name__ == "__main__":

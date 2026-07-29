@@ -6,7 +6,7 @@ These samples demonstrate different approaches to managing conversation history 
 
 | File | Description |
 |------|-------------|
-| [`suspend_resume_session.py`](suspend_resume_session.py) | Suspend and resume conversation sessions, comparing service-managed sessions (Azure AI Foundry) with in-memory sessions (OpenAI). |
+| [`suspend_resume_session.py`](suspend_resume_session.py) | Suspend and resume conversation sessions, comparing service-managed sessions (Microsoft Foundry) with in-memory sessions (OpenAI). |
 | [`custom_history_provider.py`](custom_history_provider.py) | Implement a custom history provider by extending `HistoryProvider`, enabling conversation persistence in your preferred storage backend. |
 | [`file_history_provider.py`](file_history_provider.py) | Use the experimental `FileHistoryProvider` with `FoundryChatClient` and a function tool so the local JSON Lines file shows the full tool-calling loop. |
 | [`file_history_provider_conversation_persistence.py`](file_history_provider_conversation_persistence.py) | Persist a tool-driven weather conversation with `FileHistoryProvider`, inspect the stored JSONL records, and continue with another city. |
@@ -19,7 +19,7 @@ These samples demonstrate different approaches to managing conversation history 
 ## Prerequisites
 
 **For `suspend_resume_session.py`:**
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint (service-managed session)
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint (service-managed session)
 - `FOUNDRY_MODEL`: The Foundry model deployment name
 - `OPENAI_API_KEY`: Your OpenAI API key (in-memory session)
 - Azure CLI authentication (`az login`)
@@ -28,21 +28,21 @@ These samples demonstrate different approaches to managing conversation history 
 - `OPENAI_API_KEY`: Your OpenAI API key
 
 **For `file_history_provider.py`:**
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL`: The Foundry model deployment name
 - Azure CLI authentication (`az login`)
 - The sample writes plaintext JSONL conversation logs to disk; use a trusted
   local directory and avoid treating the history files as secure secret storage
 
 **For `file_history_provider_conversation_persistence.py`:**
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL`: The Foundry model deployment name
 - Azure CLI authentication (`az login`)
 - The sample writes plaintext JSONL conversation logs to disk; use a trusted
   local directory and avoid treating the history files as secure secret storage
 
 **For Cosmos DB samples (`cosmos_history_provider*.py`):**
-- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL`: The Foundry model deployment name
 - `AZURE_COSMOS_ENDPOINT`: Your Azure Cosmos DB account endpoint
 - `AZURE_COSMOS_DATABASE_NAME`: The database that stores conversation history

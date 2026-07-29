@@ -12,7 +12,6 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -26,7 +25,6 @@ namespace Microsoft.Agents.AI;
 /// directory for files with matching extensions. Invalid resources are skipped with logged warnings.
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 {
     private const string SkillFileName = "SKILL.md";
@@ -114,7 +112,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     }
 
     /// <inheritdoc/>
-    public override Task<IList<AgentSkill>> GetSkillsAsync(CancellationToken cancellationToken = default)
+    public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
         var discoveredPaths = DiscoverSkillDirectories(this._skillPaths);
 

@@ -61,7 +61,6 @@ class ExperimentalFeature(str, Enum):
     MCP_LONG_RUNNING_TASKS = "MCP_LONG_RUNNING_TASKS"
     MCP_SKILLS = "MCP_SKILLS"
     PROGRESSIVE_TOOLS = "PROGRESSIVE_TOOLS"
-    SKILLS = "SKILLS"
     TO_PROMPT_AGENT = "TO_PROMPT_AGENT"
 
 
@@ -226,15 +225,16 @@ def _resolve_user_frame() -> tuple[str, int, str] | None:
 def _warn_on_feature_use(
     *,
     stage: FeatureStageName,
-    feature_id: str,
+    feature_id: str | Enum,
     object_name: str,
     category: type[Warning],
 ) -> None:
-    warning_key = (category, feature_id)
+    normalized_feature_id = _normalize_feature_id(feature_id)
+    warning_key = (category, normalized_feature_id)
     if warning_key in _WARNED_FEATURES:
         return
 
-    message = _build_stage_warning_message(stage=stage, feature_id=feature_id, object_name=object_name)
+    message = _build_stage_warning_message(stage=stage, feature_id=normalized_feature_id, object_name=object_name)
     user_frame = _resolve_user_frame()
     if user_frame is None:
         # Last-resort fallback: emit at the immediate caller of this helper.
@@ -249,6 +249,45 @@ def _warn_on_feature_use(
             module=module,
         )
     _WARNED_FEATURES.add(warning_key)
+
+
+def warn_experimental_feature(
+    message: str,
+    *,
+    feature_id: str | Enum,
+    category: type[Warning] = ExperimentalWarning,
+) -> bool:
+    """Emit a one-time feature-stage warning for a feature not gated by a decorator.
+
+    Some released APIs opt callers into experimental behaviour through individual
+    parameters, which Python cannot decorate on their own. Call this to warn once per
+    ``feature_id`` with a custom ``message`` (pointing at the caller's call site) and to
+    seed the shared dedup registry, so a downstream decorated provider for the same
+    ``feature_id`` does not warn a second time.
+
+    Returns ``True`` when a warning was emitted, ``False`` when it was already emitted for
+    this ``feature_id``/``category`` earlier in the process.
+    """
+    normalized_feature_id = _normalize_feature_id(feature_id)
+    warning_key = (category, normalized_feature_id)
+    if warning_key in _WARNED_FEATURES:
+        return False
+
+    user_frame = _resolve_user_frame()
+    if user_frame is None:
+        # Last-resort fallback: emit at the immediate caller of this helper.
+        warnings.warn(message, category=category, stacklevel=2)
+    else:
+        filename, lineno, module = user_frame
+        warnings.warn_explicit(
+            message,
+            category=category,
+            filename=filename,
+            lineno=lineno,
+            module=module,
+        )
+    _WARNED_FEATURES.add(warning_key)
+    return True
 
 
 def _add_runtime_warning(

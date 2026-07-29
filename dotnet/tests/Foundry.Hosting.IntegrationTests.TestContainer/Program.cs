@@ -26,11 +26,14 @@ var projectEndpoint = new Uri(Environment.GetEnvironmentVariable("FOUNDRY_PROJEC
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set."));
 var deployment = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
 
-var projectClient = new AIProjectClient(projectEndpoint, new DefaultAzureCredential());
+var credential = new DefaultAzureCredential();
+var projectClient = new AIProjectClient(projectEndpoint, credential);
 
 AIAgent agent = scenario switch
 {
     "happy-path" => CreateHappyPathAgent(projectClient, deployment),
+    "unsupported-protocol" => CreateHappyPathAgent(projectClient, deployment),
+    "store-config" => CreateStoreConfigAgent(projectClient, deployment),
     "tool-calling" => CreateToolCallingAgent(projectClient, deployment),
     "tool-calling-approval" => CreateToolCallingApprovalAgent(projectClient, deployment),
     "mcp-toolbox" => CreateMcpToolboxAgent(projectClient, deployment),
@@ -60,7 +63,7 @@ builder.Services.AddFoundryResponses(agent);
 var consentToolboxName = Environment.GetEnvironmentVariable("IT_TOOLBOX_NAME");
 if (!string.IsNullOrEmpty(consentToolboxName))
 {
-    builder.Services.AddFoundryToolboxes(consentToolboxName);
+    builder.Services.AddFoundryToolboxes(credential, consentToolboxName);
 }
 
 var app = builder.Build();
@@ -70,9 +73,21 @@ app.Run();
 static AIAgent CreateHappyPathAgent(AIProjectClient client, string deployment) =>
     client.AsAIAgent(
         model: deployment,
-        instructions: "You are a helpful AI assistant. Always reply with exactly the single word ECHO unless the user explicitly asks a question that requires a different answer.",
+        instructions: "You are a helpful assistant. Answer the user's question concisely and accurately. " +
+                      "At the very end of every reply, append the marker token CONTAINER-OK on its own line.",
         name: "happy-path-agent",
         description: "Round trip and conversation test agent.");
+
+// store-config scenario: a neutral assistant used to exercise store/session semantics
+// (store=true/false, previous_response_id and conversation_id forks, multi-turn recall). It has no
+// marker instruction so it never contaminates the content/recall assertions.
+static AIAgent CreateStoreConfigAgent(AIProjectClient client, string deployment) =>
+    client.AsAIAgent(
+        model: deployment,
+        instructions: "You are a helpful assistant. Answer the user's question concisely and accurately, " +
+                      "and use any facts the user told you earlier in the conversation.",
+        name: "store-config-agent",
+        description: "Store and session semantics test agent.");
 
 static AIAgent CreateToolCallingAgent(AIProjectClient client, string deployment) =>
     client.AsAIAgent(

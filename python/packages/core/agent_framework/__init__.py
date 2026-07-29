@@ -3,13 +3,19 @@
 """Public API surface for Agent Framework core.
 
 This module exposes the primary abstractions for agents, chat clients, tools, sessions,
-middleware, observability, and workflows. Connector namespaces such as
-``agent_framework.azure`` and ``agent_framework.anthropic`` provide provider-specific
-integrations, many of which are lazy-loaded from optional packages.
+middleware, observability, and workflows. Most public exports are resolved lazily to keep
+``import agent_framework`` lightweight; importing a specific symbol still loads the module
+that owns that symbol.
 """
 
+from __future__ import annotations
+
+# pyright: reportUnsupportedDunderAll=false
+# ruff:file-ignore[undefined-export]
+import importlib
 import importlib.metadata
-from typing import TYPE_CHECKING, Any, Final
+from collections.abc import Mapping
+from typing import Any, Final
 
 try:
     _version = importlib.metadata.version(__name__)
@@ -17,318 +23,12 @@ except importlib.metadata.PackageNotFoundError:
     _version = "0.0.0"  # Fallback for development mode
 __version__: Final[str] = _version
 
-from ._agents import Agent, BaseAgent, RawAgent, SupportsAgentRun
-from ._clients import (
-    BaseChatClient,
-    BaseEmbeddingClient,
-    SupportsChatGetResponse,
-    SupportsCodeInterpreterTool,
-    SupportsFileSearchTool,
-    SupportsGetEmbeddings,
-    SupportsImageGenerationTool,
-    SupportsMCPTool,
-    SupportsShellTool,
-    SupportsWebSearchTool,
-)
-from ._compaction import (
-    COMPACTION_STATE_KEY,
-    EXCLUDE_REASON_KEY,
-    EXCLUDED_KEY,
-    GROUP_ANNOTATION_KEY,
-    GROUP_HAS_REASONING_KEY,
-    GROUP_ID_KEY,
-    GROUP_INDEX_KEY,
-    GROUP_KIND_KEY,
-    GROUP_TOKEN_COUNT_KEY,
-    SUMMARIZED_BY_SUMMARY_ID_KEY,
-    SUMMARY_OF_GROUP_IDS_KEY,
-    SUMMARY_OF_MESSAGE_IDS_KEY,
-    CharacterEstimatorTokenizer,
-    CompactionProvider,
-    CompactionStrategy,
-    ContextWindowCompactionStrategy,
-    SelectiveToolCallCompactionStrategy,
-    SlidingWindowStrategy,
-    SummarizationStrategy,
-    TokenBudgetComposedStrategy,
-    TokenizerProtocol,
-    ToolResultCompactionStrategy,
-    TruncationStrategy,
-    annotate_message_groups,
-    apply_compaction,
-    included_messages,
-    included_token_count,
-)
-from ._evaluation import (
-    AgentEvalConverter,
-    CheckResult,
-    ConversationSplit,
-    ConversationSplitter,
-    EvalItem,
-    EvalItemResult,
-    EvalNotPassedError,
-    EvalResults,
-    EvalScoreResult,
-    Evaluator,
-    ExpectedToolCall,
-    LocalEvaluator,
-    RubricScore,
-    evaluate_agent,
-    evaluate_workflow,
-    evaluator,
-    keyword_check,
-    tool_call_args_match,
-    tool_called_check,
-    tool_calls_present,
-)
-from ._feature_stage import ExperimentalFeature, ReleaseCandidateFeature
-from ._harness._agent import (
-    DEFAULT_HARNESS_INSTRUCTIONS,
-    create_harness_agent,
-)
-from ._harness._background_agents import (
-    DEFAULT_BACKGROUND_AGENTS_SOURCE_ID,
-    BackgroundAgentsProvider,
-    BackgroundTaskInfo,
-    BackgroundTaskStatus,
-)
-from ._harness._file_access import (
-    DEFAULT_FILE_ACCESS_INSTRUCTIONS,
-    DEFAULT_FILE_ACCESS_SOURCE_ID,
-    AgentFileStore,
-    FileAccessProvider,
-    FileSearchMatch,
-    FileSearchResult,
-    FileSystemAgentFileStore,
-    InMemoryAgentFileStore,
-)
-from ._harness._file_memory import (
-    DEFAULT_FILE_MEMORY_INSTRUCTIONS,
-    DEFAULT_FILE_MEMORY_SOURCE_ID,
-    FileMemoryProvider,
-)
-from ._harness._loop import (
-    AgentLoopMiddleware,
-    JudgeVerdict,
-    background_tasks_running,
-    todos_remaining,
-    todos_remaining_message,
-)
-from ._harness._memory import (
-    DEFAULT_MEMORY_SOURCE_ID,
-    MemoryContextProvider,
-    MemoryFileStore,
-    MemoryIndexEntry,
-    MemoryStore,
-    MemoryTopicRecord,
-)
-from ._harness._mode import (
-    DEFAULT_MODE_SOURCE_ID,
-    AgentModeProvider,
-    get_agent_mode,
-    set_agent_mode,
-)
-from ._harness._todo import (
-    DEFAULT_TODO_SOURCE_ID,
-    TodoFileStore,
-    TodoInput,
-    TodoItem,
-    TodoProvider,
-    TodoSessionStore,
-    TodoStore,
-)
-from ._harness._tool_approval import (
-    DEFAULT_TOOL_APPROVAL_SOURCE_ID,
-    ToolApprovalMiddleware,
-    ToolApprovalRule,
-    ToolApprovalRuleCallback,
-    ToolApprovalState,
-    create_always_approve_tool_response,
-    create_always_approve_tool_with_arguments_response,
-)
-from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPTaskOptions, MCPWebsocketTool, SamplingApprovalCallback
-from ._middleware import (
-    AgentContext,
-    AgentMiddleware,
-    AgentMiddlewareLayer,
-    AgentMiddlewareTypes,
-    ChatAndFunctionMiddlewareTypes,
-    ChatContext,
-    ChatMiddleware,
-    ChatMiddlewareLayer,
-    ChatMiddlewareTypes,
-    FunctionInvocationContext,
-    FunctionMiddleware,
-    FunctionMiddlewareTypes,
-    MiddlewareTermination,
-    MiddlewareType,
-    MiddlewareTypes,
-    agent_middleware,
-    chat_middleware,
-    function_middleware,
-)
-from ._sessions import (
-    AgentSession,
-    ContextProvider,
-    FileHistoryProvider,
-    HistoryProvider,
-    InMemoryHistoryProvider,
-    SessionContext,
-    register_state_type,
-)
-from ._settings import SecretString, load_settings
-from ._skills import (
-    AggregatingSkillsSource,
-    ClassSkill,
-    DeduplicatingSkillsSource,
-    DelegatingSkillsSource,
-    FileSkill,
-    FileSkillScript,
-    FileSkillsSource,
-    FilteringSkillsSource,
-    InlineSkill,
-    InlineSkillResource,
-    InlineSkillScript,
-    InMemorySkillsSource,
-    MCPSkill,
-    MCPSkillResource,
-    MCPSkillsSource,
-    Skill,
-    SkillFrontmatter,
-    SkillResource,
-    SkillScript,
-    SkillScriptRunner,
-    SkillsProvider,
-    SkillsSource,
-)
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
     APP_INFO,
     USER_AGENT_KEY,
     USER_AGENT_TELEMETRY_DISABLED_ENV_VAR,
     prepend_agent_framework_to_user_agent,
-)
-from ._tools import (
-    SKIP_PARSING,
-    FunctionInvocationConfiguration,
-    FunctionInvocationLayer,
-    FunctionTool,
-    ToolTypes,
-    normalize_function_invocation_configuration,
-    tool,
-)
-from ._types import (
-    AgentResponse,
-    AgentResponseUpdate,
-    AgentRunInputs,
-    Annotation,
-    ChatOptions,
-    ChatResponse,
-    ChatResponseUpdate,
-    Content,
-    ContinuationToken,
-    Embedding,
-    EmbeddingGenerationOptions,
-    EmbeddingInputT,
-    EmbeddingT,
-    FinalT,
-    FinishReason,
-    FinishReasonLiteral,
-    GeneratedEmbeddings,
-    Message,
-    OuterFinalT,
-    OuterUpdateT,
-    ResponseStream,
-    Role,
-    RoleLiteral,
-    TextSpanRegion,
-    ToolMode,
-    UpdateT,
-    UsageDetails,
-    add_usage_details,
-    detect_media_type_from_base64,
-    map_chat_to_agent_update,
-    merge_chat_options,
-    normalize_messages,
-    normalize_tools,
-    prepend_instructions_to_messages,
-    validate_chat_options,
-    validate_tool_mode,
-    validate_tools,
-)
-from ._workflows._agent import WorkflowAgent
-from ._workflows._agent_executor import (
-    AgentExecutor,
-    AgentExecutorRequest,
-    AgentExecutorResponse,
-)
-from ._workflows._agent_utils import resolve_agent_id
-from ._workflows._checkpoint import (
-    CheckpointID,
-    CheckpointStorage,
-    FileCheckpointStorage,
-    InMemoryCheckpointStorage,
-    WorkflowCheckpoint,
-)
-from ._workflows._const import (
-    DEFAULT_MAX_ITERATIONS,
-)
-from ._workflows._edge import (
-    Case,
-    Default,
-    Edge,
-    EdgeCondition,
-    FanInEdgeGroup,
-    FanOutEdgeGroup,
-    SingleEdgeGroup,
-    SwitchCaseEdgeGroup,
-    SwitchCaseEdgeGroupCase,
-    SwitchCaseEdgeGroupDefault,
-)
-from ._workflows._edge_runner import create_edge_runner
-from ._workflows._events import (
-    WorkflowErrorDetails,
-    WorkflowEvent,
-    WorkflowEventSource,
-    WorkflowEventType,
-    WorkflowRunState,
-)
-from ._workflows._executor import (
-    Executor,
-    handler,
-)
-from ._workflows._function_executor import FunctionExecutor, executor
-from ._workflows._functional import (
-    FunctionalWorkflow,
-    FunctionalWorkflowAgent,
-    RunContext,
-    StepWrapper,
-    get_run_context,
-    step,
-    workflow,
-)
-from ._workflows._request_info_mixin import response_handler
-from ._workflows._runner_context import (
-    InProcRunnerContext,
-    RunnerContext,
-    WorkflowMessage,
-)
-from ._workflows._validation import (
-    EdgeDuplicationError,
-    GraphConnectivityError,
-    TypeCompatibilityError,
-    ValidationTypeEnum,
-    WorkflowValidationError,
-    validate_workflow_graph,
-)
-from ._workflows._viz import WorkflowViz
-from ._workflows._workflow import Workflow, WorkflowRunResult
-from ._workflows._workflow_builder import WorkflowBuilder
-from ._workflows._workflow_context import WorkflowContext
-from ._workflows._workflow_executor import (
-    SubWorkflowRequestMessage,
-    SubWorkflowResponseMessage,
-    WorkflowExecutor,
 )
 from .exceptions import (
     AgentFrameworkException,
@@ -339,6 +39,312 @@ from .exceptions import (
     WorkflowException,
     WorkflowRunnerException,
 )
+
+_LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
+    "._agents": ("Agent", "BaseAgent", "RawAgent", "SupportsAgentRun"),
+    "._clients": (
+        "BaseChatClient",
+        "BaseEmbeddingClient",
+        "SupportsChatGetResponse",
+        "SupportsCodeInterpreterTool",
+        "SupportsFileSearchTool",
+        "SupportsGetEmbeddings",
+        "SupportsImageGenerationTool",
+        "SupportsMCPTool",
+        "SupportsShellTool",
+        "SupportsWebSearchTool",
+    ),
+    "._compaction": (
+        "COMPACTION_STATE_KEY",
+        "EXCLUDE_REASON_KEY",
+        "EXCLUDED_KEY",
+        "GROUP_ANNOTATION_KEY",
+        "GROUP_HAS_REASONING_KEY",
+        "GROUP_ID_KEY",
+        "GROUP_INDEX_KEY",
+        "GROUP_KIND_KEY",
+        "GROUP_TOKEN_COUNT_KEY",
+        "SUMMARIZED_BY_SUMMARY_ID_KEY",
+        "SUMMARY_OF_GROUP_IDS_KEY",
+        "SUMMARY_OF_MESSAGE_IDS_KEY",
+        "CharacterEstimatorTokenizer",
+        "CompactionProvider",
+        "CompactionStrategy",
+        "ContextWindowCompactionStrategy",
+        "SelectiveToolCallCompactionStrategy",
+        "SlidingWindowStrategy",
+        "SummarizationStrategy",
+        "TokenBudgetComposedStrategy",
+        "TokenizerProtocol",
+        "ToolResultCompactionStrategy",
+        "TruncationStrategy",
+        "annotate_message_groups",
+        "apply_compaction",
+        "included_messages",
+        "included_token_count",
+    ),
+    "._evaluation": (
+        "AgentEvalConverter",
+        "CheckResult",
+        "ConversationSplit",
+        "ConversationSplitter",
+        "EvalItem",
+        "EvalItemResult",
+        "EvalNotPassedError",
+        "EvalResults",
+        "EvalScoreResult",
+        "Evaluator",
+        "ExpectedToolCall",
+        "LocalEvaluator",
+        "RubricScore",
+        "evaluate_agent",
+        "evaluate_workflow",
+        "evaluator",
+        "keyword_check",
+        "tool_call_args_match",
+        "tool_called_check",
+        "tool_calls_present",
+    ),
+    "._feature_stage": ("ExperimentalFeature", "ReleaseCandidateFeature"),
+    "._harness._agent": ("DEFAULT_HARNESS_INSTRUCTIONS", "create_harness_agent"),
+    "._harness._background_agents": (
+        "DEFAULT_BACKGROUND_AGENTS_SOURCE_ID",
+        "BackgroundAgentsProvider",
+        "BackgroundTaskInfo",
+        "BackgroundTaskStatus",
+    ),
+    "._harness._file_access": (
+        "DEFAULT_FILE_ACCESS_INSTRUCTIONS",
+        "DEFAULT_FILE_ACCESS_SOURCE_ID",
+        "AgentFileStore",
+        "FileAccessProvider",
+        "FileSearchMatch",
+        "FileSearchResult",
+        "FileStoreEntry",
+        "FileSystemAgentFileStore",
+        "InMemoryAgentFileStore",
+    ),
+    "._harness._file_memory": (
+        "DEFAULT_FILE_MEMORY_INSTRUCTIONS",
+        "DEFAULT_FILE_MEMORY_SOURCE_ID",
+        "FileMemoryProvider",
+    ),
+    "._harness._loop": (
+        "AgentLoopMiddleware",
+        "JudgeVerdict",
+        "background_tasks_running",
+        "background_tasks_running_message",
+        "todos_remaining",
+        "todos_remaining_message",
+    ),
+    "._harness._memory": (
+        "DEFAULT_MEMORY_SOURCE_ID",
+        "MemoryContextProvider",
+        "MemoryFileStore",
+        "MemoryIndexEntry",
+        "MemoryStore",
+        "MemoryTopicRecord",
+    ),
+    "._harness._mode": ("DEFAULT_MODE_SOURCE_ID", "AgentModeProvider", "get_agent_mode", "set_agent_mode"),
+    "._harness._todo": (
+        "DEFAULT_TODO_SOURCE_ID",
+        "TodoFileStore",
+        "TodoItem",
+        "TodoProvider",
+        "TodoSessionStore",
+        "TodoStore",
+    ),
+    "._harness._tool_approval": (
+        "DEFAULT_TOOL_APPROVAL_SOURCE_ID",
+        "ToolApprovalMiddleware",
+        "ToolApprovalRule",
+        "ToolApprovalRuleCallback",
+        "ToolApprovalState",
+        "create_always_approve_tool_response",
+        "create_always_approve_tool_with_arguments_response",
+    ),
+    "._mcp": (
+        "MCPStdioTool",
+        "MCPStreamableHTTPTool",
+        "MCPTaskOptions",
+        "MCPWebsocketTool",
+        "SamplingApprovalCallback",
+    ),
+    "._middleware": (
+        "AgentContext",
+        "AgentMiddleware",
+        "AgentMiddlewareLayer",
+        "AgentMiddlewareTypes",
+        "ChatAndFunctionMiddlewareTypes",
+        "ChatContext",
+        "ChatMiddleware",
+        "ChatMiddlewareLayer",
+        "ChatMiddlewareTypes",
+        "FunctionInvocationContext",
+        "FunctionMiddleware",
+        "FunctionMiddlewareTypes",
+        "MiddlewareTermination",
+        "MiddlewareType",
+        "MiddlewareTypes",
+        "agent_middleware",
+        "chat_middleware",
+        "function_middleware",
+    ),
+    "._sessions": (
+        "AgentSession",
+        "ContextProvider",
+        "FileHistoryProvider",
+        "HistoryProvider",
+        "InMemoryHistoryProvider",
+        "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
+        "MessageInjectionMiddleware",
+        "ServiceSessionId",
+        "SessionContext",
+        "enqueue_messages",
+        "register_state_type",
+    ),
+    "._settings": ("SecretString", "load_settings"),
+    "._skills": (
+        "AggregatingSkillsSource",
+        "CachingSkillsSource",
+        "ClassSkill",
+        "DeduplicatingSkillsSource",
+        "DelegatingSkillsSource",
+        "FileSkill",
+        "FileSkillScript",
+        "FileSkillsSource",
+        "FilteringSkillsSource",
+        "InlineSkill",
+        "InlineSkillResource",
+        "InlineSkillScript",
+        "InMemorySkillsSource",
+        "MCPSkill",
+        "MCPSkillResource",
+        "MCPSkillsSource",
+        "Skill",
+        "SkillFrontmatter",
+        "SkillResource",
+        "SkillScript",
+        "SkillScriptArgumentParser",
+        "SkillScriptRunner",
+        "SkillsProvider",
+        "SkillsSource",
+        "SkillsSourceContext",
+    ),
+    "._tools": (
+        "SKIP_PARSING",
+        "FunctionInvocationConfiguration",
+        "FunctionInvocationLayer",
+        "FunctionTool",
+        "ToolTypes",
+        "normalize_function_invocation_configuration",
+        "tool",
+    ),
+    "._types": (
+        "AgentResponse",
+        "AgentResponseUpdate",
+        "AgentRunInputs",
+        "Annotation",
+        "ChatOptions",
+        "ChatResponse",
+        "ChatResponseUpdate",
+        "Content",
+        "ContinuationToken",
+        "Embedding",
+        "EmbeddingGenerationOptions",
+        "EmbeddingInputT",
+        "EmbeddingT",
+        "FinalT",
+        "FinishReason",
+        "FinishReasonLiteral",
+        "GeneratedEmbeddings",
+        "Message",
+        "OuterFinalT",
+        "OuterUpdateT",
+        "ResponseStream",
+        "Role",
+        "RoleLiteral",
+        "TextSpanRegion",
+        "ToolMode",
+        "UpdateT",
+        "UsageDetails",
+        "add_usage_details",
+        "detect_media_type_from_base64",
+        "map_chat_to_agent_update",
+        "merge_chat_options",
+        "normalize_messages",
+        "normalize_tools",
+        "prepend_instructions_to_messages",
+        "validate_chat_options",
+        "validate_tool_mode",
+        "validate_tools",
+    ),
+    "._workflows._agent": ("WorkflowAgent",),
+    "._workflows._agent_executor": ("AgentExecutor", "AgentExecutorRequest", "AgentExecutorResponse"),
+    "._workflows._agent_utils": ("resolve_agent_id",),
+    "._workflows._checkpoint": (
+        "CheckpointID",
+        "CheckpointStorage",
+        "FileCheckpointStorage",
+        "InMemoryCheckpointStorage",
+        "WorkflowCheckpoint",
+    ),
+    "._workflows._const": ("DEFAULT_MAX_ITERATIONS",),
+    "._workflows._edge": (
+        "Case",
+        "Default",
+        "Edge",
+        "EdgeCondition",
+        "FanInEdgeGroup",
+        "FanOutEdgeGroup",
+        "SingleEdgeGroup",
+        "SwitchCaseEdgeGroup",
+        "SwitchCaseEdgeGroupCase",
+        "SwitchCaseEdgeGroupDefault",
+    ),
+    "._workflows._edge_runner": ("create_edge_runner",),
+    "._workflows._events": (
+        "WorkflowErrorDetails",
+        "WorkflowEvent",
+        "WorkflowEventSource",
+        "WorkflowEventType",
+        "WorkflowRunState",
+    ),
+    "._workflows._executor": ("Executor", "handler"),
+    "._workflows._function_executor": ("FunctionExecutor", "executor"),
+    "._workflows._functional": (
+        "FunctionalWorkflow",
+        "FunctionalWorkflowAgent",
+        "RunContext",
+        "StepWrapper",
+        "get_run_context",
+        "step",
+        "workflow",
+    ),
+    "._workflows._request_info_mixin": ("response_handler",),
+    "._workflows._runner": ("Runner",),
+    "._workflows._runner_context": ("InProcRunnerContext", "RunnerContext", "WorkflowMessage"),
+    "._workflows._validation": (
+        "EdgeDuplicationError",
+        "GraphConnectivityError",
+        "TypeCompatibilityError",
+        "ValidationTypeEnum",
+        "WorkflowValidationError",
+        "validate_workflow_graph",
+    ),
+    "._workflows._viz": ("WorkflowViz",),
+    "._workflows._workflow": ("Workflow", "WorkflowRunResult"),
+    "._workflows._workflow_builder": ("WorkflowBuilder",),
+    "._workflows._workflow_context": ("WorkflowContext",),
+    "._workflows._workflow_executor": (
+        "SubWorkflowRequestMessage",
+        "SubWorkflowResponseMessage",
+        "WorkflowExecutor",
+    ),
+}
+_LAZY_EXPORTS: Final[dict[str, str]] = {
+    name: module_name for module_name, names in _LAZY_MODULE_EXPORTS.items() for name in names
+}
 
 __all__ = [
     "AGENT_FRAMEWORK_USER_AGENT",
@@ -363,6 +369,7 @@ __all__ = [
     "GROUP_INDEX_KEY",
     "GROUP_KIND_KEY",
     "GROUP_TOKEN_COUNT_KEY",
+    "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
     "SKIP_PARSING",
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
     "SUMMARY_OF_GROUP_IDS_KEY",
@@ -394,6 +401,7 @@ __all__ = [
     "BaseAgent",
     "BaseChatClient",
     "BaseEmbeddingClient",
+    "CachingSkillsSource",
     "Case",
     "CharacterEstimatorTokenizer",
     "ChatAndFunctionMiddlewareTypes",
@@ -446,6 +454,7 @@ __all__ = [
     "FileSkill",
     "FileSkillScript",
     "FileSkillsSource",
+    "FileStoreEntry",
     "FileSystemAgentFileStore",
     "FilteringSkillsSource",
     "FinalT",
@@ -486,6 +495,7 @@ __all__ = [
     "MemoryStore",
     "MemoryTopicRecord",
     "Message",
+    "MessageInjectionMiddleware",
     "MiddlewareException",
     "MiddlewareTermination",
     "MiddlewareType",
@@ -504,15 +514,18 @@ __all__ = [
     "SamplingApprovalCallback",
     "SecretString",
     "SelectiveToolCallCompactionStrategy",
+    "ServiceSessionId",
     "SessionContext",
     "SingleEdgeGroup",
     "Skill",
     "SkillFrontmatter",
     "SkillResource",
     "SkillScript",
+    "SkillScriptArgumentParser",
     "SkillScriptRunner",
     "SkillsProvider",
     "SkillsSource",
+    "SkillsSourceContext",
     "SlidingWindowStrategy",
     "StepWrapper",
     "SubWorkflowRequestMessage",
@@ -532,7 +545,6 @@ __all__ = [
     "SwitchCaseEdgeGroupDefault",
     "TextSpanRegion",
     "TodoFileStore",
-    "TodoInput",
     "TodoItem",
     "TodoProvider",
     "TodoSessionStore",
@@ -577,12 +589,14 @@ __all__ = [
     "annotate_message_groups",
     "apply_compaction",
     "background_tasks_running",
+    "background_tasks_running_message",
     "chat_middleware",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
     "create_edge_runner",
     "create_harness_agent",
     "detect_media_type_from_base64",
+    "enqueue_messages",
     "evaluate_agent",
     "evaluate_workflow",
     "evaluator",
@@ -620,19 +634,17 @@ __all__ = [
     "workflow",
 ]
 
-if TYPE_CHECKING:
-    from ._workflows._runner import Runner
-
 
 def __getattr__(name: str) -> Any:
-    """Lazily resolve deprecated public names, emitting a ``DeprecationWarning``.
+    """Lazily resolve public names exported from ``agent_framework``."""
+    if module_name := _LAZY_EXPORTS.get(name):
+        value = getattr(importlib.import_module(module_name, __name__), name)
+        globals()[name] = value
+        return value
 
-    ``Runner`` remains importable from ``agent_framework`` for backward
-    compatibility but is deprecated and slated for removal from the public API.
-    """
-    if name == "Runner":
-        from ._workflows._runner import Runner, warn_runner_deprecated
-
-        warn_runner_deprecated()
-        return Runner
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Return public names for interactive discovery."""
+    return sorted(set(globals()) | set(__all__))

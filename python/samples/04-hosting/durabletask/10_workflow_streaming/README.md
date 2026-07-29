@@ -29,7 +29,7 @@ streaming counterpart to [`08_workflow`](../08_workflow/README.md).
 
 See the [README.md](../README.md) in the parent directory for environment setup.
 
-This sample uses Azure AI Foundry credentials:
+This sample uses Microsoft Foundry credentials:
 
 - `FOUNDRY_PROJECT_ENDPOINT`
 - `FOUNDRY_MODEL`

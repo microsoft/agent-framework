@@ -1,4 +1,4 @@
-# Dockerfile for contributors building from the agent-framework repository source.
+﻿# Dockerfile for contributors building from the agent-framework repository source.
 #
 # This project uses ProjectReference to the local Microsoft.Agents.AI.Foundry source,
 # which means a standard multi-stage Docker build cannot resolve dependencies outside
@@ -10,7 +10,6 @@
 #   docker run --rm -p 8088:8088 \
 #     -e AGENT_NAME=hosted-memory-agent \
 #     -e HOSTED_USER_ISOLATION_KEY=alice \
-#     -e HOSTED_CHAT_ISOLATION_KEY=alice-chat-1 \
 #     --env-file .env hosted-memory-agent
 #
 # For end-users consuming the NuGet package (not ProjectReference), use the standard

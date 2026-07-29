@@ -37,7 +37,7 @@ This sample demonstrates how to use the experimental `FileHistoryProvider` with
 the tool-calling loop as well as the regular chat turns.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT: Azure AI Foundry project endpoint.
+    FOUNDRY_PROJECT_ENDPOINT: Microsoft Foundry project endpoint.
     FOUNDRY_MODEL: Foundry model deployment name.
 
 Key components:

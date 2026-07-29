@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -10,7 +8,6 @@ namespace Microsoft.Agents.AI;
 /// Represents the state of the <see cref="FileMemoryProvider"/>,
 /// stored in the session's <see cref="AgentSessionStateBag"/>.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FileMemoryState
 {
     /// <summary>

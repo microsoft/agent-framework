@@ -56,8 +56,10 @@ class PurviewPolicyMiddleware(AgentMiddleware):
           2. First message whose additional_properties contains 'conversation_id'
           3. None: the downstream processor will generate a new UUID
         """
-        if context.session and context.session.service_session_id:
-            return context.session.service_session_id
+        if context.session:
+            service_session_id = context.session.service_session_id
+            if isinstance(service_session_id, str) and service_session_id:
+                return service_session_id
 
         for message in context.messages:
             conversation_id = message.additional_properties.get("conversation_id")

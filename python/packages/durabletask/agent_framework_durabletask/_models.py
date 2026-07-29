@@ -315,6 +315,9 @@ class DurableAgentSession(AgentSession):
         data = dict(data)  # defensive copy — avoid mutating caller's dict
         session_id_value = data.pop(cls._SERIALIZED_SESSION_ID_KEY, None)
         session = super().from_dict(data)
+        service_session_id = session.service_session_id
+        if service_session_id is not None and not isinstance(service_session_id, str):
+            raise ValueError("durable sessions require service_session_id to be a string when present")
         durable_session_id: AgentSessionId | None = None
         # We need to create a DurableAgentSession from the base AgentSession
         if session_id_value is not None:
@@ -325,7 +328,7 @@ class DurableAgentSession(AgentSession):
         durable_session = cls(
             durable_session_id=durable_session_id,
             session_id=session.session_id,
-            service_session_id=session.service_session_id,
+            service_session_id=service_session_id,
         )
         durable_session.state.update(session.state)
         return durable_session

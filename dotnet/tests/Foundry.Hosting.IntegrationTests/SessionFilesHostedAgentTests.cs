@@ -69,7 +69,6 @@ public sealed class SessionFilesHostedAgentTests(SessionFilesHostedAgentFixture 
         var adminOptions = new AgentAdministrationClientOptions();
         adminOptions.AddPolicy(new FoundryFeaturesPolicy(HostedAgentsFeatureValue), PipelinePosition.PerCall);
         var adminClient = new AgentAdministrationClient(endpoint, credential, adminOptions);
-        var sessionFiles = adminClient.GetAgentSessionFiles();
 
         // Build the per-agent OpenAI client. The conversation is created on this client so it is
         // bound to the agent endpoint URL (`/agents/{name}/endpoint/protocols/openai/conversations`).
@@ -103,12 +102,13 @@ public sealed class SessionFilesHostedAgentTests(SessionFilesHostedAgentFixture 
                 ?? throw new InvalidOperationException(
                     $"Expected '{SessionIdHeader}' response header on warm-up but got none.");
 
+            // AgentSessionFiles is scoped to the (agent, session) pair at creation time.
+            var sessionFiles = adminClient.GetAgentSessionFiles(this._fixture.AgentName, agentSessionId);
+
             try
             {
                 // Step 3 — upload the file via the alpha AgentSessionFiles SDK to that exact session's $HOME.
-                SessionFileWriteResponse writeResponse = await sessionFiles.UploadSessionFileAsync(
-                    agentName: this._fixture.AgentName,
-                    sessionId: agentSessionId,
+                SessionFileWriteResponse writeResponse = await sessionFiles.UploadAsync(
                     sessionStoragePath: TestDataFileName,
                     localPath: localPath);
 
@@ -116,12 +116,10 @@ public sealed class SessionFilesHostedAgentTests(SessionFilesHostedAgentFixture 
                 Assert.Equal(expectedBytes, writeResponse.BytesWritten);
 
                 bool foundEntry = false;
-                await foreach (SessionDirectoryEntry entry in sessionFiles.GetSessionFilesAsync(
-                    agentName: this._fixture.AgentName,
-                    agentSessionId: agentSessionId,
+                await foreach (SessionDirectoryEntry entry in sessionFiles.GetAllAsync(
                     sessionStoragePath: "."))
                 {
-                    if (entry.Name == TestDataFileName && !entry.IsDirectory && entry.Size == expectedBytes)
+                    if (entry.Name == TestDataFileName && !entry.IsDirectory && entry.SizeInBytes == expectedBytes)
                     {
                         foundEntry = true;
                         break;
@@ -172,10 +170,7 @@ public sealed class SessionFilesHostedAgentTests(SessionFilesHostedAgentFixture 
                 // the platform owns its lifecycle (no isolation key in our hands).
                 try
                 {
-                    await sessionFiles.DeleteSessionFileAsync(
-                        agentName: this._fixture.AgentName,
-                        sessionId: agentSessionId,
-                        path: TestDataFileName);
+                    await sessionFiles.DeleteAsync(TestDataFileName);
                 }
                 catch
                 {

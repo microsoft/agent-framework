@@ -3,11 +3,13 @@
 import inspect
 import json
 import os
+import re
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import (
+    Agent,
     ChatResponse,
     Content,
     Message,
@@ -27,6 +29,9 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_openai import OpenAIChatCompletionClient, RawOpenAIChatCompletionClient
+from agent_framework_openai._chat_completion_client import (
+    _AZURE_WEB_SEARCH_UNSUPPORTED_MSG,
+)
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -68,6 +73,16 @@ def test_init_uses_explicit_parameters() -> None:
     assert "compaction_strategy" in signature.parameters
     assert "tokenizer" in signature.parameters
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_agent_accepts_openai_chat_completion_clients() -> None:
+    raw_client = RawOpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
 
 
 def test_supports_web_search_only() -> None:
@@ -903,6 +918,20 @@ def test_prepare_message_with_text_reasoning_content(
     assert prepared[0]["content"] == "The answer is 42."
 
 
+def test_prepare_message_with_unprotected_text_reasoning_content(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text_reasoning(id="rs_abc123", text="Foundry summary")],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert prepared == [{"role": "assistant", "content": "Foundry summary"}]
+
+
 def test_prepare_message_with_only_text_reasoning_content(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -1239,6 +1268,39 @@ def test_prepare_tools_with_web_search_no_location(
     # Should have empty web_search_options (no location)
     assert "web_search_options" in result
     assert result["web_search_options"] == {}
+
+
+def test_prepare_tools_with_web_search_on_azure_raises(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that web search raises ValueError when configured with Azure endpoint."""
+    client = OpenAIChatCompletionClient(
+        azure_endpoint="https://test.openai.azure.com",
+        model="gpt-4o-mini",
+        api_key="test-key",
+    )
+
+    web_search_tool = OpenAIChatCompletionClient.get_web_search_tool()
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(_AZURE_WEB_SEARCH_UNSUPPORTED_MSG),
+    ):
+        client._prepare_tools_for_openai([web_search_tool])
+
+
+def test_prepare_tools_with_web_search_on_openai_allowed(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that web search works normally on non-Azure client."""
+    client = OpenAIChatCompletionClient()
+
+    web_search_tool = OpenAIChatCompletionClient.get_web_search_tool()
+
+    result = client._prepare_tools_for_openai([web_search_tool])
+
+    # Non-Azure client should include web_search_options
+    assert "web_search_options" in result
 
 
 def test_prepare_options_with_instructions(
@@ -2023,6 +2085,135 @@ def test_streaming_chunk_with_null_delta_no_tool_calls_parsed(
 
     assert update.finish_reason == "tool_calls"
     assert not any(c.type == "function_call" for c in update.contents)
+
+
+# endregion
+
+
+# region Prompt cache breakpoints and options
+
+
+def test_prepare_message_text_prompt_cache_breakpoint_keeps_parts() -> None:
+    """A text part with a breakpoint stays in list form and carries the key."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text(
+        "stable prefix",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    msgs = client._prepare_message_for_openai(Message(role="user", contents=[content]))
+    assert isinstance(msgs[0]["content"], list)
+    assert msgs[0]["content"][0] == {
+        "type": "text",
+        "text": "stable prefix",
+        "prompt_cache_breakpoint": {"mode": "explicit"},
+    }
+
+
+def test_prepare_message_text_without_breakpoint_flattens_to_string() -> None:
+    """Text-only content without a breakpoint keeps the plain-string form."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    msgs = client._prepare_message_for_openai(Message(role="user", contents=[Content.from_text("hello")]))
+    assert msgs[0]["content"] == "hello"
+
+
+def test_prepare_message_system_prompt_cache_breakpoint_keeps_parts() -> None:
+    """A system message with a breakpoint keeps typed content parts."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text(
+        "system prefix",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    msgs = client._prepare_message_for_openai(Message(role="system", contents=[content]))
+    assert isinstance(msgs[0]["content"], list)
+    assert msgs[0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_message_system_without_breakpoint_keeps_string_form() -> None:
+    """System messages without a breakpoint keep the joined-string form."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    msgs = client._prepare_message_for_openai(Message(role="system", contents=[Content.from_text("plain system")]))
+    assert msgs[0]["content"] == "plain system"
+
+
+def test_prepare_message_system_non_mapping_breakpoint_stays_string_form() -> None:
+    """A non-mapping breakpoint value must not switch a system message to list content.
+
+    Only a mapping value is a real breakpoint, so a malformed value leaves the message
+    in its default plain-string form rather than an empty shape change.
+    """
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text("system prefix", additional_properties={"prompt_cache_breakpoint": "explicit"})
+    msgs = client._prepare_message_for_openai(Message(role="system", contents=[content]))
+    assert msgs[0]["content"] == "system prefix"
+    assert "prompt_cache_breakpoint" not in json.dumps(msgs)
+
+
+def test_prepare_message_developer_prompt_cache_breakpoint_keeps_parts() -> None:
+    """A developer message with a breakpoint keeps typed content parts, like system."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text(
+        "developer prefix",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    msgs = client._prepare_message_for_openai(Message(role="developer", contents=[content]))
+    assert isinstance(msgs[0]["content"], list)
+    assert msgs[0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_message_developer_non_mapping_breakpoint_stays_string_form() -> None:
+    """A non-mapping breakpoint value must not switch a developer message to list content."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text("developer prefix", additional_properties={"prompt_cache_breakpoint": "explicit"})
+    msgs = client._prepare_message_for_openai(Message(role="developer", contents=[content]))
+    assert msgs[0]["content"] == "developer prefix"
+    assert "prompt_cache_breakpoint" not in json.dumps(msgs)
+
+
+def test_prepare_message_user_non_mapping_breakpoint_stays_string_form() -> None:
+    """A non-mapping breakpoint value on a user message flattens to a string, same as the other roles."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text("user prefix", additional_properties={"prompt_cache_breakpoint": "explicit"})
+    msgs = client._prepare_message_for_openai(Message(role="user", contents=[content]))
+    assert msgs[0]["content"] == "user prefix"
+    assert "prompt_cache_breakpoint" not in json.dumps(msgs)
+
+
+def test_prepare_content_for_openai_image_prompt_cache_breakpoint() -> None:
+    """An image part carries an explicit prompt cache breakpoint onto the request."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    image = Content.from_uri(
+        uri="https://example.com/x.png",
+        media_type="image/png",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    part = client._prepare_content_for_openai(image)
+    assert part["type"] == "image_url"
+    assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_options_prompt_cache_options_passthrough() -> None:
+    """Request-level prompt_cache_options reaches the Chat Completions run options."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    run_options = client._prepare_options(
+        [Message(role="user", contents=[Content.from_text("hi")])],
+        {"model": "test-model", "prompt_cache_options": {"mode": "explicit", "ttl": "30m"}},
+    )
+    assert run_options["prompt_cache_options"] == {"mode": "explicit", "ttl": "30m"}
+
+
+def test_prepare_options_prompt_cache_options_guarded_on_old_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Setting prompt_cache_options on an openai too old to send it raises a clear error."""
+    from agent_framework.exceptions import ChatClientInvalidRequestException
+
+    import agent_framework_openai._chat_completion_client as chat_completion_module
+
+    monkeypatch.setattr(chat_completion_module, "_prompt_cache_options_supported", False)
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    with pytest.raises(ChatClientInvalidRequestException, match="openai>=2.45.0"):
+        client._prepare_options(
+            [Message(role="user", contents=[Content.from_text("hi")])],
+            {"model": "test-model", "prompt_cache_options": {"mode": "explicit"}},
+        )
 
 
 # endregion

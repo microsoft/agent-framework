@@ -76,10 +76,10 @@ def build_index(name: str) -> SearchIndex:
     return SearchIndex(
         name=name,
         fields=[
-            SimpleField(name="id", type=SearchFieldDataType.String, key=True, filterable=True),
-            SearchableField(name="content", type=SearchFieldDataType.String, analyzer_name="standard.lucene"),
-            SimpleField(name="sourceName", type=SearchFieldDataType.String, filterable=True, retrievable=True),
-            SimpleField(name="sourceLink", type=SearchFieldDataType.String, retrievable=True),
+            SimpleField(name="id", type=SearchFieldDataType.STRING, key=True, filterable=True),
+            SearchableField(name="content", type=SearchFieldDataType.STRING, analyzer_name="standard.lucene"),
+            SimpleField(name="sourceName", type=SearchFieldDataType.STRING, filterable=True, retrievable=True),
+            SimpleField(name="sourceLink", type=SearchFieldDataType.STRING, retrievable=True),
         ],
     )
 

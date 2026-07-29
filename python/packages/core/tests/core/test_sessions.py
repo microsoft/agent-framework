@@ -107,6 +107,92 @@ class TestSessionContext:
         stored = ctx.context_messages["rag"][0]
         assert stored.additional_properties["_attribution"] == {"source_id": "rag", "source_type": "MyProvider"}
 
+    def test_extend_messages_origin_session_ids_default_omits_field(self) -> None:
+        ctx = SessionContext(input_messages=[])
+        msg = Message(role="system", contents=["ctx"])
+        ctx.extend_messages("rag", [msg])
+        stored = ctx.context_messages["rag"][0]
+        # Default (no origin_session_ids passed) preserves the historical attribution shape
+        # so observers can distinguish "no origin info" from "explicit cross-session marker."
+        assert "origin_session_ids" not in stored.additional_properties["_attribution"]
+
+    def test_extend_messages_origin_session_ids_recorded_on_attribution(self) -> None:
+        ctx = SessionContext(session_id="current", input_messages=[])
+        msg = Message(role="system", contents=["loaded from a prior session"])
+        ctx.extend_messages(
+            "memory_provider",
+            [msg],
+            origin_session_ids=["prior-session-id", "another-session", "prior-session-id"],
+        )
+        stored = ctx.context_messages["memory_provider"][0]
+        assert stored.additional_properties["_attribution"] == {
+            "source_id": "memory_provider",
+            "origin_session_ids": ["prior-session-id", "another-session"],
+        }
+
+    def test_extend_messages_origin_session_ids_with_provider_object(self) -> None:
+        class MyMemoryProvider:
+            source_id = "memory"
+
+        ctx = SessionContext(session_id="current", input_messages=[])
+        msg = Message(role="assistant", contents=["consolidated memory content"])
+        ctx.extend_messages(MyMemoryProvider(), [msg], origin_session_ids=["prior"])
+        stored = ctx.context_messages["memory"][0]
+        assert stored.additional_properties["_attribution"] == {
+            "source_id": "memory",
+            "source_type": "MyMemoryProvider",
+            "origin_session_ids": ["prior"],
+        }
+
+    def test_extend_messages_applies_all_origins_to_each_message(self) -> None:
+        ctx = SessionContext(session_id="current", input_messages=[])
+        messages = [
+            Message(role="assistant", contents=["first composed memory"]),
+            Message(role="assistant", contents=["second composed memory"]),
+        ]
+
+        ctx.extend_messages("memory_provider", messages, origin_session_ids=["session-a", "session-b"])
+
+        stored_messages = ctx.context_messages["memory_provider"]
+        assert [message.additional_properties["_attribution"] for message in stored_messages] == [
+            {
+                "source_id": "memory_provider",
+                "origin_session_ids": ["session-a", "session-b"],
+            },
+            {
+                "source_id": "memory_provider",
+                "origin_session_ids": ["session-a", "session-b"],
+            },
+        ]
+
+    def test_extend_messages_adds_origin_to_existing_attribution(self) -> None:
+        ctx = SessionContext(session_id="current", input_messages=[])
+        msg = Message(
+            role="system",
+            contents=["loaded from a prior session"],
+            additional_properties={
+                "_attribution": {
+                    "source_id": "custom",
+                    "custom_key": "value",
+                    "origin_session_ids": ["existing", "prior"],
+                }
+            },
+        )
+
+        ctx.extend_messages("memory_provider", [msg], origin_session_ids=["prior", "new"])
+
+        stored = ctx.context_messages["memory_provider"][0]
+        assert stored.additional_properties["_attribution"] == {
+            "source_id": "custom",
+            "custom_key": "value",
+            "origin_session_ids": ["existing", "prior", "new"],
+        }
+        assert msg.additional_properties["_attribution"] == {
+            "source_id": "custom",
+            "custom_key": "value",
+            "origin_session_ids": ["existing", "prior"],
+        }
+
     def test_extend_instructions_string(self) -> None:
         ctx = SessionContext(input_messages=[])
         ctx.extend_instructions("sys", "Be helpful")
@@ -437,6 +523,11 @@ class TestAgentSession:
         session = AgentSession(service_session_id="svc-456")
         assert session.service_session_id == "svc-456"
 
+    def test_service_session_id_accepts_structured_mapping(self) -> None:
+        service_session_id = {"context_id": "ctx-123", "task_id": "task-456", "task_state": "working"}
+        session = AgentSession(service_session_id=service_session_id)
+        assert session.service_session_id == service_session_id
+
     def test_to_dict(self) -> None:
         session = AgentSession(session_id="s1", service_session_id="svc1")
         session.state = {"key": "value"}
@@ -465,6 +556,14 @@ class TestAgentSession:
         restored = AgentSession.from_dict(json.loads(json_str))
         assert restored.session_id == "rt-1"
         assert restored.state == {"messages": ["a", "b"], "count": 42}
+
+    def test_roundtrip_with_structured_service_session_id(self) -> None:
+        service_session_id = {"context_id": "ctx-123", "task_id": "task-456", "task_state": "working"}
+        session = AgentSession(session_id="rt-2", service_session_id=service_session_id)
+        json_str = json.dumps(session.to_dict())
+        restored = AgentSession.from_dict(json.loads(json_str))
+        assert restored.session_id == "rt-2"
+        assert restored.service_session_id == service_session_id
 
     def test_from_dict_missing_state(self) -> None:
         data = {"session_id": "s1"}

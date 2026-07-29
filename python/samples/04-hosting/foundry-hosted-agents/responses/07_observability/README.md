@@ -28,8 +28,10 @@ Follow the instructions in the [Running the Agent Host Locally](../../README.md#
 
 > Because the observability exporters are managed by Foundry, this sample must be run using `azd ai agent run`. Run this sample using `python main.py` will not send telemetry to Application Insights.
 
+After the agent host is running locally, you can interact with the agent using the `azd ai agent invoke --local` command. For example:
+
 ```bash
-azd ai agent run --local "What is the current weather?"
+azd ai agent invoke --local "What is the current weather?"
 ```
 
 A couple of spans will be created for this request from Agent Framework's instrumentation, representing the generation of the response by the agent:

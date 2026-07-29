@@ -2,6 +2,8 @@
 
 """Tests for orchestration helper functions."""
 
+from typing import Any
+
 from agent_framework import Content, Message
 
 from agent_framework_ag_ui._orchestration._helpers import (
@@ -137,13 +139,13 @@ class TestEnsureToolCallEntry:
 
     def test_returns_existing_entry(self):
         """Returns existing entry when ID found."""
-        existing_entry = {
+        existing_entry: dict[str, Any] = {
             "id": "call_123",
             "type": "function",
             "function": {"name": "get_weather", "arguments": '{"city": "NYC"}'},
         }
-        tool_calls_by_id = {"call_123": existing_entry}
-        pending_tool_calls: list = []
+        tool_calls_by_id: dict[str, dict[str, Any]] = {"call_123": existing_entry}
+        pending_tool_calls: list[dict[str, Any]] = []
 
         entry = ensure_tool_call_entry("call_123", tool_calls_by_id, pending_tool_calls)
 

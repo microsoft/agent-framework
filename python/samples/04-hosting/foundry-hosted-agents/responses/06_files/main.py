@@ -7,8 +7,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from agent_framework import Agent, MCPStreamableHTTPTool, tool
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from dotenv import load_dotenv
 
@@ -108,7 +107,6 @@ async def main():
 
     async with httpx.AsyncClient(
         auth=ToolboxAuth(token_provider),
-        headers={"Foundry-Features": "Toolboxes=V1Preview"},
         timeout=120.0,
     ) as http_client:
         toolbox = MCPStreamableHTTPTool(

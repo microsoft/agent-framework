@@ -329,14 +329,88 @@ internal static class AgentsSamples
             ],
         },
 
+        new SampleDefinition
+        {
+            Name = "Agent_Step20_DynamicFunctionTools",
+            ProjectPath = "samples/02-agents/Agents/Agent_Step20_DynamicFunctionTools",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            MustContain =
+            [
+                "=== Dynamic Function Tools Sample ===",
+                "=== Non-Streaming Mode ===",
+                "=== Streaming Mode ===",
+                "[User]",
+                "[Agent]",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should show the agent starting with only a RequestTools function and dynamically loading additional tools (weather, time, temperature) as needed.",
+                "The output should contain weather information for Seattle and London, the current time in New York, and a Fahrenheit-to-Celsius temperature conversion.",
+                "The output should demonstrate both non-streaming and streaming modes.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_Step21_ShellWithEnvironment",
+            ProjectPath = "samples/02-agents/Agents/Agent_Step21_ShellWithEnvironment",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            MustContain =
+            [
+                "### Stateless mode",
+                "### Persistent mode",
+                "--- Captured environment snapshot ---",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should show an agent using a shell tool to print the current working directory.",
+                "The output should demonstrate that in stateless mode side effects (such as changing directory) do not carry between calls, while in persistent mode the working directory and an environment variable (DEMO_TOKEN set to 'hello-world') carry across calls.",
+                "The output should include a captured environment snapshot describing the OS, shell, and working directory.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_Step22_AgentMode",
+            ProjectPath = "samples/02-agents/Agents/Agent_Step22_AgentMode",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            SkipReason = "Interactive sample that reads console input in a loop and does not exit on its own.",
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_Step23_TodoList",
+            ProjectPath = "samples/02-agents/Agents/Agent_Step23_TodoList",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            MustContain =
+            [
+                "User:",
+                "Agent:",
+                "--- Current todo list ---",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should show an agent planning a team offsite by breaking the work into a todo list.",
+                "The output should show the todo list being updated as progress is reported (for example marking items complete after the venue is booked and invites are sent) and adjusted when the plan changes to skip catering and add a group hike.",
+                "The current todo list should be printed after each turn, showing item status.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
         // ── AgentSkills ─────────────────────────────────────────────────────
 
         new SampleDefinition
         {
             Name = "Agent_Step01_FileBasedSkills",
             ProjectPath = "samples/02-agents/AgentSkills/Agent_Step01_FileBasedSkills",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain =
             [
                 "Converting units with file-based skills",
@@ -354,8 +428,8 @@ internal static class AgentsSamples
         {
             Name = "Agent_Step06_McpBasedSkills",
             ProjectPath = "samples/02-agents/AgentSkills/Agent_Step06_McpBasedSkills",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain =
             [
                 "Discovering MCP-based skills",
@@ -425,6 +499,15 @@ internal static class AgentsSamples
                 "After the window fills up and overflows, the agent should still be able to recall older information (like a favorite color) from the vector store.",
                 "The output should not contain error messages or stack traces.",
             ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "AgentWithMemory_Step06_MemoryUsingAgentMemory",
+            ProjectPath = "samples/02-agents/AgentWithMemory/AgentWithMemory_Step06_MemoryUsingAgentMemory",
+            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
+            OptionalEnvironmentVariables = ["AZURE_OPENAI_API_KEY", "FOUNDRY_MODEL", "FOUNDRY_EMBEDDING_MODEL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD"],
+            SkipReason = "Requires a running Neo4j instance; standalone sample outside the repo's CPM build.",
         },
 
         // ── AgentWithRAG ────────────────────────────────────────────────────
@@ -701,7 +784,7 @@ internal static class AgentsSamples
             OptionalEnvironmentVariables = ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             ExpectedOutputDescription =
             [
-                "The output should contain a list of countries or information about countries that use the EUR currency.",
+                "The output should contain the current EUR exchange rate against USD and GBP as numeric values.",
                 "The output should not contain error messages or stack traces.",
             ],
         },
@@ -749,6 +832,19 @@ internal static class AgentsSamples
             ExpectedOutputDescription =
             [
                 "The output should contain a user prompt and a response listing files in the current directory.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_With_GitHubCopilot_BYOK",
+            ProjectPath = "samples/02-agents/AgentProviders/github-copilot/Agent_With_GitHubCopilot_BYOK",
+            RequiredEnvironmentVariables = ["BYOK_BASE_URL", "BYOK_API_KEY"],
+            OptionalEnvironmentVariables = ["BYOK_PROVIDER_TYPE", "BYOK_MODEL_ID"],
+            ExpectedOutputDescription =
+            [
+                "The output should contain a user prompt and a response about the benefits of BYOK.",
                 "The output should not contain error messages or stack traces.",
             ],
         },
@@ -837,7 +933,7 @@ internal static class AgentsSamples
             ProjectPath = "samples/02-agents/Agents/Agent_Step15_DeepResearch",
             RequiredEnvironmentVariables = ["AZURE_AI_PROJECT_ENDPOINT", "AZURE_AI_MODEL_DEPLOYMENT_NAME", "AZURE_AI_BING_CONNECTION_ID"],
             OptionalEnvironmentVariables = ["AZURE_AI_REASONING_DEPLOYMENT_NAME"],
-            SkipReason = "Requires Azure AI Foundry project with Bing search connection.",
+            SkipReason = "Requires Microsoft Foundry project with Bing search connection.",
         },
 
         new SampleDefinition

@@ -48,7 +48,7 @@ Key Concepts:
 Environment Setup:
 - Configure Azure credentials (e.g., via Azure CLI)
 - Run `az login` to authenticate
-- Set FOUNDRY_PROJECT_ENDPOINT to your Azure AI Foundry project endpoint
+- Set FOUNDRY_PROJECT_ENDPOINT to your Microsoft Foundry project endpoint
 - Set FOUNDRY_MODEL to the model deployment name (for example: gpt-4o)
 
 """

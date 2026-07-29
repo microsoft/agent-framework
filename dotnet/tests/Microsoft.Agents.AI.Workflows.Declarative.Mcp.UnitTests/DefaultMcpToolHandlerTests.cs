@@ -936,4 +936,178 @@ public sealed class DefaultMcpToolHandlerTests
     }
 
     #endregion
+
+    #region Origin Pinning Tests
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_SameOrigin_RetainsAuthorization()
+    {
+        // Arrange
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — same origin, credential is preserved
+        request.Headers.Contains("Authorization").Should().BeTrue();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_DifferentHost_RemovesAuthorization()
+    {
+        // Arrange — server-advertised endpoint on an attacker origin
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — credential must not cross the origin boundary
+        request.Headers.Contains("Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_DifferentPort_RemovesAuthorization()
+    {
+        // Arrange — same host but a different port is a different origin
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com:8443/mcp");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert
+        request.Headers.Contains("Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_ExplicitDefaultPort_RetainsAuthorization()
+    {
+        // Arrange — pinned endpoint carries an explicit :443 while the request omits it; these are
+        // the same origin and Uri.Compare must normalize the default port rather than strip.
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com:443/mcp"));
+
+        // Assert — explicit vs implicit default port is the same origin
+        request.Headers.Contains("Authorization").Should().BeTrue();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_RelativeRequestUri_RetainsAuthorization()
+    {
+        // Arrange — a relative URI resolves against the client's base address (the pinned origin) and
+        // therefore can never target a foreign origin. It must not throw and must retain credentials.
+        using HttpRequestMessage request = new(HttpMethod.Post, new Uri("/mcp/message", UriKind.Relative));
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        Action act = () => OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — does not throw and leaves the credential in place
+        act.Should().NotThrow();
+        request.Headers.Contains("Authorization").Should().BeTrue();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_DifferentScheme_RemovesAuthorization()
+    {
+        // Arrange — downgrade to http is a different origin (and would leak over plaintext)
+        using HttpRequestMessage request = new(HttpMethod.Post, "http://trusted.example.com/mcp");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert
+        request.Headers.Contains("Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_CrossOrigin_RemovesCookieAndProxyAuthorization()
+    {
+        // Arrange
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+        request.Headers.TryAddWithoutValidation("Cookie", "session=abc");
+        request.Headers.TryAddWithoutValidation("Proxy-Authorization", "Bearer proxy-token");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — all credential-bearing headers are stripped
+        request.Headers.Contains("Authorization").Should().BeFalse();
+        request.Headers.Contains("Cookie").Should().BeFalse();
+        request.Headers.Contains("Proxy-Authorization").Should().BeFalse();
+    }
+
+    [Fact]
+    public void StripCredentialHeadersOnCrossOrigin_CrossOrigin_PreservesNonCredentialHeaders()
+    {
+        // Arrange
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+        request.Headers.TryAddWithoutValidation("X-Trace-Id", "trace-123");
+
+        // Act
+        OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+
+        // Assert — only credential headers are removed; other headers are untouched
+        request.Headers.Contains("Authorization").Should().BeFalse();
+        request.Headers.Contains("X-Trace-Id").Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task OriginPinningHandler_CrossOriginRequest_DoesNotForwardAuthorizationAsync()
+    {
+        // Arrange — capture what the inner handler actually receives on the wire
+        CapturingHandler inner = new();
+        using OriginPinningHandler pinning = new(new Uri("https://trusted.example.com/mcp")) { InnerHandler = inner };
+        using HttpMessageInvoker invoker = new(pinning);
+
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://attacker.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert — the credential never reached the inner handler for the foreign origin
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+        inner.LastRequestHadAuthorization.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task OriginPinningHandler_SameOriginRequest_ForwardsAuthorizationAsync()
+    {
+        // Arrange
+        CapturingHandler inner = new();
+        using OriginPinningHandler pinning = new(new Uri("https://trusted.example.com/mcp")) { InnerHandler = inner };
+        using HttpMessageInvoker invoker = new(pinning);
+
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://trusted.example.com/mcp/message");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
+
+        // Act
+        using HttpResponseMessage response = await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert — same-origin credential flows through normally
+        response.StatusCode.Should().Be(System.Net.HttpStatusCode.OK);
+        inner.LastRequestHadAuthorization.Should().BeTrue();
+    }
+
+    private sealed class CapturingHandler : HttpMessageHandler
+    {
+        public bool LastRequestHadAuthorization { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            this.LastRequestHadAuthorization = request.Headers.Contains("Authorization");
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK));
+        }
+    }
+
+    #endregion
 }

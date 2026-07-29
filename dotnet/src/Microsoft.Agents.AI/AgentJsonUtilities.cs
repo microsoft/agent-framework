@@ -96,6 +96,10 @@ internal static partial class AgentJsonUtilities
     [JsonSerializable(typeof(List<FileSearchMatch>), TypeInfoPropertyName = "FileSearchMatchList")]
     [JsonSerializable(typeof(FileListEntry))]
     [JsonSerializable(typeof(List<FileListEntry>), TypeInfoPropertyName = "FileListEntryList")]
+    [JsonSerializable(typeof(FileStoreEntry))]
+    [JsonSerializable(typeof(List<FileStoreEntry>), TypeInfoPropertyName = "FileStoreEntryList")]
+    [JsonSerializable(typeof(FileLineEdit))]
+    [JsonSerializable(typeof(List<FileLineEdit>), TypeInfoPropertyName = "FileLineEditList")]
 
     // BackgroundAgentsProvider types
     [JsonSerializable(typeof(BackgroundAgentState))]

@@ -1,7 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using AGUI.Abstractions;
+using AGUI.Client;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AGUI;
 using Microsoft.Extensions.AI;
 
 string serverUrl = Environment.GetEnvironmentVariable("AGUI_SERVER_URL") ?? "http://localhost:8888";
@@ -14,7 +15,7 @@ using HttpClient httpClient = new()
     Timeout = TimeSpan.FromSeconds(60)
 };
 
-AGUIChatClient chatClient = new(httpClient, serverUrl);
+AGUIChatClient chatClient = new(new(httpClient, serverUrl));
 
 AIAgent agent = chatClient.AsAIAgent(
     name: "agui-client",
@@ -49,7 +50,7 @@ try
 
         // Stream the response
         bool isFirstUpdate = true;
-        string? sessionId = null;
+        string? threadId = null;
 
         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session))
         {
@@ -58,9 +59,11 @@ try
             // First update indicates run started
             if (isFirstUpdate)
             {
-                sessionId = chatUpdate.ConversationId;
+                // AGUIChatClient is stateless and never surfaces a ConversationId; the thread
+                // id is carried on the AG-UI RUN_STARTED event's raw representation.
+                threadId = (chatUpdate.RawRepresentation as RunStartedEvent)?.ThreadId;
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"\n[Run Started - Session: {chatUpdate.ConversationId}, Run: {chatUpdate.ResponseId}]");
+                Console.WriteLine($"\n[Run Started - Thread: {threadId}, Run: {chatUpdate.ResponseId}]");
                 Console.ResetColor();
                 isFirstUpdate = false;
             }
@@ -116,7 +119,7 @@ try
         }
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"\n[Run Finished - Session: {sessionId}]");
+        Console.WriteLine($"\n[Run Finished - Thread: {threadId}]");
         Console.ResetColor();
     }
 }

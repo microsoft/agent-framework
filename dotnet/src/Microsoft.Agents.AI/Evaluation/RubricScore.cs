@@ -7,7 +7,7 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Rubric evaluators (such as the generated rubric evaluators produced by Azure AI Foundry's
+/// Rubric evaluators (such as the generated rubric evaluators produced by Microsoft Foundry's
 /// adaptive evals) emit one <see cref="RubricScore"/> per dimension per item, alongside an
 /// overall weighted score. Attach instances to <see cref="EvalScoreResult.Dimensions"/> as
 /// a typed view of the per-dimension breakdown returned by the provider

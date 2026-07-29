@@ -3,6 +3,58 @@ These samples illustrate the Durable extensibility for Agent Framework running i
 
 All of these samples are set up to run in Azure Functions. Azure Functions has a local development tool called [CoreTools](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools) which we will set up to run these samples locally.
 
+## Quick Prerequisites Checklist
+
+Install and verify these tools before [Environment Setup](#environment-setup):
+
+- **[Azure Functions Core Tools](https://learn.microsoft.com/azure/azure-functions/functions-run-local?tabs=windows%2Cpython%2Cv2&pivots=programming-language-python#install-the-azure-functions-core-tools)** – run samples locally with `func start`
+- **[Azurite](https://learn.microsoft.com/azure/storage/common/storage-install-azurite)** – local storage emulator; must be running before `func start`
+- **[uv](https://docs.astral.sh/uv/)** – create virtual environments (recommended, especially on Windows)
+- **[Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)** – authenticate with `az login` for `AzureCliCredential`
+
+**Windows (PowerShell):**
+
+```powershell
+winget install Microsoft.Azure.FunctionsCoreTools
+npm install -g azurite
+irm https://astral.sh/uv/install.ps1 | iex
+winget install Microsoft.AzureCLI
+```
+
+**macOS:**
+
+```bash
+brew tap azure/functions
+brew install azure-functions-core-tools@4
+npm install -g azurite
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Azure CLI: https://learn.microsoft.com/cli/azure/install-azure-cli
+```
+
+**Linux:**
+
+```bash
+npm install -g azure-functions-core-tools@4 --unsafe-perm true
+npm install -g azurite
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Azure CLI: https://learn.microsoft.com/cli/azure/install-azure-cli
+```
+
+**Verify:**
+
+```bash
+func --version
+azurite --version
+uv --version
+az account show
+```
+
+Start Azurite in a separate terminal before `func start`:
+
+```bash
+azurite
+```
+
 ## Environment Setup
 
 ### 1. Install dependencies and create appropriate services
@@ -11,7 +63,7 @@ All of these samples are set up to run in Azure Functions. Azure Functions has a
 
 - Install [Azurite storage emulator](https://learn.microsoft.com/en-us/azure/storage/common/storage-install-azurite?toc=%2Fazure%2Fstorage%2Fblobs%2Ftoc.json&bc=%2Fazure%2Fstorage%2Fblobs%2Fbreadcrumb%2Ftoc.json&tabs=visual-studio%2Cblob-storage)
 
-- Create an [Azure AI Foundry project](https://learn.microsoft.com/azure/ai-foundry/) with an OpenAI model deployment. Note the Foundry project endpoint and deployment name, and ensure you can authenticate with `AzureCliCredential`.
+- Create a [Microsoft Foundry project](https://learn.microsoft.com/azure/ai-foundry/) with an OpenAI model deployment. Note the Foundry project endpoint and deployment name, and ensure you can authenticate with `AzureCliCredential`.
 
 - Install a tool to execute HTTP calls, for example the [REST Client extension](https://marketplace.visualstudio.com/items?itemName=humao.rest-client)
 

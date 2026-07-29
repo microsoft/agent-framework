@@ -413,7 +413,7 @@ class BackgroundAgentToolFormatter(ToolCallFormatter):
 
 class FileMemoryToolFormatter(ToolCallFormatter):
     """Formats file_memory_* tool calls, showing file names and search patterns
-    with tree-view corners for save operations.
+    with tree-view corners for write operations.
     """
 
     def can_format(self, call: Content) -> bool:
@@ -422,17 +422,17 @@ class FileMemoryToolFormatter(ToolCallFormatter):
 
     def format_detail(self, call: Content) -> str | None:
         """Format based on the specific file_memory operation."""
-        if call.name == "file_memory_save_file":
-            return self._format_save_file(call)
-        if call.name in ("file_memory_read_file", "file_memory_delete_file"):
+        if call.name == "file_memory_write":
+            return self._format_write_file(call)
+        if call.name in ("file_memory_read", "file_memory_delete", "file_memory_replace", "file_memory_replace_lines"):
             value = get_argument_value(call, "file_name")
             return f"({value})" if value else None
-        if call.name == "file_memory_search_files":
+        if call.name == "file_memory_grep":
             return self._format_search_files(call)
         return None
 
-    def _format_save_file(self, call: Content) -> str | None:
-        """Format save_file with file name and description indicator."""
+    def _format_write_file(self, call: Content) -> str | None:
+        """Format write_file with file name and description indicator."""
         file_name = get_argument_value(call, "file_name")
         description = get_argument_value(call, "description")
 
@@ -444,15 +444,15 @@ class FileMemoryToolFormatter(ToolCallFormatter):
         return f"\n   └─ {file_name}"
 
     def _format_search_files(self, call: Content) -> str | None:
-        """Format search_files with regex pattern and optional file pattern."""
+        """Format grep with regex pattern and optional glob pattern."""
         pattern = get_argument_value(call, "regex_pattern")
-        file_pattern = get_argument_value(call, "file_pattern")
+        glob_pattern = get_argument_value(call, "glob_pattern")
 
         if not pattern:
             return None
 
-        if file_pattern:
-            return f"(/{pattern}/ in {file_pattern})"
+        if glob_pattern:
+            return f"(/{pattern}/ in {glob_pattern})"
         return f"(/{pattern}/)"
 
 

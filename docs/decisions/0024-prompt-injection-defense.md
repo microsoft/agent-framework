@@ -43,6 +43,11 @@ FIDES (Flow Integrity Deterministic Enforcement System) is a label-based securit
 3. **Variable Indirection** — `ContentVariableStore` and `VariableReferenceContent` for physical isolation of untrusted content from the LLM context.
 4. **Quarantined Execution** — `quarantined_llm` and `inspect_variable` tools for isolated processing of untrusted data with audit logging.
 
+In addition, remote MCP integrations are secured through two mechanisms:
+
+- **Hint-based tool auto-labeling**: MCP `ToolAnnotations` (`readOnlyHint`, `openWorldHint`, etc.) are mapped to FIDES tool properties (`source_integrity`, `accepts_untrusted`, `max_allowed_confidentiality`).
+- **Server `_meta.ifc` result labels**: MCP result metadata is parsed into per-item `security_label` values, so provider-supplied IFC labels are enforced by middleware.
+
 ### Consequences
 
 - Good, because it provides deterministic security guarantees about what untrusted content can influence.
@@ -117,6 +122,13 @@ Monitor agent behavior and block suspicious actions post-facto.
 - Uses existing `FunctionMiddleware` base class.
 - Attaches labels via `additional_properties` (no schema changes).
 - Leverages `SerializationMixin` for label persistence.
+- Integrates MCP hint/result metadata through `additional_properties` keys (`max_allowed_confidentiality`, `source_integrity`, `__mcp_result_meta__`) without transport-specific policy code in core middleware.
+
+### MCP-Specific Security Notes
+
+- `SecureMCPToolProxy` applies `apply_mcp_security_labels(...)` automatically when connecting an MCP tool or URL.
+- For servers like the GitHub MCP server (with `X-MCP-Features: ifc_labels`), `_meta.ifc` labels are considered authoritative for per-result label assignment.
+- Tools that are not explicitly `readOnlyHint=True` are treated as potential sinks and default to `max_allowed_confidentiality=PUBLIC` to prevent exfiltration.
 
 
 ### Backwards Compatibility

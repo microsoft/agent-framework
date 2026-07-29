@@ -3,7 +3,7 @@
 """Provider-agnostic evaluation framework for Microsoft Agent Framework.
 
 Defines the core evaluation types and orchestration functions that work with
-any evaluation provider (Azure AI Foundry, local evaluators, third-party
+any evaluation provider (Microsoft Foundry, local evaluators, third-party
 libraries, etc.).  Also includes ``LocalEvaluator`` and built-in check
 functions for fast, API-free evaluation during inner-loop development and
 CI smoke tests.
@@ -683,7 +683,7 @@ class RubricScore:
 class Evaluator(Protocol):
     """Protocol for evaluation providers.
 
-    Any evaluation backend (Azure AI Foundry, local LLM-as-judge, custom
+    Any evaluation backend (Microsoft Foundry, local LLM-as-judge, custom
     scorers, etc.) implements this protocol. The provider encapsulates all
     connection details, evaluator selection, and execution logic.
 
@@ -1942,7 +1942,7 @@ async def evaluate_workflow(
                             overall_item.expected_output = expected_output[qi]
                         overall_items.append(overall_item)
     else:
-        assert workflow_result is not None  # noqa: S101  # nosec B101
+        assert workflow_result is not None  # ruff:ignore[assert]  # nosec B101
         all_agent_data = _extract_agent_eval_data(workflow_result, workflow)
         if include_overall:
             original_query = _extract_overall_query(workflow_result)

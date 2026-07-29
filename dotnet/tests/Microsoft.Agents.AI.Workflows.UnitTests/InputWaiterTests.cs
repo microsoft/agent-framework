@@ -107,7 +107,7 @@ public sealed class InputWaiterTests : IDisposable
         await this._waiter.WaitForInputAsync(TimeSpan.FromSeconds(1));
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky in merge_group; see https://github.com/microsoft/agent-framework/issues/7360")]
     public async Task InputWaiter_WaitForInputAsync_CompletesWhenTimeoutExpiresAsync()
     {
         // Verify that a finite timeout releases the block even without a signal.
@@ -115,6 +115,12 @@ public sealed class InputWaiterTests : IDisposable
         // we intentionally do not assert that it stays blocked until the timeout,
         // because that would re-introduce the same wall-clock flakiness
         // described in BlocksUntilSignaledAsync (see comment on that test).
+        //
+        // The generous outer bound is itself not generous enough: on the loaded
+        // net472/windows-latest leg, thread pool starvation can delay the 300ms
+        // continuation past the 5s guard, so Task.Delay wins the race and the
+        // identity assertion below fails. Quarantined until the assertion is
+        // rewritten to not depend on scheduling latency.
         Task waitTask = this._waiter.WaitForInputAsync(TimeSpan.FromMilliseconds(300));
 
         Task completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(5)));

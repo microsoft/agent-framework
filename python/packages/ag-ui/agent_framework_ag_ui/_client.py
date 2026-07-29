@@ -8,6 +8,7 @@ import json
 import logging
 import sys
 import uuid
+from binascii import Error as BinasciiError
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableSequence, Sequence
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
@@ -27,7 +28,7 @@ from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvo
 from agent_framework.observability import ChatTelemetryLayer
 
 from ._event_converters import AGUIEventConverter
-from ._http_service import AGUIHttpService
+from ._http_service import AGUIHttpService, _serialize_available_interrupts, _serialize_resume
 from ._message_adapters import agent_framework_messages_to_agui
 from ._utils import convert_tools_to_agui_format
 
@@ -294,16 +295,17 @@ class AGUIChatClient(
             if isinstance(content, Content) and content.type == "data" and content.media_type == "application/json":
                 try:
                     uri = content.uri
-                    if uri.startswith("data:application/json;base64,"):  # type: ignore[union-attr]
+                    prefix, _, encoded_data = uri.partition(",")  # type: ignore[union-attr]
+                    media_type, *parameters = prefix[5:].split(";")
+                    if prefix.startswith("data:") and media_type == "application/json" and "base64" in parameters:
                         import base64
 
-                        encoded_data = uri.split(",", 1)[1]  # type: ignore[union-attr]
-                        decoded_bytes = base64.b64decode(encoded_data)
+                        decoded_bytes = base64.b64decode(encoded_data, validate=True)
                         state = json.loads(decoded_bytes.decode("utf-8"))
 
                         messages_without_state = list(messages[:-1]) if len(messages) > 1 else []
                         return messages_without_state, state
-                except (json.JSONDecodeError, ValueError, KeyError) as e:
+                except (BinasciiError, json.JSONDecodeError, ValueError, KeyError) as e:
                     logger.warning(f"Failed to extract state from message: {e}")
 
         return list(messages), None
@@ -430,17 +432,16 @@ class AGUIChatClient(
 
         converter = AGUIEventConverter()
 
+        available_interrupts = options.get("available_interrupts", options.get("availableInterrupts"))
+
         async for event in self._http_service.post_run(
             thread_id=thread_id,
             run_id=run_id,
             messages=agui_messages,
             state=state,
             tools=agui_tools,
-            available_interrupts=cast(
-                list[dict[str, Any]] | None,
-                options.get("available_interrupts") or options.get("availableInterrupts"),
-            ),
-            resume=cast(dict[str, Any] | None, options.get("resume")),
+            available_interrupts=_serialize_available_interrupts(cast(Sequence[Any] | None, available_interrupts)),
+            resume=_serialize_resume(options.get("resume")),
         ):
             logger.debug(f"[AGUIChatClient] Raw AG-UI event: {event}")
             update = converter.convert_event(event)

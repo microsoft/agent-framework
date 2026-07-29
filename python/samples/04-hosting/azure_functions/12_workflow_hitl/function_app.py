@@ -8,11 +8,13 @@ running on Azure Durable Functions. It uses the MAF `request_info` and
 The workflow simulates a content moderation pipeline:
 1. User submits content for publication
 2. An AI agent analyzes the content for policy compliance
-3. A human reviewer is prompted to approve/reject the content
+3. A human reviewer is emailed an approval link and prompted to approve/reject
 4. Based on approval, content is either published or rejected
 
 Key architectural points:
 - Uses MAF's `ctx.request_info()` to pause workflow and request human input
+- A `NotifyExecutor` builds the respond URL via `WorkflowHitlContext` and notifies the
+  reviewer out-of-band (email) -- the caller never threads instanceId / requestId by hand
 - Uses `@response_handler` decorator to handle the human's response
 - AgentFunctionApp automatically provides HITL endpoints for status and response
 - Durable Functions provides durability while waiting for human input
@@ -42,7 +44,7 @@ from agent_framework import (
 )
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.openai import OpenAIChatOptions
-from agent_framework_azurefunctions import AgentFunctionApp
+from agent_framework_azurefunctions import AgentFunctionApp, WorkflowHitlContext
 from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
 from typing_extensions import Never
@@ -115,6 +117,19 @@ class ModerationResult:
     status: str  # "approved", "rejected"
     ai_analysis: ContentAnalysisResult | None
     reviewer_notes: str
+
+
+@dataclass
+class HumanReviewNotification:
+    """Payload handed to the notifier so it can build the respond URL and alert a human.
+
+    Carries the ``request_id`` the review executor passed to ``ctx.request_info`` so the
+    notifier addresses the exact pending request the workflow is waiting on.
+    """
+
+    request_id: str
+    content_id: str
+    prompt: str
 
 
 # ============================================================================
@@ -196,14 +211,14 @@ class HumanReviewExecutor(Executor):
     async def request_review(
         self,
         data: AnalysisWithSubmission,
-        ctx: WorkflowContext,
+        ctx: WorkflowContext[HumanReviewNotification],
     ) -> None:
         """Request human review for the content.
 
         This method:
         1. Constructs the approval request with all context
-        2. Calls request_info to pause the workflow
-        3. The workflow will resume when a response is provided via the HITL endpoint
+        2. Sends the request id to the notifier so it can email the reviewer a link
+        3. Calls request_info to pause the workflow until a response arrives
         """
         submission = data.submission
         analysis = data.analysis
@@ -234,11 +249,28 @@ class HumanReviewExecutor(Executor):
         # Store analysis in shared state for the response handler
         ctx.set_state("pending_analysis", data)
 
-        # Request human input - workflow will pause here
-        # The response_type specifies what we expect back
+        # Pause the workflow for human input. request_info generates the request id;
+        # read it back so a downstream NotifyExecutor can build the respond URL -- no
+        # need to mint an id by hand.
         await ctx.request_info(
             request_data=approval_request,
             response_type=HumanApprovalResponse,
+        )
+        request_id = await WorkflowHitlContext.pending_request_id(ctx)
+        assert request_id is not None  # always set immediately after request_info
+
+        # Side-branch: hand the request id to the notifier so it can build the respond
+        # URL and alert the reviewer. The email is sent by the downstream NotifyExecutor
+        # (a separate activity), so only this activity's committed id ever reaches the
+        # notifier -- retries of this executor notify no one. The orchestrator drains
+        # this message before entering the HITL wait.
+        await ctx.send_message(
+            HumanReviewNotification(
+                request_id=request_id,
+                content_id=submission.content_id,
+                prompt=prompt,
+            ),
+            target_id="notify_executor",
         )
 
     @response_handler
@@ -270,7 +302,61 @@ class HumanReviewExecutor(Executor):
             reviewer_notes=response.reviewer_notes,
         )
 
-        await ctx.send_message(result)
+        await ctx.send_message(result, target_id="publish_executor")
+
+
+class NotifyExecutor(Executor):
+    """Notifies a human reviewer with a respond link, without pausing the workflow.
+
+    Reached by an edge from ``HumanReviewExecutor`` in the same superstep that raises the
+    ``request_info`` request. It builds the canonical respond URL with
+    :class:`WorkflowHitlContext` and (in a real app) emails it to the reviewer. Because it
+    runs as a durable activity *downstream* of the id-generating executor, the id it emails
+    is always the one the orchestrator ends up waiting on -- retries of the upstream
+    executor never produce a dead link.
+    """
+
+    def __init__(self):
+        super().__init__(id="notify_executor")
+
+    @handler
+    async def notify(
+        self,
+        notification: HumanReviewNotification,
+        ctx: WorkflowContext,
+    ) -> None:
+        """Build the respond URL and notify the reviewer (logged here for the sample)."""
+        hitl = WorkflowHitlContext.from_context(ctx)
+        if hitl is None:
+            # Not running on the Azure Functions durable host (e.g. in-process DevUI):
+            # there is no respond endpoint to address, so skip notification.
+            logger.info(
+                "Not on the durable host; skipping reviewer notification for content %s.",
+                notification.content_id,
+            )
+            return
+
+        try:
+            respond_url = hitl.build_respond_url(notification.request_id)
+        except RuntimeError:
+            # No base URL configured (WEBSITE_HOSTNAME unset and no override). Notifying
+            # is a best-effort side effect -- the request is still reachable via the
+            # status endpoint -- so warn and continue rather than failing the workflow.
+            logger.warning(
+                "Cannot build a respond URL (set WEBSITE_HOSTNAME, e.g. in "
+                "local.settings.json). Skipping reviewer notification for content %s.",
+                notification.content_id,
+            )
+            return
+
+        # In a real application, send this URL to the reviewer (email, Teams, etc.). The
+        # reviewer POSTs {"approved": bool, "reviewer_notes": str} to it to resume the run.
+        logger.info(
+            "Human review needed for content %s.\n  Respond at: %s\n  Details: %s",
+            notification.content_id,
+            respond_url,
+            notification.prompt,
+        )
 
 
 class PublishExecutor(Executor):
@@ -381,17 +467,21 @@ def _create_workflow() -> Workflow:
     input_router = InputRouterExecutor()
     content_analyzer_executor = ContentAnalyzerExecutor()
     human_review_executor = HumanReviewExecutor()
+    notify_executor = NotifyExecutor()
     publish_executor = PublishExecutor()
 
     # Build the workflow graph
     # Flow:
     #   input_router -> content_analyzer_agent -> content_analyzer_executor
     #   -> human_review_executor (HITL pause here) -> publish_executor
+    # Side-branch: human_review_executor -> notify_executor emails the reviewer a respond
+    # link (built from WorkflowHitlContext) in the same superstep, before the pause.
     return (
-        WorkflowBuilder(start_executor=input_router)
+        WorkflowBuilder(name="content_moderation", start_executor=input_router)
         .add_edge(input_router, content_analyzer_agent)
         .add_edge(content_analyzer_agent, content_analyzer_executor)
         .add_edge(content_analyzer_executor, human_review_executor)
+        .add_edge(human_review_executor, notify_executor)
         .add_edge(human_review_executor, publish_executor)
         .build()
     )
@@ -411,11 +501,12 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
     """
     if durable:
         # Azure Functions mode with Durable Functions
-        # The app automatically provides HITL endpoints:
-        # - POST /api/workflow/run - Start the workflow
-        # - GET /api/workflow/status/{instanceId} - Check status and pending HITL requests
-        # - POST /api/workflow/respond/{instanceId}/{requestId} - Send HITL response
-        # - GET /api/health - Health check
+        # The app automatically provides per-workflow HITL endpoints (workflow name
+        # "content_moderation"):
+        # - POST /api/workflow/content_moderation/run - Start the workflow
+        # - GET  /api/workflow/content_moderation/status/{instanceId} - Status + pending HITL requests
+        # - POST /api/workflow/content_moderation/respond/{instanceId}/{requestId} - Send HITL response
+        # - GET  /api/health - Health check
         workflow = _create_workflow()
         return AgentFunctionApp(workflow=workflow, enable_health_check=True)
     # Pure MAF mode with DevUI for local development
@@ -433,7 +524,7 @@ def launch(durable: bool = True) -> AgentFunctionApp | None:
     logger.info("- Human-in-the-loop using request_info / @response_handler pattern")
     logger.info("- AI content analysis with structured output")
     logger.info("- Human approval workflow integration")
-    logger.info("\nFlow: InputRouter -> ContentAnalyzer Agent -> HumanReview -> Publish")
+    logger.info("\nFlow: InputRouter -> ContentAnalyzer Agent -> HumanReview -> Notify/Publish")
 
     workflow = _create_workflow()
     serve(entities=[workflow], port=8096, auto_open=True)

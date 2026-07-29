@@ -16,7 +16,12 @@ const checkTeamMembership = require('../scripts/check_team_membership.js');
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createMocks({ payloadIssue = undefined, apiUser = 'api-user', teamState = 'active' } = {}) {
+function createMocks({
+  payloadIssue = undefined,
+  payloadPullRequest = undefined,
+  apiUser = 'api-user',
+  teamState = 'active',
+} = {}) {
   const core = {
     _infoMessages: [],
     _failedMessages: [],
@@ -24,14 +29,27 @@ function createMocks({ payloadIssue = undefined, apiUser = 'api-user', teamState
     setFailed(msg) { this._failedMessages.push(msg); },
   };
 
+  const payload = {};
+  if (payloadIssue !== undefined) {
+    payload.issue = payloadIssue;
+  }
+  if (payloadPullRequest !== undefined) {
+    payload.pull_request = payloadPullRequest;
+  }
+
   const context = {
-    payload: { issue: payloadIssue },
+    payload,
     repo: { owner: 'test-org', repo: 'test-repo' },
   };
 
   const github = {
     rest: {
       issues: {
+        get: async () => ({
+          data: { user: apiUser ? { login: apiUser } : null },
+        }),
+      },
+      pulls: {
         get: async () => ({
           data: { user: apiUser ? { login: apiUser } : null },
         }),
@@ -62,6 +80,37 @@ describe('author resolution', () => {
     });
     const result = await checkTeamMembership({ github, context, core, ...BASE_OPTS });
     assert.equal(result.author, 'payload-user');
+  });
+
+  it('resolves author from pull_request event payload', async () => {
+    const { github, context, core } = createMocks({
+      payloadPullRequest: { user: { login: 'pr-author' } },
+    });
+    let issuesGetCalled = false;
+    github.rest.issues.get = async () => {
+      issuesGetCalled = true;
+      return { data: { user: { login: 'api-user' } } };
+    };
+
+    const result = await checkTeamMembership({ github, context, core, ...BASE_OPTS });
+    assert.equal(result.author, 'pr-author');
+    assert.equal(issuesGetCalled, false);
+  });
+
+  it('resolves author via pulls API when pull_request payload user is null', async () => {
+    const { github, context, core } = createMocks({
+      payloadPullRequest: { user: null },
+      apiUser: 'fetched-pr-author',
+    });
+    let pullsGetCalled = false;
+    github.rest.pulls.get = async () => {
+      pullsGetCalled = true;
+      return { data: { user: { login: 'fetched-pr-author' } } };
+    };
+
+    const result = await checkTeamMembership({ github, context, core, ...BASE_OPTS });
+    assert.equal(result.author, 'fetched-pr-author');
+    assert.equal(pullsGetCalled, true);
   });
 
   it('resolves author via API when payload issue is absent', async () => {

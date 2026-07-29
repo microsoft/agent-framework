@@ -505,6 +505,94 @@ async def test_memory_context_provider_recent_turns_can_skip_tool_call_groups(tm
     assert with_tools_messages[4].text == "Second final answer"
 
 
+async def test_memory_context_provider_marks_cross_session_origins(tmp_path) -> None:
+    """Injected memory should carry all prior session origins without duplicates.
+
+    Exercises the cross-session attribution surface added to support downstream observers
+    detecting attacks of the class documented in Dai et al. (arXiv:2605.06158).
+    """
+    session = AgentSession(session_id="session-current")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(
+        tmp_path,
+        owner_state_key="owner_id",
+        dumps=lambda value: json.dumps(value, separators=(",", ":"), sort_keys=True),
+        loads=json.loads,
+    )
+    updated_at = datetime(2026, 4, 21, tzinfo=timezone.utc).replace(microsecond=0).isoformat()
+    store.write_topic(
+        session,
+        MemoryTopicRecord(
+            topic="travel preferences",
+            summary="Loves Oslo trips.",
+            memories=["Prefers Oslo in summer."],
+            updated_at=updated_at,
+            session_ids=["session-current", "session-prior-1", "session-prior-2", "session-prior-1"],
+        ),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+
+    agent = Agent(
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        context_providers=[MemoryContextProvider(store=store)],
+        default_options=_no_store_options(),
+    )
+
+    session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Tell me about my travel preferences."])],
+    )
+
+    memory_messages = [
+        m for m in session_context.context_messages.get(DEFAULT_MEMORY_SOURCE_ID, []) if "### MEMORY.md" in m.text
+    ]
+    assert memory_messages, "expected an injected memory block under the memory source"
+    attribution: dict[str, Any] = memory_messages[0].additional_properties.get("_attribution") or {}
+    assert attribution.get("origin_session_ids") == ["session-prior-1", "session-prior-2"]
+
+
+async def test_memory_context_provider_omits_origin_when_only_current_session(tmp_path) -> None:
+    """When all contributing topics are from the current session, attribution must NOT advertise an origin."""
+    session = AgentSession(session_id="session-current")
+    session.state["owner_id"] = "alice"
+    store = MemoryFileStore(
+        tmp_path,
+        owner_state_key="owner_id",
+        dumps=lambda value: json.dumps(value, separators=(",", ":"), sort_keys=True),
+        loads=json.loads,
+    )
+    updated_at = datetime(2026, 4, 21, tzinfo=timezone.utc).replace(microsecond=0).isoformat()
+    store.write_topic(
+        session,
+        MemoryTopicRecord(
+            topic="travel preferences",
+            summary="Loves Oslo trips.",
+            memories=["Prefers Oslo in summer."],
+            updated_at=updated_at,
+            session_ids=["session-current"],
+        ),
+        source_id=DEFAULT_MEMORY_SOURCE_ID,
+    )
+
+    agent = Agent(
+        client=_MemoryHarnessClient(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        context_providers=[MemoryContextProvider(store=store)],
+        default_options=_no_store_options(),
+    )
+
+    session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", contents=["Tell me about my travel preferences."])],
+    )
+
+    memory_messages = [
+        m for m in session_context.context_messages.get(DEFAULT_MEMORY_SOURCE_ID, []) if "### MEMORY.md" in m.text
+    ]
+    assert memory_messages
+    attribution: dict[str, Any] = memory_messages[0].additional_properties.get("_attribution") or {}
+    assert "origin_session_ids" not in attribution
+
+
 async def test_memory_context_provider_uses_explicit_consolidation_client(tmp_path) -> None:
     """The memory provider should use the explicit consolidation client when one is configured."""
     session = AgentSession(session_id="session-1")
@@ -773,3 +861,21 @@ async def test_memory_extraction_propagates_programmer_errors(tmp_path) -> None:
             context=context,
             now=datetime(2026, 4, 22, tzinfo=timezone.utc),
         )
+
+
+def test_extract_keywords_handles_non_english_text() -> None:
+    """Keyword extraction yields tokens for non-English input (#6989).
+
+    The pattern used to be ASCII-only, so CJK/Cyrillic messages produced an
+    empty keyword set and therefore never matched any topic file.
+    """
+    from agent_framework._harness._memory import _extract_keywords  # pyright: ignore[reportPrivateUsage]
+
+    cjk = _extract_keywords([Message(role="user", contents=["こんにちは 元気ですか"])])
+    cyrillic = _extract_keywords([Message(role="user", contents=["привет мир друзья"])])
+    english = _extract_keywords([Message(role="user", contents=["hello world"])])
+
+    assert cjk == {"こんにちは", "元気ですか"}
+    assert cyrillic == {"привет", "мир", "друзья"}
+    # English extraction is unchanged.
+    assert english == {"hello", "world"}

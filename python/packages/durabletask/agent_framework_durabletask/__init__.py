@@ -55,8 +55,16 @@ from ._workflows.activity import execute_workflow_activity
 from ._workflows.client import DurableWorkflowClient
 from ._workflows.context import WorkflowOrchestrationContext
 from ._workflows.dt_context import DurableTaskWorkflowContext
-from ._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME, run_workflow_orchestrator
-from ._workflows.registration import WorkflowRegistrationPlan, plan_workflow_registration
+from ._workflows.naming import (
+    DURABLE_NAME_PREFIX,
+    is_auto_generated_workflow_name,
+    validate_executor_id,
+    validate_workflow_name,
+    workflow_name_from_orchestrator,
+    workflow_orchestrator_name,
+)
+from ._workflows.orchestrator import run_workflow_orchestrator
+from ._workflows.registration import WorkflowRegistrationPlan, collect_hosted_workflows, plan_workflow_registration
 from ._workflows.runner_context import CapturingRunnerContext
 from ._workflows.serialization import deserialize_workflow_output
 
@@ -68,6 +76,7 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "DEFAULT_MAX_POLL_RETRIES",
     "DEFAULT_POLL_INTERVAL_SECONDS",
+    "DURABLE_NAME_PREFIX",
     "MIMETYPE_APPLICATION_JSON",
     "MIMETYPE_TEXT_PLAIN",
     "REQUEST_RESPONSE_FORMAT_JSON",
@@ -76,7 +85,6 @@ __all__ = [
     "THREAD_ID_HEADER",
     "WAIT_FOR_RESPONSE_FIELD",
     "WAIT_FOR_RESPONSE_HEADER",
-    "WORKFLOW_ORCHESTRATOR_NAME",
     "AgentCallbackContext",
     "AgentEntity",
     "AgentEntityStateProviderMixin",
@@ -118,11 +126,17 @@ __all__ = [
     "WorkflowOrchestrationContext",
     "WorkflowRegistrationPlan",
     "__version__",
+    "collect_hosted_workflows",
     "deserialize_workflow_output",
     "ensure_response_format",
     "execute_workflow_activity",
+    "is_auto_generated_workflow_name",
     "load_agent_response",
     "plan_workflow_registration",
     "run_agent_coroutine",
     "run_workflow_orchestrator",
+    "validate_executor_id",
+    "validate_workflow_name",
+    "workflow_name_from_orchestrator",
+    "workflow_orchestrator_name",
 ]

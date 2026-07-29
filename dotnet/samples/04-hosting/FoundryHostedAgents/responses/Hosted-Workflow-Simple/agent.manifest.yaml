@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+﻿# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
 name: hosted-workflows
 displayName: "Translation Chain Workflow Agent"
 
@@ -20,7 +20,7 @@ template:
   kind: hosted
   protocols:
     - protocol: responses
-      version: 1.0.0
+      version: 2.0.0
   resources:
     cpu: "0.25"
     memory: 0.5Gi

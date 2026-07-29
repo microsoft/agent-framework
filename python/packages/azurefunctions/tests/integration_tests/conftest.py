@@ -338,7 +338,12 @@ def _load_and_validate_env(sample_path: Path) -> None:
         "DURABLE_TASK_SCHEDULER_CONNECTION_STRING",
         "FUNCTIONS_WORKER_RUNTIME",
     ]
-    if sample_path.name == "11_workflow_parallel":
+    # Samples that host no AI agents need no model credentials (only the DTS emulator
+    # and Azurite). The suite-level gate still requires *some* LLM config to be present.
+    no_llm_samples = {"13_subworkflow_hitl"}
+    if sample_path.name in no_llm_samples:
+        pass
+    elif sample_path.name == "11_workflow_parallel":
         required_env_vars.extend(["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_MODEL"])
     else:
         required_env_vars.extend(["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL"])

@@ -67,6 +67,10 @@ class AzureFunctionsWorkflowContext:
         orchestration_context: Any = self._context
         return orchestration_context.call_activity(activity_name, input_json)
 
+    def call_sub_orchestrator(self, name: str, input: Any, instance_id: str | None = None) -> Any:
+        orchestration_context: Any = self._context
+        return orchestration_context.call_sub_orchestrator(name, input_=input, instance_id=instance_id)
+
     # -- Composite tasks ------------------------------------------------------
 
     def task_all(self, tasks: list[Any]) -> Any:

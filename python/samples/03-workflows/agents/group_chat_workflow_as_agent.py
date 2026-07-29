@@ -20,7 +20,7 @@ What it does:
 - The orchestrator coordinates a researcher (chat completions) and a writer (responses API) to solve a task.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - Environment variables configured for `FoundryChatClient`.
 """
 

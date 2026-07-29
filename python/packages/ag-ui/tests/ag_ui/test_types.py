@@ -2,6 +2,9 @@
 
 """Tests for type definitions in _types.py."""
 
+import pytest
+from pydantic import ValidationError
+
 from agent_framework_ag_ui._types import AgentState, AGUIRequest, PredictStateConfig, RunMetadata
 
 
@@ -248,15 +251,77 @@ class TestAGUIRequest:
         assert dumped["parent_run_id"] == "parent-456"
 
     def test_agui_request_available_interrupts_alias_round_trip(self) -> None:
-        """availableInterrupts should deserialize, while dumps remain snake_case."""
+        """availableInterrupts should deserialize to canonical Interrupt models."""
         request = AGUIRequest.model_validate(
             {
                 "messages": [{"role": "user", "content": "Hello"}],
-                "availableInterrupts": [{"id": "req_1", "value": {"choice": "A"}}],
+                "availableInterrupts": [{"id": "req_1", "reason": "input_required", "message": "Choose"}],
             }
         )
 
-        assert request.available_interrupts == [{"id": "req_1", "value": {"choice": "A"}}]
+        assert request.available_interrupts is not None
+        assert request.available_interrupts[0].id == "req_1"
+        assert request.available_interrupts[0].reason == "input_required"
         dumped = request.model_dump(exclude_none=True)
-        assert dumped["available_interrupts"] == [{"id": "req_1", "value": {"choice": "A"}}]
+        assert dumped["available_interrupts"] == [{"id": "req_1", "reason": "input_required", "message": "Choose"}]
         assert "availableInterrupts" not in dumped
+
+    def test_agui_request_resume_accepts_canonical_entries(self) -> None:
+        """resume should preserve AG-UI resume arrays at the HTTP trust boundary."""
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "resume": [{"interruptId": "req_1", "status": "resolved", "payload": {"approved": True}}],
+            }
+        )
+
+        assert request.resume is not None
+        assert request.resume[0].interrupt_id == "req_1"
+        assert request.resume[0].status == "resolved"
+        assert request.resume[0].payload == {"approved": True}
+
+    def test_agui_request_resume_schema_advertises_canonical_entries(self) -> None:
+        """resume should advertise the canonical ResumeEntry array shape in JSON schema."""
+        resume_schema = AGUIRequest.model_json_schema()["properties"]["resume"]
+        array_schema = next((schema for schema in resume_schema["anyOf"] if schema.get("type") == "array"), None)
+
+        assert array_schema is not None
+        assert array_schema["items"] == {"$ref": "#/$defs/ResumeEntry"}
+
+    def test_agui_request_resume_accepts_legacy_object_shapes(self) -> None:
+        """resume coerces supported legacy containers to canonical ResumeEntry models."""
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "resume": {"interrupts": [{"id": "req_1", "value": {"approved": True}}]},
+            }
+        )
+
+        assert request.resume is not None
+        assert request.resume[0].interrupt_id == "req_1"
+        assert request.resume[0].status == "resolved"
+        assert request.resume[0].payload == {"approved": True}
+
+    def test_agui_request_resume_accepts_legacy_single_entry_mapping(self) -> None:
+        """resume coerces a supported single legacy entry object to a one-entry canonical list."""
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "resume": {"toolCallId": "call_1", "approved": True},
+            }
+        )
+
+        assert request.resume is not None
+        assert request.resume[0].interrupt_id == "call_1"
+        assert request.resume[0].status == "resolved"
+        assert request.resume[0].payload == {"approved": True}
+
+    def test_agui_request_resume_rejects_malformed_shape(self) -> None:
+        """resume rejects malformed inputs at request validation once the contract shape is advertised."""
+        with pytest.raises(ValidationError):
+            AGUIRequest.model_validate(
+                {
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "resume": {"unexpected": "shape"},
+                }
+            )

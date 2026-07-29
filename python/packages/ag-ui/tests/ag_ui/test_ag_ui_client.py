@@ -4,8 +4,9 @@
 
 import json
 from collections.abc import AsyncGenerator, Awaitable, MutableSequence
-from typing import Any
+from typing import Any, cast
 
+from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
     ChatOptions,
     ChatResponse,
@@ -104,6 +105,30 @@ class TestAGUIChatClient:
         assert result_messages[0].text == "Hello"
         assert state == state_data
 
+    async def test_extract_state_from_messages_with_parameterized_data_uri(self) -> None:
+        """Test state extraction from JSON data URIs with media type parameters."""
+        import base64
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+
+        state_data = {"key": "value", "count": 42}
+        state_json = json.dumps(state_data)
+        state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
+
+        messages = [
+            Message(role="user", contents=["Hello"]),
+            Message(
+                role="user",
+                contents=[Content.from_uri(uri=f"data:application/json;charset=utf-8;base64,{state_b64}")],
+            ),
+        ]
+
+        result_messages, state = client.extract_state_from_messages(messages)
+
+        assert len(result_messages) == 1
+        assert result_messages[0].text == "Hello"
+        assert state == state_data
+
     async def test_extract_state_invalid_json(self) -> None:
         """Test state extraction with invalid JSON."""
         import base64
@@ -117,6 +142,22 @@ class TestAGUIChatClient:
             Message(
                 role="user",
                 contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
+            ),
+        ]
+
+        result_messages, state = client.extract_state_from_messages(messages)
+
+        assert result_messages == messages
+        assert state is None
+
+    async def test_extract_state_invalid_base64(self) -> None:
+        """Test state extraction with invalid base64."""
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+
+        messages = [
+            Message(
+                role="user",
+                contents=[Content.from_uri(uri="data:application/json;base64,not-valid-base64!")],
             ),
         ]
 
@@ -184,7 +225,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options=chat_options)
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(update)
+            updates.append(cast(ChatResponseUpdate, update))
 
         assert len(updates) == 4
         assert updates[0].additional_properties is not None
@@ -427,7 +468,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options={"tools": [my_tool]})
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(update)
+            updates.append(cast(ChatResponseUpdate, update))
 
         # Find the function_call content - it should have agui_thread_id
         found = False
@@ -440,10 +481,60 @@ class TestAGUIChatClient:
                     break
         assert found, "Expected to find function_call content for my_tool"
 
+    async def test_tool_call_args_id_mismatch_does_not_execute_current_client_tool(
+        self, monkeypatch: MonkeyPatch
+    ) -> None:
+        """Mismatched TOOL_CALL_ARGS must not be rebound to the latest client tool."""
+        executed: list[int] = []
+
+        @tool
+        def danger_tool(amount: int) -> str:
+            """Record an invocation for the regression assertion."""
+            executed.append(amount)
+            return f"danger={amount}"
+
+        call_count = 0
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                mock_events = [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "safe", "toolName": "safe_tool"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "danger", "toolName": "danger_tool"},
+                    {"type": "TOOL_CALL_ARGS", "toolCallId": "safe", "delta": '{"amount": 100}'},
+                    {"type": "TOOL_CALL_END", "toolCallId": "safe"},
+                    {"type": "TOOL_CALL_END", "toolCallId": "danger"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+                ]
+            else:
+                mock_events = [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_2"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "done"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_2"},
+                ]
+
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        response = await client.get_response(
+            [Message(role="user", contents=["Test"])],
+            options={"tools": [danger_tool]},
+        )
+
+        assert response.text == "done"
+        assert executed == []
+
     async def test_interrupt_options_transmission(self, monkeypatch: MonkeyPatch) -> None:
         """Interrupt option fields are forwarded to the HTTP service."""
         available_interrupts = [{"id": "req_1", "type": "request_info"}]
+        expected_available_interrupts = [{"id": "req_1", "reason": "input_required"}]
         resume_payload = {"interrupts": [{"id": "req_1", "value": "approved"}]}
+        expected_resume_payload = [{"interruptId": "req_1", "status": "resolved", "payload": "approved"}]
 
         mock_events = [
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
@@ -451,8 +542,8 @@ class TestAGUIChatClient:
         ]
 
         async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
-            assert kwargs.get("available_interrupts") == available_interrupts
-            assert kwargs.get("resume") == resume_payload
+            assert kwargs.get("available_interrupts") == expected_available_interrupts
+            assert kwargs.get("resume") == expected_resume_payload
             for event in mock_events:
                 yield event
 
@@ -466,4 +557,48 @@ class TestAGUIChatClient:
         }
 
         response = await client.inner_get_response(messages=messages, options=options)
+        assert response is not None
+
+    async def test_typed_interrupt_options_forward_canonical_protocol_shape(self, monkeypatch: MonkeyPatch) -> None:
+        """Typed interrupt options are forwarded as canonical protocol JSON."""
+        mock_events = [
+            {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+            {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+        ]
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            assert kwargs.get("available_interrupts") == [
+                {
+                    "id": "approval_1",
+                    "reason": "tool_call",
+                    "toolCallId": "call_1",
+                    "responseSchema": {"type": "object"},
+                }
+            ]
+            assert kwargs.get("resume") == [
+                {"interruptId": "approval_1", "status": "resolved", "payload": {"approved": True}}
+            ]
+            for event in mock_events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        options: dict[str, Any] = {
+            "available_interrupts": [
+                Interrupt(
+                    id="approval_1",
+                    reason="tool_call",
+                    tool_call_id="call_1",
+                    response_schema={"type": "object"},
+                )
+            ],
+            "resume": [ResumeEntry(interrupt_id="approval_1", status="resolved", payload={"approved": True})],
+        }
+
+        response = await client.inner_get_response(
+            messages=[Message(role="user", contents=["continue"])],
+            options=options,
+        )
+
         assert response is not None

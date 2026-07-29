@@ -3,7 +3,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-declarative --pre
+pip install agent-framework-declarative
 ```
 
 ## Release stage
@@ -11,8 +11,7 @@ pip install agent-framework-declarative --pre
 This package ships at two different stability levels:
 
 - **Declarative workflows** (`WorkflowFactory`, executors, handlers, and the
-  `_workflows` surface) are at **release-candidate** stability and may receive only
-  minor refinements before GA.
+  `_workflows` surface) are **stable**.
 - **Declarative agents** (`AgentFactory` and the YAML agent loading/parsing path:
   `DeclarativeLoaderError`, `ProviderLookupError`, `ProviderTypeMapping`) are
   **experimental** and may change or be removed in future versions without notice.

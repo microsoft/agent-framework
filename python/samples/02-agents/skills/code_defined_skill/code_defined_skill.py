@@ -3,15 +3,17 @@
 import asyncio
 import json
 import os
-
-# Uncomment this filter to suppress the experimental Skills warning before
-# using the sample's Skills APIs.
-# import warnings  # isort: skip
-# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 from typing import Any
 
-from agent_framework import Agent, InlineSkill, InlineSkillResource, SkillFrontmatter, SkillsProvider
+from agent_framework import (
+    Agent,
+    InlineSkill,
+    InlineSkillResource,
+    SkillFrontmatter,
+    SkillsProvider,
+    ToolApprovalMiddleware,
+)
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -144,16 +146,22 @@ async def main() -> None:
     )
 
     # Create the skills provider with the code-defined skill and pass it to the agent
+    # All skill tools require approval by default; auto-approve them so the
+    # sample runs unattended. See the script_approval / skills_auto_approval
+    # samples for interactive and selective approval handling.
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units.",
         context_providers=[SkillsProvider(unit_converter_skill)],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.all_tools_auto_approval_rule])],
     ) as agent:
         print("Converting units")
         print("-" * 60)
+        session = agent.create_session()
         response = await agent.run(
             "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?",
             function_invocation_kwargs={"precision": 2},
+            session=session,
         )
         print(f"Agent: {response}\n")
 

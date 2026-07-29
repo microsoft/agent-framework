@@ -4,7 +4,7 @@ description = "Mistral AI integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0a260604"
+version = "1.0.0b260721"
 license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/agent-framework/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -12,7 +12,7 @@ urls.release_notes = "https://github.com/microsoft/agent-framework/releases?q=ta
 urls.issues = "https://github.com/microsoft/agent-framework/issues"
 classifiers = [
   "License :: OSI Approved :: MIT License",
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -23,8 +23,9 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.8.0,<2",
-    "mistralai>=2.0.0,<3",
+    "agent-framework-core>=1.11.0,<2",
+    # Mistral 1.x retains the embeddings API without the OpenTelemetry semantic-conventions cap in 2.x.
+    "mistralai>=1.8.1,<3",
 ]
 
 [tool.uv]
@@ -101,5 +102,5 @@ module-name = "agent_framework_mistral"
 module-root = ""
 
 [build-system]
-requires = ["uv_build>=0.8.2,<0.9.0"]
+requires = ["uv_build>=0.8.2,<0.12.0"]
 build-backend = "uv_build"

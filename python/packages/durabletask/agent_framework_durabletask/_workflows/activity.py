@@ -67,6 +67,10 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
     # omitted, so coerce None to the appropriate empty default.
     shared_state_snapshot: dict[str, Any] = data.get("shared_state_snapshot") or {}
     source_executor_ids = cast(list[str], data.get("source_executor_ids") or [SOURCE_ORCHESTRATOR])
+    # Orchestration metadata the orchestrator attaches when dispatching this activity
+    # (instance_id, workflow_name). Absent for in-process / legacy inputs, so default
+    # to None and surface it on the runner context for executors that want it.
+    host_context = cast("dict[str, Any] | None", data.get("host_context"))
 
     # Reconstruct the message - deserialize_value restores the original typed
     # objects from the encoded data (with type markers).
@@ -89,6 +93,7 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
     async def _run() -> dict[str, Any]:
         runner_context = CapturingRunnerContext()
         runner_context.set_yield_output_classifier(classify_yielded_output)
+        runner_context.set_host_metadata(host_context)
         shared_state = State()
 
         # Deserialize shared state values to reconstruct dataclasses / Pydantic models.
@@ -101,11 +106,11 @@ def execute_workflow_activity(executor: Executor, input_json: str, workflow: Wor
         shared_state.import_state(deserialized_state)
 
         if is_hitl_response:
-            if not isinstance(message_data, dict):
+            if not isinstance(message, dict):
                 raise ValueError("HITL message payload must be a JSON object")
             await execute_hitl_response_handler(
                 executor=executor,
-                hitl_message=cast(dict[str, Any], message_data),
+                hitl_message=cast(dict[str, Any], message),
                 shared_state=shared_state,
                 runner_context=runner_context,
             )

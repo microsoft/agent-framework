@@ -1191,9 +1191,9 @@ class DurableAgentStateUsage:
     """
 
     # UsageDetails field name constants (snake_case keys from agent_framework.UsageDetails)
-    _INPUT_TOKEN_COUNT = "input_token_count"  # noqa: S105  # nosec B105
-    _OUTPUT_TOKEN_COUNT = "output_token_count"  # noqa: S105  # nosec B105
-    _TOTAL_TOKEN_COUNT = "total_token_count"  # noqa: S105  # nosec B105
+    _INPUT_TOKEN_COUNT = "input_token_count"  # ruff:ignore[hardcoded-password-string]  # nosec B105
+    _OUTPUT_TOKEN_COUNT = "output_token_count"  # ruff:ignore[hardcoded-password-string]  # nosec B105
+    _TOTAL_TOKEN_COUNT = "total_token_count"  # ruff:ignore[hardcoded-password-string]  # nosec B105
 
     # Standard fields in UsageDetails that are mapped to dedicated attributes
     _STANDARD_USAGE_FIELDS: ClassVar[set[str]] = {_INPUT_TOKEN_COUNT, _OUTPUT_TOKEN_COUNT, _TOTAL_TOKEN_COUNT}

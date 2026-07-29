@@ -49,7 +49,7 @@ class FoundryProjectSettings(TypedDict, total=False):
 class FoundryMemoryProvider(ContextProvider):
     """Foundry Memory context provider using the new ContextProvider hooks pattern.
 
-    Integrates Azure AI Foundry Memory Store for persistent semantic memory,
+    Integrates Microsoft Foundry Memory Store for persistent semantic memory,
     searching and storing memories via the Azure AI Projects SDK.
 
     Args:

@@ -17,7 +17,7 @@ internal interface IScopedContentProcessor
     /// Process a list of messages.
     /// The list of messages should be a prompt or response.
     /// </summary>
-    /// <param name="messages">A list of <see cref="ChatMessage"/> objects sent to the agent or received from the agent..</param>
+    /// <param name="messages">A list of <see cref="ChatMessage"/> objects sent to the agent or received from the agent.</param>
     /// <param name="sessionId">The session where the messages were sent.</param>
     /// <param name="activity">An activity to indicate prompt or response.</param>
     /// <param name="purviewSettings">Purview settings containing tenant id, app name, etc.</param>

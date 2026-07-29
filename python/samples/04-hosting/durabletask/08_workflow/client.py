@@ -3,9 +3,9 @@
 """Client that starts the standalone workflow orchestration and prints the result.
 
 The worker (``worker.py``) must be running first. The workflow is started via
-``DurableWorkflowClient.start_workflow`` - which schedules the orchestrator that
-``DurableAIAgentWorker.configure_workflow`` auto-registers, so the caller never
-needs to know its internal name.
+``DurableWorkflowClient.start_workflow`` - which schedules the ``dafx-{name}``
+orchestration that ``DurableAIAgentWorker.configure_workflow`` auto-registers for
+the workflow named ``email_triage``.
 
 Prerequisites:
 - ``worker.py`` running and connected to the same Durable Task Scheduler.
@@ -25,6 +25,8 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+WORKFLOW_NAME = "email_triage"
 
 
 def get_client(taskhub: str | None = None, endpoint: str | None = None) -> DurableTaskSchedulerClient:
@@ -53,7 +55,7 @@ def run_workflow(client: DurableWorkflowClient, email_content: str) -> None:
 
 async def main() -> None:
     """Run the workflow against a legitimate email and a spam email."""
-    client = DurableWorkflowClient(get_client())
+    client = DurableWorkflowClient(get_client(), workflow_name=WORKFLOW_NAME)
 
     logger.info("TEST 1: Legitimate email")
     run_workflow(

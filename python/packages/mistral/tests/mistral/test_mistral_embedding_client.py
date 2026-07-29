@@ -1,12 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch, sentinel
 
 import pytest
 from agent_framework import Embedding, GeneratedEmbeddings
 
 from agent_framework_mistral import MistralEmbeddingClient, MistralEmbeddingOptions
+from agent_framework_mistral._embedding_client import _load_mistral_client_class  # pyright: ignore[reportPrivateUsage]
 
 # region: Unit Tests
 
@@ -60,6 +63,25 @@ def test_mistral_embedding_construction_with_client() -> None:
             client=mock_client,
         )
         assert client.client is mock_client
+
+
+def test_mistral_client_import_falls_back_when_client_module_is_missing() -> None:
+    """Test Mistral 1.x layouts that expose the client only from the package root."""
+
+    def import_mistral_module(name: str) -> object:
+        if name == "mistralai.client":
+            raise ModuleNotFoundError(name="mistralai.client")
+        return SimpleNamespace(Mistral=sentinel.mistral_class)
+
+    with patch("agent_framework_mistral._embedding_client.import_module", side_effect=import_mistral_module):
+        assert _load_mistral_client_class() is sentinel.mistral_class
+
+
+def test_mistral_sdk_supports_output_dimension() -> None:
+    """Test that the supported SDK range includes the dimensions parameter."""
+    client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
+
+    assert "output_dimension" in inspect.signature(client.client.embeddings.create_async).parameters
 
 
 def test_mistral_embedding_construction_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:

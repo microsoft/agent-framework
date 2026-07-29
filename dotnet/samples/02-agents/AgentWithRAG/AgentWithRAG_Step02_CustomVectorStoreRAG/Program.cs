@@ -6,10 +6,10 @@
 
 using Azure.AI.Projects;
 using Azure.Identity;
+using CommunityToolkit.VectorData.Qdrant;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
-using Microsoft.SemanticKernel.Connectors.Qdrant;
 using Qdrant.Client;
 
 var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
@@ -25,7 +25,7 @@ AIProjectClient aiProjectClient = new(
     new Uri(endpoint),
     new DefaultAzureCredential());
 
-// Create a Qdrant vector store that uses the Azure AI Foundry embedding model to generate embeddings.
+// Create a Qdrant vector store that uses the Microsoft Foundry embedding model to generate embeddings.
 QdrantClient client = new("localhost");
 VectorStore vectorStore = new QdrantVectorStore(client, ownsClient: true, new()
 {
@@ -134,6 +134,6 @@ internal sealed class DocumentationChunk
     public string SourceName { get; set; } = string.Empty;
     [VectorStoreData]
     public string Text { get; set; } = string.Empty;
-    [VectorStoreVector(Dimensions: 3072)]
+    [VectorStoreVector(dimensions: 3072)]
     public string Embedding => this.Text;
 }

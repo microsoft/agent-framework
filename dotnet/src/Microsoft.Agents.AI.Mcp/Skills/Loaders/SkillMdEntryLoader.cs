@@ -29,7 +29,7 @@ internal sealed partial class SkillMdEntryLoader : IMcpSkillEntryLoader
     public string EntryType => "skill-md";
 
     /// <inheritdoc/>
-    public Task<IList<AgentSkill>> LoadAsync(IReadOnlyList<McpSkillIndexEntry> entries, CancellationToken cancellationToken)
+    public Task<IList<AgentSkill>> LoadAsync(IReadOnlyList<McpSkillIndexEntry> entries, AgentSkillsSourceContext context, CancellationToken cancellationToken)
     {
         var skills = new List<AgentSkill>();
 

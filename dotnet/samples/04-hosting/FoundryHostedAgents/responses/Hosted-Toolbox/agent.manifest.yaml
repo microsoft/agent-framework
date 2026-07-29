@@ -1,10 +1,10 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+﻿# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
 name: hosted-toolbox
 displayName: "Hosted Toolbox"
 
 description: >
   A hosted agent that loads its tools from a single Foundry Toolbox via the
-  AF Foundry hosting bridge. AddFoundryToolboxes(name) connects to the Foundry
+  AF Foundry hosting bridge. AddFoundryToolboxes(credential, name) connects to the Foundry
   Toolboxes MCP proxy at startup and exposes the toolbox's bundled tools to the
   agent on every request. The toolbox itself is provisioned out of band; see this
   sample's README for the portal walkthrough.
@@ -23,7 +23,7 @@ template:
   kind: hosted
   protocols:
     - protocol: responses
-      version: 1.0.0
+      version: 2.0.0
   resources:
     cpu: "0.25"
     memory: 0.5Gi

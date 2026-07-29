@@ -15,7 +15,7 @@ import pytest
 from agent_framework import WorkflowEvent
 
 from agent_framework_durabletask import DurableWorkflowClient
-from agent_framework_durabletask._workflows.orchestrator import WORKFLOW_ORCHESTRATOR_NAME
+from agent_framework_durabletask._workflows.naming import workflow_orchestrator_name
 from agent_framework_durabletask._workflows.serialization import serialize_value, serialize_workflow_event
 
 
@@ -45,14 +45,14 @@ class TestStartWorkflow:
     def test_start_workflow_schedules_orchestrator(
         self, workflow_client: DurableWorkflowClient, mock_client: Mock
     ) -> None:
-        """start_workflow schedules the auto-registered orchestrator by name."""
+        """start_workflow schedules the per-workflow orchestration by name."""
         mock_client.schedule_new_orchestration.return_value = "instance-1"
 
-        result = workflow_client.start_workflow(input="hello")
+        result = workflow_client.start_workflow(input="hello", workflow_name="orders")
 
         assert result == "instance-1"
         mock_client.schedule_new_orchestration.assert_called_once_with(
-            WORKFLOW_ORCHESTRATOR_NAME, input="hello", instance_id=None
+            workflow_orchestrator_name("orders"), input="hello", instance_id=None
         )
 
     def test_start_workflow_passes_non_string_input_unchanged(
@@ -62,10 +62,27 @@ class TestStartWorkflow:
         mock_client.schedule_new_orchestration.return_value = "instance-2"
         payload = {"order_id": 42, "items": ["a", "b"]}
 
-        workflow_client.start_workflow(input=payload)
+        workflow_client.start_workflow(input=payload, workflow_name="orders")
 
         _, kwargs = mock_client.schedule_new_orchestration.call_args
         assert kwargs["input"] == payload
+
+    def test_start_workflow_strips_forged_subworkflow_envelope(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """Reserved sub-workflow envelope keys in client input are stripped at the boundary.
+
+        Only an internal child dispatch may carry these keys; if untrusted input could,
+        it would smuggle a payload onto the orchestrator's trusted (pickle) path.
+        """
+        mock_client.schedule_new_orchestration.return_value = "i"
+        forged = {"__subworkflow_input__": {"__pickled__": "evil", "__type__": "x"}, "real": 1}
+
+        workflow_client.start_workflow(input=forged, workflow_name="orders")
+
+        _, kwargs = mock_client.schedule_new_orchestration.call_args
+        assert kwargs["input"] == {"real": 1}
+        assert "__subworkflow_input__" not in kwargs["input"]
 
     def test_start_workflow_forwards_instance_id(
         self, workflow_client: DurableWorkflowClient, mock_client: Mock
@@ -73,10 +90,98 @@ class TestStartWorkflow:
         """An explicit instance id is forwarded to the underlying client."""
         mock_client.schedule_new_orchestration.return_value = "explicit-id"
 
-        workflow_client.start_workflow(input="x", instance_id="explicit-id")
+        workflow_client.start_workflow(input="x", workflow_name="orders", instance_id="explicit-id")
 
         _, kwargs = mock_client.schedule_new_orchestration.call_args
         assert kwargs["instance_id"] == "explicit-id"
+
+
+class TestWorkflowNameTargeting:
+    """Resolving the target workflow name from a default or per-call value."""
+
+    def test_uses_constructor_default(self, mock_client: Mock) -> None:
+        """A client default workflow name is used when none is passed per call."""
+        client = DurableWorkflowClient(mock_client, workflow_name="billing")
+        mock_client.schedule_new_orchestration.return_value = "i"
+
+        client.start_workflow(input="x")
+
+        mock_client.schedule_new_orchestration.assert_called_once_with(
+            workflow_orchestrator_name("billing"), input="x", instance_id=None
+        )
+
+    def test_per_call_overrides_default(self, mock_client: Mock) -> None:
+        """A per-call workflow name overrides the constructor default."""
+        client = DurableWorkflowClient(mock_client, workflow_name="billing")
+        mock_client.schedule_new_orchestration.return_value = "i"
+
+        client.start_workflow(input="x", workflow_name="orders")
+
+        mock_client.schedule_new_orchestration.assert_called_once_with(
+            workflow_orchestrator_name("orders"), input="x", instance_id=None
+        )
+
+    def test_raises_when_no_name_resolvable(self, workflow_client: DurableWorkflowClient) -> None:
+        """With no default and no per-call name, starting raises a clear error."""
+        with pytest.raises(ValueError, match="No workflow name"):
+            workflow_client.start_workflow(input="x")
+
+
+class TestOwnershipValidation:
+    """Opt-in validation that an instance belongs to the targeted workflow."""
+
+    def test_runtime_status_returns_none_for_foreign_instance(self, mock_client: Mock) -> None:
+        """A status query scoped to a workflow returns None for a foreign instance."""
+        client = DurableWorkflowClient(mock_client, workflow_name="orders")
+        state = Mock()
+        state.name = workflow_orchestrator_name("billing")  # different workflow
+        state.runtime_status.name = "RUNNING"
+        mock_client.get_orchestration_state.return_value = state
+
+        assert client.get_runtime_status("instance-1") is None
+
+    def test_runtime_status_returns_status_for_owned_instance(self, mock_client: Mock) -> None:
+        """A status query returns the status for an instance of the targeted workflow."""
+        client = DurableWorkflowClient(mock_client, workflow_name="orders")
+        state = Mock()
+        state.name = workflow_orchestrator_name("orders")
+        state.runtime_status.name = "RUNNING"
+        mock_client.get_orchestration_state.return_value = state
+
+        assert client.get_runtime_status("instance-1") == "RUNNING"
+
+    def test_pending_hitl_empty_for_foreign_instance(self, mock_client: Mock) -> None:
+        """Pending HITL is empty for an instance of a different workflow."""
+        client = DurableWorkflowClient(mock_client, workflow_name="orders")
+        state = Mock()
+        state.name = workflow_orchestrator_name("billing")
+        state.serialized_custom_status = json.dumps({"pending_requests": {"req-1": {"source_executor_id": "x"}}})
+        mock_client.get_orchestration_state.return_value = state
+
+        assert client.get_pending_hitl_requests("instance-1") == []
+
+    def test_send_hitl_rejects_foreign_instance(self, mock_client: Mock) -> None:
+        """Sending a HITL response to a foreign instance raises and does not deliver."""
+        client = DurableWorkflowClient(mock_client, workflow_name="orders")
+        state = Mock()
+        state.name = workflow_orchestrator_name("billing")
+        mock_client.get_orchestration_state.return_value = state
+
+        with pytest.raises(ValueError, match="does not belong"):
+            client.send_hitl_response("instance-1", "req-1", {"approved": True})
+
+        mock_client.raise_orchestration_event.assert_not_called()
+
+    def test_send_hitl_allows_owned_instance(self, mock_client: Mock) -> None:
+        """Sending a HITL response to an owned instance delivers the event."""
+        client = DurableWorkflowClient(mock_client, workflow_name="orders")
+        state = Mock()
+        state.name = workflow_orchestrator_name("orders")
+        mock_client.get_orchestration_state.return_value = state
+
+        client.send_hitl_response("instance-1", "req-1", {"approved": True})
+
+        mock_client.raise_orchestration_event.assert_called_once()
 
 
 class TestAwaitWorkflowOutput:
@@ -356,11 +461,12 @@ class TestRunWorkflow:
         """By default run_workflow starts the workflow and returns its deserialized output."""
         mock_client.schedule_new_orchestration.return_value = "instance-1"
         metadata = Mock()
+        metadata.name = workflow_orchestrator_name("orders")
         metadata.runtime_status.name = "COMPLETED"
         metadata.serialized_output = json.dumps(["done"])
         mock_client.wait_for_orchestration_completion.return_value = metadata
 
-        result = await workflow_client.run_workflow(input="hello")
+        result = await workflow_client.run_workflow(input="hello", workflow_name="orders")
 
         assert result == ["done"]
         mock_client.schedule_new_orchestration.assert_called_once()
@@ -372,7 +478,215 @@ class TestRunWorkflow:
         """With wait=False, run_workflow returns the instance id and does not await completion."""
         mock_client.schedule_new_orchestration.return_value = "instance-2"
 
-        result = await workflow_client.run_workflow(input="hello", wait=False)
+        result = await workflow_client.run_workflow(input="hello", workflow_name="orders", wait=False)
 
         assert result == "instance-2"
         mock_client.wait_for_orchestration_completion.assert_not_called()
+
+
+class TestSubworkflowHitl:
+    """Sub-workflow HITL: qualified request ids in/out (B2 single-surface addressing)."""
+
+    @staticmethod
+    def _states(mock_client: Mock, by_instance: dict[str, dict | None]) -> None:
+        """Wire get_orchestration_state to return a state per instance id.
+
+        Each value is the custom-status dict for that instance (or None for no
+        status). ``name`` is unset so ownership validation is skipped (these tests
+        construct the client without a workflow_name default).
+        """
+
+        def _get_state(instance_id: str) -> Mock | None:
+            if instance_id not in by_instance:
+                return None
+            status = by_instance[instance_id]
+            state = Mock()
+            state.serialized_custom_status = json.dumps(status) if status is not None else None
+            return state
+
+        mock_client.get_orchestration_state.side_effect = _get_state
+
+    def test_collects_nested_request_with_qualified_id(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """A request pending in a child sub-workflow surfaces with an {executor}~{ordinal}~{id} id."""
+        self._states(
+            mock_client,
+            {
+                "parent": {"state": "running", "subworkflows": {"sub": ["child-1"]}},
+                "child-1": {
+                    "state": "waiting_for_human_input",
+                    "pending_requests": {"req-9": {"request_id": "req-9", "source_executor_id": "inner_node"}},
+                },
+            },
+        )
+
+        requests = workflow_client.get_pending_hitl_requests("parent")
+
+        assert len(requests) == 1
+        assert requests[0]["request_id"] == "sub~0~req-9"
+        assert requests[0]["source_executor_id"] == "inner_node"
+
+    def test_collects_parent_and_nested_requests_together(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """Top-level and nested pending requests are both returned (nested qualified)."""
+        self._states(
+            mock_client,
+            {
+                "parent": {
+                    "state": "waiting_for_human_input",
+                    "pending_requests": {"top-1": {"request_id": "top-1", "source_executor_id": "outer_node"}},
+                    "subworkflows": {"sub": ["child-1"]},
+                },
+                "child-1": {
+                    "state": "waiting_for_human_input",
+                    "pending_requests": {"inner-1": {"request_id": "inner-1", "source_executor_id": "inner_node"}},
+                },
+            },
+        )
+
+        ids = {r["request_id"] for r in workflow_client.get_pending_hitl_requests("parent")}
+
+        assert ids == {"top-1", "sub~0~inner-1"}
+
+    def test_collects_deeply_nested_request_with_full_path(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """Two levels of nesting accumulate a full {a}~{i}~{b}~{j}~{id} path."""
+        self._states(
+            mock_client,
+            {
+                "parent": {"state": "running", "subworkflows": {"mid": ["child-1"]}},
+                "child-1": {"state": "running", "subworkflows": {"leaf": ["child-2"]}},
+                "child-2": {
+                    "state": "waiting_for_human_input",
+                    "pending_requests": {"deep": {"request_id": "deep", "source_executor_id": "leaf_node"}},
+                },
+            },
+        )
+
+        requests = workflow_client.get_pending_hitl_requests("parent")
+
+        assert [r["request_id"] for r in requests] == ["mid~0~leaf~0~deep"]
+
+    def test_send_qualified_response_routes_to_child_instance(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """A qualified id resolves to the owning child instance and bare request id."""
+        self._states(
+            mock_client,
+            {"parent": {"state": "running", "subworkflows": {"sub": ["child-1"]}}},
+        )
+
+        workflow_client.send_hitl_response("parent", "sub~0~req-9", {"approved": True})
+
+        mock_client.raise_orchestration_event.assert_called_once()
+        args, kwargs = mock_client.raise_orchestration_event.call_args
+        assert args[0] == "child-1"
+        assert kwargs["event_name"] == "req-9"
+        assert kwargs["data"] == {"approved": True}
+
+    def test_send_deeply_qualified_response_routes_to_leaf(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """A two-level qualified id lands on the leaf child with the bare id."""
+        self._states(
+            mock_client,
+            {
+                "parent": {"state": "running", "subworkflows": {"mid": ["child-1"]}},
+                "child-1": {"state": "running", "subworkflows": {"leaf": ["child-2"]}},
+            },
+        )
+
+        workflow_client.send_hitl_response("parent", "mid~0~leaf~0~deep", {"ok": 1})
+
+        args, kwargs = mock_client.raise_orchestration_event.call_args
+        assert args[0] == "child-2"
+        assert kwargs["event_name"] == "deep"
+
+    def test_send_qualified_response_unknown_subworkflow_raises(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """A qualified id for an inactive sub-workflow raises and delivers nothing."""
+        self._states(mock_client, {"parent": {"state": "running"}})  # no subworkflows map
+
+        with pytest.raises(ValueError, match="No active sub-workflow"):
+            workflow_client.send_hitl_response("parent", "sub~0~req-9", {"approved": True})
+
+        mock_client.raise_orchestration_event.assert_not_called()
+
+    def test_unqualified_response_still_targets_named_instance(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """A plain (unqualified) request id targets the given instance directly."""
+        self._states(mock_client, {"parent": {"state": "waiting_for_human_input"}})
+
+        workflow_client.send_hitl_response("parent", "req-1", {"approved": True})
+
+        args, kwargs = mock_client.raise_orchestration_event.call_args
+        assert args[0] == "parent"
+        assert kwargs["event_name"] == "req-1"
+
+    def test_multiple_children_of_one_executor_stay_addressable(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """Two children dispatched by one node are qualified by ordinal, not collapsed."""
+        self._states(
+            mock_client,
+            {
+                "parent": {"state": "running", "subworkflows": {"sub": ["child-1", "child-2"]}},
+                "child-1": {
+                    "state": "waiting_for_human_input",
+                    "pending_requests": {"r1": {"request_id": "r1", "source_executor_id": "a"}},
+                },
+                "child-2": {
+                    "state": "waiting_for_human_input",
+                    "pending_requests": {"r2": {"request_id": "r2", "source_executor_id": "b"}},
+                },
+            },
+        )
+
+        ids = {r["request_id"] for r in workflow_client.get_pending_hitl_requests("parent")}
+        assert ids == {"sub~0~r1", "sub~1~r2"}
+
+        # The second child (ordinal 1) is reachable, not shadowed by the first.
+        workflow_client.send_hitl_response("parent", "sub~1~r2", {"ok": 1})
+        args, kwargs = mock_client.raise_orchestration_event.call_args
+        assert args[0] == "child-2"
+        assert kwargs["event_name"] == "r2"
+
+    def test_nested_leaf_request_id_with_double_colon_round_trips(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """A functional sub-workflow's ``auto::N`` leaf id survives qualification and routing."""
+        self._states(
+            mock_client,
+            {
+                "parent": {"state": "running", "subworkflows": {"sub": ["child-1"]}},
+                "child-1": {
+                    "state": "waiting_for_human_input",
+                    "pending_requests": {"auto::0": {"request_id": "auto::0", "source_executor_id": "fn"}},
+                },
+            },
+        )
+
+        requests = workflow_client.get_pending_hitl_requests("parent")
+        assert [r["request_id"] for r in requests] == ["sub~0~auto::0"]
+
+        workflow_client.send_hitl_response("parent", "sub~0~auto::0", {"ok": 1})
+        args, kwargs = mock_client.raise_orchestration_event.call_args
+        assert args[0] == "child-1"
+        assert kwargs["event_name"] == "auto::0"
+
+    def test_top_level_auto_request_id_is_not_treated_as_nested(
+        self, workflow_client: DurableWorkflowClient, mock_client: Mock
+    ) -> None:
+        """A top-level ``auto::N`` id (contains ``::`` but no ``~``) routes to the instance itself."""
+        self._states(mock_client, {"parent": {"state": "waiting_for_human_input"}})
+
+        workflow_client.send_hitl_response("parent", "auto::0", {"approved": True})
+
+        args, kwargs = mock_client.raise_orchestration_event.call_args
+        assert args[0] == "parent"
+        assert kwargs["event_name"] == "auto::0"

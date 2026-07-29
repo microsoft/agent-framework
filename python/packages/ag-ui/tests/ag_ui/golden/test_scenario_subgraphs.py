@@ -78,13 +78,11 @@ async def test_subgraphs_turn1_interrupt_structure() -> None:
         },
     )
 
-    finished = stream.last("RUN_FINISHED")
-    interrupt = getattr(finished, "interrupt", None)
-    assert interrupt is not None, "Expected interrupt in RUN_FINISHED"
-    assert isinstance(interrupt, list)
+    interrupt = stream.run_finished_interrupts()
     assert len(interrupt) > 0
-    assert interrupt[0]["value"]["agent"] == "flights"
-    assert len(interrupt[0]["value"]["options"]) == 2
+    interrupt_value = stream.interrupt_metadata_value(interrupt[0])
+    assert interrupt_value["agent"] == "flights"
+    assert len(interrupt_value["options"]) == 2
 
 
 async def test_subgraphs_turn1_text_messages_balanced() -> None:
@@ -143,8 +141,7 @@ async def test_subgraphs_full_flow_event_ordering() -> None:
     stream1.assert_no_run_error()
 
     # Extract flight interrupt
-    finished1 = stream1.last("RUN_FINISHED")
-    interrupt1 = finished1.model_dump()["interrupt"][0]
+    interrupt1 = stream1.run_finished_interrupts()[0]
 
     # Turn 2: Select flight
     stream2 = await _run(
@@ -174,9 +171,8 @@ async def test_subgraphs_full_flow_event_ordering() -> None:
     stream2.assert_no_run_error()
 
     # Should now have hotel interrupt
-    finished2 = stream2.last("RUN_FINISHED")
-    interrupt2 = finished2.model_dump()["interrupt"]
-    assert interrupt2[0]["value"]["agent"] == "hotels"
+    interrupt2 = stream2.run_finished_interrupts()
+    assert stream2.interrupt_metadata_value(interrupt2[0])["agent"] == "hotels"
 
     # Turn 3: Select hotel
     stream3 = await _run(
@@ -207,5 +203,5 @@ async def test_subgraphs_full_flow_event_ordering() -> None:
 
     # Final turn should not have interrupt
     finished3 = stream3.last("RUN_FINISHED")
-    final_interrupt = getattr(finished3, "interrupt", None)
-    assert not final_interrupt, f"Expected no interrupt after completion, got {final_interrupt}"
+    final_dump = finished3.model_dump(by_alias=True, exclude_none=True)
+    assert "outcome" not in final_dump, f"Expected no interrupt after completion, got {final_dump.get('outcome')}"

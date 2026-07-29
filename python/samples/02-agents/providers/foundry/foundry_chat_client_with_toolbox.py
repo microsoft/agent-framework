@@ -3,7 +3,7 @@
 import asyncio
 import os
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.foundry import FoundryChatClient
@@ -50,8 +50,12 @@ def create_sample_toolbox(name: str) -> str:
         AzureCliCredential() as credential,
         AIProjectClient(credential=credential, endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"]) as project_client,
     ):
+        toolboxes = getattr(project_client, "toolboxes", None)
+        if toolboxes is None:
+            toolboxes = cast(Any, project_client.beta).toolboxes
+
         try:
-            project_client.beta.toolboxes.delete(name)
+            toolboxes.delete(name)
             print(f"Toolbox `{name}` deleted")
         except ResourceNotFoundError:
             pass
@@ -64,7 +68,7 @@ def create_sample_toolbox(name: str) -> str:
             )
         ]
 
-        created = project_client.beta.toolboxes.create_version(
+        created = toolboxes.create_version(
             name=name,
             description="Toolbox version with MCP require_approval set to 'never'.",
             tools=tools,
