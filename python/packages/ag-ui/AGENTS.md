@@ -33,6 +33,8 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   resumed messages, while `TOOL_CALL_RESULT` events are emitted only for terminal `function_result` contents.
 - Approval responses for tools injected during `before_run` are deferred to the in-run approval middleware rather
   than executed or rejected by the transport before those tools exist.
+- `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
+  it must never concatenate unrelated tool results when several calls are present.
 - SSE keepalive is endpoint-owned transport behavior configured through
   `add_agent_framework_fastapi_endpoint(keepalive_seconds=...)`. It emits SSE comments only; do not add `PING`,
   `HEARTBEAT`, or `KEEPALIVE` AG-UI events, and do not add runner-level keepalive settings.

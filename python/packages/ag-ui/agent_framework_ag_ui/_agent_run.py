@@ -1406,6 +1406,39 @@ def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
     messages[:] = result
 
 
+def _confirm_changes_target_call_id(
+    snapshot_messages: list[dict[str, Any]],
+    confirm_call_id: str,
+    approval_payload: Mapping[str, Any],
+) -> str | None:
+    explicit_call_id = approval_payload.get("function_call_id")
+    if explicit_call_id:
+        return str(explicit_call_id)
+
+    for snapshot_message in snapshot_messages:
+        if normalize_agui_role(snapshot_message.get("role", "")) != "assistant":
+            continue
+        tool_calls = snapshot_message.get("tool_calls") or snapshot_message.get("toolCalls")
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, Mapping) or str(tool_call.get("id") or "") != confirm_call_id:
+                continue
+            function = tool_call.get("function")
+            if not isinstance(function, Mapping) or function.get("name") != "confirm_changes":
+                return None
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    return None
+            if isinstance(arguments, Mapping) and arguments.get("function_call_id"):
+                return str(arguments["function_call_id"])
+            return None
+    return None
+
+
 def _clean_resolved_approvals_from_snapshot(
     snapshot_messages: list[dict[str, Any]],
     resolved_messages: list[Message],
@@ -1439,9 +1472,6 @@ def _clean_resolved_approvals_from_snapshot(
                 )
                 result_by_call_id[str(content.call_id)] = result_text
 
-    if not result_by_call_id:
-        return
-
     for snap_msg in snapshot_messages:
         if normalize_agui_role(snap_msg.get("role", "")) != "tool":
             continue
@@ -1460,12 +1490,23 @@ def _clean_resolved_approvals_from_snapshot(
         # Find matching tool result by toolCallId
         tool_call_id = snap_msg.get("toolCallId") or snap_msg.get("tool_call_id") or ""
         replacement = result_by_call_id.get(str(tool_call_id))
-        if replacement is not None:
-            snap_msg["content"] = replacement
-            logger.info(
-                "Replaced approval payload in snapshot for tool_call_id=%s with actual result",
-                tool_call_id,
+        if replacement is None:
+            target_call_id = _confirm_changes_target_call_id(
+                snapshot_messages,
+                str(tool_call_id),
+                parsed,
             )
+            if target_call_id is None:
+                continue
+            if parsed.get("accepted"):
+                replacement = result_by_call_id.get(target_call_id, "Changes confirmed and applied successfully.")
+            else:
+                replacement = "Changes declined."
+        snap_msg["content"] = replacement
+        logger.info(
+            "Replaced approval payload in snapshot for tool_call_id=%s with resolved content",
+            tool_call_id,
+        )
 
 
 def _snapshot_tool_call_ids(message: Mapping[str, Any]) -> list[str]:

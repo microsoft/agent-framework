@@ -474,6 +474,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | AG-UI approval-time follow-up | The full grouped user-input pause remains in message history and emits no synthetic `TOOL_CALL_RESULT`. | `test_resolve_approval_responses_preserves_follow_up_user_input_group` |
 | AG-UI approval execution failure | A grouped executor failure becomes one deterministic terminal error result for the approved call. | `test_resolve_approval_responses_returns_failure_when_grouped_execution_raises` |
 | AG-UI no-approval path | Ordinary tool results do not gain an extra approval result event. | `test_no_approval_no_extra_tool_result` |
+| AG-UI `confirm_changes` snapshot | The synthetic confirmation result is replaced only by the result for its original function call; rejection and missing-result fallbacks contain no approval payload. | `packages/ag-ui/tests/ag_ui/test_confirm_changes_snapshot.py` |
+| AG-UI malformed `confirm_changes` metadata | Non-list tool-call metadata and malformed argument JSON are ignored without guessing a target call. | `test_confirm_changes_target_ignores_non_list_tool_calls`, `test_confirm_changes_target_rejects_malformed_arguments_json` |
 | Compaction pair integrity | Function call/result groups remain atomic. | `packages/core/tests/core/test_compaction.py::test_group_annotations_keep_tool_call_and_tool_result_atomic`, `test_group_annotations_include_reasoning_in_tool_call_group` |
 
 ## Required coverage gaps
@@ -487,7 +489,6 @@ These scenarios are required but are not fully covered by merged tests on `main`
 | Service-owned `previous_response_id` continuation cannot execute a terminal approval again on a later turn. | #6851 |
 | A provider that ignores `tool_choice="none"` after an invocation limit cannot expose an unanswered call. | #7045 |
 | Declaration-only streaming preserves request metadata without duplicating arguments. | #6973 |
-| AG-UI `confirm_changes` cleanup correlates one result by original function call id when several results exist. | #6828 |
 
 Do not mark these rows covered by nearby tests; each needs a dedicated regression at the owning layer.
 
@@ -537,6 +538,7 @@ Before accepting an update, reviewers must confirm:
 - #7241 — approval-resolution result streaming
 - #7267 / #7271 and #7304 — replayed calls and reused ids
 - #7043 — provider-injected approval execution
+- #6828 — AG-UI `confirm_changes` snapshot correlation
 - #6851 — duplicate side effects after approval continuation
 - #7383 — bind approval responses to framework-issued requests after this foundation merges
 - #6963 / #7095 — opaque reasoning-signature replay
