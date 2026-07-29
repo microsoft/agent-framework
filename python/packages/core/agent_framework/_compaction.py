@@ -969,13 +969,17 @@ def _tool_result_text(value: Any) -> str:
     return str(cast(object, value))
 
 
-def _format_messages_for_summary(messages: list[Message]) -> str:
+def _format_summary_message(index: int, message: Message) -> str:
+    content_text = message.text
+    if not content_text:
+        content_text = ", ".join(content.type for content in message.contents)
+    return f"{index}. [{message.role}] {content_text}"
+
+
+def _format_messages_for_summary(messages: list[Message], *, start_index: int = 1) -> str:
     lines: list[str] = []
-    for index, message in enumerate(messages, start=1):
-        content_text = message.text
-        if not content_text:
-            content_text = ", ".join(content.type for content in message.contents)
-        lines.append(f"{index}. [{message.role}] {content_text}")
+    for index, message in enumerate(messages, start=start_index):
+        lines.append(_format_summary_message(index, message))
     return "\n".join(lines)
 
 
@@ -995,17 +999,24 @@ def _select_summary_input_groups(
     selected_group_ids: list[str] = []
     selected_messages: list[Message] = []
     prompt_token_count = tokenizer.count_tokens(prompt)
+    selected_message_count = 0
+    selected_text_token_count = 0
+    separator_token_count = tokenizer.count_tokens("\n")
 
     for group_id, group_messages in groups:
-        candidate_messages = [*selected_messages, *group_messages]
-        candidate_text = _format_messages_for_summary(candidate_messages)
-        candidate_token_count = prompt_token_count + tokenizer.count_tokens(candidate_text)
+        group_text = _format_messages_for_summary(group_messages, start_index=selected_message_count + 1)
+        candidate_text_token_count = selected_text_token_count + tokenizer.count_tokens(group_text)
+        if selected_messages:
+            candidate_text_token_count += separator_token_count
+        candidate_token_count = prompt_token_count + candidate_text_token_count
         if candidate_token_count > max_summary_input_tokens:
             if not selected_messages:
                 continue
             break
         selected_group_ids.append(group_id)
-        selected_messages = candidate_messages
+        selected_messages.extend(group_messages)
+        selected_message_count += len(group_messages)
+        selected_text_token_count = candidate_text_token_count
 
     return selected_group_ids, selected_messages
 

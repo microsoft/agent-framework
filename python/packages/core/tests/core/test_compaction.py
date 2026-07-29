@@ -35,6 +35,7 @@ from agent_framework import (
     included_token_count,
 )
 from agent_framework._compaction import (
+    _select_summary_input_groups,
     _serialize_message,
     append_compaction_message,
     extend_compaction_messages,
@@ -478,7 +479,7 @@ class _EmptySummarizer:
 
 
 class _ScriptedSummarizer:
-    def __init__(self, outcomes: list[str | BaseException]) -> None:
+    def __init__(self, outcomes: list[str | Exception]) -> None:
         self.outcomes = outcomes
 
     async def get_response(
@@ -490,7 +491,7 @@ class _ScriptedSummarizer:
         **kwargs: Any,
     ) -> ChatResponse:
         outcome = self.outcomes.pop(0)
-        if isinstance(outcome, BaseException):
+        if isinstance(outcome, Exception):
             raise outcome
         return ChatResponse(messages=[Message(role="assistant", contents=[outcome])])
 
@@ -513,6 +514,15 @@ class _RecordingSummarizer:
 
 class _CharacterCountTokenizer:
     def count_tokens(self, text: str) -> int:
+        return len(text)
+
+
+class _RecordingCharacterCountTokenizer:
+    def __init__(self) -> None:
+        self.seen_texts: list[str] = []
+
+    def count_tokens(self, text: str) -> int:
+        self.seen_texts.append(text)
         return len(text)
 
 
@@ -614,6 +624,33 @@ async def test_summarization_strategy_skips_oversized_first_group() -> None:
     assert "small later group" in summary_request_text
     assert oversized_message.additional_properties.get(EXCLUDED_KEY) is not True
     assert small_message.additional_properties.get(EXCLUDED_KEY) is True
+
+
+def test_summary_input_selection_does_not_retokenize_selected_transcript() -> None:
+    tokenizer = _RecordingCharacterCountTokenizer()
+    groups = [
+        ("group_1", [Message(role="user", contents=["first"])]),
+        ("group_2", [Message(role="assistant", contents=["second"])]),
+        ("group_3", [Message(role="user", contents=["third"])]),
+    ]
+
+    selected_group_ids, selected_messages = _select_summary_input_groups(
+        groups,
+        prompt="prompt",
+        max_summary_input_tokens=1_000,
+        tokenizer=tokenizer,
+    )
+
+    assert selected_group_ids == ["group_1", "group_2", "group_3"]
+    assert selected_messages == [message for _, group_messages in groups for message in group_messages]
+    assert (
+        "\n".join([
+            "1. [user] first",
+            "2. [assistant] second",
+            "3. [user] third",
+        ])
+        not in tokenizer.seen_texts
+    )
 
 
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(
