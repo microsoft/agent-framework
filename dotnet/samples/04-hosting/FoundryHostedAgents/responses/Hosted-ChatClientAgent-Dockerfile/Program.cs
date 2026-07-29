@@ -1,8 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Sample: a minimal general-purpose AI assistant hosted as a Foundry Hosted Agent
-// using the Responses protocol. It is deployed to Foundry directly from source
-// (code / ZIP upload), so the platform builds and runs it with no container image.
+// using the Responses protocol. It is deployed to Foundry as a container image built
+// from the Dockerfile in this folder.
+//
+// The sibling Hosted-ChatClientAgent sample is the same agent deployed the other way,
+// straight from source with no container image. Compare the two folders to see exactly
+// what the container path adds.
 
 using Azure.AI.Projects;
 using Azure.Identity;
@@ -25,7 +29,7 @@ var model = FirstNonBlank(
     System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
     "gpt-4o");
 
-var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-chat-client-agent";
+var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-chat-client-agent-docker";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful
 // consideration in production. Consider a specific credential (for example

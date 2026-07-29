@@ -1,17 +1,16 @@
 ﻿<Project>
 
   <!--
-    Source (ZIP) deploy sample. The code-deploy upload is a flat folder with no repo-level props,
-    so this project is intentionally self-contained: a single target framework and explicit package
-    versions. Foundry runs `dotnet restore` + `dotnet publish` on it during provisioning
-    (dependencyResolution: remote_build in azure.yaml).
+    Container deploy sample. Foundry builds the Dockerfile in this folder and runs the resulting
+    image, so unlike the source (ZIP) path there is no server-side `dotnet restore` on a bare
+    folder: the restore happens inside the container build.
 
     ImportDirectoryPackagesProps has to be set before the SDK props are imported, hence the explicit
     Sdk imports below instead of the usual Sdk attribute on the Project element. It stops MSBuild
     from walking up to the repository's dotnet/Directory.Packages.props, which does two things this
     sample must avoid: it turns on central package management, and it injects analyzer
-    PackageReference items whose versions it also supplies. Neither exists inside the ZIP, so
-    without this the in-repo build would resolve differently from the server-side build.
+    PackageReference items whose versions it also supplies. Neither exists inside the container
+    build context, so without this the in-repo build would resolve differently from the image build.
   -->
 
   <PropertyGroup>
@@ -21,16 +20,16 @@
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk.Web" />
 
   <PropertyGroup>
-    <!-- Single target: the Foundry dotnet_10 runtime publishes without -f, so the
-         project must not multi-target. The empty TargetFrameworks clears the value
-         inherited from the repo's samples Directory.Build.props for in-repo builds. -->
+    <!-- Single target: the Dockerfile publishes without -f, so the project must not multi-target.
+         The empty TargetFrameworks clears the value inherited from the repo's samples
+         Directory.Build.props for in-repo builds. -->
     <TargetFramework>net10.0</TargetFramework>
     <TargetFrameworks></TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>HostedChatClientAgent</RootNamespace>
-    <AssemblyName>HostedChatClientAgent</AssemblyName>
-    <UserSecretsId>222d2622-da26-4da0-99b4-0507fb8d41b0</UserSecretsId>
+    <RootNamespace>HostedChatClientAgentDocker</RootNamespace>
+    <AssemblyName>HostedChatClientAgentDocker</AssemblyName>
+    <UserSecretsId>7b1c3f04-24a1-4f0e-9a5e-0d2f6b8c1e57</UserSecretsId>
     <AgentFrameworkVersion>1.15.0-preview.260722.1</AgentFrameworkVersion>
   </PropertyGroup>
 

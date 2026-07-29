@@ -385,3 +385,61 @@ async def test_checkpoint_restore_with_partial_responses_reemits_unhandled_reque
         assert final_status.state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS, (
             f"Workflow should be IDLE_WITH_PENDING_REQUESTS, got {final_status.state}"
         )
+
+
+async def test_apply_checkpoint_drops_stale_events() -> None:
+    """apply_checkpoint should drop events left over from a prior run.
+
+    After restore, only the pending request_info events carried by the checkpoint are
+    re-emitted onto the event queue; unrelated events queued earlier must be discarded so
+    they don't leak into the resumed run.
+    """
+    # Build a checkpoint that carries a single pending request_info event.
+    source = InProcRunnerContext(InMemoryCheckpointStorage())
+    keep_event = WorkflowEvent.request_info(
+        request_id="keep-me",
+        source_executor_id="gateway",
+        request_data=MockRequest(),
+        response_type=bool,
+    )
+    await source.add_request_info_event(keep_event)
+    checkpoint_id = await source.create_checkpoint("test_name", "test_hash", State(), None, iteration_count=1)
+    checkpoint = await source.load_checkpoint(checkpoint_id)
+    assert checkpoint is not None
+
+    # Target context has a stale event queued from a prior run.
+    target = InProcRunnerContext(InMemoryCheckpointStorage())
+    stale_event = WorkflowEvent.request_info(
+        request_id="stale",
+        source_executor_id="old",
+        request_data=MockRequest(),
+        response_type=bool,
+    )
+    await target.add_event(stale_event)
+    assert await target.has_events()
+
+    await target.apply_checkpoint(checkpoint)
+
+    events = await target.drain_events()
+    request_ids = [event.request_id for event in events]
+    assert request_ids == ["keep-me"]
+    assert "stale" not in request_ids
+
+
+async def test_apply_checkpoint_preserves_streaming_flag() -> None:
+    """apply_checkpoint must not reset the streaming flag set before restore.
+
+    The run pipeline calls set_streaming() before restoring, so applying a checkpoint must
+    leave the flag untouched (unlike the deprecated reset_for_new_run, which clears it).
+    """
+    source = InProcRunnerContext(InMemoryCheckpointStorage())
+    checkpoint_id = await source.create_checkpoint("test_name", "test_hash", State(), None, iteration_count=1)
+    checkpoint = await source.load_checkpoint(checkpoint_id)
+    assert checkpoint is not None
+
+    target = InProcRunnerContext(InMemoryCheckpointStorage())
+    target.set_streaming(True)
+
+    await target.apply_checkpoint(checkpoint)
+
+    assert target.is_streaming() is True

@@ -21,7 +21,7 @@ from .._types import ResponseStream
 from ..exceptions import WorkflowException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage
-from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
+from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
     EdgeGroup,
     FanOutEdgeGroup,
@@ -35,7 +35,7 @@ from ._events import (
 from ._executor import Executor
 from ._model_utils import DictConvertible
 from ._runner import RunnerImpl
-from ._runner_context import RunnerContext
+from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
 from ._validation import ValidationTypeEnum, WorkflowValidationError
@@ -299,6 +299,8 @@ class Workflow(DictConvertible):
             start_executor: The starting executor for the workflow.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
+                The first iteration is the initial run of the start executor, and each subsequent
+                iteration is a superstep.
             name: A human-readable name for the workflow. This can be used to identify the workflow in
                 checkpoints, and telemetry. If the workflow is built using WorkflowBuilder, this will be the
                 name of the builder. This name should be unique across different workflow definitions for
@@ -654,15 +656,28 @@ class Workflow(DictConvertible):
 
         # Handle initial message
         elif message is not None:
-            executor = self.get_start_executor()
-            await executor.execute(
-                message,
-                [self.__class__.__name__],
-                self._runner.state,
-                self._runner.context,
-                trace_contexts=None,
-                source_span_ids=None,
+            # Seed the initial input through the start executor's internal self-edge. If the caller
+            # passed a WorkflowMessage, unwrap it so we don't double-wrap.
+            start_id = self.start_executor_id
+            data = message.data if isinstance(message, WorkflowMessage) else message
+            entry_message = WorkflowMessage(
+                data=data,
+                source_id=INTERNAL_SOURCE_ID(start_id),
+                target_id=start_id,
             )
+
+            # Ensure that the start executor can handle the input type.
+            start_executor = self.get_start_executor()
+            if not start_executor.can_handle(entry_message):
+                raise RuntimeError(
+                    f"Start executor '{start_id}' cannot handle input of type '{type(data).__name__}'. "
+                    f"Expected input types: {start_executor.input_types}."
+                )
+
+            await self._runner.context.send_message(entry_message)
+            # Record the entry checkpoint capturing the seeded input before any
+            # executor runs. The runner only checkpoints after each superstep.
+            await self._runner.create_checkpoint_if_enabled()
 
     @overload
     def run(
@@ -1018,6 +1033,12 @@ class Workflow(DictConvertible):
             self._runner.context.send_request_info_response(request_id, response)
             for request_id, response in coerced_responses.items()
         ])
+
+        # Record a response-entry checkpoint capturing the delivered responses in-flight, before the
+        # runner processes them in the next superstep. This mirrors the initial-message entry
+        # checkpoint so a human-in-the-loop continuation is fully replayable: resuming from this
+        # checkpoint re-delivers the responses and replays the superstep that consumes them.
+        await self._runner.create_checkpoint_if_enabled()
 
     def _get_executor_by_id(self, executor_id: str) -> Executor:
         """Get an executor by its ID.
