@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import inspect
 import logging
@@ -387,6 +388,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         self._started = False
         self._current_session_id: str | None = None
         self._structured_output: Any = None
+        self._session_lock = asyncio.Lock()
 
     def _normalize_tools(
         self,
@@ -449,21 +451,37 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
     async def _ensure_session(self, session_id: str | None = None) -> None:
         """Ensure the client is connected for the specified session.
 
-        If the requested session differs from the current one, recreates the client.
+        A ``ClaudeSDKClient`` is stateful and represents a single provider
+        conversation. Deciding whether to reuse it is therefore an isolation
+        decision, not just a connection optimization: a fresh session
+        (``session_id is None``) must never inherit the provider conversation of
+        a previously started client, otherwise independent sessions running
+        against the same agent instance would share conversation state. A new
+        client is created when there is no started client, when a fresh session
+        is requested, or when an explicit continuation id differs from the
+        currently connected one.
 
         Args:
-            session_id: The session ID to use, or None for a new session.
+            session_id: The provider continuation id to resume, or None for a
+                fresh session that must get its own client.
         """
-        needs_new_client = (
-            not self._started or self._client is None or (session_id and session_id != self._current_session_id)
-        )
+        async with self._session_lock:
+            needs_new_client = (
+                not self._started
+                or self._client is None
+                or session_id is None
+                or session_id != self._current_session_id
+            )
 
-        if needs_new_client:
+            if not needs_new_client:
+                return
+
             # Stop existing client if any
             if self._client and self._owns_client:
                 with contextlib.suppress(Exception):
                     await self._client.disconnect()
-                self._started = False
+            self._started = False
+            self._current_session_id = None
 
             # Create new client with resume option if needed
             opts = self._prepare_client_options(resume_session_id=session_id)

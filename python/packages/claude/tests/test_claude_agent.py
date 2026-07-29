@@ -607,6 +607,60 @@ class TestClaudeAgentSessionManagement:
             # Only called once
             assert mock_client_class.call_count == 1
 
+    async def test_ensure_session_creates_new_client_for_each_fresh_session(self) -> None:
+        """Two fresh (None) sessions must each get their own client.
+
+        A fresh session must never inherit a previously started client's
+        provider conversation, otherwise independent sessions running against
+        the same agent instance would share conversation state.
+        """
+        with patch("agent_framework_claude._agent.ClaudeSDKClient") as mock_client_class:
+            mock_client1 = MagicMock()
+            mock_client1.connect = AsyncMock()
+            mock_client1.disconnect = AsyncMock()
+
+            mock_client2 = MagicMock()
+            mock_client2.connect = AsyncMock()
+            mock_client2.disconnect = AsyncMock()
+
+            mock_client_class.side_effect = [mock_client1, mock_client2]
+
+            agent = ClaudeAgent()
+
+            # First fresh session starts a client.
+            await agent._ensure_session(None)  # type: ignore[reportPrivateUsage]
+
+            # A second, independent fresh session must not reuse the first client.
+            await agent._ensure_session(None)  # type: ignore[reportPrivateUsage]
+
+            assert mock_client_class.call_count == 2
+            mock_client1.disconnect.assert_called_once()
+            assert agent._client is mock_client2  # type: ignore[reportPrivateUsage]
+
+    async def test_ensure_session_resumes_bound_session(self) -> None:
+        """A run with a continuation id resumes rather than recreating the client."""
+        with patch("agent_framework_claude._agent.ClaudeSDKClient") as mock_client_class:
+            mock_client1 = MagicMock()
+            mock_client1.connect = AsyncMock()
+            mock_client1.disconnect = AsyncMock()
+
+            mock_client2 = MagicMock()
+            mock_client2.connect = AsyncMock()
+
+            mock_client_class.side_effect = [mock_client1, mock_client2]
+
+            agent = ClaudeAgent()
+
+            # Fresh session starts a client and becomes bound to a provider id.
+            await agent._ensure_session(None)  # type: ignore[reportPrivateUsage]
+            agent._current_session_id = "provider-session-1"  # type: ignore[reportPrivateUsage]
+
+            # Re-running with the same continuation id reuses the client.
+            await agent._ensure_session("provider-session-1")  # type: ignore[reportPrivateUsage]
+
+            assert mock_client_class.call_count == 1
+            mock_client1.disconnect.assert_not_called()
+
 
 # region Test ClaudeAgent Tool Conversion
 
