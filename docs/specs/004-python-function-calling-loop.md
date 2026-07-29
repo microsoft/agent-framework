@@ -476,7 +476,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | AG-UI no-approval path | Ordinary tool results do not gain an extra approval result event. | `test_no_approval_no_extra_tool_result` |
 | AG-UI `confirm_changes` snapshot | An accepted synthetic confirmation is replaced only when its original function call has a real result; rejection is cleaned explicitly, and missing accepted results remain inert. | `packages/ag-ui/tests/ag_ui/test_confirm_changes_snapshot.py` |
 | AG-UI malformed `confirm_changes` metadata | Non-list tool-call metadata and malformed argument JSON are ignored without guessing a target call. | `test_confirm_changes_target_ignores_non_list_tool_calls`, `test_confirm_changes_target_rejects_malformed_arguments_json` |
-| Compaction pair integrity | Function call/result groups remain atomic. | `packages/core/tests/core/test_compaction.py::test_group_annotations_keep_tool_call_and_tool_result_atomic`, `test_group_annotations_include_reasoning_in_tool_call_group` |
+| Compaction pair integrity | Adjacent, non-adjacent, and completed reused-id call/result occurrences remain atomic without pairing ambiguous or out-of-order ids. | `packages/core/tests/core/test_compaction.py::test_group_annotations_keep_tool_call_and_tool_result_atomic`, `test_group_annotations_include_reasoning_in_tool_call_group`, `test_group_annotations_pair_nonadjacent_function_result_by_call_id`, `test_group_annotations_pair_multiple_nonadjacent_results_with_declaration`, `test_group_annotations_pair_completed_reused_call_id_occurrences`, `test_sliding_window_keeps_reused_call_id_occurrences_atomic`, `test_group_annotations_do_not_pair_ambiguous_duplicate_call_ids` |
 
 ## Required coverage gaps
 
@@ -484,7 +484,6 @@ These scenarios are required but are not fully covered by merged tests on `main`
 
 | Gap | Tracking |
 |---|---|
-| Non-adjacent and reused-id call/result occurrences remain atomic during compaction. | #7212 |
 | Service-side storage sends the current approval response while omitting the stored request. | #7125 |
 | Service-owned `previous_response_id` continuation cannot execute a terminal approval again on a later turn. | #6851 |
 | A provider that ignores `tool_choice="none"` after an invocation limit cannot expose an unanswered call. | #7045 |
@@ -539,6 +538,7 @@ Before accepting an update, reviewers must confirm:
 - #7267 / #7271 and #7304 — replayed calls and reused ids
 - #7043 — provider-injected approval execution
 - #6828 — AG-UI `confirm_changes` snapshot correlation
+- #7212 — non-adjacent and reused-id compaction integrity
 - #6851 — duplicate side effects after approval continuation
 - #7383 — bind approval responses to framework-issued requests after this foundation merges
 - #6963 / #7095 — opaque reasoning-signature replay
