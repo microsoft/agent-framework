@@ -84,7 +84,7 @@ actions:
                 ],
             })
 
-        mark_feature_used.assert_called_once_with(FeatureIndex.WORKFLOW)
+        mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_WORKFLOW)
 
 
 @_requires_powerfx

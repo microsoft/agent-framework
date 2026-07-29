@@ -198,7 +198,7 @@ def test_magentic_builder_marks_feature_with_custom_manager() -> None:
 
     token = get_feature_token()
     assert token is not None
-    assert int(token.split(".", 1)[1], 16) & (1 << FeatureIndex.MAGENTIC)
+    assert int(token.split(".", 1)[1], 16) & (1 << FeatureIndex.ORCHESTRATION_MAGENTIC)
 
 
 async def test_magentic_builder_returns_workflow_and_runs() -> None:

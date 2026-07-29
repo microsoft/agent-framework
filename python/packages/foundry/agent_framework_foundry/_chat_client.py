@@ -58,7 +58,7 @@ from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 
 from ._feature_usage import (
     FeatureIndex,
-    create_feature_usage_user_agent_policy,
+    create_feature_usage_policy,
     create_foundry_feature_usage_http_client,
 )
 from ._tools import _sanitize_foundry_response_tool  # pyright: ignore[reportPrivateUsage]
@@ -156,7 +156,7 @@ class RawFoundryChatClient(
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = False
-    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.CHAT_CLIENT
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.FOUNDRY_CHAT_CLIENT
 
     def __init__(
         self,
@@ -226,7 +226,7 @@ class RawFoundryChatClient(
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": project_endpoint,
                 "credential": credential,
-                "user_agent_policy": create_feature_usage_user_agent_policy(),
+                "custom_hook_policy": create_feature_usage_policy(),
             }
             if IS_TELEMETRY_ENABLED:
                 project_client_kwargs["user_agent"] = get_user_agent()

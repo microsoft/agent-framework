@@ -29,6 +29,7 @@ from agent_framework import (
     normalize_messages,
 )
 from agent_framework._settings import load_settings
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import (
     AgentRunInputs,
@@ -37,6 +38,8 @@ from agent_framework._types import (
 )
 from agent_framework.exceptions import AgentException, ContentError
 from agent_framework.observability import AgentTelemetryLayer
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -666,6 +669,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         unsubscribe = copilot_session.on(usage_event_handler)
         try:
+            mark_feature_used(FeatureIndex.GITHUB_COPILOT)
             response_event = await copilot_session.send_and_wait(prompt, attachments=attachments, timeout=timeout)
         except Exception as ex:
             raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
@@ -852,6 +856,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         unsubscribe = copilot_session.on(event_handler)
 
         try:
+            mark_feature_used(FeatureIndex.GITHUB_COPILOT)
             await copilot_session.send(prompt, attachments=attachments)
 
             while (item := await queue.get()) is not None:

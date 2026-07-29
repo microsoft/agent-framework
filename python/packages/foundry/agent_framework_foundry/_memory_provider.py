@@ -26,7 +26,7 @@ from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from openai.types.responses import ResponseInputItemParam
 
-from ._feature_usage import FeatureIndex, create_feature_usage_user_agent_policy
+from ._feature_usage import FeatureIndex, create_feature_usage_policy
 
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # pragma: no cover
@@ -121,7 +121,7 @@ class FoundryMemoryProvider(ContextProvider):
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": resolved_endpoint,
                 "credential": credential,
-                "user_agent_policy": create_feature_usage_user_agent_policy(),
+                "custom_hook_policy": create_feature_usage_policy(),
             }
             if IS_TELEMETRY_ENABLED:
                 project_client_kwargs["user_agent"] = get_user_agent()
@@ -168,7 +168,7 @@ class FoundryMemoryProvider(ContextProvider):
         2. Searches for contextual memories based on input messages
         3. Combines and injects memories into the context
         """
-        mark_feature_used(FeatureIndex.MEMORY)
+        mark_feature_used(FeatureIndex.FOUNDRY_MEMORY)
         # On first run, retrieve static memories (user profile memories)
         if not state.get("initialized"):
             try:

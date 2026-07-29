@@ -16,6 +16,7 @@ from botocore.client import BaseClient
 
 from agent_framework_bedrock import BedrockChatClient
 from agent_framework_bedrock._chat_client import BedrockSettings
+from agent_framework_bedrock._feature_usage import FeatureIndex
 
 
 class _StubBedrockRuntime:
@@ -67,8 +68,10 @@ async def test_get_response_invokes_bedrock_runtime() -> None:
         Message(role="user", contents=[Content.from_text(text="hello")]),
     ]
 
-    response = await client.get_response(messages=messages, options={"max_tokens": 32})
+    with patch("agent_framework_bedrock._chat_client.mark_feature_used") as mark_feature_used:
+        response = await client.get_response(messages=messages, options={"max_tokens": 32})
 
+    mark_feature_used.assert_called_once_with(FeatureIndex.BEDROCK)
     assert stub.calls, "Expected the runtime client to be called"
     payload = stub.calls[0]
     assert payload["modelId"] == "amazon.titan-text"

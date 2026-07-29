@@ -6,5 +6,5 @@ from enum import IntEnum
 class FeatureIndex(IntEnum):
     """Declarative-owned feature-usage indexes."""
 
-    AGENT = 75
-    WORKFLOW = 76
+    DECLARATIVE_AGENT = 75
+    DECLARATIVE_WORKFLOW = 76

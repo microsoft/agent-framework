@@ -23,7 +23,7 @@ from azure.ai.inference.aio import EmbeddingsClient, ImageEmbeddingsClient
 from azure.ai.inference.models import ImageEmbeddingInput
 from azure.core.credentials import AzureKeyCredential
 
-from ._feature_usage import FeatureIndex, create_feature_usage_user_agent_policy
+from ._feature_usage import FeatureIndex, create_feature_usage_policy
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -157,7 +157,7 @@ class RawFoundryEmbeddingClient(
         client_kwargs: dict[str, Any] = {
             "endpoint": resolved_endpoint,
             "credential": credential,
-            "user_agent_policy": create_feature_usage_user_agent_policy(),
+            "custom_hook_policy": create_feature_usage_policy(),
         }
         if IS_TELEMETRY_ENABLED:
             client_kwargs["user_agent"] = get_user_agent()
@@ -210,7 +210,7 @@ class RawFoundryEmbeddingClient(
         """
         if not values:
             return GeneratedEmbeddings([], options=options)
-        mark_feature_used(FeatureIndex.EMBEDDING)
+        mark_feature_used(FeatureIndex.FOUNDRY_EMBEDDING)
 
         opts: dict[str, Any] = dict(options) if options else {}
 

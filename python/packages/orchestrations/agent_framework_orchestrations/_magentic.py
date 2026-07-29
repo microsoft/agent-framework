@@ -1776,7 +1776,7 @@ class MagenticBuilder:
 
     def build(self) -> Workflow:
         """Build a Magentic workflow with the orchestrator and all agent executors."""
-        mark_feature_used(FeatureIndex.MAGENTIC)
+        mark_feature_used(FeatureIndex.ORCHESTRATION_MAGENTIC)
         logger.info(f"Building Magentic workflow with {len(self._participants)} participants")
 
         participants: list[Executor] = self._resolve_participants()

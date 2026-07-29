@@ -27,6 +27,7 @@ from agent_framework._telemetry import (
     apply_feature_token,
     get_feature_token,
     mark_feature_used,
+    remove_feature_token,
 )
 
 # region Test constants
@@ -145,6 +146,10 @@ def test_apply_feature_token_preserves_unrelated_comments() -> None:
         )
 
 
+def test_remove_feature_token_strips_standalone_token() -> None:
+    assert remove_feature_token("(feat=v1.1)") == ""
+
+
 def test_apply_feature_token_removes_stale_token_when_disabled() -> None:
     _reset_feature_mask()
     with (
@@ -152,6 +157,7 @@ def test_apply_feature_token_removes_stale_token_when_disabled() -> None:
         patch.dict(os.environ, {FEATURE_MASK_DISABLED_ENV_VAR: "true"}),
     ):
         assert apply_feature_token("agent-framework-python/1.0 (feat=v1.5)") == "agent-framework-python/1.0"
+        assert apply_feature_token("(feat=v1.5)") == ""
 
 
 def test_mark_feature_used_is_thread_safe() -> None:
@@ -166,7 +172,7 @@ def test_mark_feature_used_is_thread_safe() -> None:
         assert get_feature_token() == f"v1.{(1 << 128) - 1:x}"
 
 
-def test_declared_feature_indexes_do_not_overlap() -> None:
+def test_declared_feature_indexes_match_registry() -> None:
     registry_path = next(
         (
             parent / "docs" / "specs" / "feature-usage-bit-registry.md"
@@ -179,11 +185,20 @@ def test_declared_feature_indexes_do_not_overlap() -> None:
         pytest.skip("Feature-usage registry is not available outside a repository checkout.")
 
     repository_root = registry_path.parents[2]
+    registry_text = registry_path.read_text(encoding="utf-8")
+    python_table = registry_text.split("## Index table — Python", 1)[1].split("## Index table — .NET", 1)[0]
+    registry_rows = re.findall(r"^\| (\d+) \| `([^`]+)` \|", python_table, re.MULTILINE)
+    registry_pairs = {(int(index), identifier.upper().replace(".", "_")) for index, identifier in registry_rows}
+    assert len(registry_pairs) == len(registry_rows), "Python v1 registry contains duplicate (index, id) rows."
+    assert all(0 <= index < 128 for index, _ in registry_pairs)
+
     declaration_files = [
         repository_root / "python" / "packages" / "core" / "agent_framework" / "_telemetry.py",
-        *repository_root.glob("python/packages/*/agent_framework*/_feature_usage.py"),
+        *repository_root.glob("python/packages/**/_feature_usage.py"),
     ]
-    declarations: dict[int, str] = {}
+    declarations_by_index: dict[int, str] = {}
+    declaration_pairs: set[tuple[int, str]] = set()
+    declaration_owners: dict[tuple[int, str], tuple[Path, Path]] = {}
     for declaration_file in declaration_files:
         tree = ast.parse(declaration_file.read_text(encoding="utf-8"))
         for node in tree.body:
@@ -198,17 +213,36 @@ def test_declared_feature_indexes_do_not_overlap() -> None:
                 index = member.value.value
                 if not isinstance(index, int):
                     continue
-                assert 0 <= index < 128
-                assert index not in declarations, (
-                    f"Feature index {index} overlaps between {declarations[index]} and "
-                    f"{declaration_file.relative_to(repository_root)}:{target.id}"
+                declaration = f"{declaration_file.relative_to(repository_root)}:{target.id}"
+                assert 0 <= index < 128, f"Feature index {index} is out of range in {declaration}."
+                assert index not in declarations_by_index, (
+                    f"Feature index {index} overlaps between {declarations_by_index[index]} and {declaration}."
                 )
-                declarations[index] = f"{declaration_file.relative_to(repository_root)}:{target.id}"
+                declarations_by_index[index] = declaration
+                pair = (index, target.id)
+                declaration_pairs.add(pair)
+                package_root = repository_root.joinpath(*declaration_file.relative_to(repository_root).parts[:3])
+                declaration_owners[pair] = (package_root, declaration_file)
 
-    registry_text = registry_path.read_text(encoding="utf-8")
-    python_table = registry_text.split("## Index table — Python", 1)[1].split("## Index table — .NET", 1)[0]
-    registry_indexes = {int(index) for index in re.findall(r"^\| (\d+) \| `[^`]+` \|", python_table, re.MULTILINE)}
-    assert declarations.keys() <= registry_indexes
+    assert declaration_pairs == registry_pairs
+
+    for pair, (package_root, declaration_file) in declaration_owners.items():
+        _, member_name = pair
+        referenced = False
+        for source_file in package_root.rglob("*.py"):
+            if source_file == declaration_file or "tests" in source_file.parts:
+                continue
+            source_tree = ast.parse(source_file.read_text(encoding="utf-8"))
+            if any(
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "FeatureIndex"
+                and node.attr == member_name
+                for node in ast.walk(source_tree)
+            ):
+                referenced = True
+                break
+        assert referenced, f"Feature index {pair} is declared but never referenced by its owning package."
 
 
 def test_app_info_when_telemetry_enabled():

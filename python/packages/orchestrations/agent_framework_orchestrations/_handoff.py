@@ -943,7 +943,7 @@ class HandoffBuilder:
             ValueError: If participants or coordinator were not configured, or if
                        required configuration is invalid.
         """
-        mark_feature_used(FeatureIndex.HANDOFF)
+        mark_feature_used(FeatureIndex.ORCHESTRATION_HANDOFF)
         # Resolve agents (either from instances or factories)
         # The returned map keys are either executor IDs or factory names, which is need to resolve handoff configs
         resolved_agents = self._resolve_agents()

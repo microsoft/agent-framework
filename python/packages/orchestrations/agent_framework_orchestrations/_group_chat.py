@@ -1012,7 +1012,7 @@ class GroupChatBuilder:
         Returns:
             Validated Workflow instance ready for execution
         """
-        mark_feature_used(FeatureIndex.GROUP_CHAT)
+        mark_feature_used(FeatureIndex.ORCHESTRATION_GROUP_CHAT)
         # Resolve orchestrator and participants to executors
         participants: list[Executor] = self._resolve_participants()
         orchestrator: Executor = self._resolve_orchestrator(participants)

@@ -506,7 +506,7 @@ class TestAgentFactoryCreateFromDict:
                 "instructions": "You are a helpful assistant.",
             })
 
-        mark_feature_used.assert_called_once_with(FeatureIndex.AGENT)
+        mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_AGENT)
 
     async def test_create_agent_from_dict_async_marks_declarative_agent_used(self):
         """Test that successful async declarative agent creation marks feature usage."""
@@ -522,7 +522,7 @@ class TestAgentFactoryCreateFromDict:
                 "instructions": "You are a helpful assistant.",
             })
 
-        mark_feature_used.assert_called_once_with(FeatureIndex.AGENT)
+        mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_AGENT)
 
     def test_create_agent_from_dict_matches_yaml(self):
         """Test that create_agent_from_dict produces same result as create_agent_from_yaml."""

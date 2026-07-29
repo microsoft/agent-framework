@@ -243,7 +243,7 @@ class SequentialBuilder:
           terminator's own `yield_output` is Workflow Output (`AgentResponse`,
           or per-chunk `AgentResponseUpdate` when streaming).
         """
-        mark_feature_used(FeatureIndex.SEQUENTIAL)
+        mark_feature_used(FeatureIndex.ORCHESTRATION_SEQUENTIAL)
         input_conv = _InputToConversation(id="input-conversation")
 
         # Resolve participants and participant factories to executors

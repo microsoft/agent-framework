@@ -28,6 +28,7 @@ from agent_framework import (
     normalize_messages,
     normalize_tools,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentException
 from agent_framework.observability import AgentTelemetryLayer
 from claude_agent_sdk import (
@@ -41,6 +42,8 @@ from claude_agent_sdk import (
     ClaudeAgentOptions as SDKOptions,
 )
 from claude_agent_sdk.types import StreamEvent, TextBlock
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -779,6 +782,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         session_id: str | None = None
         structured_output: Any = None
 
+        mark_feature_used(FeatureIndex.CLAUDE)
         await self._client.query(prompt)
         async for message in self._client.receive_response():
             if isinstance(message, StreamEvent):

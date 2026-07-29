@@ -480,7 +480,7 @@ class AgentFactory:
             instructions=prompt_agent.instructions,
             default_options=chat_options,  # type: ignore[arg-type]
         )
-        mark_feature_used(FeatureIndex.AGENT)
+        mark_feature_used(FeatureIndex.DECLARATIVE_AGENT)
         return agent
 
     async def create_agent_from_yaml_path_async(self, yaml_path: str | Path) -> Agent:
@@ -593,7 +593,7 @@ class AgentFactory:
             instructions=prompt_agent.instructions,
             default_options=chat_options,  # type: ignore[arg-type]
         )
-        mark_feature_used(FeatureIndex.AGENT)
+        mark_feature_used(FeatureIndex.DECLARATIVE_AGENT)
         return agent
 
     async def _create_agent_with_provider(self, prompt_agent: PromptAgent, mapping: ProviderTypeMapping) -> Agent:

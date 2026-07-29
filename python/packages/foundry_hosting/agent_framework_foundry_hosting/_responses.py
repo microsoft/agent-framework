@@ -26,6 +26,7 @@ from agent_framework import (
     SupportsAgentRun,
     WorkflowAgent,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
 from azure.ai.agentserver.responses import (
     ResponseContext,
@@ -114,6 +115,8 @@ from azure.ai.agentserver.responses.streaming._builders import (
 )
 from mcp import McpError
 from typing_extensions import Any
+
+from ._feature_usage import FeatureIndex
 
 logger = logging.getLogger(__name__)
 
@@ -485,6 +488,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self._agent_init_lock = asyncio.Lock()
         self.shutdown_handler(self._cleanup_agent)
         self.response_handler(self._handle_response)
+        mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
 
     async def _ensure_agent_ready(self) -> None:
         """Lazily enter the agent's async context exactly once.

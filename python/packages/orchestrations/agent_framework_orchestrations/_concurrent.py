@@ -404,7 +404,7 @@ class ConcurrentBuilder:
 
             workflow = ConcurrentBuilder(participants=[agent1, agent2]).build()
         """
-        mark_feature_used(FeatureIndex.CONCURRENT)
+        mark_feature_used(FeatureIndex.ORCHESTRATION_CONCURRENT)
         # Internal nodes
         dispatcher = _DispatchToAllParticipants(id="dispatcher")
         aggregator = self._aggregator if self._aggregator is not None else _AggregateAgentConversations(id="aggregator")

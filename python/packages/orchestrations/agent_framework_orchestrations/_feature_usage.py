@@ -6,8 +6,8 @@ from enum import IntEnum
 class FeatureIndex(IntEnum):
     """Orchestration-owned feature-usage indexes."""
 
-    SEQUENTIAL = 32
-    CONCURRENT = 33
-    GROUP_CHAT = 34
-    MAGENTIC = 35
-    HANDOFF = 36
+    ORCHESTRATION_SEQUENTIAL = 32
+    ORCHESTRATION_CONCURRENT = 33
+    ORCHESTRATION_GROUP_CHAT = 34
+    ORCHESTRATION_MAGENTIC = 35
+    ORCHESTRATION_HANDOFF = 36

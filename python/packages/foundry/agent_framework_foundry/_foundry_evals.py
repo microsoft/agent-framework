@@ -888,7 +888,7 @@ class FoundryEvals:
         Returns:
             ``EvalResults`` with status, counts, and portal link.
         """
-        mark_feature_used(FeatureIndex.EVALS)
+        mark_feature_used(FeatureIndex.FOUNDRY_EVALS)
         # Resolve evaluators with auto-detection
         resolved = _resolve_default_evaluators(self._evaluators, items=items)
         # Filter tool evaluators if items don't have tools
@@ -1033,7 +1033,7 @@ async def evaluate_traces(
         )
     """
     oai_client = _resolve_openai_client(client, project_client)
-    mark_feature_used(FeatureIndex.EVALS)
+    mark_feature_used(FeatureIndex.FOUNDRY_EVALS)
     resolved_evaluators = _resolve_default_evaluators(evaluators)
 
     if response_ids:
@@ -1126,7 +1126,7 @@ async def evaluate_foundry_target(
     if "type" not in target:
         raise ValueError("target dict must include a 'type' key (e.g., 'azure_ai_agent').")
     oai_client = _resolve_openai_client(client, project_client)
-    mark_feature_used(FeatureIndex.EVALS)
+    mark_feature_used(FeatureIndex.FOUNDRY_EVALS)
     resolved_evaluators = _resolve_default_evaluators(evaluators)
 
     eval_obj = await oai_client.evals.create(

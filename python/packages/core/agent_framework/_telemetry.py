@@ -65,7 +65,7 @@ _user_agent_prefixes: set[str] = set()
 _hosted_env_detected: bool = False
 _feature_mask = 0
 _feature_mask_lock = threading.Lock()
-_feature_comment_pattern = re.compile(r"\s+\(feat=v\d+\.[0-9a-fA-F]+\)")
+_feature_comment_pattern = re.compile(r"(?:^|\s+)\(feat=v\d+\.[0-9a-fA-F]+\)")
 
 
 def _add_user_agent_prefix(prefix: str) -> None:

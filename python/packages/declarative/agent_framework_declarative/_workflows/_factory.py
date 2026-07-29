@@ -473,7 +473,7 @@ class WorkflowFactory:
             len(graph_builder._executors),  # type: ignore[reportPrivateUsage]
         )
 
-        mark_feature_used(FeatureIndex.WORKFLOW)
+        mark_feature_used(FeatureIndex.DECLARATIVE_WORKFLOW)
         return workflow
 
     def _normalize_workflow_def(self, workflow_def: dict[str, Any]) -> dict[str, Any]:

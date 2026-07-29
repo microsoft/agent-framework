@@ -105,7 +105,7 @@ def test_sequential_builder_does_not_mark_custom_workflow() -> None:
     token = get_feature_token()
     assert token is not None
     mask = int(token.split(".", 1)[1], 16)
-    assert mask & (1 << FeatureIndex.SEQUENTIAL)
+    assert mask & (1 << FeatureIndex.ORCHESTRATION_SEQUENTIAL)
     assert not mask & (1 << CoreFeatureIndex.CORE_WORKFLOW)
 
 

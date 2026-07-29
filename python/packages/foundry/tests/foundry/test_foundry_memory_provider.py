@@ -97,7 +97,7 @@ def test_init_with_project_endpoint_and_credential(mock_project_client: AsyncMoc
             credential=mock_credential,
             allow_preview=True,
             user_agent=get_user_agent(),
-            user_agent_policy=ANY,
+            custom_hook_policy=ANY,
         )
 
 

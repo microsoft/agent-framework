@@ -20,13 +20,16 @@ from agent_framework_openai import OpenAIContentFilterException
 from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.exceptions import ResourceNotFoundError
+from azure.core.pipeline import Pipeline
+from azure.core.pipeline.policies import RedirectPolicy, UserAgentPolicy
+from azure.core.pipeline.transport import HttpRequest, HttpResponse, HttpTransport
 from azure.identity import AzureCliCredential
 from openai import BadRequestError
 from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_foundry import FoundryChatClient, RawFoundryChatClient
-from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsageUserAgentPolicy
+from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
 
 
 class OutputStruct(BaseModel):
@@ -39,19 +42,69 @@ class OutputStruct(BaseModel):
 def test_foundry_feature_usage_policy_refreshes_user_agent() -> None:
     with telemetry._feature_mask_lock:
         telemetry._feature_mask = 0
-    mark_feature_used(FeatureIndex.CHAT_CLIENT)
+    mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
     request = MagicMock()
     request.http_request.url = "https://project.services.ai.azure.com/api/projects/test"
     request.http_request.headers = {"User-Agent": "azsdk-python-ai-projects/1.0 agent-framework-python/1.0"}
-    FeatureUsageUserAgentPolicy().on_request(request)
+    FeatureUsagePolicy().on_request(request)
 
     assert request.http_request.headers["User-Agent"] == (
         "azsdk-python-ai-projects/1.0 agent-framework-python/1.0 (feat=v1.1000000000000)"
     )
 
 
+def test_foundry_feature_usage_policy_removes_token_on_cross_origin_redirect() -> None:
+    class _Response(HttpResponse):
+        def body(self) -> bytes:
+            return b""
+
+    class _RedirectTransport(HttpTransport[HttpRequest, HttpResponse]):
+        def __init__(self) -> None:
+            self.sent_headers: list[dict[str, str]] = []
+
+        def __enter__(self) -> _RedirectTransport:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self.close()
+
+        def open(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+        def send(self, request: HttpRequest, **kwargs: Any) -> HttpResponse:
+            self.sent_headers.append(dict(request.headers))
+            response = _Response(request, None)
+            if len(self.sent_headers) == 1:
+                response.status_code = 302
+                response.headers = {"location": "https://example.com/redirected"}
+            else:
+                response.status_code = 200
+                response.headers = {}
+            return response
+
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+    mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
+    transport = _RedirectTransport()
+    pipeline = cast(Any, Pipeline)(
+        transport, [UserAgentPolicy(user_agent=get_user_agent()), RedirectPolicy(), FeatureUsagePolicy()]
+    )
+
+    pipeline.run(HttpRequest("GET", "https://project.services.ai.azure.com/api/projects/test"))
+
+    assert "(feat=v1." in transport.sent_headers[0]["User-Agent"]
+    assert "(feat=v1." not in transport.sent_headers[1]["User-Agent"]
+
+
+def test_foundry_feature_index_does_not_own_toolbox() -> None:
+    assert not hasattr(FeatureIndex, "FOUNDRY_TOOLBOX")
+
+
 def test_raw_foundry_chat_client_owns_foundry_feature_bit() -> None:
-    assert RawFoundryChatClient._FEATURE_USAGE_INDEX is FeatureIndex.CHAT_CLIENT
+    assert RawFoundryChatClient._FEATURE_USAGE_INDEX is FeatureIndex.FOUNDRY_CHAT_CLIENT
 
 
 @tool(approval_mode="never_require")
@@ -238,6 +291,8 @@ def test_init_with_project_endpoint_creates_project_client() -> None:
     assert factory.call_args.kwargs["credential"] is credential
     assert factory.call_args.kwargs["allow_preview"] is True
     assert factory.call_args.kwargs["user_agent"] == get_user_agent()
+    assert isinstance(factory.call_args.kwargs["custom_hook_policy"], FeatureUsagePolicy)
+    assert "user_agent_policy" not in factory.call_args.kwargs
 
 
 def test_init_with_empty_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
