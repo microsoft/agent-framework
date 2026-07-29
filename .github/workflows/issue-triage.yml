@@ -126,7 +126,6 @@ jobs:
     environment: integration
     permissions:
       contents: read
-      copilot-requests: write
       id-token: write
       issues: write
     timeout-minutes: 60
@@ -203,7 +202,7 @@ jobs:
         working-directory: ${{ env.DEVFLOW_PATH }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_COPILOT_TOKEN: ${{ github.token }}
+          GH_COPILOT_TOKEN: ${{ secrets.GH_COPILOT_TOKEN }}
           # Not seen by the agent prompt; used only to push a paper-trail
           # branch back to maf-dashboard at run end.
           DEVFLOW_TOKEN: ${{ secrets.DEVFLOW_TOKEN }}

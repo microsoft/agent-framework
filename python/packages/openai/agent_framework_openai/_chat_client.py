@@ -62,7 +62,6 @@ from agent_framework._types import (
     TextSpanRegion,
     UsageDetails,
     detect_media_type_from_base64,
-    prepend_instructions_to_messages,
     validate_tool_mode,
 )
 from agent_framework.exceptions import (
@@ -1377,7 +1376,6 @@ class RawOpenAIChatClient(
             "logit_bias",  # not supported
             "seed",  # not supported
             "stop",  # not supported
-            "instructions",  # already added as system message
             "response_format",  # handled separately
             "conversation_id",  # handled separately
             "tool_choice",  # handled separately
@@ -1389,15 +1387,6 @@ class RawOpenAIChatClient(
             raise ChatClientInvalidRequestException(
                 "prompt_cache_options requires openai>=2.45.0; upgrade the openai package to use it."
             )
-
-        # messages
-        # Handle instructions by prepending to messages as system message
-        # Only prepend instructions for the first turn (when no conversation/response ID exists)
-        conversation_id = options.get("conversation_id")
-        if (instructions := options.get("instructions")) and not conversation_id:
-            # First turn: prepend instructions as system message
-            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
-        # Continuation turn: instructions already exist in conversation context, skip prepending
         request_uses_service_side_storage = False
         for key in ("conversation_id", "previous_response_id", "conversation"):
             value = options.get(key)
