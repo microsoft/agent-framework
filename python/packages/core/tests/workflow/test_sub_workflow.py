@@ -1,9 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
+import pytest
 from typing_extensions import Never
 
 from agent_framework import (
@@ -15,6 +17,7 @@ from agent_framework import (
     WorkflowContext,
     WorkflowEvent,
     WorkflowExecutor,
+    WorkflowRunState,
     handler,
     response_handler,
 )
@@ -465,6 +468,62 @@ async def test_concurrent_sub_workflow_execution() -> None:
     # (This is implicitly tested by the fact that we got correct results for all emails)
 
 
+async def test_sub_workflow_warns_on_overlapping_execution(caplog: pytest.LogCaptureFixture) -> None:
+    """A new input while a prior sub-workflow execution is awaiting responses logs a warning.
+
+    Overlapping executions share one sub-workflow instance and its state, so WorkflowExecutor
+    allows the new execution but warns that it is only safe when the wrapped workflow is stateless.
+    """
+
+    class TwoInputParent(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="two_input_parent")
+            self._pending: dict[str, SubWorkflowRequestMessage] = {}
+
+        @handler
+        async def start(self, emails: list[str], ctx: WorkflowContext[EmailValidationRequest]) -> None:
+            for email in emails:
+                await ctx.send_message(EmailValidationRequest(email=email))
+
+        @handler
+        async def handle_domain_request(
+            self,
+            sub_workflow_request: SubWorkflowRequestMessage,
+            ctx: WorkflowContext[SubWorkflowResponseMessage],
+        ) -> None:
+            domain_request = sub_workflow_request.source_event.data
+            assert isinstance(domain_request, DomainCheckRequest)
+            self._pending[domain_request.id] = sub_workflow_request
+            await ctx.request_info(domain_request, bool)
+
+        @handler
+        async def collect(self, result: ValidationResult, ctx: WorkflowContext) -> None: ...
+
+    parent = TwoInputParent()
+    workflow_executor = WorkflowExecutor(create_email_validation_workflow(), "email_workflow")
+    main_workflow = (
+        WorkflowBuilder(start_executor=parent)
+        .add_edge(parent, workflow_executor)
+        .add_edge(workflow_executor, parent)
+        .build()
+    )
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework._workflows._workflow_executor"):
+        result = await main_workflow.run(["a@domain1.com", "b@domain2.com"])
+
+    # Two inputs are delivered to the same WorkflowExecutor in one superstep: the second execution
+    # starts while the sub-workflow still has a pending request, producing exactly one overlap
+    # warning from the WorkflowExecutor. (The substring is unique to the WorkflowExecutor warning so
+    # it is not confused with the core Workflow.run pending-request warning.)
+    assert len(result.get_request_info_events()) == 2
+    overlap_warnings = [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "new input message while its sub-workflow" in record.getMessage()
+    ]
+    assert len(overlap_warnings) == 1
+
+
 # region Checkpoint-related message types and executors for sub-workflow tests
 
 
@@ -617,6 +676,59 @@ async def test_sub_workflow_checkpoint_restore_no_duplicate_requests() -> None:
     # Key assertion: Only the second request should be received, not a duplicate of the first
     assert len(request_events) == 1
     assert request_events[0].data.prompt == "Second request"
+
+
+async def test_sub_workflow_checkpoint_restore_preserves_sub_workflow_state() -> None:
+    """Resuming a sub-workflow mid-progress must restore its internal executor state.
+
+    Regression guard for the issue where only the WorkflowExecutor's bookkeeping (pending
+    requests) was checkpointed, so a sub-workflow executor that accumulates state across
+    multiple request/response cycles (here ``TwoStepSubWorkflowExecutor._responses``) lost
+    that state on resume. With the sub-workflow's own checkpoint embedded in the parent
+    checkpoint, the second response now completes the two-step flow instead of triggering a
+    spurious third request.
+    """
+    storage = InMemoryCheckpointStorage()
+
+    # Step 1: run until the first request.
+    workflow1 = _build_checkpoint_test_workflow(storage)
+    first_request_id: str | None = None
+    async for event in workflow1.run("test_value", stream=True):
+        if event.type == "request_info":
+            first_request_id = event.request_id
+    assert first_request_id is not None
+
+    # Step 2: answer the first request so the sub-workflow accumulates internal state
+    # (``_responses == ["first_answer"]``) and emits the second request. This mid-progress
+    # point is what we checkpoint and resume from - the case the no-duplicate test (which
+    # checkpoints at the first request, before any state accrues) does not cover.
+    second_request_id: str | None = None
+    async for event in workflow1.run(stream=True, responses={first_request_id: "first_answer"}):
+        if event.type == "request_info":
+            second_request_id = event.request_id
+    assert second_request_id is not None
+
+    # Resume from the latest checkpoint (captured after the second request was made).
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow1.name)
+    checkpoint_id = max(checkpoints, key=lambda cp: cp.iteration_count).checkpoint_id
+
+    workflow2 = _build_checkpoint_test_workflow(storage)
+    resumed_second_request_id: str | None = None
+    async for event in workflow2.run(checkpoint_id=checkpoint_id, stream=True):
+        if event.type == "request_info":
+            resumed_second_request_id = event.request_id
+    assert resumed_second_request_id is not None
+    assert resumed_second_request_id == second_request_id
+
+    # Step 3: answer the second request. With the sub-workflow's state restored, the two-step
+    # executor completes instead of emitting a spurious third request. If the internal state
+    # were lost, the second answer would be treated as a first answer and a third request
+    # ("Second request") would be emitted.
+    result = await workflow2.run(responses={resumed_second_request_id: "second_answer"})
+    assert result.get_request_info_events() == [], (
+        "Sub-workflow internal state was lost on resume: a spurious extra request was emitted"
+    )
+    assert result.get_final_state() == WorkflowRunState.IDLE
 
 
 async def test_sub_workflow_intermediate_outputs_propagate_to_parent() -> None:
