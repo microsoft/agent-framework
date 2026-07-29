@@ -382,31 +382,41 @@ public static class FoundryHostingExtensions
                 name: HealthCheckName,
                 factory: sp => new ResilientWorkflowExecutorIdHealthCheck(
                     isResilient: () => sp.GetService<IOptions<ResponsesServerOptions>>()?.Value.ResilientBackground ?? false,
-                    agents: () => EnumerateRegisteredAgents(services)),
+                    agents: () => ResolveRegisteredAgents(sp, services)),
                 failureStatus: HealthStatus.Unhealthy,
                 tags: ["foundry", "workflow", "readiness"]));
         });
     }
 
     /// <summary>
-    /// Enumerates the <see cref="AIAgent"/> instances registered on <paramref name="services"/> as
-    /// concrete singletons (default or keyed). Reads the descriptors directly so no agent is
-    /// resolved or constructed; agents registered via a factory (rather than an instance) are not
-    /// inspectable this way and are skipped.
+    /// Resolves the registered <see cref="AIAgent"/> instances (default and keyed) from
+    /// <paramref name="serviceProvider"/>. Resolving (rather than reading descriptors) is what lets the
+    /// health check see agents registered via a factory, not just those registered as a concrete
+    /// instance. The keys are discovered from <paramref name="services"/> because a
+    /// <see cref="IServiceProvider"/> cannot enumerate keyed registrations on its own. Agents are
+    /// singletons here, so each is constructed at most once and cached for later readiness polls.
     /// </summary>
-    private static IEnumerable<AIAgent> EnumerateRegisteredAgents(IServiceCollection services)
+    private static IEnumerable<AIAgent> ResolveRegisteredAgents(IServiceProvider serviceProvider, IServiceCollection services)
     {
+        // Default (non-keyed) registrations.
+        foreach (var agent in serviceProvider.GetServices<AIAgent>())
+        {
+            yield return agent;
+        }
+
+        // Keyed registrations: discover each distinct key from the descriptors, then resolve it.
+        var seenKeys = new HashSet<object>();
         foreach (var descriptor in services)
         {
-            if (descriptor.ServiceType != typeof(AIAgent))
+            if (descriptor.ServiceType != typeof(AIAgent)
+                || !descriptor.IsKeyedService
+                || descriptor.ServiceKey is null
+                || !seenKeys.Add(descriptor.ServiceKey))
             {
                 continue;
             }
 
-            object? instance = descriptor.IsKeyedService
-                ? descriptor.KeyedImplementationInstance
-                : descriptor.ImplementationInstance;
-            if (instance is AIAgent agent)
+            foreach (var agent in serviceProvider.GetKeyedServices<AIAgent>(descriptor.ServiceKey))
             {
                 yield return agent;
             }

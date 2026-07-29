@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
@@ -107,6 +108,44 @@ public class ServiceCollectionExtensionsTests
             Microsoft.Extensions.Options.IOptions<
                 Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>>();
         Assert.Contains(options.Value.Registrations, r => r.Name == "foundry-agent-registration");
+    }
+
+    [Fact]
+    public async Task ResilientWorkflowIdHealthCheck_SeesFactoryRegisteredAgentAsync()
+    {
+        // Arrange: resilient host with a workflow agent registered via a KEYED FACTORY (not a concrete
+        // instance). Its step agents have auto-generated ids, which would break crash-recovery resume.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFoundryResponses(o => o.ResilientBackground = true);
+        services.AddKeyedSingleton<AIAgent>("wf", (sp, key) =>
+        {
+            var french = new StreamingTextAgent("french", "bonjour");
+            var spanish = new StreamingTextAgent("spanish", "hola");
+            return new WorkflowBuilder(french).AddEdge(french, spanish).Build().AsAIAgent(name: "wf-host");
+        });
+
+        var provider = services.BuildServiceProvider();
+        var registration = provider
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<
+                Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>>()
+            .Value.Registrations.Single(r => r.Name == "foundry-resilient-workflow-ids");
+
+        var check = registration.Factory(provider);
+        var context = new Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckContext
+        {
+            Registration = new Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckRegistration(
+                registration.Name,
+                check,
+                Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Unhealthy,
+                tags: null),
+        };
+
+        // Act: resolving (not descriptor-reading) is what lets the check see a factory-registered agent.
+        var result = await check.CheckHealthAsync(context);
+
+        // Assert
+        Assert.Equal(Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Unhealthy, result.Status);
     }
 
     [Fact]
