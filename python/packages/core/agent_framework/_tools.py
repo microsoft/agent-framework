@@ -1723,6 +1723,7 @@ async def _try_execute_function_call_groups(
     """
     from ._types import Content
 
+    # Normalize the batch to calls owned by this layer before making any control-flow decision.
     function_calls = [
         function_call
         for function_call in function_calls
@@ -1746,6 +1747,8 @@ async def _try_execute_function_call_groups(
     actionable_calls = [
         function_call for function_call in function_calls if _is_actionable_function_call(function_call)
     ]
+
+    # Classify the entire batch first: any required user interaction pauses the batch before execution.
     requires_approval = False
     has_declaration_only_call = False
     # A user-input pause takes precedence over unknown-call termination in mixed batches.
@@ -1767,6 +1770,7 @@ async def _try_execute_function_call_groups(
         if config.get("terminate_on_unknown_calls", False) and function_name not in tool_map:
             raise KeyError(f'Error: Requested function "{function_name}" not found.')
     if requires_approval:
+        # Surface only the approvals the host must decide; session-backed safe siblings wait for that resume.
         # approval can only be needed for Function Call Content, not Approval Responses.
         logger.debug("Returning visible function_approval_request contents and storing already-approved requests")
         visible_requests: list[Content] = []
@@ -1802,6 +1806,7 @@ async def _try_execute_function_call_groups(
         )
         return [[request] for request in visible_requests], False
     if has_declaration_only_call:
+        # Declaration-only calls are returned as user input rather than executed locally.
         # return the declaration only tools to the user, since we cannot execute them.
         # Mark as user_input_request so AgentExecutor emits request_info events and pauses the workflow.
         declaration_only_calls: list[Content] = []
@@ -1812,6 +1817,7 @@ async def _try_execute_function_call_groups(
                 declaration_only_calls.append(function_call)
         return [[function_call] for function_call in declaration_only_calls], False
 
+    # Only a fully executable batch reaches this point; run calls concurrently but retain per-call result groups.
     # Create each task inside a copied context so the active agent span is
     # preserved for every parallel tool invocation.
     execution_tasks = [
@@ -2172,10 +2178,6 @@ def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[C
     return [
         request for approval_id, request in approval_requests_by_id.items() if approval_id not in answered_approval_ids
     ]
-
-
-def _approval_request_replay_contents(requests: Sequence[Content]) -> list[Content]:
-    return list(requests)
 
 
 def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]) -> None:
@@ -2665,23 +2667,26 @@ async def _resolve_approval_responses(
     """Resolve inbound approval responses before the next model call."""
     from ._types import Message
 
+    # 1. Restore safe siblings hidden with a prior mixed approval batch when its visible decision arrives.
     explicit_approval_response_ids = {
         content.id
         for message in prepared_messages
         for content in message.contents
         if content.type == "function_approval_response" and content.id
     }
-    already_approved_responses = _pop_already_approved_approval_responses(
+
+    if already_approved_responses := _pop_already_approved_approval_responses(
         invocation_session,
         explicit_approval_response_ids,
-    )
-    if already_approved_responses:
+    ):
         prepared_messages.append(Message(role="user", contents=already_approved_responses))
-    pending_approval_responses = _collect_approval_responses(prepared_messages)
-    if not pending_approval_responses:
+
+    # 2. With no new decision, hide any still-pending batch from model input while keeping it resumable in history.
+    if not (pending_approval_responses := _collect_approval_responses(prepared_messages)):
         _remove_unanswered_approval_batches_from_model_input(prepared_messages)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
 
+    # 3. Execute approved decisions once. Rejected decisions are converted to results during normalization below.
     responses_to_execute = [response for response in pending_approval_responses.values() if response.approved]
     execution_result_groups: list[list[Content]] = []
     should_terminate = False
@@ -2698,14 +2703,17 @@ async def _resolve_approval_responses(
             had_errors=execution.had_errors,
             max_errors=max_errors,
         )
+
+    # 4. Replace approval controls/placeholders with terminal contents, correlated by logical call occurrence.
     terminal_contents = _replace_approval_contents_with_results(
         prepared_messages,
         pending_approval_responses,
         execution_result_groups,
     )
-    pending_requests = _collect_unanswered_approval_requests(prepared_messages)
-    if pending_requests:
-        terminal_contents.extend(_approval_request_replay_contents(pending_requests))
+    if pending_requests := _collect_unanswered_approval_requests(prepared_messages):
+        terminal_contents.extend(pending_requests)
+
+    # 5. Return role-correct output and tell the outer loop whether to return, stop tools, or call the model.
     executed_function_count = len(execution_result_groups)
     requires_user_input = any(
         result.type == "function_call" or result.user_input_request for result in terminal_contents
@@ -2735,6 +2743,7 @@ async def _process_model_function_calls(
     execute_function_calls: _FunctionCallExecutor,
 ) -> _FunctionProcessingResult:
     """Execute function calls from a newly completed model response."""
+    # 1. Extract only actionable, unanswered calls from this model turn.
     tools = _extract_tools(options)
     function_calls = _extract_function_calls(response)
     if not (function_calls and tools):
@@ -2742,10 +2751,13 @@ async def _process_model_function_calls(
             _prepend_function_call_messages(response, function_call_messages)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
 
+    # 2. Execute the batch once while preserving each call's result group.
     execution = await execute_function_calls(
         function_calls=function_calls,
         options=options,
     )
+
+    # 3. Fold results into the response and translate errors or middleware termination into the next loop action.
     processing_result = _handle_function_call_results(
         response=response,
         execution_results=execution.contents,
@@ -2832,6 +2844,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
         attempt_start = int(budget_state.get("attempt_count", 0) or 0)
 
+        # Phase 1: resolve inbound approvals before consuming another model iteration.
         approval_processing = await _resolve_approval_responses(
             prepared_messages=prepared_messages,
             options=options,
@@ -2856,6 +2869,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         else:
             _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls)
 
+        # Phase 2: alternate model turns and local execution until a terminal response or safety limit is reached.
         for attempt_idx in range(attempt_start, max_iterations):
             budget_state["attempt_count"] = attempt_idx + 1
             response = cast(
@@ -2905,6 +2919,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             _reset_required_tool_choice(options)
             _prepare_messages_for_next_iteration(prepared_messages, response)
 
+        # Phase 3: the iteration budget is exhausted, so request one final response with tools disabled.
         if response is not None:
             logger.info(
                 "Maximum iterations reached (%d). Requesting final response without tools.",
@@ -2957,6 +2972,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
         attempt_start = int(budget_state.get("attempt_count", 0) or 0)
 
+        # Phase 1: resolve and emit inbound approval outcomes before opening another provider stream.
         approval_processing = await _resolve_approval_responses(
             prepared_messages=prepared_messages,
             options=options,
@@ -2980,6 +2996,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         else:
             _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls)
 
+        # Phase 2: stream each model turn, finalize it, execute its calls, then advance the transcript.
         for attempt_idx in range(attempt_start, max_iterations):
             budget_state["attempt_count"] = attempt_idx + 1
             inner_stream = cast(
@@ -3045,6 +3062,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             _reset_required_tool_choice(options)
             _prepare_messages_for_next_iteration(prepared_messages, response)
 
+        # Phase 3: the iteration budget is exhausted, so stream one final response with tools disabled.
         if response is not None:
             logger.info(
                 "Maximum iterations reached (%d). Requesting final response without tools.",
@@ -3141,6 +3159,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             Callable[..., Any],
             super().get_response,  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
         )
+
+        # Build the run-local middleware pipeline and recover shared budget/session state for approval re-entry.
         request_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if middleware is not None:
             existing_middleware = request_kwargs.get("middleware", [])
@@ -3175,6 +3195,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
         raw_session = request_kwargs.get("session")
         invocation_session = raw_session if isinstance(raw_session, _AgentSession) else None
+
+        # Bind one executor with the run's custom arguments, middleware, configuration, and session.
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
@@ -3182,6 +3204,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
         )
+
+        # Give the loop private mutable options and one shared run-local tool list for progressive tool changes.
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}
         # Remove additional_function_arguments from options passed to underlying chat client
@@ -3204,6 +3228,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # rebuilt on every loop iteration.
         if mutable_options.get("tools"):
             mutable_options["tools"] = normalize_tools(mutable_options["tools"])
+
+        # Dispatch to the shape-specific loop; both loops follow the same approval -> model -> execution phases.
         if not stream:
             return self._get_response_with_function_invocation(
                 super_get_response=super_get_response,
