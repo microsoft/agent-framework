@@ -26,20 +26,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import tomli
+from packaging.utils import canonicalize_name
 from rich import print
 
 from scripts.dependencies._dependency_bounds_release_impl import run_release_mode
 from scripts.dependencies._dependency_bounds_runtime import (
     extend_command_with_runtime_tools,
     extend_command_with_task,
+    load_workspace_package_configs,
+    resolve_internal_editables,
 )
-from scripts.dependencies._dependency_bounds_upper_impl import (
-    _build_internal_graph,
-    _build_workspace_package_map,
-    _load_package_name,
-    _resolve_internal_editables,
-)
+from scripts.dependencies._dependency_bounds_upper_impl import _load_package_name
 from scripts.task_runner import discover_projects, extract_poe_tasks, project_filter_matches
 
 _LOWER_IMPL_MODULE = "scripts.dependencies._dependency_bounds_lower_impl"
@@ -52,6 +49,7 @@ class PackageTestPlan:
 
     project_path: Path
     package_name: str
+    typing_task: str
     dependency_groups: list[str]
     include_dev_extra: bool
     optional_extras: list[str]
@@ -85,8 +83,7 @@ def _coerce_subprocess_output(output: str | bytes | None) -> str:
 def _build_test_plans(workspace_root: Path, package_filter: str | None) -> list[PackageTestPlan]:
     """Build per-package test plans for the requested workspace selector."""
     workspace_pyproject = workspace_root / "pyproject.toml"
-    package_map = _build_workspace_package_map(workspace_root)
-    internal_graph = _build_internal_graph(workspace_root, package_map)
+    workspace_packages = load_workspace_package_configs(workspace_root)
 
     plans: list[PackageTestPlan] = []
     missing_tasks: list[str] = []
@@ -107,25 +104,36 @@ def _build_test_plans(workspace_root: Path, package_filter: str | None) -> list[
             continue
 
         available_tasks = extract_poe_tasks(pyproject_file)
-        required_tasks = {"test", "pyright"}
+        typing_task = "dependency-pyright" if "dependency-pyright" in available_tasks else "pyright"
+        required_tasks = {"test", typing_task}
         if not required_tasks.issubset(available_tasks):
             missing = sorted(required_tasks - available_tasks)
             missing_tasks.append(f"{project_path}: missing {', '.join(missing)}")
             continue
-        with pyproject_file.open("rb") as f:
-            package_config = tomli.load(f)
-        project_section = package_config.get("project", {})
-        optional_dependencies = project_section.get("optional-dependencies", {}) or {}
-        dependency_groups = package_config.get("dependency-groups", {}) or {}
+        workspace_package = workspace_packages[str(canonicalize_name(package_name))]
+        dependency_group_names = sorted(workspace_package.dependency_groups)
+        include_dev_extra = "dev" in workspace_package.optional_dependencies
+        optional_extra_names = sorted(
+            name for name in workspace_package.optional_dependencies if name not in {"all", "dev"}
+        )
+        selected_extra_names = list(optional_extra_names)
+        if include_dev_extra:
+            selected_extra_names.append("dev")
 
         plans.append(
             PackageTestPlan(
                 project_path=project_path,
                 package_name=package_name,
-                dependency_groups=sorted(dependency_groups),
-                include_dev_extra="dev" in optional_dependencies,
-                optional_extras=sorted(name for name in optional_dependencies if name not in {"all", "dev"}),
-                internal_editables=_resolve_internal_editables(package_name, package_map, internal_graph),
+                typing_task=typing_task,
+                dependency_groups=dependency_group_names,
+                include_dev_extra=include_dev_extra,
+                optional_extras=optional_extra_names,
+                internal_editables=resolve_internal_editables(
+                    package_name,
+                    workspace_packages,
+                    dependency_groups=dependency_group_names,
+                    optional_extras=selected_extra_names,
+                ),
             )
         )
 
@@ -151,7 +159,7 @@ def _run_package_tasks(
     # stay inside uv's isolated throwaway environment instead of mutating `.venv`.
     env.pop("VIRTUAL_ENV", None)
 
-    for task_name in ("test", "pyright"):
+    for task_name in ("test", plan.typing_task):
         command = [
             "uv",
             "--no-progress",
@@ -174,7 +182,7 @@ def _run_package_tasks(
             command.extend(["--extra", extra_name])
         for editable_path in plan.internal_editables:
             command.extend(["--with-editable", str(editable_path)])
-        extend_command_with_task(command, task_name)
+        extend_command_with_task(command, task_name, workspace_root=workspace_root)
 
         if dry_run:
             print(f"[cyan]DRY RUN[/cyan] {' '.join(command)}")

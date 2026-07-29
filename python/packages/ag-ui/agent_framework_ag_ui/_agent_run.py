@@ -42,7 +42,7 @@ from agent_framework._tools import (
     _collect_approval_responses,  # type: ignore
     _replace_approval_contents_with_results,  # type: ignore
     _TOOL_APPROVAL_STATE_KEY,  # type: ignore
-    _try_execute_function_calls,  # type: ignore
+    _try_execute_function_call_groups,  # type: ignore
     normalize_function_invocation_configuration,
 )
 from agent_framework._types import ResponseStream
@@ -1306,7 +1306,7 @@ async def _resolve_approval_responses(
         approved_responses = validated
         rejected_responses = validated_rejected
 
-    approved_function_results: list[Any] = []
+    approved_function_result_groups: list[list[Content]] = []
 
     # Execute approved tool calls
     if approved_responses and tools:
@@ -1319,36 +1319,30 @@ async def _resolve_approval_responses(
         # Filter out AG-UI-specific kwargs that should not be passed to tool execution
         tool_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
         try:
-            results, _ = await _try_execute_function_calls(
+            approved_function_result_groups, _ = await _try_execute_function_call_groups(
                 custom_args=tool_kwargs,
-                attempt_idx=0,
                 function_calls=approved_responses,
                 tools=tools,
                 middleware_pipeline=middleware_pipeline,
                 config=config,
             )
-            approved_function_results = list(results)
         except Exception as e:
             logger.exception("Failed to execute approved tool calls; injecting error results: %s", e)
-            approved_function_results = []
+            approved_function_result_groups = []
 
-    # Build results for approved responses (used for TOOL_CALL_RESULT event emission)
+    # Normalize one group per approval and collect only terminal results for TOOL_CALL_RESULT events.
+    replacement_groups: list[list[Content]] = []
     approved_results: list[Content] = []
     for idx, approval in enumerate(approved_responses):
-        if (
-            idx < len(approved_function_results)
-            and getattr(approved_function_results[idx], "type", None) == "function_result"
-        ):
-            approved_results.append(approved_function_results[idx])
-            continue
-        # Get call_id from function_call if present, otherwise use approval.id
-        func_call = approval.function_call
-        call_id = (func_call.call_id if func_call else None) or approval.id or ""
-        approved_results.append(
-            Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")
-        )
+        result_group = approved_function_result_groups[idx] if idx < len(approved_function_result_groups) else []
+        if not result_group:
+            func_call = approval.function_call
+            call_id = (func_call.call_id if func_call else None) or approval.id or ""
+            result_group = [Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")]
+        replacement_groups.append(result_group)
+        approved_results.extend(content for content in result_group if content.type == "function_result")
 
-    _replace_approval_contents_with_results(messages, fcc_todo, approved_results)
+    _replace_approval_contents_with_results(messages, fcc_todo, replacement_groups)
 
     # Post-process: Convert user messages with function_result content to proper tool messages.
     # After _replace_approval_contents_with_results, approved tool calls have their results

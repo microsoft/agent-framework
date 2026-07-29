@@ -1090,6 +1090,31 @@ def test_function_approval_content_is_skipped_in_preparation(
     assert prepared_mixed[0]["content"] == "I need approval for this action."
 
 
+def test_mixed_approval_resume_roles_serialize_function_result_as_tool(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    follow_up_request = Content.from_oauth_consent_request(consent_link="https://example.com/consent")
+    follow_up_request.call_id = "call_paused"
+    messages = [
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_completed", result="completed")],
+        ),
+        Message(role="assistant", contents=[follow_up_request]),
+    ]
+
+    prepared = client._prepare_messages_for_openai(messages)
+
+    assert prepared[0] == {
+        "role": "tool",
+        "tool_call_id": "call_completed",
+        "content": "completed",
+    }
+    assert prepared[1]["role"] == "assistant"
+    assert "tool_call_id" not in prepared[1]
+
+
 def test_usage_content_in_streaming_response(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -1586,6 +1611,59 @@ def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) 
     assert prepared_options["response_format"] == custom_format
 
 
+def test_response_format_raw_schema_dict_is_wrapped(openai_unit_test_env: dict[str, str]) -> None:
+    """A raw JSON-Schema dict is wrapped in the json_schema envelope (parity with the Responses client)."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    raw_schema = {
+        "type": "object",
+        "properties": {"word": {"type": "string"}},
+        "required": ["word"],
+    }
+
+    prepared_options = client._prepare_options(messages, {"response_format": raw_schema})
+
+    assert prepared_options["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "response",
+            "schema": {
+                "type": "object",
+                "properties": {"word": {"type": "string"}},
+                "required": ["word"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    }
+
+
+def test_response_format_raw_schema_title_becomes_name(openai_unit_test_env: dict[str, str]) -> None:
+    """A raw schema's title is popped into the envelope name (strict mode rejects unknown keys)."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    raw_schema = {"type": "object", "title": "Word", "properties": {"word": {"type": "string"}}}
+
+    prepared_options = client._prepare_options(messages, {"response_format": raw_schema})
+
+    wrapped = prepared_options["response_format"]
+    assert wrapped["json_schema"]["name"] == "Word"
+    assert "title" not in wrapped["json_schema"]["schema"]
+
+
+def test_response_format_json_object_dict_passthrough(openai_unit_test_env: dict[str, str]) -> None:
+    """Valid non-json_schema response_format types still pass through unchanged."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+
+    prepared_options = client._prepare_options(messages, {"response_format": {"type": "json_object"}})
+
+    assert prepared_options["response_format"] == {"type": "json_object"}
+
+
 def test_parse_response_with_dict_response_format(openai_unit_test_env: dict[str, str]) -> None:
     """Chat completions should parse dict response_format values into response.value."""
     client = OpenAIChatCompletionClient()
@@ -1785,6 +1863,27 @@ class OutputStruct(BaseModel):
             },
             True,
             id="response_format_runtime_json_schema",
+        ),
+        param(
+            "response_format",
+            {
+                "title": "WeatherDigest",
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"},
+                    "conditions": {"type": "string"},
+                    "temperature_c": {"type": "number"},
+                    "advisory": {"type": "string"},
+                },
+                "required": [
+                    "location",
+                    "conditions",
+                    "temperature_c",
+                    "advisory",
+                ],
+            },
+            True,
+            id="response_format_raw_json_schema",
         ),
     ],
 )

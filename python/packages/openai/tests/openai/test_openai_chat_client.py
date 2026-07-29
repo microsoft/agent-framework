@@ -33,6 +33,7 @@ from agent_framework._sessions import (
     AgentSession,
     InMemoryHistoryProvider,
     SessionContext,
+    _filter_approval_control_messages,
 )
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from agent_framework.exceptions import (
@@ -411,10 +412,14 @@ async def test_get_response_with_all_parameters() -> None:
     assert len(run_options["tools"]) == 1
     assert run_options["tools"][0]["type"] == "function"
     assert run_options["tools"][0]["name"] == "get_weather"
-    assert run_options["input"][0]["role"] == "system"
-    assert run_options["input"][0]["content"][0]["text"] == "You are a helpful assistant"
-    assert run_options["input"][1]["role"] == "user"
-    assert run_options["input"][1]["content"][0]["text"] == "Test message"
+
+    # Verify instructions are passed natively, not as a system message
+    assert run_options["instructions"] == "You are a helpful assistant"
+
+    # Verify the input only contains the user message
+    assert len(run_options["input"]) == 1
+    assert run_options["input"][0]["role"] == "user"
+    assert run_options["input"][0]["content"][0]["text"] == "Test message"
 
 
 @pytest.mark.asyncio
@@ -6196,70 +6201,30 @@ def _create_mock_responses_text_response(*, response_id: str) -> MagicMock:
     return mock_response
 
 
-async def test_instructions_sent_first_turn_then_skipped_for_continuation() -> None:
-    client = OpenAIChatClient(model="test-model", api_key="test-key")
-    mock_response = _create_mock_responses_text_response(response_id="resp_123")
-
-    with patch.object(client.client.responses, "create", return_value=mock_response) as mock_create:
-        await client.get_response(
-            messages=[Message(role="user", contents=["Hello"])],
-            options={"instructions": "Reply in uppercase."},
-        )
-
-        first_input_messages = mock_create.call_args.kwargs["input"]
-        assert len(first_input_messages) == 2
-        assert first_input_messages[0]["role"] == "system"
-        assert any("Reply in uppercase" in str(c) for c in first_input_messages[0]["content"])
-        assert first_input_messages[1]["role"] == "user"
-
-        await client.get_response(
-            messages=[Message(role="user", contents=["Tell me a joke"])],
-            options={
-                "instructions": "Reply in uppercase.",
-                "conversation_id": "resp_123",
-            },
-        )
-
-        second_input_messages = mock_create.call_args.kwargs["input"]
-        assert len(second_input_messages) == 1
-        assert second_input_messages[0]["role"] == "user"
-        assert not any(message["role"] == "system" for message in second_input_messages)
-
-
-@pytest.mark.parametrize("conversation_id", ["resp_456", "conv_abc123"])
-async def test_instructions_not_repeated_for_continuation_ids(
-    conversation_id: str,
+@pytest.mark.parametrize("conversation_id", [None, "resp_456", "conv_abc123"])
+async def test_instructions_passed_natively_not_as_system_message(
+    conversation_id: str | None,
 ) -> None:
+    """Test that instructions are passed to the Responses API natively and not prepended to messages."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
     mock_response = _create_mock_responses_text_response(response_id="resp_456")
 
     with patch.object(client.client.responses, "create", return_value=mock_response) as mock_create:
+        options: OpenAIChatOptions = {"instructions": "Reply in uppercase."}
+        if conversation_id:
+            options["conversation_id"] = conversation_id
+
         await client.get_response(
-            messages=[Message(role="user", contents=["Continue conversation"])],
-            options={"instructions": "Be helpful.", "conversation_id": conversation_id},
+            messages=[Message(role="user", contents=["Hello"])],
+            options=options,
         )
+
+        assert mock_create.call_args.kwargs.get("instructions") == "Reply in uppercase."
 
         input_messages = mock_create.call_args.kwargs["input"]
         assert len(input_messages) == 1
         assert input_messages[0]["role"] == "user"
-        assert not any(message["role"] == "system" for message in input_messages)
-
-
-async def test_instructions_included_without_conversation_id() -> None:
-    client = OpenAIChatClient(model="test-model", api_key="test-key")
-    mock_response = _create_mock_responses_text_response(response_id="resp_new")
-
-    with patch.object(client.client.responses, "create", return_value=mock_response) as mock_create:
-        await client.get_response(
-            messages=[Message(role="user", contents=["Hello"])],
-            options={"instructions": "You are a helpful assistant."},
-        )
-
-        input_messages = mock_create.call_args.kwargs["input"]
-        assert len(input_messages) == 2
-        assert input_messages[0]["role"] == "system"
-        assert any("helpful assistant" in str(c) for c in input_messages[0]["content"])
-        assert input_messages[1]["role"] == "user"
+        assert not any(message.get("role") == "system" for message in input_messages)
 
 
 def test_with_callable_api_key() -> None:
@@ -6345,6 +6310,27 @@ def test_with_callable_api_key() -> None:
             },
             True,
             id="response_format_runtime_json_schema",
+        ),
+        param(
+            "response_format",
+            {
+                "title": "WeatherDigest",
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"},
+                    "conditions": {"type": "string"},
+                    "temperature_c": {"type": "number"},
+                    "advisory": {"type": "string"},
+                },
+                "required": [
+                    "location",
+                    "conditions",
+                    "temperature_c",
+                    "advisory",
+                ],
+            },
+            True,
+            id="response_format_raw_json_schema",
         ),
     ],
 )
@@ -7831,6 +7817,38 @@ def test_prepare_messages_strips_approval_items_under_storage() -> None:
     storage_off_types = [item.get("type") for item in storage_off]
     assert "mcp_approval_request" in storage_off_types
     assert "mcp_approval_response" in storage_off_types
+
+
+def test_stateless_history_preserves_pending_hosted_approval_request_until_response() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    function_call = Content.from_function_call(
+        call_id="mcp_pending",
+        name="sensitive_action",
+        arguments='{"action": "delete"}',
+        additional_properties={"server_label": "hosted_server"},
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval_pending",
+        function_call=function_call,
+    )
+    approval_response = approval_request.to_function_approval_response(approved=True)
+
+    pending_history = _filter_approval_control_messages([Message(role="assistant", contents=[approval_request])])
+    pending_items = client._prepare_messages_for_openai(
+        pending_history,
+        request_uses_service_side_storage=False,
+    )
+    assert [item.get("type") for item in pending_items] == ["mcp_approval_request"]
+
+    resolved_history = _filter_approval_control_messages([
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=[approval_response]),
+    ])
+    resolved_items = client._prepare_messages_for_openai(
+        resolved_history,
+        request_uses_service_side_storage=False,
+    )
+    assert resolved_items == []
 
 
 def test_prepare_messages_strips_local_shell_call_under_storage() -> None:

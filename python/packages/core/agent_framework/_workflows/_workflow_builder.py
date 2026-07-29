@@ -100,7 +100,9 @@ class WorkflowBuilder:
         """Initialize the WorkflowBuilder.
 
         Args:
-            max_iterations: Maximum number of iterations for workflow convergence. Default is 100.
+            max_iterations: Maximum number of iterations for workflow convergence. The first
+                iteration is the initial run of the start executor, and each subsequent iteration
+                is a superstep. Default is 100.
             name: A human-readable name for the workflow builder. This name will be the identifier
                 for all workflow instances created from this builder. If not provided, a unique name
                 will be generated. This will be useful for versioning, monitoring, checkpointing, and
