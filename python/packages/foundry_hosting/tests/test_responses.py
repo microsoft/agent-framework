@@ -34,7 +34,6 @@ from agent_framework import (
     Content,
     ExperimentalFeature,
     FileCheckpointStorage,
-    FileSessionStore,
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
@@ -183,10 +182,16 @@ class _FailingSessionStore(SessionStore):
         raise OSError("session storage is full")
 
 
+_SESSION_STORE_UNSET = object()
+
+
 def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
-    """Create a ResponsesHostServer with an in-memory store."""
-    kwargs.setdefault("session_store", SessionStore())
-    return ResponsesHostServer(agent, store=InMemoryResponseProvider(), **kwargs)
+    """Create a ResponsesHostServer, optionally replacing its private store for tests."""
+    session_store = kwargs.pop("session_store", _SESSION_STORE_UNSET)
+    server = ResponsesHostServer(agent, store=InMemoryResponseProvider(), **kwargs)
+    if session_store is not _SESSION_STORE_UNSET:
+        server._session_store = cast(SessionStore | None, session_store)  # pyright: ignore[reportPrivateUsage]
+    return server
 
 
 async def _post(
@@ -258,6 +263,11 @@ def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
 
 
 class TestResponsesHostServerInit:
+    def test_init_does_not_expose_session_store_override(self) -> None:
+        import inspect
+
+        assert "session_store" not in inspect.signature(ResponsesHostServer).parameters
+
     def test_init_basic(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
@@ -322,26 +332,6 @@ class TestResponsesHostServerInit:
         agent.context_providers = [hp]
         with pytest.raises(RuntimeError, match="history provider"):
             ResponsesHostServer(agent)
-
-    def test_init_accepts_explicit_file_session_store_override(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
-        session_store = FileSessionStore(tmp_path)
-
-        server = ResponsesHostServer(
-            agent,
-            store=InMemoryResponseProvider(),
-            session_store=session_store,
-        )
-
-        assert server._session_store is session_store  # pyright: ignore[reportPrivateUsage]
-        assert server.config.is_hosted
 
     async def test_hosted_request_requires_user_partition_key(self) -> None:
         agent = _make_agent(
@@ -662,7 +652,7 @@ class TestAgentSessionPersistence:
         client = _RecordingHistoryClient()
         agent = Agent(client=client, name="History Test Agent")
         store = SessionStore()
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider(), session_store=store)
+        server = _make_server(agent, session_store=store)
 
         first = await _post(server, input_text="first")
         await _post(server, input_text="second", previous_response_id=first.json()["id"])
@@ -701,15 +691,15 @@ class TestAgentSessionPersistence:
         first_server = ResponsesHostServer(
             make_agent(),
             store=response_store,
-            session_store=FoundrySessionStore(tmp_path),
         )
+        first_server._session_store = FoundrySessionStore(tmp_path)  # pyright: ignore[reportPrivateUsage]
         first = await _post(first_server)
 
         second_server = ResponsesHostServer(
             make_agent(),
             store=response_store,
-            session_store=FoundrySessionStore(tmp_path),
         )
+        second_server._session_store = FoundrySessionStore(tmp_path)  # pyright: ignore[reportPrivateUsage]
         second = await _post(second_server, previous_response_id=first.json()["id"])
 
         assert second.status_code == 200

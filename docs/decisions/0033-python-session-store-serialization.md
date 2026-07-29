@@ -222,11 +222,7 @@ allows branching without overwriting the parent snapshot. Because Foundry does
 not infer `agent_session_id` from `previous_response_id`, response-chain callers
 must also reuse the prior response's hosted session ID so the request reaches
 the same persistent `$HOME`; conversation objects bind a stable hosted session
-automatically. Callers can override the default through `session_store=` when
-snapshots must be stored outside Foundry, such as in a database or blob store.
-The host passes the same raw Responses IDs to every store implementation;
-custom stores are responsible for any backend-specific user, tenant, or agent
-partitioning.
+automatically.
 The Foundry-specific type is the host configuration seam; its implementation
 may later move from files to a Foundry storage API without changing the generic
 core store contract. The session file API maps `/` to the hosted `$HOME`

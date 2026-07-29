@@ -8,11 +8,7 @@ uses the experimental `FoundrySessionStore` under `/.sessions` when hosted and
 an in-memory `SessionStore` locally. Hosted snapshots are partitioned by the
 Agent Server request context's platform user ID. Snapshot filenames use the
 Responses `conversation_id` or `response_id`, depending on the continuation
-mode. Pass `session_store=` to explicitly override either
-default when MAF session snapshots must be stored outside Foundry, such as in a
-database or blob store. Every store receives the same raw Responses
-`conversation_id`, `previous_response_id`, and `response_id` key semantics.
-Custom stores own any backend-specific user, tenant, or agent isolation.
+mode.
 
 Foundry's session file API exposes the hosted `$HOME` directory as `/`, so the
 API path `/.sessions` is stored on disk at `$HOME/.sessions`.

@@ -412,7 +412,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
-        session_store: SessionStore | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -422,12 +421,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             prefix: The URL prefix for the server.
             options: Optional server options.
             store: Optional response store.
-            session_store: Optional Agent Framework session store override.
-                Defaults to a :class:`FoundrySessionStore` under ``/.sessions``
-                when hosted and an in-memory :class:`SessionStore` locally.
-                Provide another implementation when MAF session snapshots must
-                be persisted outside Foundry, such as in a database or blob
-                store.
             **kwargs: Additional keyword arguments.
 
         Note:
@@ -486,13 +479,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
 
         self._agent: SupportsAgentRun = agent
-        if not self._is_workflow_agent and session_store is None:
-            session_store = (
+        self._session_store: SessionStore | None = (
+            (
                 FoundrySessionStore(Path.home() / self.SESSION_STORAGE_PATH.lstrip("/"))
                 if self.config.is_hosted
                 else SessionStore()
             )
-        self._session_store = session_store
+            if not self._is_workflow_agent
+            else None
+        )
         self._approval_storage: ApprovalStorage = (
             FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH)
             if self.config.is_hosted
