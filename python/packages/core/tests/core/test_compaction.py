@@ -795,8 +795,37 @@ async def test_tool_result_compaction_bounds_large_summary_payload() -> None:
     assert "file-start" in summary_text
     assert "file-end" not in summary_text
     assert "[truncated]" in summary_text
-    assert len(summary_text) <= 4096
+    assert len(summary_text) <= ToolResultCompactionStrategy._SUMMARY_MAX_CHARS
     assert len(summary_text) < len(large_result)
+
+
+async def test_tool_result_compaction_ignores_already_excluded_results() -> None:
+    """Summary text should not restore tool results already excluded from context."""
+    excluded_result = "excluded-start\n" + ("excluded line\n" * 1_000) + "excluded-end"
+    messages = [
+        Message(role="user", contents=["read the files"]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="read_file", arguments="{}"),
+                Content.from_function_call(call_id="c2", name="read_file", arguments="{}"),
+            ],
+        ),
+        _tool_result("c1", "included result"),
+        _tool_result("c2", excluded_result),
+        Message(role="assistant", contents=["done"]),
+    ]
+    strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
+    annotate_message_groups(messages)
+    messages[3].additional_properties[EXCLUDED_KEY] = True
+
+    await strategy(messages)
+
+    summary = next(m for m in included_messages(messages) if (m.text or "").startswith("[Tool results:"))
+    summary_text = summary.text or ""
+    assert "included result" in summary_text
+    assert excluded_result not in summary_text
+    assert "excluded-start" not in summary_text
 
 
 async def test_tool_result_compaction_bidirectional_tracing() -> None:
