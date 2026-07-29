@@ -16,10 +16,12 @@ from ._request_context import validate_path_segment
 class FoundrySessionStore(FileSessionStore):
     """Persist MAF AgentSession snapshots within a Foundry hosted session.
 
-    A Foundry hosted session controls platform compute and filesystem lifetime;
-    a MAF :class:`AgentSession` contains framework context state. They remain
-    distinct concepts even though Responses hosting uses the Foundry session ID
-    as the MAF session identifier and snapshot filename for correlation.
+    A Foundry hosted session controls platform compute and filesystem lifetime
+    and may host multiple users and Responses conversations. A MAF
+    :class:`AgentSession` contains framework context state. Snapshots are keyed
+    by ``conversation_id`` for stored conversations or by Responses
+    ``response_id`` for response chains; these storage keys are independent of
+    the MAF session's own identifier.
 
     This implementation currently persists through :class:`FileSessionStore`,
     with each validated platform user ID as a child directory. The

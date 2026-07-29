@@ -72,12 +72,8 @@ from agent_framework_foundry_hosting._responses import (
     ConsentError,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
-    _conversation_object_id,  # pyright: ignore[reportPrivateUsage]
-    _custom_session_store_key,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
-    _resolve_session_conversation_key,  # pyright: ignore[reportPrivateUsage]
-    _response_id_partition,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 
@@ -385,24 +381,8 @@ class TestResponsesHostServerInit:
                 asyncio.Event(),
             )
 
-    async def test_hosted_foundry_store_requires_platform_session_id(self, tmp_path: Path) -> None:
+    async def test_hosted_foundry_store_does_not_require_platform_session_id(self, tmp_path: Path) -> None:
         server = _make_server(_make_agent(), session_store=FoundrySessionStore(tmp_path))
-        request = CreateResponse(model="m", input="hi")
-        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-
-        with (
-            patch.object(server.config, "is_hosted", True),
-            _request_context(call_id="call-1", user_id="user-1"),
-            pytest.raises(RuntimeError, match="platform session ID"),
-        ):
-            await server._handle_response(  # pyright: ignore[reportPrivateUsage]
-                request,
-                context,
-                asyncio.Event(),
-            )
-
-    async def test_hosted_explicit_store_does_not_require_platform_session_id(self) -> None:
-        server = _make_server(_make_agent(), session_store=SessionStore())
         request = CreateResponse(model="m", input="hi")
         context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
 
@@ -414,6 +394,59 @@ class TestResponsesHostServerInit:
             )
 
         assert handler is not None
+
+    async def test_fresh_request_runs_without_session_store(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        server = _make_server(agent)
+        server._session_store = None  # pyright: ignore[reportPrivateUsage]
+
+        response = await _post(server)
+
+        assert response.json()["status"] == "completed"
+        assert "session" not in agent.run.call_args.kwargs
+
+    @pytest.mark.parametrize("continuation", ["conversation", "previous_response"])
+    async def test_continuation_requires_session_store(self, continuation: str) -> None:
+        server = _make_server(_make_agent())
+        server._session_store = None  # pyright: ignore[reportPrivateUsage]
+        request = CreateResponse(
+            model="m",
+            input="hi",
+            previous_response_id="response-previous" if continuation == "previous_response" else None,
+        )
+        context = ResponseContext(
+            response_id="response-current",
+            conversation_id="conversation-1" if continuation == "conversation" else None,
+            mode_flags=MagicMock(),
+        )
+
+        handler = await server._handle_response(request, context, asyncio.Event())  # pyright: ignore[reportPrivateUsage]
+        events = [event async for event in handler]
+
+        failed_events = [event for event in events if getattr(event, "type", None) == "response.failed"]
+        assert len(failed_events) == 1
+        failed_response = getattr(failed_events[0], "response", None)
+        error = getattr(failed_response, "error", None)
+        assert "Session storage is required" in getattr(error, "message", "")
+
+    async def test_previous_response_requires_existing_snapshot(self, tmp_path: Path) -> None:
+        agent = _make_agent()
+        server = _make_server(agent, session_store=FoundrySessionStore(tmp_path))
+        request = CreateResponse(model="m", input="hi", previous_response_id="response-missing")
+        context = ResponseContext(response_id="response-current", mode_flags=MagicMock())
+
+        handler = await server._handle_response(request, context, asyncio.Event())  # pyright: ignore[reportPrivateUsage]
+        events = [event async for event in handler]
+
+        failed_events = [event for event in events if getattr(event, "type", None) == "response.failed"]
+        assert len(failed_events) == 1
+        failed_response = getattr(failed_events[0], "response", None)
+        error = getattr(failed_response, "error", None)
+        assert "reuse the response's agent_session_id" in getattr(error, "message", "").lower()
+        agent.run.assert_not_called()
+        agent.create_session.assert_not_called()
 
 
 # endregion
@@ -428,76 +461,6 @@ class TestSessionPersistenceHelpers:
         assert FoundrySessionStore.__feature_id__ == ExperimentalFeature.SESSION_STORE.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert FoundrySessionStore.__doc__ is not None
         assert ".. warning:: Experimental" in FoundrySessionStore.__doc__
-
-    def test_response_id_partition_supports_current_legacy_and_raw_ids(self) -> None:
-        current_partition = "a" * 18
-        legacy_partition = "b" * 16
-
-        assert _response_id_partition(f"caresp_{current_partition}{'1' * 32}") == current_partition
-        assert _response_id_partition(f"caresp_{'2' * 32}{legacy_partition}") == legacy_partition
-        assert _response_id_partition("custom-response") == "custom-response"
-        assert _response_id_partition(None) is None
-
-    def test_session_conversation_key_prefers_conversation_then_previous_then_response(self) -> None:
-        previous_partition = "a" * 18
-        response_partition = "b" * 18
-        previous_response_id = f"caresp_{previous_partition}{'1' * 32}"
-        response_id = f"caresp_{response_partition}{'2' * 32}"
-        request = CreateResponse(model="m", input="hi", previous_response_id=previous_response_id)
-
-        assert (
-            _resolve_session_conversation_key(
-                request,
-                ResponseContext(
-                    response_id=response_id,
-                    previous_response_id=previous_response_id,
-                    conversation_id="conversation-1",
-                    mode_flags=MagicMock(),
-                ),
-            )
-            == "conversation-1"
-        )
-        assert (
-            _resolve_session_conversation_key(
-                request,
-                ResponseContext(
-                    response_id=response_id,
-                    previous_response_id=previous_response_id,
-                    mode_flags=MagicMock(),
-                ),
-            )
-            == previous_partition
-        )
-        assert (
-            _resolve_session_conversation_key(
-                CreateResponse(model="m", input="hi"),
-                ResponseContext(response_id=response_id, mode_flags=MagicMock()),
-            )
-            == response_partition
-        )
-
-    def test_custom_store_key_partitions_by_agent_and_request_user(self) -> None:
-        agent = _make_agent()
-        other_agent = _make_agent()
-        other_agent.name = "Other Agent"
-
-        with _request_context(user_id="user-a"):
-            key_a = _custom_session_store_key(agent, "conversation-1")
-            key_other_agent = _custom_session_store_key(other_agent, "conversation-1")
-            repeated_key_a = _custom_session_store_key(agent, "conversation-1")
-        with _request_context(user_id="user-b"):
-            key_b = _custom_session_store_key(agent, "conversation-1")
-
-        assert key_a != key_b
-        assert key_a != key_other_agent
-        assert key_a.startswith("foundry_")
-        assert len(key_a) == len("foundry_") + 64
-        assert all(character.isascii() and (character.isalnum() or character in "-_") for character in key_a)
-        assert key_a == repeated_key_a
-
-    def test_conversation_object_id_preserves_supported_opaque_values(self) -> None:
-        assert _conversation_object_id("conversation-1") == "conversation-1"
-        assert _conversation_object_id("conversation/opaque") == "conversation/opaque"
 
 
 class TestAgentSessionPersistence:
@@ -600,8 +563,9 @@ class TestAgentSessionPersistence:
             await store.set("conversation-1", AgentSession(session_id="conversation-1"))
         assert (tmp_path / "conversation-1.json").is_file()
 
-    async def test_hosted_file_store_persists_by_platform_user_and_session_ids(self, tmp_path: Path) -> None:
+    async def test_hosted_file_store_isolates_conversations_within_platform_session(self, tmp_path: Path) -> None:
         seen_counts: list[int] = []
+        seen_session_ids: list[str] = []
 
         async def run_with_state(*args: Any, **kwargs: Any) -> AgentResponse:
             session = kwargs["session"]
@@ -609,6 +573,7 @@ class TestAgentSessionPersistence:
             count = int(session.state.get("turn_count", 0)) + 1
             session.state["turn_count"] = count
             seen_counts.append(count)
+            seen_session_ids.append(session.session_id)
             return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(f"turn {count}")])])
 
         agent = _make_agent()
@@ -627,6 +592,7 @@ class TestAgentSessionPersistence:
                 asyncio.Event(),
             )
             first_events = [event async for event in first_stream]
+
             second_stream = await server._handle_response(  # pyright: ignore[reportPrivateUsage]
                 CreateResponse(model="m", input="again"),
                 ResponseContext(response_id="response-2", conversation_id="conversation-2", mode_flags=MagicMock()),
@@ -634,11 +600,23 @@ class TestAgentSessionPersistence:
             )
             second_events = [event async for event in second_stream]
 
+            third_stream = await server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                CreateResponse(model="m", input="continue first"),
+                ResponseContext(response_id="response-3", conversation_id="conversation-1", mode_flags=MagicMock()),
+                asyncio.Event(),
+            )
+            third_events = [event async for event in third_stream]
+
         assert any(getattr(event, "type", None) == "response.completed" for event in first_events)
         assert any(getattr(event, "type", None) == "response.completed" for event in second_events)
-        assert seen_counts == [1, 2]
-        assert (tmp_path / "user-1" / "session-1.json").is_file()
-        agent.create_session.assert_called_once_with(session_id="session-1")
+        assert any(getattr(event, "type", None) == "response.completed" for event in third_events)
+        assert seen_counts == [1, 1, 2]
+        assert seen_session_ids[0] != seen_session_ids[1]
+        assert seen_session_ids[2] == seen_session_ids[0]
+        assert (tmp_path / "user-1" / "conversation-1.json").is_file()
+        assert (tmp_path / "user-1" / "conversation-2.json").is_file()
+        assert agent.create_session.call_count == 2
+        assert all(item.kwargs == {} for item in agent.create_session.call_args_list)
 
     async def test_previous_response_chain_restores_session_state(self) -> None:
         seen_counts: list[int] = []
@@ -659,11 +637,26 @@ class TestAgentSessionPersistence:
 
         first = await _post(server)
         second = await _post(server, previous_response_id=first.json()["id"])
+        third = await _post(server, previous_response_id=first.json()["id"])
 
         assert first.status_code == 200
         assert second.status_code == 200
-        assert seen_counts == [1, 2]
-        assert seen_session_ids[0] == seen_session_ids[1]
+        assert third.status_code == 200
+        assert seen_counts == [1, 2, 2]
+        assert seen_session_ids[0] == seen_session_ids[1] == seen_session_ids[2]
+
+        session_store = server._session_store  # pyright: ignore[reportPrivateUsage]
+        assert session_store is not None
+        first_snapshot = await session_store.get(first.json()["id"])
+        second_snapshot = await session_store.get(second.json()["id"])
+        third_snapshot = await session_store.get(third.json()["id"])
+        assert first_snapshot is not None
+        assert second_snapshot is not None
+        assert third_snapshot is not None
+        assert first_snapshot.state["turn_count"] == 1
+        assert second_snapshot.state["turn_count"] == 2
+        assert third_snapshot.state["turn_count"] == 2
+        assert first_snapshot.session_id == second_snapshot.session_id == third_snapshot.session_id
 
     async def test_responses_history_is_not_duplicated_by_default_local_history(self) -> None:
         client = _RecordingHistoryClient()
@@ -680,14 +673,8 @@ class TestAgentSessionPersistence:
         ]
         assert [provider.source_id for provider in agent.context_providers] == ["_foundry_responses_history"]
 
-        conversation_key = _response_id_partition(first.json()["id"])
-        assert conversation_key is not None
-        stored = await store.get(
-            _custom_session_store_key(
-                agent,
-                _conversation_object_id(conversation_key),
-            )
-        )
+        session_id = first.json()["id"]
+        stored = await store.get(session_id)
         assert stored is not None
         assert InMemoryHistoryProvider.DEFAULT_SOURCE_ID not in stored.state
 
@@ -746,7 +733,7 @@ class TestAgentSessionPersistence:
         second = await _post(server, conversation_id="conversation-1")
 
         assert second.json()["status"] == "completed"
-        agent.create_session.assert_called_once_with(session_id="conversation-1")
+        agent.create_session.assert_called_once_with()
 
     async def test_streaming_run_saves_final_session_state(self) -> None:
         store = SessionStore()
@@ -766,16 +753,9 @@ class TestAgentSessionPersistence:
         server = _make_server(agent, session_store=store)
 
         response = await _post(server, stream=True)
-        response_id = _parse_sse_events(response.text)[-1]["data"]["response"]["id"]
-        conversation_key = _response_id_partition(response_id)
-        assert conversation_key is not None
+        session_id = _parse_sse_events(response.text)[-1]["data"]["response"]["id"]
 
-        stored = await store.get(
-            _custom_session_store_key(
-                agent,
-                _conversation_object_id(conversation_key),
-            )
-        )
+        stored = await store.get(session_id)
 
         assert stored is not None
         assert stored.state["stream_complete"] is True
@@ -795,15 +775,9 @@ class TestAgentSessionPersistence:
 
         response = await _post(server)
         body = response.json()
-        conversation_key = _response_id_partition(body["id"])
-        assert conversation_key is not None
+        session_id = body["id"]
 
-        stored = await store.get(
-            _custom_session_store_key(
-                agent,
-                _conversation_object_id(conversation_key),
-            )
-        )
+        stored = await store.get(session_id)
 
         assert body["status"] == "failed"
         assert stored is not None
@@ -871,6 +845,42 @@ class TestAgentSessionPersistence:
 
         assert store.set_attempts == 1
         assert "while unwinding an interrupted request" in caplog.text
+
+    async def test_abandoned_stream_saves_partial_session(self) -> None:
+        store = SessionStore()
+        agent = _make_agent()
+
+        def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream:
+            session = kwargs["session"]
+            assert isinstance(session, AgentSession)
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                session.state["started"] = True
+                yield AgentResponseUpdate(contents=[Content.from_text("started")], role="assistant")
+
+            return ResponseStream(updates())
+
+        agent.run = MagicMock(side_effect=run_streaming)
+        server = _make_server(agent, session_store=store)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_inner_agent(request, context),  # pyright: ignore[reportPrivateUsage]
+            )
+            await anext(handler)
+            await anext(handler)
+            await anext(handler)
+            await handler.aclose()
+
+        stored = await store.get("response-1")
+        assert stored is not None
+        assert stored.state["started"] is True
 
 
 # endregion

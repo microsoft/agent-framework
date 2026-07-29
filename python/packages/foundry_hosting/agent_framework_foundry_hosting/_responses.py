@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 import json
 import logging
 import os
@@ -22,7 +21,6 @@ from agent_framework import (
     Content,
     ContextProvider,
     FileCheckpointStorage,
-    FileSessionStore,
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
@@ -132,10 +130,6 @@ from ._session_store import FoundrySessionStore
 logger = logging.getLogger(__name__)
 
 _AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
-_CURRENT_RESPONSE_ID_BODY_LENGTH = 50
-_CURRENT_RESPONSE_ID_PARTITION_LENGTH = 18
-_LEGACY_RESPONSE_ID_BODY_LENGTH = 48
-_LEGACY_RESPONSE_ID_PARTITION_LENGTH = 16
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
 
 
@@ -231,55 +225,6 @@ class FileBasedFunctionApprovalStorage:
 
     async def load_approval_request(self, approval_request_id: str) -> Content:
         return await asyncio.to_thread(self._load_sync, approval_request_id)
-
-
-def _response_id_partition(response_id: str | None) -> str | None:
-    """Extract the stable Responses SDK partition from an item/response ID."""
-    if response_id is None or not response_id.strip():
-        return None
-    _, separator, body = response_id.partition("_")
-    if not separator:
-        body = response_id
-    if len(body) == _CURRENT_RESPONSE_ID_BODY_LENGTH:
-        return body[:_CURRENT_RESPONSE_ID_PARTITION_LENGTH]
-    if len(body) == _LEGACY_RESPONSE_ID_BODY_LENGTH:
-        return body[-_LEGACY_RESPONSE_ID_PARTITION_LENGTH:]
-    return response_id
-
-
-def _resolve_session_conversation_key(request: CreateResponse, context: ResponseContext) -> str:
-    """Resolve the stable conversation-level key used for AgentSession persistence."""
-    conversation_key = (
-        context.conversation_id
-        or _response_id_partition(request.previous_response_id)
-        or _response_id_partition(context.response_id)
-    )
-    if conversation_key is None:
-        raise RuntimeError("A Responses session key could not be resolved.")
-    return conversation_key
-
-
-def _conversation_object_id(conversation_key: str) -> str:
-    """Return a restricted store/file ID derived from the Responses conversation object."""
-    try:
-        FileSessionStore.validate_session_id(conversation_key)
-    except ValueError:
-        return f"conversation_{hashlib.sha256(conversation_key.encode('utf-8')).hexdigest()}"
-    return conversation_key
-
-
-def _custom_session_store_key(
-    agent: SupportsAgentRun,
-    object_id: str,
-) -> str:
-    """Create a request-user-scoped key for a non-file custom store."""
-    key: dict[str, str] = {"object": object_id}
-    if agent.name:
-        key["agent"] = agent.name
-    if user_id := get_request_context().user_id:
-        key["user"] = user_id
-    canonical_key = json.dumps(key, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return f"foundry_{hashlib.sha256(canonical_key.encode('utf-8')).hexdigest()}"
 
 
 def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
@@ -614,16 +559,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         """Handle the creation of a response."""
         request_context = get_request_context()
         validate_foundry_request_context(request_context, is_hosted=self.config.is_hosted)
-        if (
-            self.config.is_hosted
-            and not self._is_workflow_agent
-            and isinstance(self._session_store, FoundrySessionStore)
-            and not request_context.session_id
-        ):
-            raise RuntimeError(
-                "The hosted environment is missing the platform session ID in the request context. "
-                "Please ensure that the request is associated with a valid Foundry session."
-            )
 
         if self._is_workflow_agent:
             # Workflow agents are handled differently because they require checkpoint restoration
@@ -635,11 +570,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request: CreateResponse,
         context: ResponseContext,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
-        """Handle a regular agent with MAF state scoped by a Foundry session.
+        """Handle a regular agent with Responses-managed MAF session continuity.
 
-        Foundry sessions govern hosted compute and filesystem lifetime. MAF
-        AgentSession objects hold framework context state. The shared identifier
-        correlates the two without making their lifecycle semantics equivalent.
+        Foundry sessions govern hosted compute and filesystem lifetime and may
+        serve multiple users and Responses conversations. Conversation mode
+        reads and writes one MAF session snapshot under ``conversation_id``.
+        Response chaining reads the snapshot under ``previous_response_id`` and
+        writes the updated session under the current ``response_id``, allowing
+        branches without changing the MAF session's own identifier. The request
+        user provides the storage isolation boundary.
         """
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
         yield response_event_stream.emit_created()
@@ -649,43 +588,38 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # lazily created on matching content, closed when a different type arrives.
         tracker: _OutputItemTracker | None = None
         session: AgentSession | None = None
-        request_session_store: SessionStore | None = None
-        session_store_key: str | None = None
-        # Successful runs save before response.completed so a persistence failure
-        # can become response.failed. The finally path covers cancellation or an
-        # abandoned stream and must not save a second time.
-        session_save_attempted = False
-
-        async def save_session() -> None:
-            nonlocal session_save_attempted
-            session_save_attempted = True
-            if request_session_store is None:
-                raise RuntimeError("Session storage is not configured for a regular agent.")
-            if session is not None and session_store_key is not None:
-                await request_session_store.set(session_store_key, session)
+        request_failure: Exception | None = None
+        request_interrupted = False
+        response_messages: Sequence[Message] | None = None
+        consent_errors_to_emit: list[ConsentError] | None = None
+        approval_storage: ApprovalStorage | None = None
 
         try:
             approval_storage = self._approval_storage_for_request()
-            conversation_key = _resolve_session_conversation_key(request, context)
-            object_id = _conversation_object_id(conversation_key)
-            request_session_store = self._session_store
-            if request_session_store is None:
-                raise RuntimeError("Session storage is not configured for a regular agent.")
-            if isinstance(request_session_store, FoundrySessionStore) and self.config.is_hosted:
-                session_id = get_request_context().session_id
-                if session_id is None:  # Guarded by _handle_response.
-                    raise RuntimeError("The hosted request context is missing its platform session ID.")
-                session_store_key = session_id
+            read_session_id = context.conversation_id or request.previous_response_id
+            if self._session_store is None:
+                if read_session_id is not None:
+                    raise RuntimeError(
+                        "Session storage is required when using conversation_id or previous_response_id."
+                    )
             else:
-                session_id = object_id
-                session_store_key = (
-                    session_id
-                    if isinstance(request_session_store, FoundrySessionStore)
-                    else _custom_session_store_key(self._agent, object_id)
+                previous_session = (
+                    await self._session_store.get(read_session_id) if read_session_id is not None else None
                 )
-            session = await request_session_store.get(session_store_key)
-            if session is None:
-                session = self._agent.create_session(session_id=session_id)
+                # check if a previous response was tried to be used, that should raise if not found
+                # likely because the wrong user tried to use it.
+                if request.previous_response_id is not None and previous_session is None:
+                    message = (
+                        "No Agent Framework session snapshot was found for previous_response_id "
+                        f"{request.previous_response_id!r}."
+                    )
+                    if isinstance(self._session_store, FoundrySessionStore):
+                        message += (
+                            " Reuse the response's agent_session_id so the request is routed to the same "
+                            "persistent Foundry sandbox."
+                        )
+                    raise RuntimeError(message)
+                session = previous_session if previous_session is not None else self._agent.create_session()
 
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
@@ -696,8 +630,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     *(await _output_items_to_messages(history, approval_storage=approval_storage)),
                     *input_messages,
                 ],
-                "session": session,
             }
+            if session is not None:
+                run_kwargs["session"] = session
             is_streaming_request = request.stream is not None and request.stream is True
 
             chat_options, are_options_set = _to_chat_options(request)
@@ -715,74 +650,91 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             try:
                 await self._ensure_agent_ready()
             except AgentFrameworkException as ex:
-                consent_errors = consent_url_from_error(ex)
-                if consent_errors is None:
+                consent_errors_to_emit = consent_url_from_error(ex)
+                if consent_errors_to_emit is None:
                     raise
-                for consent_error in consent_errors:
-                    logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
-                    oauth_item = OAuthConsentRequestOutputItem(
-                        id=IdGenerator.new_id("oacr"),
-                        consent_link=consent_error.consent_url,
-                        server_label=consent_error.name,
-                    )
-                    builder = response_event_stream.add_output_item(oauth_item.id)
-                    yield builder.emit_added(oauth_item)
-                    yield builder.emit_done(oauth_item)
-                await save_session()
-                yield response_event_stream.emit_completed()
-                return
 
-            tracker = _OutputItemTracker(response_event_stream) if is_streaming_request else None
+            if consent_errors_to_emit is None:
+                tracker = _OutputItemTracker(response_event_stream) if is_streaming_request else None
 
-            if not is_streaming_request:
-                # Run the agent in non-streaming mode
-                response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
-
-                async for item in _to_outputs_for_messages(
-                    response_event_stream,
-                    response.messages,
-                    approval_storage=approval_storage,
-                ):
-                    yield item
-            else:
-                if tracker is None:  # pragma: no cover - defensive, set above
-                    raise RuntimeError("Streaming tracker was not initialized.")
-                # Run the agent in streaming mode
-                async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
-                    for content in update.contents:
-                        for event in tracker.handle(content):
-                            yield event
-                        if tracker.needs_async:
-                            async for item in _to_outputs(
-                                response_event_stream,
-                                content,
-                                approval_storage=approval_storage,
-                            ):
-                                yield item
-                            tracker.needs_async = False
-
-                # Close any remaining active builder
-                for event in tracker.close():
-                    yield event
-            await save_session()
-            yield response_event_stream.emit_completed()
+                if not is_streaming_request:
+                    # Run the agent in non-streaming mode
+                    response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
+                    response_messages = response.messages
+                else:
+                    if tracker is None:  # pragma: no cover - defensive, set above
+                        raise RuntimeError("Streaming tracker was not initialized.")
+                    # Run the agent in streaming mode
+                    async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
+                        for content in update.contents:
+                            for event in tracker.handle(content):
+                                yield event
+                            if tracker.needs_async:
+                                async for item in _to_outputs(
+                                    response_event_stream,
+                                    content,
+                                    approval_storage=approval_storage,
+                                ):
+                                    yield item
+                                tracker.needs_async = False
+        except asyncio.CancelledError:
+            request_interrupted = True
+            raise
+        except GeneratorExit:
+            request_interrupted = True
+            raise
         except Exception as ex:
-            logger.exception("Failed to produce response for agent")
-            if not session_save_attempted:
-                try:
-                    await save_session()
-                except Exception:
-                    logger.exception("Failed to persist the Agent Framework session after an agent failure")
-            for event in self._emit_failure(response_event_stream, tracker, ex):
-                yield event
+            request_failure = ex
         finally:
-            if session is not None and not session_save_attempted:
+            if session is not None and self._session_store is not None:
                 try:
-                    await save_session()
-                except Exception:
-                    logger.exception(
-                        "Failed to persist the Agent Framework session while unwinding an interrupted request"
-                    )
+                    await self._session_store.set(context.conversation_id or context.response_id, session)
+                except Exception as save_error:
+                    if request_interrupted:
+                        logger.error(
+                            "Failed to persist the Agent Framework session while unwinding an interrupted request",
+                            exc_info=(type(save_error), save_error, save_error.__traceback__),
+                        )
+                    elif request_failure is None:
+                        request_failure = save_error
+                    else:
+                        logger.error(
+                            "Failed to persist the Agent Framework session after an agent failure",
+                            exc_info=(type(save_error), save_error, save_error.__traceback__),
+                        )
+
+        if request_failure is not None:
+            logger.error(
+                "Failed to produce response for agent",
+                exc_info=(type(request_failure), request_failure, request_failure.__traceback__),
+            )
+            for event in self._emit_failure(response_event_stream, tracker, request_failure):
+                yield event
+            return
+
+        if consent_errors_to_emit is not None:
+            for consent_error in consent_errors_to_emit:
+                logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
+                oauth_item = OAuthConsentRequestOutputItem(
+                    id=IdGenerator.new_id("oacr"),
+                    consent_link=consent_error.consent_url,
+                    server_label=consent_error.name,
+                )
+                builder = response_event_stream.add_output_item(oauth_item.id)
+                yield builder.emit_added(oauth_item)
+                yield builder.emit_done(oauth_item)
+        elif response_messages is not None:
+            async for item in _to_outputs_for_messages(
+                response_event_stream,
+                response_messages,
+                approval_storage=approval_storage,
+            ):
+                yield item
+        elif tracker is not None:
+            for event in tracker.close():
+                yield event
+
+        yield response_event_stream.emit_completed()
 
     async def _handle_inner_workflow(
         self,

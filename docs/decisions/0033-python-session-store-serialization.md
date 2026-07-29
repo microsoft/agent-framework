@@ -210,17 +210,27 @@ Foundry Hosting exposes an experimental `FoundrySessionStore`, which is the
 default `ResponsesHostServer` store when hosted; local hosting defaults to the
 in-memory `SessionStore`. `FoundrySessionStore` currently subclasses
 `FileSessionStore`, stores snapshots under
-`/.sessions/<user-id>/<session-id>.json`, and derives the validated platform
-IDs from `azure.ai.agentserver.core.get_request_context()`. A Foundry session
-controls hosted compute and filesystem lifetime, while a MAF `AgentSession`
-contains framework context state; using the same identifier correlates them but
-does not make their semantics equivalent. Callers can override the default
-through `session_store=` when snapshots must be stored outside Foundry, such as
-in a database or blob store. The Foundry-specific type is the host configuration
-seam; its implementation may later move from files to a Foundry storage API
-without changing the generic core store contract. The session file API maps `/`
-to the hosted `$HOME` directory, so this API path is persisted on disk under
-`$HOME/.sessions`.
+`/.sessions/<user-id>/<conversation-id-or-response-id>.json`, and derives the
+validated user partition from
+`azure.ai.agentserver.core.get_request_context()`. A Foundry session controls
+hosted compute and filesystem lifetime and may host multiple users and
+Responses conversations, so its ID is not used as the MAF session identifier.
+Stored-conversation requests read and write one snapshot under
+`conversation_id`. Response-chain requests read under `previous_response_id`
+and write the updated, loaded MAF session under the current `response_id`, which
+allows branching without overwriting the parent snapshot. Because Foundry does
+not infer `agent_session_id` from `previous_response_id`, response-chain callers
+must also reuse the prior response's hosted session ID so the request reaches
+the same persistent `$HOME`; conversation objects bind a stable hosted session
+automatically. Callers can override the default through `session_store=` when
+snapshots must be stored outside Foundry, such as in a database or blob store.
+The host passes the same raw Responses IDs to every store implementation;
+custom stores are responsible for any backend-specific user, tenant, or agent
+partitioning.
+The Foundry-specific type is the host configuration seam; its implementation
+may later move from files to a Foundry storage API without changing the generic
+core store contract. The session file API maps `/` to the hosted `$HOME`
+directory, so this API path is persisted on disk under `$HOME/.sessions`.
 
 ### Decision 2: Use msgspec codecs plus an explicit dynamic registry
 
