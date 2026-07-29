@@ -40,6 +40,7 @@ from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework._tools import (
     _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY,  # type: ignore
     _collect_approval_responses,  # type: ignore
+    _get_tool_map,  # type: ignore
     _replace_approval_contents_with_results,  # type: ignore
     _TOOL_APPROVAL_STATE_KEY,  # type: ignore
     _try_execute_function_call_groups,  # type: ignore
@@ -1308,8 +1309,17 @@ async def _resolve_approval_responses(
 
     approved_function_result_groups: list[list[Content]] = []
 
-    # Execute approved tool calls
-    if approved_responses and tools:
+    # Partition approved responses into static (execute now) and deferred (execute during run)
+    tool_map = _get_tool_map(tools) if tools else {}
+    static_approved: list[Content] = []
+
+    for approval in approved_responses:
+        tool_name = approval.function_call.name if approval.function_call else None
+        if tool_name in tool_map:
+            static_approved.append(approval)
+
+    # Execute only statically-available approved tool calls
+    if static_approved and tools:
         client = getattr(agent, "client", None)
         config = normalize_function_invocation_configuration(getattr(client, "function_invocation_configuration", None))
         middleware_pipeline = FunctionMiddlewarePipeline(
@@ -1321,7 +1331,7 @@ async def _resolve_approval_responses(
         try:
             approved_function_result_groups, _ = await _try_execute_function_call_groups(
                 custom_args=tool_kwargs,
-                function_calls=approved_responses,
+                function_calls=static_approved,
                 tools=tools,
                 middleware_pipeline=middleware_pipeline,
                 config=config,
@@ -1330,10 +1340,11 @@ async def _resolve_approval_responses(
             logger.exception("Failed to execute approved tool calls; injecting error results: %s", e)
             approved_function_result_groups = []
 
-    # Normalize one group per approval and collect only terminal results for TOOL_CALL_RESULT events.
+    # Normalize one group per static approval and collect only terminal results for TOOL_CALL_RESULT events.
+    # Deferred provider-injected approvals are left in messages for ToolApprovalMiddleware to process.
     replacement_groups: list[list[Content]] = []
     approved_results: list[Content] = []
-    for idx, approval in enumerate(approved_responses):
+    for idx, approval in enumerate(static_approved):
         result_group = approved_function_result_groups[idx] if idx < len(approved_function_result_groups) else []
         if not result_group:
             func_call = approval.function_call

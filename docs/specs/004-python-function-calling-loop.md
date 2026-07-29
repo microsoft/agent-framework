@@ -438,6 +438,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Standing tool rule | Tool-level approval applies only to later matching tools. | `test_tool_approval_middleware_always_approve_tool_rule` |
 | Hosted server boundary | Standing approval does not cross `server_label`. | `test_tool_approval_middleware_standing_rules_include_hosted_server_boundary` |
 | Argument-scoped rule | Exact arguments are required; empty arguments are not tool-wide. | `test_tool_approval_middleware_always_approve_tool_with_arguments_rule`, `test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide` |
+| Provider-injected approval tool | A tool added during `before_run` defers to in-run resolution, executes once, and emits one result. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_deferred_provider_tool_executes` |
 
 ### Errors, control flow, and limits
 
@@ -482,7 +483,6 @@ These scenarios are required but are not fully covered by merged tests on `main`
 | Gap | Tracking |
 |---|---|
 | Non-adjacent and reused-id call/result occurrences remain atomic during compaction. | #7212 |
-| Provider-injected approval-required tools defer until `before_run` tools exist and still emit one result. | #7043 |
 | Service-side storage sends the current approval response while omitting the stored request. | #7125 |
 | Service-owned `previous_response_id` continuation cannot execute a terminal approval again on a later turn. | #6851 |
 | A provider that ignores `tool_choice="none"` after an invocation limit cannot expose an unanswered call. | #7045 |
@@ -536,6 +536,7 @@ Before accepting an update, reviewers must confirm:
 
 - #7241 — approval-resolution result streaming
 - #7267 / #7271 and #7304 — replayed calls and reused ids
+- #7043 — provider-injected approval execution
 - #6851 — duplicate side effects after approval continuation
 - #7383 — bind approval responses to framework-issued requests after this foundation merges
 - #6963 / #7095 — opaque reasoning-signature replay
