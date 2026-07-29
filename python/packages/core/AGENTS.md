@@ -160,6 +160,9 @@ agent_framework/
 - Once an invocation limit disables local tools, locally actionable calls and local approval requests are removed
   from streaming and final output. Provider-executed informational call/result pairs, hosted approval requests, and
   metadata-only stream updates remain visible.
+- Declaration-only streamed calls emit their arguments only from the provider stream. The function layer sends a
+  metadata-only follow-up (`arguments=None`) so `id` and `user_input_request` survive final aggregation without
+  duplicating arguments.
 - `function_approval_request` and `function_approval_response` are control-plane contents. History providers may
   retain them in their backing store for audit. The base `HistoryProvider.before_run` filters resolved wrappers from
   later model replay, but preserves unresolved requests/responses until a terminal result or follow-up request closes
