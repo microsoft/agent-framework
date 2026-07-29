@@ -1010,6 +1010,22 @@ class TestMCPSkillsSourceArchive:
         names = sorted(s.frontmatter.name for s in skills)
         assert names == ["packaged-skill", "unit-converter"]
 
+    @pytest.mark.asyncio
+    async def test_zip_slip_archive_skips_whole_skill(self) -> None:
+        # An archive with a path-traversal member is treated as hostile: the whole
+        # skill is dropped (extraction raises, and _build_skill skips it).
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        archive = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.encode(),
+            "../evil.md": b"pwned",
+        })
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        skills = await source.get_skills(_SOURCE_CTX)
+        assert skills == []
+
 
 # ---------------------------------------------------------------------------
 # Archive extractor unit tests
@@ -1047,26 +1063,30 @@ class TestArchiveExtractor:
     def test_normalize_member_name_rejects_traversal(self) -> None:
         from agent_framework._skills import _normalize_archive_member_name
 
-        # Parent-traversal escapes are rejected.
-        assert _normalize_archive_member_name("../evil.md") is None
-        assert _normalize_archive_member_name("..\\evil.md") is None
-        assert _normalize_archive_member_name("a/../../evil.md") is None
+        # Parent-traversal escapes raise (zip-slip is treated as a hostile archive).
+        with pytest.raises(ValueError, match="escape"):
+            _normalize_archive_member_name("../evil.md")
+        with pytest.raises(ValueError, match="escape"):
+            _normalize_archive_member_name("..\\evil.md")
+        with pytest.raises(ValueError, match="escape"):
+            _normalize_archive_member_name("a/../../evil.md")
+        # Degenerate non-file entries that cannot escape are skipped (return None).
         assert _normalize_archive_member_name("") is None
+        assert _normalize_archive_member_name("/") is None
+        assert _normalize_archive_member_name(".") is None
         # A leading-slash path is neutralized to a relative path.
         assert _normalize_archive_member_name("/etc/passwd") == "etc/passwd"
         # Backslashes are normalized and redundant segments collapsed.
         assert _normalize_archive_member_name("refs\\./doc.md") == "refs/doc.md"
         assert _normalize_archive_member_name("ok/file.md") == "ok/file.md"
 
-    def test_zip_slip_member_is_skipped(self) -> None:
+    def test_zip_slip_member_raises(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
 
-        archive = _make_zip({"../evil.md": b"pwned", "safe.md": b"ok"})
-        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
-
-        assert "safe.md" in files
-        assert "../evil.md" not in files
-        assert "evil.md" not in files
+        # A member attempting a path-traversal escape aborts the whole extraction.
+        archive = _make_zip({"safe.md": b"ok", "../evil.md": b"pwned"})
+        with pytest.raises(ValueError, match="escape"):
+            _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
 
     def test_leading_slash_member_is_neutralized(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory

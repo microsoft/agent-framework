@@ -4392,24 +4392,31 @@ def _detect_archive_format(data: bytes, media_type: str | None, url: str | None)
 def _normalize_archive_member_name(entry_path: str) -> str | None:
     """Normalize an archive member path to a safe relative POSIX path, or ``None``.
 
-    Guards against path-traversal ("zip-slip") shapes: empty, absolute/rooted, or
-    parent-traversing (``..``) member paths are rejected. No filesystem is touched;
-    the returned name is used only as an in-memory resource key, so this is purely a
-    naming-safety check.
+    A member whose path attempts to escape the skill namespace via a parent-traversal
+    (``..``) segment is treated as a hostile archive and raises, aborting extraction of
+    the whole skill (consistent with how the file-count and uncompressed-size limits
+    reject a malformed archive). Absolute/rooted paths are neutralized to relative, and
+    degenerate non-file entries that cannot escape (empty names, or paths that resolve to
+    nothing such as ``.`` or ``/``) return ``None`` so the caller skips just that member.
+    No filesystem is touched; the returned name is used only as an in-memory resource key.
 
     Args:
         entry_path: The archive-relative path of the member.
 
     Returns:
-        A cleaned forward-slash-separated relative path, or ``None`` when the member
-        path is empty or would escape the skill namespace.
+        A cleaned forward-slash-separated relative path, or ``None`` when the member is a
+        degenerate non-file entry that should be skipped.
+
+    Raises:
+        ValueError: If the member path attempts a path-traversal ("zip-slip") escape via
+            a ``..`` parent-traversal segment.
     """
     if not entry_path or not entry_path.strip():
         return None
 
     normalized = entry_path.replace("\\", "/").lstrip("/")
-    if not normalized or any(segment == ".." for segment in normalized.split("/")):
-        return None
+    if any(segment == ".." for segment in normalized.split("/")):
+        raise ValueError(f"Skill archive member '{entry_path}' attempts to escape the skill namespace.")
 
     parts = [segment for segment in normalized.split("/") if segment not in ("", ".")]
     if not parts:
@@ -4457,10 +4464,12 @@ def _extract_archive_to_memory(
     """Extract an archive's regular files into an in-memory ``{relative-path: bytes}`` mapping.
 
     Supports ZIP, TAR, and gzip-compressed TAR payloads. Non-regular TAR entries
-    (symbolic links, hard links, device nodes, etc.) and unsafe member names (absolute
-    or parent-traversing) are skipped, so an archive cannot smuggle in a link or escape
-    the skill namespace. Extraction is bounded by a maximum file count and total
-    uncompressed size to mitigate decompression-bomb attacks. No filesystem is touched.
+    (symbolic links, hard links, device nodes, etc.) are skipped so an archive cannot
+    smuggle in a link, and absolute member names are neutralized to relative. A member
+    that attempts to escape the skill namespace via a ``..`` parent-traversal ("zip-slip")
+    aborts extraction of the whole archive by raising. Extraction is bounded by a maximum
+    file count and total uncompressed size to mitigate decompression-bomb attacks. No
+    filesystem is touched.
 
     Args:
         data: The raw archive bytes.
@@ -4472,7 +4481,8 @@ def _extract_archive_to_memory(
         A mapping of forward-slash-separated relative paths to file bytes.
 
     Raises:
-        ValueError: If the format is unknown or a limit is exceeded.
+        ValueError: If the format is unknown, a limit is exceeded, or a member attempts
+            a path-traversal ("zip-slip") escape.
         OSError: If the payload cannot be read.
         tarfile.TarError: If a TAR payload is malformed.
         zipfile.BadZipFile: If a ZIP payload is malformed.
