@@ -727,7 +727,9 @@ class RawOpenAIChatCompletionClient(
         # response format
         if response_format := options.get("response_format"):
             if isinstance(response_format, dict):
-                run_options["response_format"] = self._normalize_response_format_dict(response_format)
+                run_options["response_format"] = self._normalize_response_format_dict(
+                    cast("dict[str, Any]", response_format)
+                )
             else:
                 run_options["response_format"] = type_to_response_format_param(response_format)
         return run_options
