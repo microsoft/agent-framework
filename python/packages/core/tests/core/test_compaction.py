@@ -772,6 +772,33 @@ async def test_tool_result_compaction_preserves_tool_results_in_summary() -> Non
     assert "found 3 docs" in summary_msgs[0].text  # type: ignore[operator]
 
 
+async def test_tool_result_compaction_bounds_large_summary_payload() -> None:
+    """Summary text should not embed an oversized tool result verbatim."""
+    large_result = "file-start\n" + ("line contents\n" * 1_000) + "file-end"
+    messages = [
+        Message(role="user", contents=["read the file"]),
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="c1", name="read_file", arguments="{}")],
+        ),
+        _tool_result("c1", large_result),
+        Message(role="assistant", contents=["done"]),
+    ]
+    strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
+    annotate_message_groups(messages)
+
+    await strategy(messages)
+
+    summary = next(m for m in included_messages(messages) if (m.text or "").startswith("[Tool results:"))
+    summary_text = summary.text or ""
+    assert large_result not in summary_text
+    assert "file-start" in summary_text
+    assert "file-end" not in summary_text
+    assert "[truncated]" in summary_text
+    assert len(summary_text) <= 4096
+    assert len(summary_text) < len(large_result)
+
+
 async def test_tool_result_compaction_bidirectional_tracing() -> None:
     """Summary and originals should link to each other like SummarizationStrategy does."""
     messages = [

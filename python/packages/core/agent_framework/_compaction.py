@@ -855,6 +855,11 @@ class ToolResultCompactionStrategy:
     untouched; older ones are collapsed.
     """
 
+    _SUMMARY_PREFIX = "[Tool results: "
+    _SUMMARY_SUFFIX = "]"
+    _SUMMARY_MAX_CHARS = 4096
+    _SUMMARY_TRUNCATION_MARKER = "... [truncated]"
+
     def __init__(self, *, keep_last_tool_call_groups: int = 1) -> None:
         """Create a tool-result compaction strategy.
 
@@ -916,8 +921,7 @@ class ToolResultCompactionStrategy:
                         tool_name = call_id_to_name.get(content.call_id or "", "")
                         label = f"{tool_name}: {result_text}" if tool_name else result_text
                         tool_results.append(label.strip())
-            summary_label = "; ".join(tool_results) if tool_results else "no results"
-            summary_text = f"[Tool results: {summary_label}]"
+            summary_text = self._summary_text(tool_results)
 
             summary_id = f"tool_summary_{group_id}"
             original_message_ids = [msg.message_id for msg in group_msgs if msg.message_id]
@@ -947,6 +951,24 @@ class ToolResultCompactionStrategy:
             grouped = _group_messages_by_id(messages)
 
         return changed
+
+    @classmethod
+    def _summary_text(cls, tool_results: list[str]) -> str:
+        summary_label = "; ".join(tool_results) if tool_results else "no results"
+        summary_text = f"{cls._SUMMARY_PREFIX}{summary_label}{cls._SUMMARY_SUFFIX}"
+        if len(summary_text) <= cls._SUMMARY_MAX_CHARS:
+            return summary_text
+
+        allowed_label_chars = (
+            cls._SUMMARY_MAX_CHARS
+            - len(cls._SUMMARY_PREFIX)
+            - len(cls._SUMMARY_TRUNCATION_MARKER)
+            - len(cls._SUMMARY_SUFFIX)
+        )
+        if allowed_label_chars <= 0:
+            return f"{cls._SUMMARY_PREFIX}{cls._SUMMARY_TRUNCATION_MARKER}{cls._SUMMARY_SUFFIX}"
+        truncated_label = summary_label[:allowed_label_chars].rstrip()
+        return f"{cls._SUMMARY_PREFIX}{truncated_label}{cls._SUMMARY_TRUNCATION_MARKER}{cls._SUMMARY_SUFFIX}"
 
 
 def _tool_result_text(value: Any) -> str:
