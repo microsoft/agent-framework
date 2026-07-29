@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Sequence
-from importlib import import_module
-from typing import Any, ClassVar, Generic, TypedDict
+from collections.abc import Mapping, Sequence
+from typing import Any, ClassVar, Generic, TypedDict, cast
 
+import httpx
 from agent_framework import (
     BaseEmbeddingClient,
     Embedding,
@@ -17,28 +17,14 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import mark_feature_used
+from agent_framework._telemetry import get_user_agent
+from agent_framework.exceptions import (
+    IntegrationException,
+    IntegrationInvalidAuthException,
+    IntegrationInvalidRequestException,
+    IntegrationInvalidResponseException,
+)
 from agent_framework.observability import EmbeddingTelemetryLayer
-
-from ._feature_usage import FeatureIndex
-
-
-def _load_mistral_client_class() -> Any:
-    try:
-        mistral_class = getattr(import_module("mistralai.client"), "Mistral", None)
-    except ModuleNotFoundError as exc:
-        if exc.name != "mistralai.client":
-            raise
-        mistral_class = None
-
-    if mistral_class is None:
-        mistral_class = getattr(import_module("mistralai"), "Mistral", None)
-    if mistral_class is None:
-        raise ImportError("The installed mistralai package does not expose the Mistral client class.")
-    return mistral_class
-
-
-Mistral: Any = _load_mistral_client_class()
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -47,6 +33,10 @@ else:
 
 
 logger = logging.getLogger("agent_framework.mistral")
+
+_MISTRAL_API_BASE_URL = "https://api.mistral.ai"
+_EMBEDDINGS_PATH = "/v1/embeddings"
+_DEFAULT_TIMEOUT_SECONDS = 60.0
 
 
 class MistralEmbeddingOptions(EmbeddingGenerationOptions, total=False):
@@ -94,13 +84,16 @@ class RawMistralEmbeddingClient(
 ):
     """Raw Mistral AI embedding client without telemetry.
 
+    Talks to the Mistral REST API directly over HTTP; the ``mistralai`` SDK is not required.
+
     Keyword Args:
         model: The Mistral embedding model (e.g. "mistral-embed").
             Can also be set via environment variable ``MISTRAL_EMBEDDING_MODEL``.
         api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
         server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
             environment variable, or the Mistral default.
-        client: Optional pre-configured ``Mistral`` client instance.
+        client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key is
+            not required and the client is expected to carry its own auth headers and base URL.
         additional_properties: Additional properties stored on the client instance.
         env_file_path: Path to ``.env`` file for settings.
         env_file_encoding: Encoding for ``.env`` file.
@@ -114,16 +107,17 @@ class RawMistralEmbeddingClient(
         model: str | None = None,
         api_key: str | SecretString | None = None,
         server_url: str | None = None,
-        client: Any | None = None,
+        client: httpx.AsyncClient | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
         """Initialize a raw Mistral AI embedding client."""
+        required_fields = ["embedding_model"] if client is not None else ["embedding_model", "api_key"]
         mistral_settings = load_settings(
             MistralEmbeddingSettings,
             env_prefix="MISTRAL_",
-            required_fields=["embedding_model", "api_key"],
+            required_fields=required_fields,
             api_key=str(api_key) if isinstance(api_key, SecretString) else api_key,
             embedding_model=model,
             server_url=server_url,
@@ -132,23 +126,36 @@ class RawMistralEmbeddingClient(
         )
 
         self.model: str = mistral_settings["embedding_model"]  # type: ignore[assignment]
-        resolved_api_key: str = mistral_settings["api_key"]  # type: ignore[assignment]
-        resolved_server_url = mistral_settings.get("server_url")
+        self.server_url = mistral_settings.get("server_url")
+        self._owns_client = client is None
 
         if client is not None:
             self.client = client
+            if self.server_url is None:
+                client_base_url = str(client.base_url).rstrip("/")
+                self.server_url = client_base_url or None
         else:
-            client_kwargs: dict[str, Any] = {"api_key": resolved_api_key}
-            if resolved_server_url:
-                client_kwargs["server_url"] = resolved_server_url
-            self.client = Mistral(**client_kwargs)
+            resolved_api_key: str = mistral_settings["api_key"]  # type: ignore[assignment]
+            self.client = httpx.AsyncClient(
+                base_url=self.server_url or _MISTRAL_API_BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {resolved_api_key}",
+                    "User-Agent": get_user_agent(),
+                    "Accept": "application/json",
+                },
+                timeout=_DEFAULT_TIMEOUT_SECONDS,
+            )
 
-        self.server_url = resolved_server_url
         super().__init__(additional_properties=additional_properties)
+
+    async def close(self) -> None:
+        """Close the internally created HTTP client."""
+        if self._owns_client:
+            await self.client.aclose()
 
     def service_url(self) -> str:
         """Get the URL of the service."""
-        return self.server_url or "https://api.mistral.ai"
+        return self.server_url or _MISTRAL_API_BASE_URL
 
     async def get_embeddings(
         self,
@@ -167,6 +174,10 @@ class RawMistralEmbeddingClient(
 
         Raises:
             ValueError: If model is not provided or values is empty.
+            IntegrationInvalidAuthException: If Mistral rejects the configured credentials.
+            IntegrationInvalidRequestException: If Mistral rejects the request.
+            IntegrationInvalidResponseException: If Mistral returns an invalid response.
+            IntegrationException: If the request fails for another reason.
         """
         if not values:
             return GeneratedEmbeddings([], options=options)
@@ -176,34 +187,60 @@ class RawMistralEmbeddingClient(
         if not model:
             raise ValueError("model is required")
 
-        kwargs: dict[str, Any] = {"model": model, "inputs": list(values)}
+        request: dict[str, Any] = {"model": model, "input": list(values)}
         if "dimensions" in opts:
-            kwargs["output_dimension"] = opts["dimensions"]
+            request["output_dimension"] = opts["dimensions"]
 
-        mark_feature_used(FeatureIndex.MISTRAL)
-        response = await self.client.embeddings.create_async(**kwargs)
+        try:
+            response = await self.client.post(_EMBEDDINGS_PATH, json=request)
+            if response.status_code >= 400:
+                message = (
+                    f"Mistral embeddings request failed with status {response.status_code}: {response.text[:2000]}"
+                )
+                if response.status_code in (401, 403):
+                    raise IntegrationInvalidAuthException(message)
+                if response.status_code < 500:
+                    raise IntegrationInvalidRequestException(message)
+                raise IntegrationException(message)
+        except IntegrationException:
+            raise
+        except Exception as ex:
+            raise IntegrationException(f"Mistral embeddings request failed: {ex}", inner_exception=ex) from ex
 
-        embeddings: list[Embedding[list[float]]] = []
-        if response and response.data:
-            items = sorted(response.data, key=lambda d: d.index if d.index is not None else 0)
+        try:
+            raw_payload = response.json()
+            if not isinstance(raw_payload, Mapping):
+                raise IntegrationInvalidResponseException("Mistral embeddings response must be a JSON object.")
+            payload = cast("Mapping[str, Any]", raw_payload)
+            embeddings: list[Embedding[list[float]]] = []
+            data = cast("Sequence[Mapping[str, Any]]", payload.get("data") or ())
+            items = sorted(data, key=lambda item: item.get("index") or 0)
             for item in items:
-                vector = list(item.embedding) if item.embedding else []
+                vector = [float(v) for v in cast("Sequence[float]", item.get("embedding") or ())]
                 embeddings.append(
                     Embedding(
                         vector=vector,
                         dimensions=len(vector),
-                        model=response.model or model,
+                        model=payload.get("model") or model,
                     )
                 )
 
-        usage_dict: UsageDetails | None = None
-        if response and response.usage:
-            usage_dict = {
-                "input_token_count": response.usage.prompt_tokens,
-                "total_token_count": response.usage.total_tokens,
-            }
+            usage_dict: UsageDetails | None = None
+            if usage := payload.get("usage"):
+                usage_dict = {}
+                if (value := usage.get("prompt_tokens")) is not None:
+                    usage_dict["input_token_count"] = value
+                if (value := usage.get("total_tokens")) is not None:
+                    usage_dict["total_token_count"] = value
 
-        return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
+            return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict or None)
+        except IntegrationException:
+            raise
+        except Exception as ex:
+            raise IntegrationInvalidResponseException(
+                f"Mistral embeddings response was invalid: {ex}",
+                inner_exception=ex,
+            ) from ex
 
 
 class MistralEmbeddingClient(
@@ -219,7 +256,7 @@ class MistralEmbeddingClient(
         api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
         server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
             environment variable, or the Mistral default.
-        client: Optional pre-configured ``Mistral`` client instance.
+        client: Optional pre-configured ``httpx.AsyncClient``.
         otel_provider_name: Optional telemetry provider name override.
         env_file_path: Path to ``.env`` file for settings.
         env_file_encoding: Encoding for ``.env`` file.
@@ -243,6 +280,7 @@ class MistralEmbeddingClient(
             # Generate embeddings
             result = await client.get_embeddings(["Hello, world!"])
             print(result[0].vector)
+            await client.close()
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "mistralai"
@@ -253,7 +291,7 @@ class MistralEmbeddingClient(
         model: str | None = None,
         api_key: str | SecretString | None = None,
         server_url: str | None = None,
-        client: Any | None = None,
+        client: httpx.AsyncClient | None = None,
         otel_provider_name: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,

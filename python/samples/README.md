@@ -148,6 +148,10 @@ variable.
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_TIMEOUT` | `60` |
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_LOG_LEVEL` | `info` |
 | `agent-framework-mem0` | `agent_framework_mem0 package import` | `MEM0_TELEMETRY` | `false` |
+| `agent-framework-mistral` | `MistralChatClient / MistralEmbeddingClient` | `MISTRAL_API_KEY` | `your-api-key` |
+| `agent-framework-mistral` | `MistralChatClient` | `MISTRAL_CHAT_MODEL` | `mistral-small-latest` |
+| `agent-framework-mistral` | `MistralEmbeddingClient` | `MISTRAL_EMBEDDING_MODEL` | `mistral-embed` |
+| `agent-framework-mistral` | `MistralChatClient / MistralEmbeddingClient` | `MISTRAL_SERVER_URL` | `https://api.mistral.ai` |
 | `agent-framework-ollama` | `OllamaChatClient` | `OLLAMA_HOST` | `http://localhost:11434` |
 | `agent-framework-ollama` | `OllamaChatClient` | `OLLAMA_MODEL` | `llama3.1:8b` |
 | `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `OPENAI_API_KEY` | `sk-proj-...` |
