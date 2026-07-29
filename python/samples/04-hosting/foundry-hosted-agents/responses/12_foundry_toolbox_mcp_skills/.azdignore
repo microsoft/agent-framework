@@ -4,4 +4,3 @@ agent.yaml
 .env
 toolbox.yaml
 skills
-*.zip

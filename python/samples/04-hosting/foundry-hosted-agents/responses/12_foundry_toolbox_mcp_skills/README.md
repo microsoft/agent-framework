@@ -6,13 +6,12 @@ This sample is **self-contained**: it ships the `SKILL.md` sources and a `toolbo
 
 ## How progressive disclosure works
 
-The `FoundryToolbox` is attached to the agent and its skills are exposed through a `SkillsProvider`. When the agent runs, it discovers the toolbox's skills and applies the three-stage progressive-disclosure pattern so a skill's full body and any supplementary resources are only fetched when the agent actually needs them, reducing token usage:
+The `FoundryToolbox` is attached to the agent and its skills are exposed through a `SkillsProvider`. When the agent runs, it discovers the toolbox's skills and applies the progressive-disclosure pattern so a skill's full body is only fetched when the agent actually needs it, reducing token usage:
 
 1. **Advertise** — each skill's name and description are injected into the system prompt so the model knows what is available (~100 tokens per skill).
 2. **Load** — when the model decides a skill is relevant, it retrieves the full `SKILL.md` body on demand via `resources/read`.
-3. **Read resources** — if a skill references supplementary content (reference documents, assets), the model reads it on demand, again via `resources/read`.
 
-This sample demonstrates all three stages: `support-style` is a single-file `SKILL.md` (advertise + load), and `escalation-policy` is an **archive** skill bundling a `SKILL.md` plus a `references/refund-matrix.md` resource that the model reads on demand (advertise + load + read resources).
+> The Agent Skills spec defines a third stage — **read resources** — where a skill fetches supplementary files (reference documents, assets) on demand. That stage requires a skill to bundle sibling resources, which Foundry serves as a `type: archive` (ZIP) skill. To keep this sample focused on the advertise + load flow, both skills are single-file `SKILL.md` skills (no bundled resources). See the [`09_foundry_skills`](../09_foundry_skills/README.md) sample for the same instruction-only pattern via direct download.
 
 ## Toolbox MCP skills vs. Foundry Skills
 
@@ -20,7 +19,7 @@ Foundry exposes skills in two ways, and this sample uses the second one.
 
 **Foundry Skills** are downloaded directly into an agent: the agent pulls each `SKILL.md` from the Skills API at startup and serves the bodies from local files. See the [`09_foundry_skills`](../09_foundry_skills/README.md) sample.
 
-**Toolbox MCP skills** are accessed through a toolbox over the MCP protocol. A toolbox bundles a curated set of skills (and optionally tools) behind one MCP endpoint, and any MCP client discovers them automatically. Skills are served either as a single `SKILL.md` (`type: skill-md`) or as a downloadable package (`type: archive`); either way, bodies and any supplementary resources are fetched on demand.
+**Toolbox MCP skills** are accessed through a toolbox over the MCP protocol. A toolbox bundles a curated set of skills (and optionally tools) behind one MCP endpoint, and any MCP client discovers them automatically. Skill bodies are fetched on demand. The same `SKILL.md` files power both modes — the difference is only in delivery.
 
 ## How it works
 
@@ -30,7 +29,7 @@ Foundry exposes skills in two ways, and this sample uses the second one.
 
 1. Constructs a `FoundryToolbox(credential, load_tools=False)`. The toolbox resolves its MCP endpoint from `TOOLBOX_ENDPOINT`, authenticates every request with the credential, and forwards the platform per-request call-id. `load_tools=False` keeps the toolbox's tools hidden so only its Agent Skills are surfaced.
 2. Calls `toolbox.as_skills_provider()`, which discovers skills from the well-known `skill://index.json` resource on the toolbox's MCP session and exposes them as an agent context provider.
-3. Passes the toolbox via `tools=` **and** the provider via `context_providers=`. The `tools=` wiring connects the MCP session (the connection the provider reads from); the `context_providers=` wiring runs the advertise/load/read-resource logic over that session. Both are required — see [main.py](main.py) for the full implementation.
+3. Passes the toolbox via `tools=` **and** the provider via `context_providers=`. The `tools=` wiring connects the MCP session (the connection the provider reads from); the `context_providers=` wiring runs the advertise/load logic over that session. Both are required — see [main.py](main.py) for the full implementation.
 
 ### Agent hosting
 
@@ -38,20 +37,19 @@ The agent is hosted with the `ResponsesHostServer`, which provisions a REST API 
 
 ## The bundled skills
 
-This sample ships two source skills under [`skills/`](skills/), one of each discovery kind so you can see both side by side:
+This sample ships two source skills under [`skills/`](skills/), reused from the [`09_foundry_skills`](../09_foundry_skills/README.md) sample so you can compare the two delivery modes side by side:
 
-| Skill | Kind | Purpose |
-|---|---|---|
-| [`support-style`](skills/support-style/SKILL.md) | single `SKILL.md` | Voice, formatting, and signature rules for Contoso Outdoors support replies. |
-| [`escalation-policy`](skills/escalation-policy/SKILL.md) | archive (`SKILL.md` + resource) | When and how to escalate a customer ticket. References a supplementary resource, [`references/refund-matrix.md`](skills/escalation-policy/references/refund-matrix.md), that the model reads on demand. |
+| Skill | Purpose |
+|---|---|
+| [`support-style`](skills/support-style/SKILL.md) | Voice, formatting, and signature rules for Contoso Outdoors support replies. |
+| [`escalation-policy`](skills/escalation-policy/SKILL.md) | When and how to escalate a customer ticket, including the refund-authority matrix. |
 
-Each file includes a unique `*-CANARY-*` token that the model is asked to echo, so a response proves the model actually **loaded** the skill (and, for `escalation-policy`, **read the resource**) rather than hallucinating:
+Each file includes a unique `*-CANARY-*` token that the model is asked to echo, so a response proves the model actually **loaded** the skill rather than hallucinating:
 
 | Artifact | Canary | Proves |
 |---|---|---|
 | `support-style/SKILL.md` | `STYLE-CANARY-3318` | The model loaded the `support-style` body. |
 | `escalation-policy/SKILL.md` | `ESC-CANARY-7742` | The model loaded the `escalation-policy` body. |
-| `escalation-policy/references/refund-matrix.md` | `RESOURCE-CANARY-9921` | The model read the supplementary resource on demand. |
 
 > The `name` and `description` values in the YAML front matter must be **unquoted** — quoting them causes the Skills API to reject the import.
 
@@ -81,27 +79,14 @@ azd ai project set "https://<account>.services.ai.azure.com/api/projects/<projec
 
 ### Step 1 — Create the skills in Foundry
 
-Skills referenced by a toolbox must already exist in the same Foundry project. Create each one from the bundled `skills/` folder.
-
-`support-style` is instruction-only, so upload its `SKILL.md` directly:
+Skills referenced by a toolbox must already exist in the same Foundry project. Both skills in this sample are single-file `SKILL.md` skills, so upload each directly:
 
 ```bash
-azd ai skill create support-style --file ./skills/support-style/SKILL.md --no-prompt
+azd ai skill create support-style     --file ./skills/support-style/SKILL.md     --no-prompt
+azd ai skill create escalation-policy --file ./skills/escalation-policy/SKILL.md --no-prompt
 ```
 
-`escalation-policy` bundles a supplementary resource (`references/refund-matrix.md`), so package the skill folder as a `.zip` (with `SKILL.md` at the archive root) and upload that. Foundry serves it as a `type: archive` skill, and the toolbox discovery unpacks it and exposes the resource on demand:
-
-```powershell
-# PowerShell
-Compress-Archive -Path skills\escalation-policy\* -DestinationPath escalation-policy.zip -Force
-azd ai skill create escalation-policy --file ./escalation-policy.zip --no-prompt
-```
-
-```bash
-# bash
-(cd skills/escalation-policy && zip -r ../../escalation-policy.zip .)
-azd ai skill create escalation-policy --file ./escalation-policy.zip --no-prompt
-```
+> **Why single files (not ZIPs)?** Uploading a skill as a `.zip` (to bundle supplementary resource files) makes Foundry serve it as `type: archive` in the toolbox's `skill://index.json`. This sample keeps each skill as a single `SKILL.md` to stay focused on the advertise + load flow; see the toolbox source's `archive_*` options if you want to serve archive skills with bundled resources.
 
 > The `name:` in each `SKILL.md` front matter must equal the positional skill name you pass to `azd ai skill create`. To replace a skill after editing it, re-run with `--force` (this deletes the existing skill and all its versions, then uploads a fresh v1).
 
@@ -144,16 +129,16 @@ curl -X POST http://localhost:8088/responses -H "Content-Type: application/json"
 # Routine question -> loads support-style
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "Hi, I am Alex. Can I return my tent within 30 days?"}'
 
-# Large refund + legal threat -> loads escalation-policy AND reads the refund-matrix resource
+# Large refund + legal threat -> loads escalation-policy (which includes the refund matrix)
 curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "I want a $750 refund on Order #A-1042 right now or I am calling my lawyer."}'
 ```
 
 | Prompt mentions | Skill that should drive the response | Canary you should see |
 |---|---|---|
 | Routine return / shipping / care question | `support-style` | `STYLE-CANARY-3318` |
-| Injury, legal threat, press, or refund > $500 | `escalation-policy` (+ `support-style`) and the refund-matrix resource | `ESC-CANARY-7742` and `RESOURCE-CANARY-9921` |
+| Injury, legal threat, press, or refund > $500 | `escalation-policy` (+ `support-style`) | `ESC-CANARY-7742` |
 
-Because skills and resources are loaded on demand, a canary token in a response proves the model actually invoked `load_skill` / `read_skill_resource` for the matching artifact — not that it merely saw the name in the advertised list.
+Because skills are loaded on demand, a canary token in a response proves the model actually invoked `load_skill` for the matching skill — not that it merely saw the name in the advertised list.
 
 ## Deploying the agent to Foundry
 
