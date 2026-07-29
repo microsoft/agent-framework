@@ -4,6 +4,12 @@
 # dependencies = ["agent-framework-mistral"]
 # ///
 
+"""Demonstrates a Mistral AI agent with basic tool usage.
+
+Requires ``MISTRAL_API_KEY`` and ``MISTRAL_CHAT_MODEL`` environment variables
+(e.g. MISTRAL_CHAT_MODEL=mistral-small-latest).
+"""
+
 import asyncio
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -11,12 +17,6 @@ from zoneinfo import ZoneInfo
 from agent_framework import Agent, tool
 from agent_framework.mistral import MistralChatClient
 from dotenv import load_dotenv
-
-"""Demonstrates a Mistral AI agent with basic tool usage.
-
-Requires ``MISTRAL_API_KEY`` and ``MISTRAL_CHAT_MODEL`` environment variables
-(e.g. MISTRAL_CHAT_MODEL=mistral-small-latest).
-"""
 
 # Load environment variables from the local .env file.
 load_dotenv()

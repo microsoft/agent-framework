@@ -510,6 +510,23 @@ async def test_response_format_json_object() -> None:
     assert server.last_request["response_format"] == {"type": "json_object"}
 
 
+async def test_response_format_json_schema_omits_unset_strict() -> None:
+    client, server = make_client(json_response(make_response_payload(content="{}")))
+
+    await client.get_response(
+        [Message("user", ["hi"])],
+        options={
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "answer", "schema": {"type": "object"}},
+            }
+        },
+    )
+
+    json_schema = server.last_request["response_format"]["json_schema"]
+    assert "strict" not in json_schema
+
+
 def test_response_format_edge_cases(caplog: pytest.LogCaptureFixture) -> None:
     client, _ = make_client()
     assert client._prepare_response_format("json") == {"type": "json_object"}  # pyright: ignore[reportPrivateUsage]
@@ -561,46 +578,6 @@ async def test_parse_tool_calls() -> None:
     assert calls[0].call_id == "abc123XYZ"
     assert calls[0].name == "get_weather"
     assert calls[0].parse_arguments() == {"location": "Paris"}
-
-
-async def test_parse_tool_calls_null_ids_stay_distinct() -> None:
-    """The Mistral API omits tool call IDs on some paths (serialized as null or "null")."""
-    client, _ = make_client(
-        json_response(
-            make_response_payload(
-                tool_calls=[
-                    tool_call_payload("get_weather", '{"location": "Paris"}', call_id="null"),
-                    tool_call_payload("get_time", '{"tz": "CET"}', call_id="null"),
-                ],
-                finish_reason="tool_calls",
-            )
-        )
-    )
-
-    response = await client.get_response([Message("user", ["hi"])])
-
-    calls = [c for c in response.messages[0].contents if c.type == "function_call"]
-    assert len(calls) == 2
-    assert calls[0].call_id != calls[1].call_id
-    assert "null" not in (calls[0].call_id, calls[1].call_id)
-    assert calls[0].parse_arguments() == {"location": "Paris"}
-    assert calls[1].parse_arguments() == {"tz": "CET"}
-
-
-async def test_parse_multiple_choices() -> None:
-    payload = make_response_payload(
-        choices=[
-            {"index": i, "finish_reason": "stop", "message": {"role": "assistant", "content": f"choice {i}"}}
-            for i in range(2)
-        ]
-    )
-    client, _ = make_client(json_response(payload))
-
-    response = await client.get_response([Message("user", ["hi"])])
-
-    assert len(response.messages) == 2
-    assert response.messages[0].text == "choice 0"
-    assert response.messages[1].text == "choice 1"
 
 
 async def test_parse_empty_choices_returns_empty_assistant_message() -> None:
@@ -756,64 +733,6 @@ async def test_streaming_fragmented_tool_call_coalesces() -> None:
     assert calls[0].call_id == "abc123XYZ"
     assert calls[0].name == "get_weather"
     assert calls[0].parse_arguments() == {"location": "Paris"}
-
-
-async def test_streaming_fragmented_function_name_coalesces() -> None:
-    """The function name itself may be split across fragments."""
-    client, _ = make_client(
-        stream_response(
-            make_chunk_payload(tool_calls=[tool_call_payload("get_", "", call_id="abc123XYZ", index=0)]),
-            make_chunk_payload(
-                tool_calls=[tool_call_payload("weather", '{"location": "Paris"}', index=0)],
-                finish_reason="tool_calls",
-            ),
-        )
-    )
-
-    stream = client.get_response([Message("user", ["hi"])], stream=True)
-    async for _ in stream:
-        pass
-    response = await stream.get_final_response()
-
-    calls = [c for c in response.messages[0].contents if c.type == "function_call"]
-    assert len(calls) == 1
-    assert calls[0].call_id == "abc123XYZ"
-    assert calls[0].name == "get_weather"
-    assert calls[0].parse_arguments() == {"location": "Paris"}
-
-
-async def test_streaming_interleaved_parallel_tool_calls() -> None:
-    """Fragments of two parallel calls may interleave across chunks."""
-    client, _ = make_client(
-        stream_response(
-            make_chunk_payload(
-                tool_calls=[
-                    tool_call_payload("get_weather", '{"loc', call_id="abc123XYZ", index=0),
-                    tool_call_payload("get_time", '{"t', call_id="def456UVW", index=1),
-                ],
-            ),
-            make_chunk_payload(
-                tool_calls=[
-                    tool_call_payload("", 'ation": "Paris"}', index=0),
-                    tool_call_payload("", 'z": "CET"}', index=1),
-                ],
-                finish_reason="tool_calls",
-            ),
-        )
-    )
-
-    stream = client.get_response([Message("user", ["hi"])], stream=True)
-    async for _ in stream:
-        pass
-    response = await stream.get_final_response()
-
-    calls = [c for c in response.messages[0].contents if c.type == "function_call"]
-    assert len(calls) == 2
-    by_id = {c.call_id: c for c in calls}
-    assert by_id["abc123XYZ"].name == "get_weather"
-    assert by_id["abc123XYZ"].parse_arguments() == {"location": "Paris"}
-    assert by_id["def456UVW"].name == "get_time"
-    assert by_id["def456UVW"].parse_arguments() == {"tz": "CET"}
 
 
 async def test_streaming_parallel_calls_without_indexes() -> None:

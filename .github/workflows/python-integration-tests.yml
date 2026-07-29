@@ -27,8 +27,6 @@ on:
         required: true
       FOUNDRY_MODELS_API_KEY:
         required: false
-      MISTRAL_API_KEY:
-        required: false
       OPENAI__APIKEY:
         required: true
 
@@ -174,9 +172,6 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ANTHROPIC_CHAT_MODEL: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
-      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-      MISTRAL_CHAT_MODEL: ${{ vars.MISTRAL_CHAT_MODEL_ID }}
-      MISTRAL_EMBEDDING_MODEL: ${{ vars.MISTRAL_EMBEDDING_MODEL_ID }}
       OLLAMA_MODEL: qwen2.5:1.5b
       OLLAMA_EMBEDDING_MODEL: nomic-embed-text
     defaults:

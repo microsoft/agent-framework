@@ -94,6 +94,7 @@ class MistralChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
         - ``store``
         - ``user``
         - ``conversation_id``
+        - ``n``
     """
 
     safe_prompt: bool
@@ -105,11 +106,11 @@ class MistralChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
     prediction: dict[str, Any]
     """Predicted output to optimize response time when large parts of the response are known."""
 
-    n: int
-    """Number of completions to return."""
-
     guardrails: list[dict[str, Any]]
     """Guardrail configurations applied to the request."""
+
+    n: None
+    """Not supported. The framework expects a single completion per request."""
 
     prompt_cache_key: str
     """Cache key shared by requests with the same prompt prefix."""
@@ -205,45 +206,6 @@ def _tool_call_id_of(tool_call: Mapping[str, Any]) -> str:
     if isinstance(call_id, str) and call_id and call_id != "null":
         return call_id
     return ""
-
-
-class _StreamedToolCall:
-    """Accumulates the fragments of one streamed tool call.
-
-    Mistral streams may fragment a tool call across chunks — the ID typically arrives
-    only on the first fragment, and the name and arguments may arrive in pieces.
-    """
-
-    __slots__ = ("arguments_dict", "arguments_text", "call_id", "name", "raw")
-
-    def __init__(self) -> None:
-        self.call_id = ""
-        self.name = ""
-        self.arguments_text = ""
-        self.arguments_dict: dict[str, Any] | None = None
-        self.raw: Any = None
-
-    def add(self, tool_call: Mapping[str, Any]) -> None:
-        if not self.call_id:
-            self.call_id = _tool_call_id_of(tool_call)
-        function: Mapping[str, Any] = tool_call.get("function") or {}
-        if name := function.get("name"):
-            self.name += name
-        arguments = function.get("arguments")
-        if isinstance(arguments, dict):
-            self.arguments_dict = {**(self.arguments_dict or {}), **cast("dict[str, Any]", arguments)}
-        elif isinstance(arguments, str):
-            self.arguments_text += arguments
-        self.raw = tool_call
-
-    def to_content(self, fallback_id: str) -> Content:
-        arguments = self.arguments_dict if self.arguments_dict is not None else self.arguments_text
-        return Content.from_function_call(
-            call_id=self.call_id or fallback_id,
-            name=self.name,
-            arguments=arguments,
-            raw_representation=self.raw,
-        )
 
 
 class RawMistralChatClient(
@@ -348,17 +310,13 @@ class RawMistralChatClient(
                 validated = await self._validate_options(options)
                 request = self._prepare_request(messages, validated, **kwargs)
                 request["stream"] = True
-                pending_tool_calls: dict[tuple[int, int], _StreamedToolCall] = {}
-                last_chunk_id = ""
                 try:
                     async with self.client.stream("POST", _CHAT_COMPLETIONS_PATH, json=request) as response:
                         await self._raise_for_status(response)
                         async for line in response.aiter_lines():
                             chunk = self._parse_sse_line(line)
-                            if chunk is None:
-                                continue
-                            last_chunk_id = chunk.get("id") or last_chunk_id
-                            yield self._parse_chunk(chunk, pending_tool_calls)
+                            if chunk is not None:
+                                yield self._parse_chunk(chunk)
                 except ChatClientException:
                     raise
                 except Exception as ex:
@@ -366,12 +324,6 @@ class RawMistralChatClient(
                         f"Mistral streaming chat request failed: {ex}",
                         inner_exception=ex,
                     ) from ex
-                if pending_tool_calls:
-                    # The stream ended without a finish chunk; emit the accumulated calls.
-                    yield ChatResponseUpdate(
-                        contents=self._flush_pending_tool_calls(pending_tool_calls, last_chunk_id),
-                        role="assistant",
-                    )
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
@@ -674,14 +626,13 @@ class RawMistralChatClient(
                 return {"type": "json_object"}
             if format_type == "json_schema":
                 json_schema: dict[str, Any] = dict(mapping.get("json_schema") or {})
-                return {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": json_schema.get("name", "response"),
-                        "schema": json_schema.get("schema") or json_schema.get("schema_definition") or {},
-                        "strict": json_schema.get("strict"),
-                    },
+                prepared_schema: dict[str, Any] = {
+                    "name": json_schema.get("name", "response"),
+                    "schema": json_schema.get("schema") or json_schema.get("schema_definition") or {},
                 }
+                if (strict := json_schema.get("strict")) is not None:
+                    prepared_schema["strict"] = strict
+                return {"type": "json_schema", "json_schema": prepared_schema}
             # A raw JSON schema mapping
             return {
                 "type": "json_schema",
@@ -707,21 +658,16 @@ class RawMistralChatClient(
         response_format: Any | None = None,
     ) -> ChatResponse:
         """Convert a Mistral chat-completion response payload to a framework ChatResponse."""
-        response_id = response.get("id")
-        messages: list[Message] = []
-        finish_reason: FinishReasonLiteral | None = None
         choices = cast("Sequence[Mapping[str, Any]]", response.get("choices") or ())
-        for choice in choices:
-            message: Mapping[str, Any] = choice.get("message") or {}
-            contents = self._parse_message_contents(message, fallback_id_prefix=response_id or "")
-            messages.append(Message(role="assistant", contents=contents, raw_representation=choice))
-            if (reason := choice.get("finish_reason")) and finish_reason is None:
-                finish_reason = _FINISH_REASON_MAP.get(str(reason))
-        if not messages:
-            messages.append(Message(role="assistant", contents=[]))
+        choice: Mapping[str, Any] = choices[0] if choices else {}
+        message: Mapping[str, Any] = choice.get("message") or {}
+        contents = self._parse_message_contents(message)
+        finish_reason: FinishReasonLiteral | None = None
+        if reason := choice.get("finish_reason"):
+            finish_reason = _FINISH_REASON_MAP.get(str(reason))
         return ChatResponse(
-            response_id=response_id,
-            messages=messages,
+            response_id=response.get("id"),
+            messages=[Message(role="assistant", contents=contents, raw_representation=choice or None)],
             usage_details=self._parse_usage(response.get("usage")),
             model=response.get("model") or self.model,
             created_at=self._format_created_at(response.get("created")),
@@ -730,31 +676,20 @@ class RawMistralChatClient(
             raw_representation=response,
         )
 
-    def _parse_chunk(
-        self,
-        chunk: Mapping[str, Any],
-        pending_tool_calls: dict[tuple[int, int], _StreamedToolCall],
-    ) -> ChatResponseUpdate:
+    def _parse_chunk(self, chunk: Mapping[str, Any]) -> ChatResponseUpdate:
         """Convert a Mistral streaming completion chunk to a framework ChatResponseUpdate.
 
-        Tool-call fragments are accumulated in ``pending_tool_calls`` (keyed by choice and
-        tool-call index) and emitted as complete calls on the chunk that carries the finish
-        reason. Fragments cannot be emitted as they arrive: the ID and name may be split
-        across chunks and fragments of parallel calls may interleave, which the framework's
-        adjacency-based merging cannot reassemble.
+        Continuation fragments of a streamed tool call carry an empty ``call_id``; the
+        framework merges them into the preceding call when building the final response.
         """
-        chunk_id = chunk.get("id") or ""
         contents: list[Content] = []
         finish_reason: FinishReasonLiteral | None = None
         choices = cast("Sequence[Mapping[str, Any]]", chunk.get("choices") or ())
         for choice in choices:
             delta: Mapping[str, Any] = choice.get("delta") or {}
-            contents.extend(self._parse_content_chunks(delta))
-            self._accumulate_tool_call_fragments(choice, chunk_id, pending_tool_calls, contents)
+            contents.extend(self._parse_message_contents(delta))
             if (reason := choice.get("finish_reason")) and finish_reason is None:
                 finish_reason = _FINISH_REASON_MAP.get(str(reason))
-        if finish_reason and pending_tool_calls:
-            contents.extend(self._flush_pending_tool_calls(pending_tool_calls, chunk_id))
         if usage := self._parse_usage(chunk.get("usage")):
             contents.append(Content.from_usage(usage_details=usage, raw_representation=chunk))
         return ChatResponseUpdate(
@@ -767,62 +702,10 @@ class RawMistralChatClient(
             raw_representation=chunk,
         )
 
-    def _accumulate_tool_call_fragments(
-        self,
-        choice: Mapping[str, Any],
-        chunk_id: str,
-        pending_tool_calls: dict[tuple[int, int], _StreamedToolCall],
-        contents: list[Content],
-    ) -> None:
-        delta: Mapping[str, Any] = choice.get("delta") or {}
-        tool_calls: Sequence[Mapping[str, Any]] = delta.get("tool_calls") or []
-        if not tool_calls:
-            return
-
-        indexes = [tool_call.get("index") for tool_call in tool_calls]
-        if len(tool_calls) > 1 and len(set(indexes)) != len(indexes):
-            # Parallel complete calls whose indexes don't distinguish them (the API may omit
-            # them entirely). They cannot be fragments, so emit directly with positionally
-            # distinct IDs.
-            for position, tool_call in enumerate(tool_calls):
-                call = _StreamedToolCall()
-                call.add(tool_call)
-                contents.append(call.to_content(f"{chunk_id}:{position}"))
-            return
-
-        choice_index = choice.get("index") or 0
-        for tool_call in tool_calls:
-            key = (choice_index, tool_call.get("index") or 0)
-            entry = pending_tool_calls.get(key)
-            incoming_id = _tool_call_id_of(tool_call)
-            if entry is not None and entry.call_id and incoming_id and incoming_id != entry.call_id:
-                # A new call reusing the index; the accumulated one is complete.
-                contents.append(entry.to_content(f"{chunk_id}:{key[1]}"))
-                entry = None
-            if entry is None:
-                entry = pending_tool_calls[key] = _StreamedToolCall()
-            entry.add(tool_call)
-
-    @staticmethod
-    def _flush_pending_tool_calls(
-        pending_tool_calls: dict[tuple[int, int], _StreamedToolCall],
-        fallback_id_prefix: str,
-    ) -> list[Content]:
-        contents = [
-            entry.to_content(f"{fallback_id_prefix}:{index}") for (_, index), entry in pending_tool_calls.items()
-        ]
-        pending_tool_calls.clear()
-        return contents
-
-    def _parse_message_contents(
-        self,
-        message: Mapping[str, Any],
-        *,
-        fallback_id_prefix: str = "",
-    ) -> list[Content]:
+    def _parse_message_contents(self, message: Mapping[str, Any]) -> list[Content]:
         contents = self._parse_content_chunks(message)
         tool_calls = cast("Sequence[Mapping[str, Any]]", message.get("tool_calls") or ())
-        for position, tool_call in enumerate(tool_calls):
+        for tool_call in tool_calls:
             function: Mapping[str, Any] = tool_call.get("function") or {}
             arguments = function.get("arguments")
             if isinstance(arguments, str):
@@ -833,7 +716,7 @@ class RawMistralChatClient(
                 normalized_arguments = str(cast(object, arguments))
             contents.append(
                 Content.from_function_call(
-                    call_id=self._resolve_tool_call_id(tool_call, position, fallback_id_prefix),
+                    call_id=_tool_call_id_of(tool_call),
                     name=function.get("name") or "",
                     arguments=normalized_arguments,
                     raw_representation=tool_call,
@@ -859,15 +742,6 @@ class RawMistralChatClient(
                 else:
                     logger.debug("Skipping unsupported response chunk from Mistral: %s", chunk_type)
         return contents
-
-    @staticmethod
-    def _resolve_tool_call_id(tool_call: Mapping[str, Any], position: int, fallback_id_prefix: str) -> str:
-        """Return the tool call ID, synthesizing a distinct one when the API omits it."""
-        if call_id := _tool_call_id_of(tool_call):
-            return call_id
-        # The index only disambiguates when non-zero (the API may omit it); otherwise position does.
-        index = tool_call.get("index") or position
-        return f"{fallback_id_prefix}:{index}"
 
     @staticmethod
     def _format_created_at(created: Any) -> str | None:

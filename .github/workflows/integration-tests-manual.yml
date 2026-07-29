@@ -132,5 +132,4 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       FOUNDRY_MODELS_API_KEY: ${{ secrets.FOUNDRY_MODELS_API_KEY }}
-      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
       OPENAI__APIKEY: ${{ secrets.OPENAI__APIKEY }}

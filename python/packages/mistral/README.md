@@ -19,18 +19,16 @@ streaming, function tools, and structured output.
 ### Quick Start
 
 ```python
-from agent_framework import Agent, Message
+from agent_framework import Agent
 from agent_framework.mistral import MistralChatClient
 
 # Using environment variables (MISTRAL_API_KEY, MISTRAL_CHAT_MODEL)
+# Parameters can also be passed directly:
+# MistralChatClient(model="mistral-large-latest", api_key="your-api-key")
 client = MistralChatClient()
 try:
     agent = Agent(client=client, instructions="You are a helpful assistant.")
-    result = await agent.run("Tell me a joke.")
-
-    # Parameters can also be passed directly:
-    # MistralChatClient(model="mistral-large-latest", api_key="your-api-key")
-    response = await client.get_response([Message("user", ["Hello!"])])
+    response = await agent.run("Hello!")
     print(response.text)
 finally:
     await client.close()
