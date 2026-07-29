@@ -774,7 +774,9 @@ async def test_tool_result_compaction_preserves_tool_results_in_summary() -> Non
 
 async def test_tool_result_compaction_bounds_large_summary_payload() -> None:
     """Summary text should not embed an oversized tool result verbatim."""
-    large_result = "file-start\n" + ("line contents\n" * 1_000) + "file-end"
+    payload_line = "line contents\n"
+    payload_lines = ToolResultCompactionStrategy._SUMMARY_MAX_CHARS // len(payload_line) + 1
+    large_result = "file-start\n" + (payload_line * payload_lines) + "file-end"
     messages = [
         Message(role="user", contents=["read the file"]),
         Message(

@@ -899,7 +899,7 @@ class ToolResultCompactionStrategy:
             if group_id in keep_ids:
                 continue
             group_msgs = grouped.get(group_id, [])
-            included_group_msgs = [msg for msg in group_msgs if msg.additional_properties.get(EXCLUDED_KEY) is not True]
+            included_group_msgs = [msg for msg in group_msgs if not msg.additional_properties.get(EXCLUDED_KEY, False)]
             # Build a call_id → function_name map from function_call contents.
             call_id_to_name: dict[str, str] = {}
             for msg in included_group_msgs:
