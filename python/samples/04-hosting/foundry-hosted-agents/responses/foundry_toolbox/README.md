@@ -270,6 +270,6 @@ returns an authorization error even though it is discovered and called correctly
 - [Quickstart: Create a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent) — end-to-end walkthrough using `azd`
 - [Tool catalog](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/tool-catalog) — browse available tools to extend your agent (Bing Search, Azure AI Search, file search, code interpreter, and more)
 - [Manage hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent) — monitor and manage deployed agents
-- [Basic agent](../01_basic/) — minimal agent with no tools
-- [Add local tools](../02_tools/) — sample with locally-defined Python tool functions
-- [Build multi-agent workflows](../05_workflows/) — sample with chained agent pipelines
+- [Basic agent](../basic/) — minimal agent with no tools
+- [Add local tools](../tools/) — sample with locally-defined Python tool functions
+- [Build multi-agent workflows](../workflows/) — sample with chained agent pipelines
