@@ -34,38 +34,9 @@ deployed agent, remove the temp `azd` project, restore the sample dir).
 
 ---
 
-## Automated script
-
-[`scripts/validate_hosted_agent.sh`](scripts/validate_hosted_agent.sh) runs all
-three phases (and cleanup) non-interactively — use it for a full pass, and read
-the phases below to interpret failures or validate a non-`responses` sample by
-hand. Run `--help` for the full dependency list and options.
-
-```bash
-# Full validation of the responses/01_basic sample (default sample dir):
-python/scripts/sample_validation/skills/foundry-hosted-agent-validation/scripts/validate_hosted_agent.sh \
-  --project-endpoint "https://<account>.services.ai.azure.com/api/projects/<project>" \
-  --model "<real-deployed-model>" \
-  --acr-endpoint "<acr-login-server>"
-
-# Local-only (skip deploy), or point at another sample:
-python/scripts/sample_validation/skills/foundry-hosted-agent-validation/scripts/validate_hosted_agent.sh --skip-deploy \
-  --sample-dir python/samples/04-hosting/foundry-hosted-agents/responses/02_tools \
-  --project-endpoint "..." --model "..."
-```
-
-Inputs may also come from env vars (`FOUNDRY_PROJECT_ENDPOINT`,
-`AZURE_AI_MODEL_DEPLOYMENT_NAME`, `FOUNDRY_PROJECT_ID`,
-`AZURE_CONTAINER_REGISTRY_ENDPOINT`). Phase flags: `--skip-native`,
-`--skip-azd-local`, `--skip-deploy`; `--no-cleanup`/`--keep-agent` to inspect
-afterward. The script encodes every gotcha below (model template fix,
-pre-existing-agent removal, ACR reuse, port/temp cleanup).
-
----
-
 ## Inputs you need before starting
 
-Gather these (ask the user if not provided):
+Gather these:
 
 - **Foundry project endpoint**, e.g.
   `https://<account>.services.ai.azure.com/api/projects/<project>`.

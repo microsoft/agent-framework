@@ -15,13 +15,6 @@ interpreter, treating a zero exit code as success. A single script can validate
 any sample shape: a plain sample that runs to completion, or a long-lived server
 sample (e.g. a hosted agent) that must be started in the background, exercised
 over HTTP, asserted, and then torn down.
-
-The script is a cache-only artifact (it is never committed to the repository), so
-it is exempt from the repository's Python style/type rules; the harness treats it
-as an opaque, self-contained program. Any paths the script references should be
-relative to the Python root (the ``python/`` directory), which is the working
-directory used at replay time, so playbooks stay portable across machines and CI
-runners.
 """
 
 import asyncio
@@ -41,10 +34,6 @@ from pathlib import Path
 from sample_validation.models import RunResult, RunStatus, SampleInfo
 
 logger = logging.getLogger(__name__)
-
-# Bump when the on-disk playbook format changes in an incompatible way.
-# v2: the payload is an agent-authored Python script (replaces the v1 RunSpec).
-SCHEMA_VERSION = 2
 
 # Hard cap on how long a replayed sample may run, regardless of the value the
 # agent recorded, to protect the CI job from a runaway process.
@@ -69,7 +58,6 @@ class Playbook:
     timeout: int = 120
     env: dict[str, str] = field(default_factory=dict) # type: ignore
     expected_status: str = RunStatus.SUCCESS.value
-    schema_version: int = SCHEMA_VERSION
     generated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def to_dict(self) -> dict[str, object]:
@@ -78,12 +66,7 @@ class Playbook:
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "Playbook":
-        """Deserialize from a dict, tolerating unknown/missing optional keys.
-
-        Tolerant of older schema versions (which lack ``script``) so
-        ``PlaybookStore.load`` can read them and then reject them on the schema
-        version check rather than raising.
-        """
+        """Deserialize from a dict, tolerating unknown/missing optional keys."""
         return cls(
             sample=str(data["sample"]),
             sample_hash=str(data["sample_hash"]),
@@ -91,7 +74,6 @@ class Playbook:
             timeout=int(data.get("timeout") or 120),  # type: ignore[arg-type]
             env={str(k): str(v) for k, v in (data.get("env") or {}).items()},  # type: ignore[union-attr]
             expected_status=str(data.get("expected_status") or RunStatus.SUCCESS.value),
-            schema_version=int(data.get("schema_version") or SCHEMA_VERSION),  # type: ignore[arg-type]
             generated_at=str(data.get("generated_at") or datetime.now().isoformat()),
         )
 
@@ -158,11 +140,8 @@ class PlaybookStore:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             playbook = Playbook.from_dict(data)
-        except (OSError, ValueError, KeyError) as ex:
+        except Exception as ex:
             logger.warning(f"Ignoring unreadable playbook {path}: {ex}")
-            return None
-        if playbook.schema_version != SCHEMA_VERSION:
-            logger.info(f"Ignoring playbook with schema {playbook.schema_version} for {sample.relative_path}")
             return None
         return playbook
 
