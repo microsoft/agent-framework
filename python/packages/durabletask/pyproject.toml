@@ -4,7 +4,7 @@ description = "Durable Task integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260709"
+version = "1.0.0b260721"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -30,7 +30,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "types-python-dateutil==2.9.0.20260518",
+    "types-python-dateutil==2.9.0.20260716",
 ]
 
 [tool.uv]

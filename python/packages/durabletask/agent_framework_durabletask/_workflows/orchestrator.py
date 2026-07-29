@@ -746,7 +746,7 @@ def _coerce_initial_input(workflow: Workflow, raw_value: Any) -> Any:
 
     input_type = _select_primary_input_type(start_executor)
     if input_type is None:
-        return raw_value
+        return strip_pickle_markers(raw_value)
     # The initial payload is untrusted external input (HTTP body / client input) with no
     # legitimate checkpoint type markers, so neutralize any pickle-marker injection before
     # it can reach deserialize_value() inside reconstruct_to_type() (avoids pickle RCE).
@@ -1262,4 +1262,4 @@ def run_workflow_orchestrator(
     # bubble nested progress; a top-level run returns the bare outputs list.
     if is_subworkflow:
         return {SUBWORKFLOW_RESULT_KEY: True, "outputs": workflow_outputs, "events": live_events}
-    return workflow_outputs  # noqa: B901
+    return workflow_outputs  # ruff:ignore[return-in-generator]

@@ -467,7 +467,7 @@ class AgentFunctionApp(DFAppBase):
 
             outputs = yield from run_workflow_orchestrator(context, captured_workflow, initial_message, shared_state)
             # Durable Functions runtime extracts return value from StopIteration
-            return outputs  # noqa: B901
+            return outputs  # ruff:ignore[return-in-generator]
 
         # Ensure the orchestrator function is registered (prevents garbage collection)
         _ = workflow_orchestrator
@@ -504,6 +504,7 @@ class AgentFunctionApp(DFAppBase):
             # keys, so stripping them here keeps untrusted input off the orchestrator's
             # trusted-deserialization path (see strip_subworkflow_markers).
             client_input = strip_subworkflow_markers(client_input)
+            client_input = strip_pickle_markers(client_input)
 
             instance_id = await client.start_new(orchestrator_name, client_input=client_input)
 

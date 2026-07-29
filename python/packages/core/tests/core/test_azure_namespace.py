@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework_azure_cosmos import CosmosHistoryProvider
+import pytest
 
 import agent_framework.azure as azure
+
+CosmosHistoryProvider = pytest.importorskip("agent_framework_azure_cosmos").CosmosHistoryProvider
 
 
 def test_azure_namespace_exposes_cosmos_history_provider() -> None:

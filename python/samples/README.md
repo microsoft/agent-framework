@@ -28,8 +28,11 @@ Start with `01-get-started/` and work through the numbered files:
 ## Prerequisites
 
 ```bash
-pip install agent-framework
+pip install agent-framework-foundry
 ```
+
+Install only the specific Agent Framework distributions required by the sample you want to run.
+Individual sample READMEs and PEP 723 metadata list any additional packages.
 
 ### Environment Variables
 

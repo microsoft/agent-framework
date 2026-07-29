@@ -17,8 +17,10 @@ from agent_framework import (
 )
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
+    _auto_invoke_function,
     _parse_annotation,
     _parse_inputs,
+    normalize_function_invocation_configuration,
 )
 from agent_framework.observability import OtelAttr
 
@@ -149,6 +151,59 @@ async def test_tool_decorator_with_json_schema_invoke_missing_required():
 
     with pytest.raises(TypeError, match="Missing required argument"):
         await search.invoke(arguments={})
+
+
+async def test_invoke_preserves_explicit_null_argument():
+    """A required nullable argument the model sets to null must reach the function.
+
+    Regression for #5934: exclude_none dropped the explicit null, so the required
+    ``unit`` went missing and the invocation failed.
+    """
+
+    @tool
+    def get_weather(location: str, unit: Literal["C", "F"] | None) -> str:
+        return f"{location}:{unit}"
+
+    result = await get_weather.invoke(arguments={"location": "Seattle", "unit": None})
+    assert isinstance(result, list)
+    assert result[0].text == "Seattle:None"
+
+
+async def test_invoke_omitted_optional_uses_function_default():
+    """An omitted optional argument still falls back to the function's own default."""
+
+    @tool
+    def get_weather(location: str, unit: str = "C") -> str:
+        return f"{location}:{unit}"
+
+    result = await get_weather.invoke(arguments={"location": "Seattle"})
+    assert result[0].text == "Seattle:C"
+
+
+async def test_auto_invoke_preserves_explicit_null_argument():
+    """The auto function-calling path must preserve an explicit null argument too.
+
+    Regression for #5934: ``FunctionTool.invoke`` was fixed, but ``_auto_invoke_function``
+    (the path a model's ``function_call`` actually takes) still ran ``exclude_none`` and
+    dropped the required ``unit``, so the invocation failed with a missing argument.
+    """
+
+    @tool
+    def get_weather(location: str, unit: Literal["C", "F"] | None) -> str:
+        return f"{location}:{unit}"
+
+    function_call = Content.from_function_call(
+        call_id="call-1",
+        name=get_weather.name,
+        arguments='{"location": "Seattle", "unit": null}',
+    )
+    result = await _auto_invoke_function(
+        function_call,
+        config=normalize_function_invocation_configuration(None),
+        tool_map={get_weather.name: get_weather},
+    )
+    assert result.type == "function_result"
+    assert result.result == "Seattle:None"
 
 
 async def test_tool_decorator_with_json_schema_invoke_invalid_type():

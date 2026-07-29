@@ -2,13 +2,7 @@
 
 ## Installation
 
-The orchestrations package is included when you install `agent-framework` (which pulls in all optional packages):
-
-```bash
-pip install agent-framework
-```
-
-Or install the orchestrations package directly:
+Install the orchestrations package directly:
 
 ```bash
 pip install agent-framework-orchestrations
