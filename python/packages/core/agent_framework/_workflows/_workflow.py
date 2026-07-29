@@ -299,6 +299,8 @@ class Workflow(DictConvertible):
             start_executor: The starting executor for the workflow.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
+                The first iteration is the initial run of the start executor, and each subsequent
+                iteration is a superstep.
             name: A human-readable name for the workflow. This can be used to identify the workflow in
                 checkpoints, and telemetry. If the workflow is built using WorkflowBuilder, this will be the
                 name of the builder. This name should be unique across different workflow definitions for
