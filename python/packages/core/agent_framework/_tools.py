@@ -101,6 +101,7 @@ _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
 )
 _USER_VISIBLE_CONTENT_TYPES: Final[set[str]] = {"data", "uri", "error", "hosted_file", "hosted_vector_store"}
+_UNEXECUTABLE_TOOL_CONTENT_TYPES: Final[set[str]] = {"function_call", "function_approval_request"}
 ApprovalMode: TypeAlias = Literal["always_require", "never_require"]
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -1953,7 +1954,16 @@ def _response_has_visible_content(response: ChatResponse[Any]) -> bool:
     return False
 
 
+def _drop_unexecutable_tool_contents_from_response(response: ChatResponse[Any]) -> None:
+    for message in response.messages:
+        if any(content.type in _UNEXECUTABLE_TOOL_CONTENT_TYPES for content in message.contents):
+            message.contents = [
+                content for content in message.contents if content.type not in _UNEXECUTABLE_TOOL_CONTENT_TYPES
+            ]
+
+
 def _ensure_function_invocation_limit_fallback_response(response: ChatResponse[Any]) -> ChatResponse[Any]:
+    _drop_unexecutable_tool_contents_from_response(response)
     if _response_has_visible_content(response):
         return response
 
@@ -1976,6 +1986,28 @@ def _function_invocation_limit_fallback_update() -> ChatResponseUpdate:
         role="assistant",
         finish_reason="stop",
     )
+
+
+def _update_has_meaningful_metadata(update: ChatResponseUpdate) -> bool:
+    return any((
+        update.author_name is not None,
+        update.response_id is not None,
+        update.message_id is not None,
+        update.conversation_id is not None,
+        update.model is not None,
+        update.created_at is not None,
+        update.finish_reason is not None,
+        update.continuation_token is not None,
+        bool(update.additional_properties),
+        update.raw_representation is not None,
+    ))
+
+
+def _drop_unexecutable_tool_contents_from_update(update: ChatResponseUpdate) -> ChatResponseUpdate | None:
+    if not any(content.type in _UNEXECUTABLE_TOOL_CONTENT_TYPES for content in update.contents):
+        return update
+    update.contents = [content for content in update.contents if content.type not in _UNEXECUTABLE_TOOL_CONTENT_TYPES]
+    return update if update.contents or _update_has_meaningful_metadata(update) else None
 
 
 def _extract_tools(
@@ -3011,7 +3043,15 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 ),
             )
             await inner_stream
+            drop_unexecutable_calls = options.get("tool_choice") == "none" and _function_call_limit_reached(
+                total_function_calls,
+                max_function_calls,
+            )
             async for update in inner_stream:
+                if drop_unexecutable_calls:
+                    update = _drop_unexecutable_tool_contents_from_update(update)
+                    if update is None:
+                        continue
                 yield update
 
             response = await inner_stream.get_final_response()
@@ -3082,6 +3122,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         await final_inner_stream
         async for update in final_inner_stream:
+            update = _drop_unexecutable_tool_contents_from_update(update)
+            if update is None:
+                continue
             yield update
         final_response = await final_inner_stream.get_final_response()
         final_response_had_visible_content = _response_has_visible_content(final_response)

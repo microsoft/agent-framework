@@ -157,6 +157,8 @@ agent_framework/
   in assistant-role messages, including mixed sibling batches.
 - Function-call budget accounting counts one unit per executed result group, not per emitted `function_result`, so
   executions that pause for user input still consume `max_function_calls`.
+- Once an invocation limit disables tools, provider-emitted calls or approval requests are removed from both
+  streaming and final output; metadata-only stream updates remain visible.
 - `function_approval_request` and `function_approval_response` are control-plane contents. History providers may
   retain them in their backing store for audit. The base `HistoryProvider.before_run` filters resolved wrappers from
   later model replay, but preserves unresolved requests/responses until a terminal result or follow-up request closes

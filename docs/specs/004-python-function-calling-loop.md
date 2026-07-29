@@ -453,6 +453,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Middleware termination | Normal non-approval loop stops without a second model call. | `test_terminate_loop_single_function_call`, `test_terminate_loop_multiple_function_calls_one_terminates`, `test_terminate_loop_streaming_single_function_call` |
 | Maximum iterations | No orphan calls; a final no-tool response or deterministic fallback is returned. | `test_max_iterations_limit`, `test_max_iterations_no_orphaned_function_calls`, `test_max_iterations_makes_final_toolchoice_none_call`, `test_max_iterations_blank_final_fallback_synthesizes_message`, streaming equivalents |
 | Maximum function calls | Parallel overshoot is bounded after the batch; every executed result group counts even without a `function_result`; blank final responses get fallback content. | `test_max_function_calls_limits_parallel_invocations`, `test_max_function_calls_single_calls_per_iteration`, `test_user_input_request_multiple_contents_propagate`, `test_approval_resume_user_input_counts_toward_function_call_budget`, `test_max_function_calls_blank_final_fallback_synthesizes_message`, streaming equivalent |
+| Provider tool content after an active limit | A call or approval request returned despite `tool_choice="none"` is removed in both response modes while metadata-only streaming updates remain visible. | `test_function_invocation_limit_drops_unexecutable_tool_content`, `test_streaming_function_invocation_limit_drops_unexecutable_tool_content`, `test_streaming_function_invocation_limit_preserves_metadata_after_tool_content_is_dropped` |
 | Conversation continuation | Conversation id updates between iterations and is cleared on stop where required. | `test_conversation_id_updated_in_options_between_tool_iterations`, `test_function_invocation_stop_clears_conversation_id_non_stream`, `test_streaming_function_invocation_stop_clears_conversation_id` |
 
 ### History and provider serialization
@@ -486,7 +487,6 @@ These scenarios are required but are not fully covered by merged tests on `main`
 |---|---|
 | Service-side storage sends the current approval response while omitting the stored request. | #7125 |
 | Service-owned `previous_response_id` continuation cannot execute a terminal approval again on a later turn. | #6851 |
-| A provider that ignores `tool_choice="none"` after an invocation limit cannot expose an unanswered call. | #7045 |
 | Declaration-only streaming preserves request metadata without duplicating arguments. | #6973 |
 
 Do not mark these rows covered by nearby tests; each needs a dedicated regression at the owning layer.
