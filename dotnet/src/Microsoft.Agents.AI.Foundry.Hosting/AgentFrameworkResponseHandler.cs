@@ -142,11 +142,20 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var chatClientAgent = agent.GetService<ChatClientAgent>();
 
-        AgentSession? session = !string.IsNullOrWhiteSpace(sessionConversationId)
+        // Load an existing session when there is a conversation key. The store returns null when
+        // nothing is persisted for it, which is the authoritative "this is a resume" signal: a
+        // non-null result means a prior turn saved this session. Whether loaded or created, the
+        // handler owns creating a fresh session when none exists, so the resume signal does not
+        // depend on hosted-only bookkeeping and works the same locally and hosted.
+        AgentSession? loadedSession = !string.IsNullOrWhiteSpace(sessionConversationId)
             ? await sessionStore.GetSessionAsync(agent, sessionConversationId, resolvedUserId, cancellationToken).ConfigureAwait(false)
-                : chatClientAgent is not null
+            : null;
+        var sessionLoadedFromStore = loadedSession is not null;
+
+        AgentSession? session = loadedSession
+            ?? (chatClientAgent is not null
                 ? await chatClientAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
-                : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+                : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false));
 
         // Capture the platform per-request call id (x-agent-foundry-call-id, protocol 2.0.0 only).
         // It is re-applied to the ambient HostedCallContext immediately before each outbound egress
@@ -154,13 +163,6 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // boundaries, so a single up-front assignment would be lost before the toolbox/MCP calls run.
         var platformCallId = context.PlatformContext?.CallId;
         HostedCallContext.CallId = platformCallId;
-
-        // Capture, before the stamping block below writes it, whether this session was already
-        // established by a prior turn. On a hosted turn the store loads a session that a prior turn
-        // saved together with its write-once HostedSessionContext; a freshly created session has none
-        // yet. This specific marker (not a count of state-bag entries) tells a resume from a first
-        // turn.
-        var sessionEstablishedByPriorTurn = session?.GetHostedContext() is not null;
 
         // Stamp/validate the hosted identity only when one was resolved. Locally (non-hosted) there is
         // no user identity, so there is nothing to partition or tamper-check and the session is shared.
@@ -214,10 +216,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             // Load conversation history only for fresh sessions. When a session was already
             // established by a prior turn (e.g. resuming a workflow paused at an external-input port),
             // its checkpointed state already contains those messages — replaying history would
-            // re-drive completed actions and break HITL resume semantics. The signal is the specific
-            // HostedSessionContext marker captured above, not a count of state-bag entries.
+            // re-drive completed actions and break HITL resume semantics. The signal is whether the
+            // store actually loaded a persisted session (sessionLoadedFromStore), which is authoritative
+            // in both local and hosted runs.
             var isResume = (!string.IsNullOrWhiteSpace(conversationId) || !string.IsNullOrWhiteSpace(request.PreviousResponseId))
-                && sessionEstablishedByPriorTurn;
+                && sessionLoadedFromStore;
             if (!isResume)
             {
                 var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
