@@ -6,8 +6,10 @@ This package provides the Responses-specific conversion layer:
 
 - `responses_to_run(...)` — convert a Responses request body into Agent
   Framework run values.
-- `responses_session_id(...)` — extract a prior `resp_*` response id or
-  `conv_*` conversation id from the request body when present.
+- `responses_session_id(...)` — return `(session_id, is_conversation_id)` for a
+  prior `resp_*` response id or `conv_*` conversation id, or `(None, None)` when
+  neither is present.
+- `create_conversation_id(...)` — mint a Responses-shaped conversation id.
 - `create_response_id(...)` — mint a Responses-shaped response id.
 - `responses_from_run(...)` — convert an `AgentResponse` into a
   Responses-compatible JSON payload.
@@ -35,7 +37,7 @@ state = AgentState(agent)
 @app.post("/responses")
 async def responses(body: dict = Body(...)) -> JSONResponse:
     run = responses_to_run(body)
-    session_id = responses_session_id(body)
+    session_id, is_conversation_id = responses_session_id(body)
     response_id = create_response_id()
     session = await state.get_or_create_session(session_id or response_id)
     result = await (await state.get_target()).run(
@@ -43,12 +45,13 @@ async def responses(body: dict = Body(...)) -> JSONResponse:
         session=session,
         options=run["options"],
     )
-    if body.get("conversation_id") == session_id:
+    if is_conversation_id:
         # The app must serialize writers that advance this stable id.
         await state.set_session(session_id, session)
     else:
         await state.set_session(response_id, session)
-    return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
+    conversation_id = session_id if is_conversation_id else None
+    return JSONResponse(responses_from_run(result, response_id=response_id, conversation_id=conversation_id))
 ```
 
 `previous_response_id` identifies an immutable continuation snapshot: multiple

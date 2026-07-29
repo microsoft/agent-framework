@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+import warnings
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, cast
 
@@ -125,26 +126,45 @@ def create_response_id() -> str:
     return f"resp_{uuid.uuid4().hex}"
 
 
-def responses_session_id(body: Mapping[str, Any]) -> str | None:
-    """Return the Responses session id from request body, if present.
+def create_conversation_id() -> str:
+    """Create a Responses-shaped conversation id."""
+    return f"conv_{uuid.uuid4().hex}"
 
-    The returned value can be a ``resp_*`` previous response id or a ``conv_*``
-    conversation id. Callers choose whether this request-derived value is
+
+def responses_session_id(body: Mapping[str, Any]) -> tuple[str, bool] | tuple[None, None]:
+    """Return the Responses session id and whether it is a conversation id.
+
+    The session id can be a ``resp_*`` previous response id or a ``conv_*``
+    conversation id. Callers choose whether these request-derived values are
     trusted for their route and deployment.
 
     Args:
         body: OpenAI Responses-shaped request body.
 
     Returns:
-        Previous response id, conversation id, or ``None``.
+        The session id, if present, and whether it came from ``conversation_id``.
+        The flag is ``None`` when no session id is present.
     """
     previous_response_id = body.get("previous_response_id")
-    if isinstance(previous_response_id, str) and previous_response_id:
-        return previous_response_id
+    if isinstance(previous_response_id, str) and previous_response_id and not previous_response_id.startswith("resp_"):
+        warnings.warn(
+            "`previous_response_id` does not use the OpenAI Responses `resp_` prefix; "
+            "continuing with the supplied value.",
+            UserWarning,
+            stacklevel=2,
+        )
     conversation_id = body.get("conversation_id")
+    if isinstance(conversation_id, str) and conversation_id and not conversation_id.startswith("conv_"):
+        warnings.warn(
+            "`conversation_id` does not use the OpenAI Responses `conv_` prefix; continuing with the supplied value.",
+            UserWarning,
+            stacklevel=2,
+        )
+    if isinstance(previous_response_id, str) and previous_response_id:
+        return previous_response_id, False
     if isinstance(conversation_id, str) and conversation_id:
-        return conversation_id
-    return None
+        return conversation_id, True
+    return None, None
 
 
 def responses_to_run(body: Mapping[str, Any]) -> AgentRunArgs:
@@ -176,7 +196,7 @@ def responses_from_run(
     result: AgentResponse[Any],
     *,
     response_id: str,
-    session_id: str | None = None,
+    conversation_id: str | None = None,
 ) -> dict[str, Any]:
     """Convert an Agent Framework response into a Responses payload.
 
@@ -185,8 +205,7 @@ def responses_from_run(
 
     Keyword Args:
         response_id: Id for the response being created.
-        session_id: Optional prior ``resp_*`` or ``conv_*`` session id. When it
-            is a conversation id, the helper renders it in the Responses
+        conversation_id: Optional conversation id to render in the Responses
             conversation field.
 
     Returns:
@@ -205,8 +224,8 @@ def responses_from_run(
         "tools": [],
         "metadata": {},
     }
-    if session_id is not None and session_id.startswith("conv_"):
-        response_kwargs["conversation"] = {"id": session_id}
+    if conversation_id is not None:
+        response_kwargs["conversation"] = {"id": conversation_id}
     return _response_payload(OpenAIResponse(**response_kwargs))
 
 
@@ -839,7 +858,7 @@ async def responses_from_streaming_run(
     stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
     *,
     response_id: str,
-    session_id: str | None = None,
+    conversation_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Convert an Agent Framework response stream into Responses SSE events.
 
@@ -849,23 +868,26 @@ async def responses_from_streaming_run(
 
     Keyword Args:
         response_id: Id for the response being created.
-        session_id: Optional prior ``resp_*`` or ``conv_*`` session id.
+        conversation_id: Optional conversation id to render in Responses events.
 
     Yields:
         Server-Sent Event strings.
     """
+    created_response: dict[str, Any] = {
+        "id": response_id,
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "in_progress",
+        "model": "agent",
+        "output": [],
+    }
+    if conversation_id is not None:
+        created_response["conversation"] = {"id": conversation_id}
     yield _sse_event(
         "response.created",
         {
             "type": "response.created",
-            "response": {
-                "id": response_id,
-                "object": "response",
-                "created_at": int(time.time()),
-                "status": "in_progress",
-                "model": "agent",
-                "output": [],
-            },
+            "response": created_response,
         },
     )
 
@@ -886,7 +908,7 @@ async def responses_from_streaming_run(
                 )
 
         final = await stream.get_final_response()
-        payload = responses_from_run(final, response_id=response_id, session_id=session_id)
+        payload = responses_from_run(final, response_id=response_id, conversation_id=conversation_id)
         if model is not None:
             # The finalized `AgentResponse` never carries a raw representation
             # (see `_model_from_update`), so prefer the model observed on the
@@ -917,8 +939,8 @@ async def responses_from_streaming_run(
                 "message": str(exc),
             },
         }
-        if session_id is not None and session_id.startswith("conv_"):
-            response_kwargs["conversation"] = {"id": session_id}
+        if conversation_id is not None:
+            response_kwargs["conversation"] = {"id": conversation_id}
         yield _sse_event(
             "response.failed",
             {

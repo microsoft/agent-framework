@@ -10,12 +10,39 @@ jobs:
     name: "Issue: add labels"
     if: ${{ github.event.action == 'opened' || github.event.action == 'reopened' }}
     runs-on: ubuntu-latest
+    environment: github-app-auth
     permissions:
+      contents: read
+      id-token: write
       issues: write
     steps:
+      - name: Checkout GitHub automation
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          sparse-checkout: |
+            .github/actions/github-app-token
+            .github/scripts/check_team_membership.js
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Get GitHub automation token
+        id: github-auth
+        uses: ./.github/actions/github-app-token
+        with:
+          mode: ${{ vars.GH_APP_AUTH_MODE }}
+          azure-client-id: ${{ secrets.GH_APP_AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.GH_APP_AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.GH_APP_AZURE_SUBSCRIPTION_ID }}
+          key-vault-name: ${{ secrets.GH_APP_KEY_VAULT_NAME }}
+          key-name: ${{ secrets.GH_APP_KEY_NAME }}
+          github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          repository: ${{ github.repository }}
+          fallback-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+
       - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
-          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          github-token: ${{ steps.github-auth.outputs.token }}
           script: |
             // Get the issue body and title
             const body = context.payload.issue.body
@@ -24,21 +51,14 @@ jobs:
             // Define the labels array
             let labels = []
 
-            // Check if the issue author is in the agentframework-developers team
-            let isTeamMember = false
-            try {
-              const teamMembership = await github.rest.teams.getMembershipForUserInOrg({
-                org: context.repo.owner,
-                team_slug: process.env.TEAM_NAME,
-                username: context.payload.issue.user.login
-              })
-              console.log("Team Membership Data:", teamMembership);
-              isTeamMember = teamMembership.data.state === 'active'
-            } catch (error) {
-              // User is not in the team or team doesn't exist
-              console.error("Error fetching team membership:", error);
-              isTeamMember = false
-            }
+            const checkTeamMembership = require('./.github/scripts/check_team_membership.js')
+            const { isTeamMember } = await checkTeamMembership({
+              github,
+              context,
+              core,
+              teamSlug: process.env.TEAM_NAME,
+              issueNumber: context.issue.number,
+            })
 
             // Only add triage label if the author is not in the team
             if (!isTeamMember) {

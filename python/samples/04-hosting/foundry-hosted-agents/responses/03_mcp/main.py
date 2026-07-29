@@ -4,8 +4,7 @@ import logging
 import os
 
 from agent_framework import Agent, ToolTypes
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 

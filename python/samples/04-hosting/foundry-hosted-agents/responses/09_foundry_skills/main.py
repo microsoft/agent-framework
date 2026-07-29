@@ -23,8 +23,7 @@ from pathlib import Path
 from typing import Final
 
 from agent_framework import Agent, SkillsProvider
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework.foundry import FoundryChatClient, ResponsesHostServer
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv

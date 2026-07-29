@@ -10,6 +10,3 @@
 -e ../../../../packages/foundry  # Foundry support - dependency for hosted chat/agent samples
 -e ../../../../packages/durabletask  # Durable Task support - dependency of azurefunctions
 -e ../../../../packages/azurefunctions  # Azure Functions integration - the main package for this sample
-
-# Azure authentication
-azure-identity

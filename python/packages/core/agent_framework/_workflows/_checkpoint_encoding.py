@@ -49,7 +49,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
-import pickle  # nosec  # noqa: S403
+import pickle  # nosec  # ruff:ignore[suspicious-pickle-import]
 from typing import Any, cast
 
 from ..exceptions import WorkflowCheckpointException
@@ -124,7 +124,7 @@ _BUILTIN_ALLOWED_TYPE_KEYS: frozenset[str] = frozenset({
 })
 
 
-class _RestrictedUnpickler(pickle.Unpickler):  # noqa: S301
+class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-usage]
     """Unpickler that restricts which classes may be instantiated.
 
     Only classes whose ``module:qualname`` key appears in the combined allow
@@ -330,7 +330,7 @@ def _base64_to_unpickle(encoded: str, *, allowed_types: frozenset[str] | None = 
         pickled = base64.b64decode(encoded.encode("ascii"))
         if allowed_types is not None:
             return _RestrictedUnpickler(pickled, allowed_types).load()
-        return pickle.loads(pickled)  # nosec  # noqa: S301
+        return pickle.loads(pickled)  # nosec  # ruff:ignore[suspicious-pickle-usage]
     except Exception as exc:
         raise WorkflowCheckpointException(f"Failed to decode pickled checkpoint data: {exc}") from exc
 

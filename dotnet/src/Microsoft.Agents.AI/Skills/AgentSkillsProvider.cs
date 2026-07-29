@@ -100,8 +100,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
     /// </para>
     /// <para>
     /// <b>Security note:</b> because matching is by tool name only, any other registered tool that
-    /// shares one of these names — for example a configurable-name tool such as the Harness shell
-    /// tool (<c>HarnessAgentOptions.ShellToolName</c>) that was assigned the same name — will also be auto-approved, bypassing the
+    /// shares one of these names — for example a configurable-name tool that was assigned the same
+    /// name — will also be auto-approved, bypassing the
     /// human approval boundary. Ensure no other tool collides with these reserved names.
     /// </para>
     /// </remarks>
@@ -133,8 +133,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
     /// </para>
     /// <para>
     /// <b>Security note:</b> because matching is by tool name only, any other registered tool that
-    /// shares one of these names — for example a configurable-name tool such as the Harness shell
-    /// tool (<c>HarnessAgentOptions.ShellToolName</c>) that was assigned the same name — will also be auto-approved, bypassing the
+    /// shares one of these names — for example a configurable-name tool that was assigned the same
+    /// name — will also be auto-approved, bypassing the
     /// human approval boundary. Ensure no other tool collides with these reserved names.
     /// </para>
     /// </remarks>

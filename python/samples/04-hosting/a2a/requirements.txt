@@ -11,9 +11,6 @@
 -e ../../../packages/hosting  # Shared AgentState and SessionStore helpers
 -e ../../../packages/hosting-a2a  # A2A-to-Agent Framework conversion helpers
 
-# Azure authentication
-azure-identity
-
 # A2A server runtime
 uvicorn
 

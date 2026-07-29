@@ -91,9 +91,9 @@ class DurableStateFields:
     CONTENT: Final[str] = "content"
 
     # Usage fields (noqa: S105 - these are JSON field names, not passwords)
-    INPUT_TOKEN_COUNT: Final[str] = "inputTokenCount"  # noqa: S105
-    OUTPUT_TOKEN_COUNT: Final[str] = "outputTokenCount"  # noqa: S105
-    TOTAL_TOKEN_COUNT: Final[str] = "totalTokenCount"  # noqa: S105
+    INPUT_TOKEN_COUNT: Final[str] = "inputTokenCount"  # ruff:ignore[hardcoded-password-string]
+    OUTPUT_TOKEN_COUNT: Final[str] = "outputTokenCount"  # ruff:ignore[hardcoded-password-string]
+    TOTAL_TOKEN_COUNT: Final[str] = "totalTokenCount"  # ruff:ignore[hardcoded-password-string]
 
     # History field
     CONVERSATION_HISTORY: Final[str] = "conversationHistory"
