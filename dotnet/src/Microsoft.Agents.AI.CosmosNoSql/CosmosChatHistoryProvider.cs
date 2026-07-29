@@ -215,7 +215,24 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     }
 
     /// <inheritdoc />
-    protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default) =>
+        new(this.GetMessagesAsync(context.Session, cancellationToken));
+
+    /// <summary>
+    /// Gets the messages stored for the specified session.
+    /// </summary>
+    /// <param name="session">The agent session to get state from.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>
+    /// The messages in the same order used by the agent invocation pipeline. When
+    /// <see cref="MaxMessagesToRetrieve"/> is set, only the most recent messages up to that limit are returned.
+    /// </returns>
+    /// <remarks>
+    /// This method returns messages as stored and does not apply the output filter or chat-history source attribution
+    /// used by the agent invocation pipeline. Use <see cref="ChatHistoryProvider.InvokingAsync"/> when that processing
+    /// is required. <see cref="MaxItemCount"/> controls the query page size.
+    /// </remarks>
+    public async Task<IEnumerable<ChatMessage>> GetMessagesAsync(AgentSession? session, CancellationToken cancellationToken = default)
     {
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
         if (this._disposed)
@@ -224,7 +241,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
-        var state = this._sessionState.GetOrInitializeState(context.Session);
+        var state = this._sessionState.GetOrInitializeState(session);
         var partitionKey = BuildPartitionKey(state);
 
         // Fetch most recent messages in descending order when limit is set, then reverse to ascending
@@ -233,7 +250,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
             .WithParameter("@conversationId", state.ConversationId)
             .WithParameter("@type", "ChatMessage");
 
-        var iterator = this._container.GetItemQueryIterator<CosmosMessageDocument>(query, requestOptions: new QueryRequestOptions
+        using var iterator = this._container.GetItemQueryIterator<CosmosMessageDocument>(query, requestOptions: new QueryRequestOptions
         {
             PartitionKey = partitionKey,
             MaxItemCount = this.MaxItemCount // Configurable query performance
