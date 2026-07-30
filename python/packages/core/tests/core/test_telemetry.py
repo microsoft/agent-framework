@@ -2,6 +2,7 @@
 
 import ast
 import concurrent.futures
+import importlib.metadata
 import os
 import re
 from pathlib import Path
@@ -46,6 +47,12 @@ def test_user_agent_key():
 def test_agent_framework_user_agent_format():
     """Test that the agent framework user agent is correctly formatted."""
     assert AGENT_FRAMEWORK_USER_AGENT.startswith("agent-framework-python/")
+
+
+def test_agent_framework_user_agent_uses_core_distribution_version() -> None:
+    core_version = importlib.metadata.version("agent-framework-core")
+
+    assert f"agent-framework-python/{core_version}" == AGENT_FRAMEWORK_USER_AGENT
 
 
 def _reset_feature_mask() -> None:

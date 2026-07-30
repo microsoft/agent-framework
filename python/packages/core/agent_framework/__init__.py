@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from typing import Any, Final
 
 try:
-    _version = importlib.metadata.version(__name__)
+    _version = importlib.metadata.version("agent-framework-core")
 except importlib.metadata.PackageNotFoundError:
     _version = "0.0.0"  # Fallback for development mode
 __version__: Final[str] = _version
