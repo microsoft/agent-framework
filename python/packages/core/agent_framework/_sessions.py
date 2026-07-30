@@ -1509,6 +1509,7 @@ class SessionStore:
         Raises:
             ValueError: If ``session_id`` is empty.
         """
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
         SessionStore.validate_session_id(session_id)
         session = self._sessions.get(session_id)
         return copy.deepcopy(session) if session is not None else None
@@ -1523,6 +1524,7 @@ class SessionStore:
         Raises:
             ValueError: If ``session_id`` is empty.
         """
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
         SessionStore.validate_session_id(session_id)
         self._sessions[session_id] = copy.deepcopy(session)
 
@@ -1535,6 +1537,7 @@ class SessionStore:
         Raises:
             ValueError: If ``session_id`` is empty.
         """
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
         SessionStore.validate_session_id(session_id)
         self._sessions.pop(session_id, None)
 
@@ -1611,6 +1614,7 @@ class FileSessionStore(SessionStore):
 
     async def get(self, session_id: str) -> AgentSession | None:
         """Load a session snapshot, or return ``None`` when it does not exist."""
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
         file_path = self._session_file_path(session_id)
         file_lock = self._session_file_lock(file_path)
 
@@ -1664,6 +1668,7 @@ class FileSessionStore(SessionStore):
 
     async def set(self, session_id: str, session: AgentSession) -> None:
         """Persist a session snapshot atomically."""
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
         file_path = self._session_file_path(session_id)
         file_lock = self._session_file_lock(file_path)
         if type(session) is not AgentSession:
@@ -1696,6 +1701,7 @@ class FileSessionStore(SessionStore):
 
     async def delete(self, session_id: str) -> None:
         """Delete a persisted session snapshot, if present."""
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
         file_path = self._session_file_path(session_id)
         file_lock = self._session_file_lock(file_path)
 

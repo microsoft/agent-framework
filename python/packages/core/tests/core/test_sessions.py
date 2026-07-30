@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import msgspec
 import pytest
@@ -37,6 +38,7 @@ from agent_framework._sessions import (
     _filter_approval_control_messages,
     is_local_history_conversation_id,
 )
+from agent_framework._telemetry import FeatureIndex
 from agent_framework.exceptions import MiddlewareException
 
 # ---------------------------------------------------------------------------
@@ -924,8 +926,36 @@ class TestSessionStore:
         with pytest.raises(ValueError, match="session_id"):
             await store.delete("")
 
+    @pytest.mark.parametrize("operation", ["get", "set", "delete"])
+    async def test_operations_mark_feature_usage(self, operation: str) -> None:
+        store = SessionStore()
+
+        with patch("agent_framework._sessions.mark_feature_used") as mark_feature_used_mock:
+            if operation == "get":
+                await store.get("session-1")
+            elif operation == "set":
+                await store.set("session-1", AgentSession())
+            else:
+                await store.delete("session-1")
+
+        mark_feature_used_mock.assert_called_once_with(FeatureIndex.CORE_SESSION_STORE)
+
 
 class TestFileSessionStore:
+    @pytest.mark.parametrize("operation", ["get", "set", "delete"])
+    async def test_operations_mark_feature_usage(self, tmp_path: Path, operation: str) -> None:
+        store = FileSessionStore(tmp_path)
+
+        with patch("agent_framework._sessions.mark_feature_used") as mark_feature_used_mock:
+            if operation == "get":
+                await store.get("session-1")
+            elif operation == "set":
+                await store.set("session-1", AgentSession())
+            else:
+                await store.delete("session-1")
+
+        mark_feature_used_mock.assert_called_once_with(FeatureIndex.CORE_SESSION_STORE)
+
     async def test_round_trips_session_across_store_instances(self, tmp_path: Path) -> None:
         session = AgentSession(session_id="framework-session", service_session_id={"response_id": "resp-1"})
         session.state["nested"] = {

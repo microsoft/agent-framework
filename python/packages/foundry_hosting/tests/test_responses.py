@@ -5037,7 +5037,7 @@ class TestCheckpointStoragePath:
         ):
             server = ResponsesHostServer(mock_agent, store=InMemoryResponseProvider())
 
-        checkpoint_path  = server._checkpoint_storage_path
+        checkpoint_path = server._checkpoint_storage_path
         assert checkpoint_path is not None
         actual_normalized = checkpoint_path.replace("\\", "/")
         assert actual_normalized.endswith("/home/testuser/.checkpoints")
@@ -5074,5 +5074,6 @@ class TestCheckpointStoragePath:
 
         assert server._checkpoint_storage_path == "/home/session/.checkpoints"
         assert server._checkpoint_storage_path != "/.checkpoints"
+
 
 # endregion

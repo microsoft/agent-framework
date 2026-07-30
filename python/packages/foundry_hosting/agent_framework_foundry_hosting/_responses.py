@@ -405,6 +405,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 pass
 
         return "/home/session/.checkpoints"
+
     def __init__(
         self,
         agent: SupportsAgentRun,
