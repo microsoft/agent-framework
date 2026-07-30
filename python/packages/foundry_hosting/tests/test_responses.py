@@ -3450,7 +3450,6 @@ class TestApprovalStoragePathValidation:
         return _approval_storage_path_for_user
 
     def test_user_id_scopes_path_under_base_directory(self, tmp_path: Any) -> None:
-        from pathlib import Path
 
         helper = self._helper()
         base = tmp_path / "approvals" / "requests.json"
@@ -4376,7 +4375,7 @@ class TestCheckpointStoragePath:
         ):
             server = ResponsesHostServer(mock_agent, store=InMemoryResponseProvider())
 
-        checkpoint_path  = server._checkpoint_storage_path
+        checkpoint_path = server._checkpoint_storage_path
         assert checkpoint_path is not None
         actual_normalized = checkpoint_path.replace("\\", "/")
         assert actual_normalized.endswith("/home/testuser/.checkpoints")
@@ -4414,4 +4413,50 @@ class TestCheckpointStoragePath:
         assert server._checkpoint_storage_path == "/home/session/.checkpoints"
         assert server._checkpoint_storage_path != "/.checkpoints"
 
+
 # endregion
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+class TestApprovalStoragePath:
+    """
+    In hosted mode, function approval storage must be stored under
+    $HOME/.function_approvals (durable across compute recreation), not
+    /.function_approvals (ephemeral root path that is wiped on idle).
+    """
+
+    def test_local_approval_path_uses_cwd(self) -> None:
+        """In local mode, approval storage should be under cwd, NOT root `/`."""
+        server = _make_server(MagicMock())
+        expected = os.path.join(os.getcwd(), ".function_approvals", "approval_requests.json")
+        assert server._approval_storage_path == expected
+
+    def test_hosted_approval_path_uses_home(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """In hosted mode with valid HOME, approvals must be under $HOME/.function_approvals/."""
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
+        monkeypatch.setenv("HOME", "/home/testuser")
+        server = ResponsesHostServer(MagicMock(), store=InMemoryResponseProvider())
+        approval_path = server._approval_storage_path
+        actual_normalized = approval_path.replace("\\", "/")
+        assert actual_normalized.endswith("/home/testuser/.function_approvals/approval_requests.json")
+        assert not actual_normalized.startswith("/.function_approvals")
+
+    def test_hosted_without_home_env_uses_default_session_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When HOME is unset in hosted mode, fall back to /home/session/.function_approvals/."""
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
+        monkeypatch.delenv("HOME", raising=False)
+        server = ResponsesHostServer(MagicMock(), store=InMemoryResponseProvider())
+        expected = "/home/session/.function_approvals/approval_requests.json"
+        assert server._approval_storage_path == expected
+
+    @pytest.mark.parametrize("bad_home", ["/", "", "   "])
+    def test_hosted_with_unusable_home_falls_back_to_default(
+        self, monkeypatch: pytest.MonkeyPatch, bad_home: str
+    ) -> None:
+        """Filesystem-root or empty HOME must NOT produce /.function_approvals/."""
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
+        monkeypatch.setenv("HOME", bad_home)
+        server = ResponsesHostServer(MagicMock(), store=InMemoryResponseProvider())
+        expected = "/home/session/.function_approvals/approval_requests.json"
+        assert server._approval_storage_path == expected
+        assert not server._approval_storage_path.startswith("/.function_approvals")

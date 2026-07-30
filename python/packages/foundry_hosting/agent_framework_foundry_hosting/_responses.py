@@ -412,6 +412,25 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         return "/home/session/.checkpoints"
 
+    @staticmethod
+    def _resolve_approval_storage_path(is_hosted: bool) -> str:
+        """Resolve function approval storage path.
+
+        Hosted: $HOME/.function_approval/approval_requests.json.
+        Local: {cwd}/.fucntion_approval/approval_requests.json.
+        """
+        if not is_hosted:
+            return os.path.join(os.getcwd(), ".function_approvals", "approval_requests.json")
+        home = os.environ.get("HOME", "").strip()
+        if home and home != "/":
+            try:
+                resolved = Path(home).resolve()
+                if str(resolved) != str(resolved.root):
+                    return str(resolved / ".function_approvals" / "approval_requests.json")
+            except (OSError, ValueError):
+                pass
+        return "/home/session/.function_approvals/approval_requests.json"
+
     def __init__(
         self,
         agent: SupportsAgentRun,
@@ -454,6 +473,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         self._is_workflow_agent = False
         self._checkpoint_storage_path = None
+        self._approval_storage_path = self._resolve_approval_storage_path(self.config.is_hosted)
         if isinstance(agent, WorkflowAgent):
             if agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
                 raise RuntimeError(
