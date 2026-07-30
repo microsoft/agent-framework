@@ -16,7 +16,6 @@ from agent_framework import (
     FunctionInvocationLayer,
     Message,
     SupportsChatGetResponse,
-    UsageDetails,
     tool,
 )
 from agent_framework._settings import load_settings
