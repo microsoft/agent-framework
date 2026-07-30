@@ -37,7 +37,9 @@ public class WorkflowAgentCheckpointIdentityTests
 
         // Act: complete a first turn (triage hands off to the specialist), then serialize the session.
         AgentResponse firstResponse = await firstGeneration.RunAsync("Please help me.", session);
-        firstResponse.Text.Should().Contain(SpecialistReply, "the first turn should route triage -> specialist");
+        firstResponse.Text.Should().Be(
+            $"{SpecialistReply}:turn:1",
+            "the first turn should route triage -> specialist, and the specialist observes a single user turn");
 
         JsonElement serialized = await firstGeneration.SerializeSessionAsync(session);
 
@@ -48,10 +50,12 @@ public class WorkflowAgentCheckpointIdentityTests
 
         AgentResponse secondResponse = await secondGeneration.RunAsync("Anything else?", resumedSession);
 
-        // Assert: the reconstructed workflow resumes from the checkpoint and completes without a compatibility error.
-        secondResponse.Text.Should().Contain(
-            SpecialistReply,
-            "stable inner agent ids keep the executor identities compatible with the checkpoint across reconstruction");
+        // Assert: the specialist observes both user turns, which is only possible if the checkpointed conversation was
+        // restored. A fresh (non-resumed) session would restart the count at turn:1, so this distinguishes a genuine
+        // resume from a compatible-but-empty restart.
+        secondResponse.Text.Should().Be(
+            $"{SpecialistReply}:turn:2",
+            "stable inner agent ids keep the executor identities compatible and the reconstructed workflow resumes from the checkpoint");
     }
 
     [Fact]
@@ -155,9 +159,13 @@ public class WorkflowAgentCheckpointIdentityTests
         return new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("handoff-call", handoffTool)]));
     });
 
-    // The specialist returns a fixed reply.
-    private static StatelessMockChatClient CreateSpecialistClient() => new((_, _) =>
-        new ChatResponse(new ChatMessage(ChatRole.Assistant, SpecialistReply)));
+    // The specialist echoes how many user turns it has observed. Because a genuine resume restores the prior turn
+    // from the checkpoint, the count advances across turns, distinguishing a real resume from a fresh restart.
+    private static StatelessMockChatClient CreateSpecialistClient() => new((messages, _) =>
+    {
+        int observedUserTurns = messages.Count(m => m.Role == ChatRole.User);
+        return new ChatResponse(new ChatMessage(ChatRole.Assistant, $"{SpecialistReply}:turn:{observedUserTurns}"));
+    });
 
     /// <summary>
     /// A minimal <see cref="IChatClient"/> whose response is a pure function of the request, so reconstructing it
