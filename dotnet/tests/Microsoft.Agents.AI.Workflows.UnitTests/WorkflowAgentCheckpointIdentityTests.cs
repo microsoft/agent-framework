@@ -82,6 +82,32 @@ public class WorkflowAgentCheckpointIdentityTests
             .WithMessage("The specified checkpoint is not compatible with the workflow associated with this runner.");
     }
 
+    [Fact]
+    public async Task WorkflowAgentSession_WithStableIdsButChangedInnerNames_FailsAcrossReconstructionAsync()
+    {
+        // Arrange: first generation uses stable ids and the default inner names.
+        AIAgent firstGeneration = BuildWorkflowAgent(useStableInnerIds: true);
+        AgentSession session = await firstGeneration.CreateSessionAsync();
+
+        AgentResponse firstResponse = await firstGeneration.RunAsync("Please help me.", session);
+        firstResponse.Text.Should().Contain(SpecialistReply, "the first turn should route triage -> specialist");
+
+        JsonElement serialized = await firstGeneration.SerializeSessionAsync(session);
+
+        // Reconstruct with the SAME stable ids but different inner names. Because the executor id is derived from
+        // both the name and the id, changing only the name still breaks checkpoint compatibility.
+        AIAgent secondGeneration = BuildWorkflowAgent(useStableInnerIds: true, nameSuffix: "-renamed");
+
+        // Act: deserialization succeeds; the incompatibility surfaces on the resuming run.
+        AgentSession resumedSession = await secondGeneration.DeserializeSessionAsync(serialized);
+
+        Func<Task> resumeAndRun = () => secondGeneration.RunAsync("Anything else?", resumedSession);
+
+        // Assert: changing a set name invalidates the executor identity even though the id is stable.
+        await resumeAndRun.Should().ThrowAsync<InvalidDataException>()
+            .WithMessage("The specified checkpoint is not compatible with the workflow associated with this runner.");
+    }
+
     /// <summary>
     /// Builds a fresh Handoff workflow-as-agent object graph. Every call constructs new chat clients, agents, and a
     /// new workflow, modeling reconstruction across dependency-injection scopes.
@@ -90,12 +116,16 @@ public class WorkflowAgentCheckpointIdentityTests
     /// When <see langword="true"/>, each inner agent is assigned a deterministic <see cref="ChatClientAgentOptions.Id"/>.
     /// When <see langword="false"/>, the id is left unset so each agent receives a random per-instance id.
     /// </param>
-    private static AIAgent BuildWorkflowAgent(bool useStableInnerIds)
+    /// <param name="nameSuffix">
+    /// Optional suffix appended to each inner agent's <see cref="ChatClientAgentOptions.Name"/>. Used to simulate a
+    /// reconstruction that keeps ids stable but changes names.
+    /// </param>
+    private static AIAgent BuildWorkflowAgent(bool useStableInnerIds, string nameSuffix = "")
     {
         AIAgent triage = CreateTriageClient().AsAIAgent(new ChatClientAgentOptions
         {
             Id = useStableInnerIds ? "triage-agent" : null,
-            Name = TriageName,
+            Name = TriageName + nameSuffix,
             Description = "Routes the request to a specialist.",
             ChatOptions = new() { Instructions = "Always hand off to the specialist." },
         });
@@ -103,7 +133,7 @@ public class WorkflowAgentCheckpointIdentityTests
         AIAgent specialist = CreateSpecialistClient().AsAIAgent(new ChatClientAgentOptions
         {
             Id = useStableInnerIds ? "specialist-agent" : null,
-            Name = SpecialistName,
+            Name = SpecialistName + nameSuffix,
             Description = "Handles the request once triage hands off.",
             ChatOptions = new() { Instructions = "Answer the request." },
         });
@@ -118,10 +148,11 @@ public class WorkflowAgentCheckpointIdentityTests
     // Triage hands off to the specialist by calling the handoff tool present on the request.
     private static StatelessMockChatClient CreateTriageClient() => new((messages, options) =>
     {
-        string? handoffTool = options?.Tools?
-            .FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+        string handoffTool = options?.Tools?
+            .FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name
+            ?? throw new InvalidOperationException("Expected a handoff tool to be available to the triage agent.");
 
-        return new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("handoff-call", handoffTool!)]));
+        return new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("handoff-call", handoffTool)]));
     });
 
     // The specialist returns a fixed reply.
