@@ -1,0 +1,59 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+"""A2UI (agent-generated UI) support for the AG-UI Agent Framework adapter.
+
+Toolkit-dependent exports (``AGUIContextAgent`` and, later, ``A2UIAgent`` /
+``get_a2ui_tools`` / ``plan_a2ui_injection``) are loaded lazily via PEP 562 so this
+package — and the toolkit-free context-plumbing helpers in :mod:`._state` it
+re-exports — can be imported by the hosting loop even when ``ag-ui-a2ui-toolkit`` is
+not installed.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+# Toolkit-free helpers — safe to import eagerly (no ag_ui_a2ui_toolkit dependency).
+from ._state import (
+    A2UI_CONTEXT_KEY,
+    A2UI_SCHEMA_CONTEXT_DESCRIPTION,
+    build_ag_ui_context_slice,
+    read_agent_state,
+    read_inject_a2ui_flag,
+    stamp_context_slice,
+)
+
+if TYPE_CHECKING:
+    from ._agent import A2UIAgent
+    from ._context_agent import AGUIContextAgent
+    from ._factory import enable_a2ui, plan_a2ui_injection
+
+__all__ = [
+    "A2UI_CONTEXT_KEY",
+    "A2UI_SCHEMA_CONTEXT_DESCRIPTION",
+    "A2UIAgent",
+    "AGUIContextAgent",
+    "build_ag_ui_context_slice",
+    "enable_a2ui",
+    "plan_a2ui_injection",
+    "read_agent_state",
+    "read_inject_a2ui_flag",
+    "stamp_context_slice",
+]
+
+# Lazy (toolkit-dependent) exports: module -> symbols defined there.
+_LAZY: dict[str, tuple[str, ...]] = {
+    "_agent": ("A2UIAgent",),
+    "_context_agent": ("AGUIContextAgent",),
+    "_factory": ("enable_a2ui", "plan_a2ui_injection"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    for module, symbols in _LAZY.items():
+        if name in symbols:
+            import importlib
+
+            mod = importlib.import_module(f".{module}", __name__)
+            return getattr(mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

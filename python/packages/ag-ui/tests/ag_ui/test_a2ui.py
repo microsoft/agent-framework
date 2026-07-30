@@ -1,0 +1,852 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+"""Tests for A2UI (agent-generated UI) support in the AG-UI adapter.
+
+Covers the context plumbing (_state), the AGUIContextAgent wrapper, and the
+A2UIAgent streaming/non-streaming loop including recovery, catalog-driven
+validation, error classification, and mid-stream render-call balancing.
+
+Skipped wholesale when ag-ui-a2ui-toolkit is not installed (A2UI is an optional
+extra; the base package does not require it).
+"""
+
+import asyncio
+import json
+
+import pytest
+
+pytest.importorskip("ag_ui_a2ui_toolkit")
+
+from agent_framework import AgentResponseUpdate, ChatResponse, ChatResponseUpdate, Content, Message  # noqa: E402
+
+from agent_framework_ag_ui._a2ui import (  # noqa: E402
+    A2UI_SCHEMA_CONTEXT_DESCRIPTION,
+    A2UIAgent,
+    AGUIContextAgent,
+    build_ag_ui_context_slice,
+    enable_a2ui,
+    plan_a2ui_injection,
+    read_agent_state,
+    read_inject_a2ui_flag,
+    stamp_context_slice,
+)
+from agent_framework_ag_ui._a2ui._state import to_history_messages  # noqa: E402
+
+# --------------------------------------------------------------------------- #
+# Test doubles
+# --------------------------------------------------------------------------- #
+
+
+def _role(msg):
+    r = getattr(msg, "role", None)
+    return getattr(r, "value", r)
+
+
+class _GenerateOnceInner:
+    """Planner that requests one generate_a2ui surface, then narrates."""
+
+    id = name = description = "planner"
+
+    def __init__(self):
+        self.calls = 0
+        self.last_tools = None
+
+    def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+        self.calls += 1
+        self.last_tools = [getattr(t, "name", None) for t in (tools or [])]
+        n = self.calls
+
+        async def gen():
+            if n == 1:
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="g1", name="generate_a2ui", arguments=json.dumps({"intent": "create"})
+                        )
+                    ],
+                )
+            else:
+                yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Done.")])
+
+        return gen()
+
+
+class _RenderSub:
+    """Render sub-agent that streams render_a2ui args as fragments."""
+
+    def __init__(self, components=None, fragments=None):
+        self._components = components or [{"id": "root", "component": "Card"}]
+        self._fragments = fragments
+
+    def get_response(self, messages, *, stream=False, options=None):
+        full = {"surfaceId": "s1", "components": self._components}
+        text = json.dumps(full)
+        frags = self._fragments if self._fragments is not None else [text[:8], text[8:20], text[20:]]
+
+        async def gen():
+            for frag in frags:
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="r1", name="render_a2ui", arguments=frag)],
+                )
+
+        return gen()
+
+
+async def _drive(agent, options=None):
+    """Run a streaming A2UIAgent and classify the yielded content."""
+    kinds = []
+    async for update in agent.run("make a card", stream=True, options=options):
+        for c in update.contents:
+            t = getattr(c, "type", None)
+            if t == "function_call":
+                kinds.append(("call", c.name, c.arguments))
+            elif t == "function_result":
+                kinds.append(("result", getattr(c, "call_id", None), c.result))
+            elif t == "text":
+                kinds.append(("text", c.text))
+    return kinds
+
+
+def _generate_envelope(kinds):
+    for kind, call_id, result in (k for k in kinds if k[0] == "result"):
+        if call_id == "g1":
+            return json.loads(result)
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# _state: context slice + enablement flag
+# --------------------------------------------------------------------------- #
+
+
+def test_context_slice_is_catalog_only():
+    ctx = [
+        {"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": "CAT"},
+        {"description": "Generation Guidelines", "value": "be terse"},
+    ]
+    slice_ = build_ag_ui_context_slice(ctx)
+    assert slice_["a2ui_schema"] == "CAT"
+    assert slice_["context"] == [{"description": "Generation Guidelines", "value": "be terse"}]
+    assert "inject_a2ui_tool" not in slice_  # enablement is NOT bundled into context
+
+
+def test_inject_flag_sourced_from_forwarded_props_only():
+    assert read_inject_a2ui_flag({"injectA2UITool": True}) is True
+    assert read_inject_a2ui_flag({"injectA2UITool": False}) is False
+    assert read_inject_a2ui_flag({"inject_a2ui_tool": True}) is True  # snake fallback
+    assert read_inject_a2ui_flag({}) is None  # unset -> None (nullish)
+    assert read_inject_a2ui_flag(None) is None
+    # A context entry never enables injection.
+    assert read_inject_a2ui_flag({"context": [{"description": "x", "value": "y"}]}) is None
+
+
+def test_stamp_and_read_round_trip():
+    slice_ = {"a2ui_schema": "CAT"}
+    opts = stamp_context_slice({"metadata": {"x": "y"}, "store": True}, slice_)
+    assert opts["metadata"] == {"x": "y"} and opts["store"] is True
+    assert read_agent_state(opts) == slice_
+    # object-attr form
+    obj = type("O", (), {"additional_properties": {"ag_ui_context": slice_}})()
+    assert read_agent_state(obj) == slice_
+    assert read_agent_state(None) == {}
+
+
+def test_no_a2ui_context_yields_empty_slice():
+    assert build_ag_ui_context_slice(None) == {}
+    assert build_ag_ui_context_slice([{"description": "x", "value": "y"}]) == {
+        "context": [{"description": "x", "value": "y"}]
+    }
+
+
+def test_to_history_messages_extracts_tool_result_payload():
+    envelope = '{"a2ui_operations": []}'
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="hi")]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="c", result=envelope)]),
+    ]
+    history = to_history_messages(messages)
+    assert history[0] == {"role": "user", "content": "hi"}
+    assert history[1]["role"] == "tool"
+    assert history[1]["content"] == envelope
+
+
+# --------------------------------------------------------------------------- #
+# AGUIContextAgent
+# --------------------------------------------------------------------------- #
+
+
+def test_context_agent_prepends_catalog_system_message():
+    slice_ = build_ag_ui_context_slice(
+        [{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": '{"components":{"Card":{}}}'}]
+    )
+    opts = stamp_context_slice(None, slice_)
+
+    class Inner:
+        id = name = description = "x"
+
+        def run(self, messages, *, stream=False, **kwargs):
+            return (stream, messages)
+
+    stream, msgs = AGUIContextAgent(Inner()).run("hi", stream=True, options=opts)
+    assert stream is True
+    assert _role(msgs[0]) == "system"
+    assert "Available Components" in msgs[0].text and "Card" in msgs[0].text
+    assert _role(msgs[-1]) == "user"
+
+
+def test_context_agent_passthrough_without_context():
+    class Inner:
+        id = name = description = "x"
+
+        def run(self, messages, *, stream=False, **kwargs):
+            return messages
+
+    msgs = AGUIContextAgent(Inner()).run("hi", stream=False, options=None)
+    assert [_role(m) for m in msgs] == ["user"]
+
+
+# --------------------------------------------------------------------------- #
+# A2UIAgent streaming loop
+# --------------------------------------------------------------------------- #
+
+
+def test_streaming_progressive_paint_balancing_and_envelope():
+    kinds = asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), _RenderSub())))
+
+    # >= 3 incremental render_a2ui arg fragments forwarded (progressive paint)
+    render_frags = [k for k in kinds if k[0] == "call" and k[1] == "render_a2ui"]
+    assert len(render_frags) >= 3
+
+    # balancing render result emitted
+    assert any(k[0] == "result" and k[1] == "r1" and "rendered" in str(k[2]) for k in kinds)
+
+    # generate_a2ui envelope fed back with operations
+    env = _generate_envelope(kinds)
+    assert env is not None and "a2ui_operations" in env
+    assert any("createSurface" in op for op in env["a2ui_operations"])
+
+    # closing turn narrated
+    assert any(k[0] == "text" and "Done" in k[1] for k in kinds)
+
+
+def test_streaming_loop_ends_when_planner_stops_requesting():
+    # Normal termination: planner requests once, then narrates -> loop ends after
+    # the planner's no-generate turn (the tool is still advertised on that turn;
+    # withholding only applies to the round-cap closing turn, below).
+    inner = _GenerateOnceInner()
+    asyncio.run(_drive(A2UIAgent(inner, _RenderSub())))
+    assert inner.calls == 2
+
+
+def test_streaming_closing_turn_withholds_generate_tool_at_round_cap():
+    from agent_framework_ag_ui._a2ui._agent import MAX_PLANNER_ROUNDS
+
+    class AlwaysGenerateInner:
+        id = name = description = "planner"
+
+        def __init__(self):
+            self.tools_per_call = []
+
+        def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+            self.tools_per_call.append([getattr(t, "name", None) for t in (tools or [])])
+
+            async def gen():
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="g", name="generate_a2ui", arguments="{}")],
+                )
+
+            return gen()
+
+    inner = AlwaysGenerateInner()
+    asyncio.run(_drive(A2UIAgent(inner, _RenderSub())))
+    # MAX_PLANNER_ROUNDS planner rounds (tool advertised) + 1 closing turn (withheld).
+    assert len(inner.tools_per_call) == MAX_PLANNER_ROUNDS + 1
+    assert all("generate_a2ui" in t for t in inner.tools_per_call[:MAX_PLANNER_ROUNDS])
+    assert "generate_a2ui" not in inner.tools_per_call[-1]
+
+
+def test_streaming_recovery_exhaustion():
+    # Always-invalid (no root) -> recovery_exhausted after default 3 attempts.
+    sub = _RenderSub(components=[{"id": "x", "component": "Card"}])
+    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), sub))))
+    assert env["code"] == "a2ui_recovery_exhausted"
+    assert len(env["attempts"]) == 3
+
+
+def test_streaming_retry_then_success():
+    class RetrySub:
+        def __init__(self):
+            self.n = 0
+
+        def get_response(self, messages, *, stream=False, options=None):
+            self.n += 1
+            comps = [{"id": "x", "component": "Card"}] if self.n == 1 else [{"id": "root", "component": "Card"}]
+
+            async def gen():
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id=f"r{self.n}",
+                            name="render_a2ui",
+                            arguments=json.dumps({"surfaceId": "s", "components": comps}),
+                        )
+                    ],
+                )
+
+            return gen()
+
+    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), RetrySub()))))
+    assert "a2ui_operations" in env
+
+
+# --------------------------------------------------------------------------- #
+# P3: catalog-driven validation + error classification
+# --------------------------------------------------------------------------- #
+
+
+def test_forwarded_schema_drives_validation_catalog():
+    # Card requires "text"; render omits it -> invalid via the forwarded catalog.
+    catalog = {"components": {"Card": {"required": ["text"]}}}
+    opts = stamp_context_slice(
+        None,
+        build_ag_ui_context_slice([{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": json.dumps(catalog)}]),
+    )
+    sub = _RenderSub(components=[{"id": "root", "component": "Card"}])
+    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), sub), options=opts)))
+    assert env["code"] == "a2ui_recovery_exhausted"
+    errors = [e for attempt in env["attempts"] for e in attempt["errors"]]
+    assert any(e["code"] == "missing_required_prop" for e in errors)
+
+
+def test_recoverable_subagent_error_retries():
+    class RaisingSub:
+        def get_response(self, messages, *, stream=False, options=None):
+            async def gen():
+                raise ValueError("transient")
+                yield  # pragma: no cover
+
+            return gen()
+
+    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), RaisingSub()))))
+    assert env["code"] == "a2ui_recovery_exhausted"
+    assert all(e["code"] == "subagent_error" for a in env["attempts"] for e in a["errors"])
+
+
+def test_programmer_error_is_rethrown():
+    class TypeErrorSub:
+        def get_response(self, messages, *, stream=False, options=None):
+            async def gen():
+                raise TypeError("bug")
+                yield  # pragma: no cover
+
+            return gen()
+
+    with pytest.raises(TypeError):
+        asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), TypeErrorSub())))
+
+
+def test_mid_stream_death_balances_render_call():
+    class PartialThenDieSub:
+        def get_response(self, messages, *, stream=False, options=None):
+            async def gen():
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(call_id="rX", name="render_a2ui", arguments='{"surfaceId":"s","comp')
+                    ],
+                )
+                raise ValueError("died mid-stream")
+
+            return gen()
+
+    kinds = asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), PartialThenDieSub())))
+    assert any(k[0] == "result" and k[1] == "rX" and "rendered" in str(k[2]) for k in kinds)
+
+
+# --------------------------------------------------------------------------- #
+# Non-streaming tool body + enable_a2ui
+# --------------------------------------------------------------------------- #
+
+
+def test_non_streaming_tool_body_runs_recovery():
+    class NonStreamSub:
+        async def get_response(self, messages, *, stream=False, options=None):
+            return ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="r",
+                                name="render_a2ui",
+                                arguments=json.dumps(
+                                    {"surfaceId": "s", "components": [{"id": "root", "component": "Card"}]}
+                                ),
+                            )
+                        ],
+                    )
+                ]
+            )
+
+    agent = A2UIAgent(
+        inner_agent=type("I", (), {"id": "i", "name": "n", "description": "d"})(), subagent_chat_client=NonStreamSub()
+    )
+    tool = agent._build_generate_tool([Message(role="user", contents=[Content.from_text(text="card")])], None)
+    assert tool.func is not None  # executable on the non-streaming path
+    env = json.loads(asyncio.run(tool.func(intent="create")))
+    assert "a2ui_operations" in env
+
+
+def test_enable_a2ui_composition_order():
+    inner = type("I", (), {"id": "i", "name": "n", "description": "d"})()
+    wrapped = enable_a2ui(inner, object())
+    assert type(wrapped).__name__ == "AGUIContextAgent"
+    assert type(wrapped.inner_agent).__name__ == "A2UIAgent"
+
+
+# --------------------------------------------------------------------------- #
+# P5: auto-injection (plan_a2ui_injection)
+# --------------------------------------------------------------------------- #
+
+
+class _AgentWithClient:
+    id = name = description = "planner"
+    client = object()  # inferable render sub-agent client
+
+
+def test_plan_injection_off_without_flag():
+    assert plan_a2ui_injection(agent=_AgentWithClient(), forwarded_props=None, existing_tool_names=[]) is None
+    assert plan_a2ui_injection(agent=_AgentWithClient(), forwarded_props={}, existing_tool_names=[]) is None
+    assert (
+        plan_a2ui_injection(agent=_AgentWithClient(), forwarded_props={"injectA2UITool": False}, existing_tool_names=[])
+        is None
+    )
+
+
+def test_plan_injection_wraps_and_drops_render_tool():
+    plan = plan_a2ui_injection(
+        agent=_AgentWithClient(),
+        forwarded_props={"injectA2UITool": True},
+        existing_tool_names=["some_other_tool"],
+    )
+    assert plan is not None
+    assert type(plan["agent"]).__name__ == "AGUIContextAgent"
+    assert plan["drop_tool_names"] == ["render_a2ui"]
+
+
+def test_plan_injection_string_flag_names_render_tool_to_drop():
+    plan = plan_a2ui_injection(
+        agent=_AgentWithClient(),
+        forwarded_props={"injectA2UITool": "render_custom"},
+        existing_tool_names=[],
+    )
+    assert plan is not None and plan["drop_tool_names"] == ["render_custom"]
+
+
+def test_plan_injection_user_prevails_when_generate_already_wired():
+    plan = plan_a2ui_injection(
+        agent=_AgentWithClient(),
+        forwarded_props={"injectA2UITool": True},
+        existing_tool_names=["generate_a2ui"],
+    )
+    assert plan is None
+
+
+def test_plan_injection_skips_already_wrapped_agent():
+    wrapped = enable_a2ui(_AgentWithClient(), object())
+    assert plan_a2ui_injection(agent=wrapped, forwarded_props={"injectA2UITool": True}, existing_tool_names=[]) is None
+
+
+def test_plan_injection_skips_when_no_client_inferable():
+    agent = type("NoClient", (), {"id": "i", "name": "n", "description": "d"})()
+    assert plan_a2ui_injection(agent=agent, forwarded_props={"injectA2UITool": True}, existing_tool_names=[]) is None
+
+
+def test_plan_injection_runtime_false_beats_backend_opt_in():
+    # Nullish fallback: explicit runtime false disables even when backend config opts in.
+    assert (
+        plan_a2ui_injection(
+            agent=_AgentWithClient(),
+            forwarded_props={"injectA2UITool": False},
+            existing_tool_names=[],
+            config={"inject_a2ui_tool": True},
+        )
+        is None
+    )
+    # Backend opt-in applies when runtime is unset.
+    plan = plan_a2ui_injection(
+        agent=_AgentWithClient(),
+        forwarded_props={},
+        existing_tool_names=[],
+        config={"inject_a2ui_tool": True},
+    )
+    assert plan is not None
+
+
+def test_run_agent_stream_auto_wraps_and_drops_render_tool(stub_agent):
+    """Integration: run_agent_stream auto-wraps the agent and strips render_a2ui."""
+    from agent_framework_ag_ui._agent import AgentConfig
+    from agent_framework_ag_ui._agent_run import run_agent_stream
+
+    # Planner that narrates (no generate call) so the A2UIAgent loop ends after one
+    # inner turn — no render sub-agent call needed for this assertion.
+    agent = stub_agent(
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="hi there")], role="assistant")],
+        client=object(),  # inferable render sub-agent client
+    )
+
+    input_data = {
+        "messages": [{"role": "user", "content": "make a card"}],
+        # The a2ui-middleware injects render_a2ui into the tool list.
+        "tools": [
+            {
+                "name": "render_a2ui",
+                "description": "render",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ],
+        "context": [{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": '{"components":{}}'}],
+        "forwardedProps": {"injectA2UITool": True},
+    }
+
+    async def _consume():
+        async for _ in run_agent_stream(input_data, agent, AgentConfig()):
+            pass
+
+    asyncio.run(_consume())
+
+    received = [getattr(t, "name", None) for t in (agent.tools_received or [])]
+    assert "generate_a2ui" in received  # auto-injected
+    assert "render_a2ui" not in received  # middleware-injected render tool dropped
+
+
+# --------------------------------------------------------------------------- #
+# Regression: real-LLM-only bugs (masked by pre-coalesced test doubles / aimock)
+# --------------------------------------------------------------------------- #
+
+
+class _FragmentedGenerateInner:
+    """Planner streaming ONE generate_a2ui call the way MAF's Chat-Completions client
+    actually does (verified empirically against gpt-4o):
+
+      1. an OPENING fragment carrying id + name + EMPTY args,
+      2. argument-delta fragments with name="" and call_id="" (streaming visibility),
+      3. a FINAL COALESCED fragment repeating id + name + the FULL args.
+
+    The coalescer must select the coalesced full args BY NAME. Accumulating every
+    fragment name-agnostically would concatenate the deltas AND the coalesced copy,
+    doubling the JSON into an unparseable string (the client emits the args twice:
+    ``buf_all == 2 * buf_named``). It must also not treat each fragment as its own
+    call (that emitted duplicate tool results for one call id -> a 400 on replay).
+    """
+
+    id = name = description = "planner"
+
+    def __init__(self):
+        self.calls = 0
+
+    def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+        self.calls += 1
+        n = self.calls
+        # intent=update + a target surface with no prior render. The OUTCOME (an
+        # "update target not found" error envelope) depends on BOTH the intent and the
+        # target_surface_id being correctly coalesced. If the args are doubled/lost, the
+        # tool defaults to intent=create and paints a normal surface instead — so this
+        # test fails under the name-agnostic-doubling mutation (mutation-effective).
+        full = '{"intent":"update","target_surface_id":"ghost-surface"}'
+        deltas = ['{"intent":"upda', 'te","target_surface_id":', '"ghost-surface"}']
+
+        async def gen():
+            if n == 1:
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="g1", name="generate_a2ui", arguments="")],
+                )
+                for piece in deltas:
+                    yield AgentResponseUpdate(
+                        role="assistant",
+                        contents=[Content.from_function_call(call_id="", name="", arguments=piece)],
+                    )
+                # Final coalesced fragment (MAF re-emits id + name + FULL args).
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="g1", name="generate_a2ui", arguments=full)],
+                )
+            else:
+                yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Done.")])
+
+        return gen()
+
+
+class _RenderSubMAF:
+    """Render sub-agent streaming render_a2ui the way MAF's Chat-Completions client does:
+    an opening fragment (id + name + empty args), name="" argument deltas, then a final
+    coalesced fragment (id + name + FULL args). Guards ``_extract_render_args`` against a
+    name-agnostic rewrite that would double the arguments (deltas + coalesced) into
+    invalid JSON."""
+
+    def __init__(self, components=None):
+        self._components = components or [{"id": "root", "component": "Card"}]
+
+    def get_response(self, messages, *, stream=False, options=None):
+        full = json.dumps({"surfaceId": "s1", "components": self._components})
+        mid = len(full) // 2
+
+        async def gen():
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="r1", name="render_a2ui", arguments="")],
+            )
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="", name="", arguments=full[:mid])],
+            )
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="", name="", arguments=full[mid:])],
+            )
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="r1", name="render_a2ui", arguments=full)],
+            )
+
+        return gen()
+
+
+def test_streaming_coalesces_fragmented_generate_call():
+    kinds = asyncio.run(_drive(A2UIAgent(_FragmentedGenerateInner(), _RenderSub())))
+    # Exactly ONE generate_a2ui result despite the call arriving as many fragments +
+    # a coalesced copy (no duplicate tool results for one call id).
+    gen_results = [k for k in kinds if k[0] == "result" and k[1] == "g1"]
+    assert len(gen_results) == 1
+    env = _generate_envelope(kinds)
+    assert env is not None
+    # The coalesced args (intent=update, target_surface_id=ghost-surface) drive an
+    # "update target not found" error envelope. This assertion depends on the args
+    # being correctly coalesced: doubling/losing them defaults to create + a painted
+    # surface (no error), which fails here.
+    assert "error" in env
+    assert "ghost-surface" in env["error"]
+    assert "a2ui_operations" not in env
+
+
+def test_streaming_render_selects_coalesced_args_not_doubled():
+    # MAF emits render args as deltas + a coalesced copy; _extract_render_args must
+    # select the coalesced full args by name. Name-agnostic accumulation would join
+    # deltas + coalesced into doubled, unparseable JSON -> None -> no surface.
+    kinds = asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), _RenderSubMAF())))
+    env = _generate_envelope(kinds)
+    assert env is not None
+    uc = next(o["updateComponents"] for o in env["a2ui_operations"] if "updateComponents" in o)
+    assert any(c.get("id") == "root" for c in uc["components"])
+
+
+def test_forwarded_list_catalog_normalized_not_crash():
+    # The A2UI middleware forwards components as an ARRAY; the validator wants a
+    # name->schema mapping. _resolve_catalog must normalize instead of crashing.
+    schema = json.dumps({"catalogId": "cat", "components": [{"name": "Card"}]})
+    opts = stamp_context_slice(
+        None, build_ag_ui_context_slice([{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": schema}])
+    )
+    sub = _RenderSub(components=[{"id": "root", "component": "Card"}])
+    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), sub), options=opts)))
+    assert env is not None  # did not raise AttributeError on the list-shaped catalog
+
+
+def test_forwarded_catalog_id_binds_surface_when_unconfigured():
+    # Zero-config (advanced): no backend default_catalog_id -> bind the surface to the
+    # catalog id the client forwarded, not the basic fallback.
+    schema = json.dumps({"catalogId": "https://x/custom_catalog.json", "components": [{"name": "Card"}]})
+    opts = stamp_context_slice(
+        None, build_ag_ui_context_slice([{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": schema}])
+    )
+    sub = _RenderSub(components=[{"id": "root", "component": "Card"}])
+    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), sub), options=opts)))
+    assert env["a2ui_operations"][0]["createSurface"]["catalogId"] == "https://x/custom_catalog.json"
+
+
+def test_strip_context_slice_removes_key_and_prunes_empty():
+    from agent_framework_ag_ui._a2ui._state import A2UI_CONTEXT_KEY, strip_context_slice
+
+    opts = {"additional_properties": {A2UI_CONTEXT_KEY: {"a2ui_schema": "x"}, "keep": 1}, "metadata": {}}
+    out = strip_context_slice(opts)
+    assert A2UI_CONTEXT_KEY not in out["additional_properties"]
+    assert out["additional_properties"]["keep"] == 1
+    # When removing the slice empties additional_properties, drop the key entirely.
+    out2 = strip_context_slice({"additional_properties": {A2UI_CONTEXT_KEY: {}}})
+    assert "additional_properties" not in out2
+    assert strip_context_slice(None) is None
+
+
+def test_planner_options_do_not_leak_context_slice():
+    # additional_properties is forwarded to the provider SDK, which rejects the
+    # adapter-private ag-ui context slice; A2UIAgent must strip it before the planner.
+    from agent_framework_ag_ui._a2ui._state import A2UI_CONTEXT_KEY
+
+    opts = stamp_context_slice(None, {"a2ui_schema": "x"})
+
+    class _RecordInner:
+        id = name = description = "planner"
+
+        def __init__(self):
+            self.seen: list = []
+
+        def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+            self.seen.append(kwargs.get("options"))
+
+            async def gen():
+                yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Done.")])
+
+            return gen()
+
+    inner = _RecordInner()
+    asyncio.run(_drive(A2UIAgent(inner, _RenderSub()), options=opts))
+    seen = inner.seen[0]
+    ap = seen.get("additional_properties", {}) if isinstance(seen, dict) else {}
+    assert A2UI_CONTEXT_KEY not in ap
+
+
+# Robustness to a DELTAS-ONLY provider (no coalesced-final fragment): the all-fragment
+# concat fallback must reassemble the full args. Guards against a regression that only
+# handles MAF's deltas+coalesced pattern (the reviewers' feared case).
+
+
+class _RenderSubDeltasOnly:
+    """Render sub-agent that streams args as deltas ONLY (name="" after the first
+    fragment) with NO final coalesced fragment — the hypothetical provider the
+    name-bearing concat alone cannot reassemble."""
+
+    def __init__(self, components=None):
+        self._components = components or [{"id": "root", "component": "Card"}]
+
+    def get_response(self, messages, *, stream=False, options=None):
+        full = json.dumps({"surfaceId": "s1", "components": self._components})
+        third = max(1, len(full) // 3)
+        pieces = [full[:third], full[third : 2 * third], full[2 * third :]]
+
+        async def gen():
+            # Opening fragment: name + id, empty args.
+            yield ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="r1", name="render_a2ui", arguments="")],
+            )
+            # Argument deltas: name="" / call_id="", no coalesced final.
+            for p in pieces:
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="", name="", arguments=p)],
+                )
+
+        return gen()
+
+
+class _DeltasOnlyGenerateInner:
+    """Planner streaming generate_a2ui as deltas ONLY (no coalesced final)."""
+
+    id = name = description = "planner"
+
+    def __init__(self):
+        self.calls = 0
+
+    def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+        self.calls += 1
+        n = self.calls
+
+        async def gen():
+            if n == 1:
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id="g1", name="generate_a2ui", arguments="")],
+                )
+                # Deltas-only (no coalesced final); the all-fragment concat fallback must
+                # reassemble intent=update + target_surface_id=ghost-surface.
+                for p in ('{"intent":"upda', 'te","target_surface_id":', '"ghost-surface"}'):
+                    yield AgentResponseUpdate(
+                        role="assistant",
+                        contents=[Content.from_function_call(call_id="", name="", arguments=p)],
+                    )
+            else:
+                yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Done.")])
+
+        return gen()
+
+
+def test_streaming_render_reassembles_deltas_only_provider():
+    kinds = asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), _RenderSubDeltasOnly())))
+    env = _generate_envelope(kinds)
+    assert env is not None  # all-fragment concat fallback reassembled the full args
+    uc = next(o["updateComponents"] for o in env["a2ui_operations"] if "updateComponents" in o)
+    assert any(c.get("id") == "root" for c in uc["components"])
+
+
+def test_streaming_generate_reassembles_deltas_only_provider():
+    kinds = asyncio.run(_drive(A2UIAgent(_DeltasOnlyGenerateInner(), _RenderSub())))
+    gen_results = [k for k in kinds if k[0] == "result" and k[1] == "g1"]
+    assert len(gen_results) == 1
+    env = _generate_envelope(kinds)
+    assert env is not None
+    # Fallback all-fragment concat reassembled intent=update + ghost target -> the
+    # "update target not found" error envelope (depends on the coalesced args).
+    assert "error" in env
+    assert "ghost-surface" in env["error"]
+
+
+def test_streaming_aclose_mid_render_does_not_raise_generator_exit():
+    # Closing the async generator mid-render (client disconnect / aclose) throws
+    # GeneratorExit into the streaming loop. The mid-stream except must re-raise it
+    # WITHOUT yielding a balancing tool result — yielding during GeneratorExit raises
+    # "async generator ignored GeneratorExit". Red-green guard for that fix.
+    sub = _RenderSub(fragments=['{"surfaceId":"s1","comp', 'onents":[{"id":"root",', '"component":"Card"}]}'])
+    agent = A2UIAgent(_GenerateOnceInner(), sub)
+
+    async def run():
+        agen = agent.run("x", stream=True)
+        async for update in agen:
+            if any(
+                getattr(c, "type", None) == "function_call" and getattr(c, "name", None) == "render_a2ui"
+                for c in update.contents
+            ):
+                await agen.aclose()  # must complete cleanly, not raise RuntimeError
+                return True
+        return False
+
+    assert asyncio.run(run()) is True
+
+
+def test_sanitize_unanswered_tool_calls_strips_dangling_a2ui_calls():
+    # A2UI surfaces persist as activities, so the assistant's generate_a2ui/render_a2ui
+    # tool calls come back on a later turn WITHOUT tool results. Those dangling calls
+    # must be stripped before the planner call (OpenAI rejects unanswered tool_calls),
+    # while assistant text and balanced call/result pairs (log_a2ui_event) are kept.
+    from agent_framework_ag_ui._a2ui._agent import _sanitize_unanswered_tool_calls
+
+    msgs = [
+        Message(role="user", contents=[Content.from_text(text="hi")]),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text(text="Here is your UI."),
+                Content.from_function_call(call_id="g1", name="generate_a2ui", arguments="{}"),
+                Content.from_function_call(call_id="r1", name="render_a2ui", arguments="{}"),
+            ],
+        ),
+        Message(
+            role="assistant", contents=[Content.from_function_call(call_id="e1", name="log_a2ui_event", arguments="{}")]
+        ),
+        Message(role="tool", contents=[Content.from_function_result(call_id="e1", result="{}")]),
+    ]
+    out = _sanitize_unanswered_tool_calls(msgs)
+    call_ids = [
+        getattr(c, "call_id", None)
+        for m in out
+        for c in (getattr(m, "contents", None) or [])
+        if getattr(c, "type", None) == "function_call"
+    ]
+    assert "g1" not in call_ids and "r1" not in call_ids  # dangling a2ui calls dropped
+    assert "e1" in call_ids  # balanced log_a2ui_event kept
+    texts = [c.text for m in out for c in (getattr(m, "contents", None) or []) if getattr(c, "type", None) == "text"]
+    assert "Here is your UI." in texts  # assistant narration preserved
