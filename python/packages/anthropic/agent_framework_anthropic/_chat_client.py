@@ -24,6 +24,7 @@ from agent_framework import (
     ResponseStream,
     TextSpanRegion,
     UsageDetails,
+    add_usage_details,
     tool,
 )
 from agent_framework._settings import SecretString, load_settings
@@ -545,8 +546,12 @@ class RawAnthropicClient(
         if stream:
             # Streaming mode
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                # Anthropic streams cumulative usage snapshots (message_start seeds it,
+                # each message_delta carries the running total), so thread a per-stream
+                # accumulator to _process_stream_event to emit increments instead.
+                emitted_usage: dict[str, int] = {}
                 async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
-                    parsed_chunk = self._process_stream_event(chunk)
+                    parsed_chunk = self._process_stream_event(chunk, emitted_usage)
                     if parsed_chunk:
                         yield parsed_chunk
 
@@ -1076,11 +1081,17 @@ class RawAnthropicClient(
             raw_representation=message,
         )
 
-    def _process_stream_event(self, event: BetaRawMessageStreamEvent) -> ChatResponseUpdate | None:
+    def _process_stream_event(
+        self, event: BetaRawMessageStreamEvent, emitted_usage: dict[str, int] | None = None
+    ) -> ChatResponseUpdate | None:
         """Process a streaming event from the Anthropic client.
 
         Args:
             event: The streaming event returned by the Anthropic client.
+            emitted_usage: Per-stream accumulator of the cumulative usage already
+                emitted, used to convert Anthropic's cumulative usage snapshots into
+                increments (see ``_incremental_usage``). Pass ``None`` for a one-off
+                event to keep the snapshot unchanged.
 
         Returns:
             A ChatResponseUpdate object containing the processed update.
@@ -1089,7 +1100,9 @@ class RawAnthropicClient(
             case "message_start":
                 usage_details: list[Content] = []
                 if event.message.usage and (details := self._parse_usage_from_anthropic(event.message.usage)):
-                    usage_details.append(Content.from_usage(usage_details=details))
+                    usage_details.append(
+                        Content.from_usage(usage_details=self._incremental_usage(details, emitted_usage))
+                    )
 
                 return ChatResponseUpdate(
                     role="assistant",
@@ -1107,7 +1120,14 @@ class RawAnthropicClient(
             case "message_delta":
                 usage = self._parse_usage_from_anthropic(event.usage)
                 return ChatResponseUpdate(
-                    contents=[Content.from_usage(usage_details=usage, raw_representation=event.usage)] if usage else [],
+                    contents=[
+                        Content.from_usage(
+                            usage_details=self._incremental_usage(usage, emitted_usage),
+                            raw_representation=event.usage,
+                        )
+                    ]
+                    if usage
+                    else [],
                     finish_reason=FINISH_REASON_MAP.get(event.delta.stop_reason) if event.delta.stop_reason else None,
                     raw_representation=event,
                 )
@@ -1145,6 +1165,40 @@ class RawAnthropicClient(
             usage_details["anthropic.cache_read_input_tokens"] = usage.cache_read_input_tokens
             usage_details["cache_read_input_token_count"] = usage.cache_read_input_tokens
         return usage_details
+
+    @staticmethod
+    def _incremental_usage(cumulative: UsageDetails, emitted: dict[str, int] | None) -> UsageDetails:
+        """Convert a cumulative Anthropic usage snapshot into the increment since the last one.
+
+        Anthropic streams cumulative usage: ``message_start`` seeds it (with an
+        ``output_tokens`` placeholder of 1) and each ``message_delta`` reports the
+        running total for the message, not a per-delta increment. ``ChatResponse.from_updates``
+        sums every usage ``Content``, so emitting the raw snapshots inflates the total by
+        the earlier ones (e.g. the seed makes ``output_token_count`` land at 26 when the
+        API reported 25). Emitting the increment over what has already been emitted makes
+        that summation reconstruct the final cumulative usage instead.
+
+        ``emitted`` accumulates the last-seen cumulative value per key and is mutated in
+        place; it is threaded across a single stream. When it is ``None`` (e.g. a direct,
+        single-event call) the snapshot is returned unchanged.
+        """
+        if emitted is None:
+            return cumulative
+        # The increment is cumulative minus what was already emitted, restricted to
+        # the keys this snapshot reports (a delta event may carry only a subset).
+        # add_usage_details sums int values and skips anything else, so negating the
+        # emitted totals and adding them yields exactly that increment.
+        negated = UsageDetails()
+        for key in cumulative:
+            emitted_value = emitted.get(key)
+            if isinstance(emitted_value, int):
+                negated[key] = -emitted_value
+        delta = add_usage_details(cumulative, negated)
+        emitted.clear()
+        for key, value in cumulative.items():
+            if isinstance(value, int):
+                emitted[key] = value
+        return delta
 
     def _parse_contents_from_anthropic(
         self,

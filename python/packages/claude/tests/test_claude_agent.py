@@ -271,7 +271,13 @@ class TestClaudeAgentRun:
             await agent.run("Hello", session=session)
             assert session.service_session_id == "test-session-id"
 
-    async def test_run_captures_result_message_usage_and_finish_reason(self) -> None:
+    @pytest.mark.parametrize(
+        ("stop_reason", "expected_finish_reason"),
+        [("end_turn", "stop"), ("pause_turn", "pause_turn")],
+    )
+    async def test_run_captures_result_message_usage_and_finish_reason(
+        self, stop_reason: str, expected_finish_reason: str
+    ) -> None:
         """Test that ResultMessage metadata is propagated to the final AgentResponse."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
         from claude_agent_sdk.types import StreamEvent
@@ -296,7 +302,7 @@ class TestClaudeAgentRun:
                 is_error=False,
                 num_turns=1,
                 session_id="test-session-id",
-                stop_reason="end_turn",
+                stop_reason=stop_reason,
                 usage={
                     "input_tokens": 42,
                     "output_tokens": 18,
@@ -311,7 +317,7 @@ class TestClaudeAgentRun:
             agent = ClaudeAgent()
             response = await agent.run("Hello")
 
-        assert response.finish_reason == "end_turn"
+        assert response.finish_reason == expected_finish_reason
         assert response.usage_details == {
             "input_token_count": 42,
             "output_token_count": 18,
@@ -465,7 +471,7 @@ class TestClaudeAgentRunStream:
                 pass
             response = await stream.get_final_response()
 
-        assert response.finish_reason == "max_tokens"
+        assert response.finish_reason == "length"
         assert response.usage_details == {
             "input_token_count": 7,
             "output_token_count": 9,

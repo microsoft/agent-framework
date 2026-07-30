@@ -2241,7 +2241,7 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(chat_cli
     )
 
     # Run with explicitly passing None (same as not specifying)
-    await agent.run("Hello", options={"tool_choice": None})  # ty: ignore[no-matching-overload]  # type: ignore[typeddict-item]
+    await agent.run("Hello", options={"tool_choice": None})  # ty: ignore[invalid-argument-type, no-matching-overload]  # type: ignore[typeddict-item]
 
     # Verify the client received tool_choice="auto" from agent-level
     assert len(captured_options) >= 1
@@ -2983,6 +2983,8 @@ async def test_persist_only_history_provider_still_injects_inmemory(
 
 async def test_shared_local_storage_cross_provider_responses_history_does_not_leak_fc_id() -> None:
     """Responses-specific replay metadata should stay local to Responses when session storage is shared."""
+    pytest.importorskip("agent_framework_openai")
+
     from openai.types.chat.chat_completion import ChatCompletion, Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 

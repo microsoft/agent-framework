@@ -6,6 +6,8 @@ Instructions for AI coding agents working in the Python codebase.
 - [DEV_SETUP.md](DEV_SETUP.md) - Development environment setup and available poe tasks
 - [CODING_STANDARD.md](CODING_STANDARD.md) - Coding standards, docstring format, and performance guidelines
 - [samples/SAMPLE_GUIDELINES.md](samples/SAMPLE_GUIDELINES.md) - Sample structure and guidelines
+- [Python function-calling loop specification](../docs/specs/004-python-function-calling-loop.md) - Required
+  behavior, scenario-to-test mapping, coverage gaps, and extra validation for function-loop changes
 
 **Agent Skills** (`.github/skills/`) — detailed, task-specific instructions loaded on demand:
 - `python-development` — coding standards, type annotations, docstrings, logging, performance
@@ -47,6 +49,16 @@ When preparing a PR description:
 ## Quick Reference
 
 Run `uv run poe` from the `python/` directory to see available commands. See [DEV_SETUP.md](DEV_SETUP.md) for detailed usage.
+
+## Function-Calling Loop Changes
+
+Changes to the Python function-calling loop, approval resume behavior, function-call history, provider
+serialization, or transport result handling must follow
+[the function-calling loop specification](../docs/specs/004-python-function-calling-loop.md). This area requires
+extra validation because small changes can duplicate side effects, orphan call/result pairs, replay stale approval
+authority, or make streaming and non-streaming behavior diverge. Update the specification and its scenario-to-test
+mapping whenever coverage or behavior changes. External contributors must check with the Agent Framework core team
+before picking up issues in this area.
 
 ## Project Structure
 
@@ -94,6 +106,8 @@ python/
 
 ### Protocols & UI
 - [a2a](packages/a2a/AGENTS.md) - Agent-to-Agent protocol
+- [hosting-a2a](packages/hosting-a2a/AGENTS.md) - A2A hosting conversion helpers
+- [hosting-mcp](packages/hosting-mcp/AGENTS.md) - MCP hosting conversion helpers
 - [ag-ui](packages/ag-ui/AGENTS.md) - AG-UI protocol
 - [chatkit](packages/chatkit/AGENTS.md) - OpenAI ChatKit integration
 - [devui](packages/devui/AGENTS.md) - Developer UI for testing

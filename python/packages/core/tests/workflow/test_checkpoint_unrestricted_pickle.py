@@ -73,7 +73,9 @@ class _NamedPickleColor(enum.Enum):
     BLUE = 2
     CRIMSON = 1
 
-    __reduce_ex__ = enum.pickle_by_enum_name  # type: ignore[attr-defined]
+    def __reduce_ex__(self, proto: object) -> tuple[Any, tuple[type[enum.Enum], str]]:
+        del proto
+        return (getattr, (type(self), self.name))
 
 
 class _EnumNonMemberAttributePayload:

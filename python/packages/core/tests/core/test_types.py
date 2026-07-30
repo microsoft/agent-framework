@@ -208,6 +208,20 @@ def test_data_content_detect_image_format_from_base64():
         detect_media_type_from_base64(data_str="data", data_uri="data:application/octet-stream;base64,AAA")
 
 
+@mark.parametrize(
+    ("data_uri", "error_message"),
+    [
+        ("data:text/plain,hello", "Data URI must use base64 encoding."),
+        ("data:image/png;base64", "Invalid data URI format."),
+        ("not-a-data-uri", "Invalid data URI format."),
+    ],
+)
+def test_detect_media_type_from_base64_rejects_malformed_data_uri(data_uri: str, error_message: str):
+    """Test malformed data URI inputs raise the documented ValueError."""
+    with raises(ValueError, match=error_message):
+        detect_media_type_from_base64(data_uri=data_uri)
+
+
 def test_data_content_create_data_uri_from_base64():
     """Test the create_data_uri_from_base64 class method."""
     # Test with PNG data
@@ -556,6 +570,15 @@ def test_function_call_content_add_merging_and_errors():
     b = Content.from_function_call(call_id="1", name="f", arguments="1}")
     c = a + b
     assert c.informational_only is True
+
+    # control metadata is preserved when a metadata-only update follows argument chunks
+    metadata = Content.from_function_call(call_id="1", name="f", arguments=None)
+    metadata.id = "1"
+    metadata.user_input_request = True
+    c = c + metadata
+    assert c.arguments == '{"x":1}'
+    assert c.id == "1"
+    assert c.user_input_request is True
 
     # incompatible argument types
     a = Content.from_function_call(call_id="1", name="f", arguments="abc")

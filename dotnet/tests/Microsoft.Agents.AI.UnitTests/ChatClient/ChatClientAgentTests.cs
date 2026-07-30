@@ -41,7 +41,7 @@ public partial class ChatClientAgentTests
         Assert.Equal("test description", agent.Description);
         Assert.Equal("test instructions", agent.Instructions);
         Assert.NotNull(agent.ChatClient);
-        Assert.Equal("ApprovalNotRequiredFunctionBypassingChatClient", agent.ChatClient.GetType().Name);
+        Assert.Equal("ApprovalResponseBindingChatClient", agent.ChatClient.GetType().Name);
     }
 
     /// <summary>
@@ -1396,9 +1396,9 @@ public partial class ChatClientAgentTests
         Assert.NotNull(result);
         Assert.IsType<IChatClient>(result, exactMatch: false);
 
-        // Note: The result will be the outermost decorator (ApprovalNotRequiredFunctionBypassingChatClient,
+        // Note: The result will be the outermost decorator (ApprovalResponseBindingChatClient,
         // added by default), not the original mock.
-        Assert.Equal("ApprovalNotRequiredFunctionBypassingChatClient", result.GetType().Name);
+        Assert.Equal("ApprovalResponseBindingChatClient", result.GetType().Name);
     }
 
     /// <summary>
