@@ -190,6 +190,7 @@ Send a test email to myself.                                      # path #4 — 
 | **HTTP 404 from a tool call** | Toolbox name mismatch (`TOOLBOX_NAME` vs the name in the portal), or the toolbox was deleted. |
 | **Server logs a warning "Neither FOUNDRY_PROJECT_ENDPOINT nor AZURE_AI_PROJECT_ENDPOINT is set; toolbox support is disabled"** | Local dev without the env var set. The agent will load with zero tools and respond as if it has none. Set `AZURE_AI_PROJECT_ENDPOINT` (local-dev fallback) or `FOUNDRY_PROJECT_ENDPOINT` to your project endpoint. |
 | **Tools appear but model never invokes them** | `instructions:` in `Program.cs` may not surface what each tool is for. Tighten the `allowed_tools` lists and rephrase prompts to mention the upstream service by name. |
+| **`azd ai agent invoke` returns `404 not_found: Conversation '<id>' not found`** | `azd` saves the session and conversation per agent and reuses them on the next invoke. Once the agent is redeployed, deleted, or restarted, that saved conversation no longer exists on the server. Pass `--new-conversation` (and `--new-session` if it persists) to start a fresh one. |
 
 ## Region and model compatibility
 

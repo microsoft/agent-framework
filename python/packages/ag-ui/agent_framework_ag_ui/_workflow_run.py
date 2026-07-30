@@ -922,6 +922,10 @@ async def run_workflow_stream(
                 else:
                     state_value = str(getattr(state, "value", state))
                 if state_value in _TERMINAL_STATES and not terminal_emitted:
+                    # Close any open assistant text message before the terminal event so
+                    # RUN_FINISHED is always the last emitted event.
+                    for end_event in _drain_open_message():
+                        yield end_event
                     if not interrupts:
                         interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
                     yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)

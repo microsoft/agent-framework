@@ -1684,9 +1684,17 @@ class RawOpenAIChatClient(
                     )
                     if function_call:
                         all_messages.append(function_call)
-                case "function_approval_response" | "function_approval_request":
+                case "function_approval_request":
                     if request_uses_service_side_storage:
                         continue
+                    prepared = self._prepare_content_for_openai(
+                        message.role,
+                        content,
+                        replays_local_storage=replays_local_storage,
+                    )
+                    if prepared:
+                        all_messages.append(prepared)
+                case "function_approval_response":
                     prepared = self._prepare_content_for_openai(
                         message.role,
                         content,
@@ -3371,6 +3379,10 @@ class RawOpenAIChatClient(
             total_token_count=usage.total_tokens,
         )
         if usage.input_tokens_details:
+            cache_write_tokens = cast("int | None", getattr(usage.input_tokens_details, "cache_write_tokens", None))
+            if cache_write_tokens is not None:
+                details["openai.cache_write_tokens"] = cache_write_tokens
+                details["cache_creation_input_token_count"] = cache_write_tokens
             cached_tokens = cast("int | None", getattr(usage.input_tokens_details, "cached_tokens", None))
             if cached_tokens is not None:
                 details["openai.cached_input_tokens"] = cached_tokens

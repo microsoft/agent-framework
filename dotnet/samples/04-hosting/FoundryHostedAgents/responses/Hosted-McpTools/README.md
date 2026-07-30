@@ -115,3 +115,16 @@ Use the standard `Dockerfile` instead of `Dockerfile.contributor`. See the comme
 - [`Hosted-Toolbox/`](../Hosted-Toolbox/) — connects to a single Foundry Toolbox via the AF Foundry hosting bridge (`AddFoundryToolboxes` + `FoundryAITool.CreateHostedMcpToolbox`).
 - [`Hosted-Toolbox-AuthPaths/`](../Hosted-Toolbox-AuthPaths/) — same hosting bones as `Hosted-Toolbox/`, but the toolbox bundles three MCP tools each authenticated differently (key, Entra agent identity, inline `Authorization`), driven by the shared `Using-Samples/SimpleAgent/` REPL.
 
+## Troubleshooting
+
+**`azd ai agent invoke` fails with `404 not_found: Conversation '<id>' not found`**
+
+`azd` saves the session and conversation per agent and reuses them on the next invoke. Once the
+agent is redeployed, deleted, or restarted, that saved conversation no longer exists on the server,
+so every following invoke fails even though the agent itself is healthy. Start a fresh one:
+
+```
+azd ai agent invoke --new-conversation "Hello!"
+```
+
+Add `--new-session` as well if the failure persists.

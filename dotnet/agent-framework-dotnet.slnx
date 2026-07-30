@@ -344,6 +344,9 @@
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-ChatClientAgent/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-ChatClientAgent/HostedChatClientAgent.csproj" />
   </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-ChatClientAgent-Dockerfile/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-ChatClientAgent-Dockerfile/HostedChatClientAgentDocker.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-FoundryAgent/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-FoundryAgent/HostedFoundryAgent.csproj" />
   </Folder>

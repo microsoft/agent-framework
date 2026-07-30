@@ -59,7 +59,17 @@ class WorkflowCheckpoint:
         pending_request_info_events: Any pending request info events that have not
             yet been processed at the time of checkpointing. This allows the workflow
             to resume with the correct pending events after a restore.
-        iteration_count: Current iteration number when checkpoint was created
+        iteration_count: Current iteration number when checkpoint was created.
+            Note: iteration_count is not guaranteed to be unique across a workflow's
+            lifecycle. It marks the superstep boundary the checkpoint sits on, and the
+            same boundary can carry more than one checkpoint. For example, a run that
+            pauses at ``IDLE_WITH_PENDING_REQUESTS`` records a checkpoint after superstep
+            K; when responses are later delivered, a response-entry checkpoint is recorded
+            at the same iteration K (responses in-flight, before superstep K+1 runs).
+            Both share iteration K but are distinct checkpoints. Checkpoint ordering is
+            defined by the ``previous_checkpoint_id`` lineage chain (and ``timestamp``),
+            not by ``iteration_count``; do not use ``iteration_count`` to identify the
+            latest checkpoint in human-in-the-loop flows.
         metadata: Additional metadata (e.g., superstep info, graph signature)
         version: Checkpoint format version
 

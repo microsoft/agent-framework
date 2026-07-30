@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -115,6 +116,23 @@ _AZURE_WEB_SEARCH_UNSUPPORTED_MSG = (
 )
 
 DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION = "2024-12-01-preview"
+
+# The Chat Completions API validates a message ``name`` against ``^[^\s<|\\/>]+$``, so an
+# author name containing whitespace (or ``< | \ / >``) fails the whole request with a 400.
+# Mirrors SanitizeAuthorName in the .NET client (dotnet/extensions): strip characters outside
+# ``[a-zA-Z0-9_]``, drop the name entirely when nothing remains, truncate to 64 characters.
+# See https://github.com/microsoft/agent-framework/issues/7126
+_INVALID_AUTHOR_NAME_RE = re.compile(r"[^a-zA-Z0-9_]+")
+_MAX_AUTHOR_NAME_LENGTH = 64
+
+
+def _sanitize_author_name(name: str | None) -> str | None:
+    """Sanitize an author name for use as the Chat Completions message ``name`` field."""
+    if not name:
+        return None
+    sanitized = _INVALID_AUTHOR_NAME_RE.sub("", name)
+    return sanitized[:_MAX_AUTHOR_NAME_LENGTH] if sanitized else None
+
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
@@ -727,10 +745,41 @@ class RawOpenAIChatCompletionClient(
         # response format
         if response_format := options.get("response_format"):
             if isinstance(response_format, dict):
-                run_options["response_format"] = response_format
+                run_options["response_format"] = self._normalize_response_format_dict(
+                    cast("dict[str, Any]", response_format)
+                )
             else:
                 run_options["response_format"] = type_to_response_format_param(response_format)
         return run_options
+
+    @staticmethod
+    def _normalize_response_format_dict(response_format: dict[str, Any]) -> dict[str, Any]:
+        """Wrap raw JSON schemas (e.g. ``{"type": "object", ...}``) in the json_schema envelope.
+
+        Mirrors the Responses client's ``_convert_response_format`` handling of raw
+        schemas so both clients accept the same inputs; dicts already using a valid
+        Chat Completions response_format type pass through unchanged.
+        """
+        format_type = response_format.get("type")
+        if format_type in {"json_schema", "json_object", "text"}:
+            return response_format
+        # Detect raw JSON Schema by primitive type or known schema keywords.
+        json_schema_keywords = {"properties", "anyOf", "oneOf", "allOf", "$ref", "$defs"}
+        json_schema_primitive_types = {"object", "array", "string", "number", "integer", "boolean", "null"}
+        if format_type in json_schema_primitive_types or (
+            format_type is None and any(k in response_format for k in json_schema_keywords)
+        ):
+            schema = dict(response_format)
+            if schema.get("type") == "object" and "additionalProperties" not in schema:
+                schema["additionalProperties"] = False
+            # Pop title from schema since OpenAI strict mode rejects unknown keys;
+            # use it as the schema name in the envelope instead.
+            name = str(schema.pop("title", None) or "response")
+            return {
+                "type": "json_schema",
+                "json_schema": {"name": name, "schema": schema, "strict": True},
+            }
+        return response_format
 
     def _parse_response_from_openai(self, response: ChatCompletion, options: Mapping[str, Any]) -> ChatResponse:
         """Parse a response from OpenAI into a ChatResponse."""
@@ -823,6 +872,10 @@ class RawOpenAIChatCompletionClient(
         if usage.prompt_tokens_details:
             if tokens := usage.prompt_tokens_details.audio_tokens:
                 details["prompt/audio_tokens"] = tokens
+            cache_write_tokens = cast("int | None", getattr(usage.prompt_tokens_details, "cache_write_tokens", None))
+            if cache_write_tokens is not None:
+                details["prompt/cache_write_tokens"] = cache_write_tokens
+                details["cache_creation_input_token_count"] = cache_write_tokens
             if (tokens := usage.prompt_tokens_details.cached_tokens) is not None:
                 details["prompt/cached_tokens"] = tokens
                 details["cache_read_input_token_count"] = tokens
@@ -922,8 +975,8 @@ class RawOpenAIChatCompletionClient(
                 else:
                     content_value = "\n".join(content.text for content in text_contents if content.text)
                 sys_args: dict[str, Any] = {"role": message.role, "content": content_value}
-                if message.author_name:
-                    sys_args["name"] = message.author_name
+                if author_name := _sanitize_author_name(message.author_name):
+                    sys_args["name"] = author_name
                 return [sys_args]
             return []
 
@@ -937,8 +990,8 @@ class RawOpenAIChatCompletionClient(
             args: dict[str, Any] = {
                 "role": message.role,
             }
-            if message.author_name and message.role != "tool":
-                args["name"] = message.author_name
+            if message.role != "tool" and (author_name := _sanitize_author_name(message.author_name)):
+                args["name"] = author_name
             if "reasoning_details" in message.additional_properties and (
                 details := message.additional_properties["reasoning_details"]
             ):
@@ -994,8 +1047,8 @@ class RawOpenAIChatCompletionClient(
                     "content": "",
                     "reasoning_details": pending_reasoning,
                 }
-                if message.author_name and message.role != "tool":
-                    pending_args["name"] = message.author_name
+                if message.role != "tool" and (author_name := _sanitize_author_name(message.author_name)):
+                    pending_args["name"] = author_name
                 all_messages.append(pending_args)
 
         # Flatten text-only content lists to plain strings for broader

@@ -33,6 +33,7 @@ from agent_framework._sessions import (
     AgentSession,
     InMemoryHistoryProvider,
     SessionContext,
+    _filter_approval_control_messages,
 )
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
 from agent_framework.exceptions import (
@@ -4457,6 +4458,7 @@ def test_usage_details_with_cached_tokens() -> None:
     mock_usage.total_tokens = 275
     mock_usage.input_tokens_details = MagicMock()
     mock_usage.input_tokens_details.cached_tokens = 25
+    mock_usage.input_tokens_details.cache_write_tokens = None
     mock_usage.output_tokens_details = None
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
@@ -4465,6 +4467,46 @@ def test_usage_details_with_cached_tokens() -> None:
     assert details["input_token_count"] == 200
     assert details_dict["openai.cached_input_tokens"] == 25
     assert details["cache_read_input_token_count"] == 25
+
+
+def test_usage_details_with_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai with cache write tokens."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.input_tokens = 2000
+    mock_usage.output_tokens = 60
+    mock_usage.total_tokens = 2060
+    mock_usage.input_tokens_details = MagicMock()
+    mock_usage.input_tokens_details.cached_tokens = 0
+    mock_usage.input_tokens_details.cache_write_tokens = 1024
+    mock_usage.output_tokens_details = None
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore
+    assert details is not None
+    details_dict = cast("dict[str, Any]", details)
+    assert details_dict["openai.cache_write_tokens"] == 1024
+    assert details["cache_creation_input_token_count"] == 1024
+    assert details["cache_read_input_token_count"] == 0
+
+
+def test_usage_details_omits_missing_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai omits cache write tokens when the provider does not report them."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.input_tokens = 100
+    mock_usage.output_tokens = 20
+    mock_usage.total_tokens = 120
+    mock_usage.input_tokens_details = MagicMock(spec=["cached_tokens"])
+    mock_usage.input_tokens_details.cached_tokens = 10
+    mock_usage.output_tokens_details = None
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore
+    assert details is not None
+    assert "openai.cache_write_tokens" not in details
+    assert "cache_creation_input_token_count" not in details
+    assert details["cache_read_input_token_count"] == 10
 
 
 def test_usage_details_with_reasoning_tokens() -> None:
@@ -4497,12 +4539,15 @@ def test_usage_details_with_zero_cached_and_reasoning_tokens() -> None:
     mock_usage.total_tokens = 230
     mock_usage.input_tokens_details = MagicMock()
     mock_usage.input_tokens_details.cached_tokens = 0
+    mock_usage.input_tokens_details.cache_write_tokens = 0
     mock_usage.output_tokens_details = MagicMock()
     mock_usage.output_tokens_details.reasoning_tokens = 0
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
     details_dict = cast("dict[str, Any]", details)
+    assert details_dict["openai.cache_write_tokens"] == 0
+    assert details["cache_creation_input_token_count"] == 0
     assert details_dict["openai.cached_input_tokens"] == 0
     assert details["cache_read_input_token_count"] == 0
     assert details_dict["openai.reasoning_tokens"] == 0
@@ -4519,11 +4564,14 @@ def test_usage_details_omits_missing_cached_and_reasoning_tokens() -> None:
     mock_usage.total_tokens = 230
     mock_usage.input_tokens_details = MagicMock()
     mock_usage.input_tokens_details.cached_tokens = None
+    mock_usage.input_tokens_details.cache_write_tokens = None
     mock_usage.output_tokens_details = MagicMock()
     mock_usage.output_tokens_details.reasoning_tokens = None
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
+    assert "openai.cache_write_tokens" not in details
+    assert "cache_creation_input_token_count" not in details
     assert "openai.cached_input_tokens" not in details
     assert "cache_read_input_token_count" not in details
     assert "openai.reasoning_tokens" not in details
@@ -6310,6 +6358,27 @@ def test_with_callable_api_key() -> None:
             True,
             id="response_format_runtime_json_schema",
         ),
+        param(
+            "response_format",
+            {
+                "title": "WeatherDigest",
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"},
+                    "conditions": {"type": "string"},
+                    "temperature_c": {"type": "number"},
+                    "advisory": {"type": "string"},
+                },
+                "required": [
+                    "location",
+                    "conditions",
+                    "temperature_c",
+                    "advisory",
+                ],
+            },
+            True,
+            id="response_format_raw_json_schema",
+        ),
     ],
 )
 async def test_integration_options(
@@ -7762,9 +7831,9 @@ def test_prepare_messages_keeps_function_call_without_storage() -> None:
     assert output_item["call_id"] == "call_1"
 
 
-def test_prepare_messages_strips_approval_items_under_storage() -> None:
-    """Approval request/response items also carry server-issued IDs and must be stripped under
-    storage. Without storage they are kept (#3295)."""
+@pytest.mark.parametrize("approved", [True, False], ids=["approved", "rejected"])
+def test_prepare_messages_strips_approval_request_but_keeps_response_under_storage(approved: bool) -> None:
+    """Stored requests are not replayed, but the new approval decision must reach the service."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     function_call = Content.from_function_call(
@@ -7777,7 +7846,7 @@ def test_prepare_messages_strips_approval_items_under_storage() -> None:
         function_call=function_call,
     )
     approval_response = Content.from_function_approval_response(
-        approved=True,
+        approved=approved,
         id="approval_req_1",
         function_call=function_call,
     )
@@ -7789,12 +7858,46 @@ def test_prepare_messages_strips_approval_items_under_storage() -> None:
     storage_on = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=True)
     storage_on_types = [item.get("type") for item in storage_on]
     assert "mcp_approval_request" not in storage_on_types
-    assert "mcp_approval_response" not in storage_on_types
+    assert storage_on_types == ["mcp_approval_response"]
+    assert storage_on[0]["approval_request_id"] == "approval_req_1"
+    assert storage_on[0]["approve"] is approved
 
     storage_off = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
     storage_off_types = [item.get("type") for item in storage_off]
     assert "mcp_approval_request" in storage_off_types
     assert "mcp_approval_response" in storage_off_types
+
+
+def test_stateless_history_preserves_pending_hosted_approval_request_until_response() -> None:
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    function_call = Content.from_function_call(
+        call_id="mcp_pending",
+        name="sensitive_action",
+        arguments='{"action": "delete"}',
+        additional_properties={"server_label": "hosted_server"},
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval_pending",
+        function_call=function_call,
+    )
+    approval_response = approval_request.to_function_approval_response(approved=True)
+
+    pending_history = _filter_approval_control_messages([Message(role="assistant", contents=[approval_request])])
+    pending_items = client._prepare_messages_for_openai(
+        pending_history,
+        request_uses_service_side_storage=False,
+    )
+    assert [item.get("type") for item in pending_items] == ["mcp_approval_request"]
+
+    resolved_history = _filter_approval_control_messages([
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=[approval_response]),
+    ])
+    resolved_items = client._prepare_messages_for_openai(
+        resolved_history,
+        request_uses_service_side_storage=False,
+    )
+    assert resolved_items == []
 
 
 def test_prepare_messages_strips_local_shell_call_under_storage() -> None:

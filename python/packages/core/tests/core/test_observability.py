@@ -2383,6 +2383,28 @@ def test_get_response_attributes_maps_legacy_usage_keys():
     assert result[OtelAttr.REASONING_OUTPUT_TOKENS] == 34
 
 
+def test_get_response_attributes_maps_openai_cache_write_tokens():
+    """Test _get_response_attributes maps the OpenAI cache write usage key to the OTel attribute."""
+    from unittest.mock import Mock
+
+    from agent_framework.observability import OtelAttr, _get_response_attributes
+
+    response = Mock()
+    response.response_id = None
+    response.finish_reason = None
+    response.raw_representation = None
+    response.usage_details = {
+        "openai.cache_write_tokens": 1024,
+        "openai.cached_input_tokens": 512,
+    }
+
+    attrs: dict[str, Any] = {}
+    result = _get_response_attributes(attrs, response)
+
+    assert result[OtelAttr.CACHE_CREATION_INPUT_TOKENS] == 1024
+    assert result[OtelAttr.CACHE_READ_INPUT_TOKENS] == 512
+
+
 def test_get_response_attributes_capture_usage_false():
     """Test _get_response_attributes skips usage when capture_usage is False."""
     from unittest.mock import Mock

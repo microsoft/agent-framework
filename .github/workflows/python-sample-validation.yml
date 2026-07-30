@@ -8,9 +8,6 @@ on:
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
-  # GitHub Copilot configuration
-  GITHUB_COPILOT_MODEL: claude-opus-4.6
-  COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
 
 permissions:
   contents: read
@@ -238,6 +235,13 @@ jobs:
     name: Validate 02-agents/providers/github_copilot
     runs-on: ubuntu-latest
     environment: integration
+    permissions:
+      copilot-requests: write
+      contents: read
+      id-token: write
+    env:
+      COPILOT_GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_COPILOT_MODEL: claude-opus-4.6
     defaults:
       run:
         working-directory: python
