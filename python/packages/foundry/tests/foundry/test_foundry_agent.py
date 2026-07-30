@@ -9,7 +9,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import httpx
@@ -31,6 +31,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework_openai._chat_client import RawOpenAIChatClient
+from agent_framework_openai._feature_usage import FeatureIndex as OpenAIFeatureIndex
 from azure.ai.projects import models as projects_models
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
@@ -44,6 +45,7 @@ from agent_framework_foundry._agent import (
     _FoundryAgentChatClient,
 )
 from agent_framework_foundry._chat_client import FoundryChatClient
+from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
 
 skip_if_foundry_agent_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.services.ai.azure.com/")
@@ -58,6 +60,11 @@ _FOUNDRY_AZURE_AI_SEARCH_MODEL_ENV_VARS = (
     "AZURE_OPENAI_CHAT_MODEL",
     "FOUNDRY_MODEL",
 )
+
+
+def test_raw_foundry_agent_chat_client_does_not_mark_openai_feature() -> None:
+    assert RawOpenAIChatClient._FEATURE_USAGE_INDEX is OpenAIFeatureIndex.OPENAI
+    assert RawFoundryAgentChatClient._FEATURE_USAGE_INDEX is FeatureIndex.FOUNDRY_AGENT
 
 
 def _get_foundry_azure_ai_search_model() -> str | None:
@@ -117,6 +124,24 @@ def test_raw_foundry_agent_chat_client_init_with_agent_name() -> None:
     assert client.agent_name == "test-agent"
     assert client.agent_version == "1.0"
     mock_project.get_openai_client.assert_called_once_with()
+
+
+def test_raw_foundry_agent_chat_client_creates_project_client_with_feature_policy() -> None:
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    with patch("agent_framework_foundry._agent.AIProjectClient", return_value=mock_project) as factory:
+        RawFoundryAgentChatClient(
+            project_endpoint="https://test-project.services.ai.azure.com",
+            credential=MagicMock(),
+            agent_name="test-agent",
+        )
+
+    policies = factory.call_args.kwargs["per_retry_policies"]
+    assert len(policies) == 1
+    assert isinstance(policies[0], FeatureUsagePolicy)
+    assert "custom_hook_policy" not in factory.call_args.kwargs
+    mock_project.get_openai_client.assert_called_once_with(http_client=ANY)
 
 
 async def test_foundry_agent_basic_call_does_not_request_unsupported_encrypted_reasoning() -> None:
@@ -1129,12 +1154,13 @@ async def test_foundry_agent_create_conversation_returns_agent_session() -> None
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = openai_client
     agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
+    mock_project.get_openai_client.reset_mock()
 
     session = await agent.create_conversation()
 
     assert isinstance(session, AgentSession)
     assert session.service_session_id == "conv_123"
-    mock_project.get_openai_client.assert_called()
+    mock_project.get_openai_client.assert_not_called()
     openai_client.conversations.create.assert_awaited_once_with()
 
 
@@ -1146,11 +1172,13 @@ async def test_foundry_agent_create_conversation_accepts_local_session_id() -> N
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = openai_client
     agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
+    mock_project.get_openai_client.reset_mock()
 
     session = await agent.create_conversation(session_id="local-session")
 
     assert session.session_id == "local-session"
     assert session.service_session_id == "conv_123"
+    mock_project.get_openai_client.assert_not_called()
 
 
 def test_foundry_agent_init() -> None:

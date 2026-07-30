@@ -17,6 +17,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, cast
 
 from agent_framework import AgentSession, ContextProvider, Message, SessionContext
 from agent_framework._settings import load_settings
+from agent_framework._telemetry import mark_feature_used
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -344,6 +347,8 @@ class CosmosMemoryContextProvider(ContextProvider):
             context: The invocation context to add memories to.
             state: Provider-scoped mutable state.
         """
+        mark_feature_used(FeatureIndex.AZURE_COSMOS_MEMORY)
+
         # Extract query from input messages
         query_text = "\n".join(msg.text for msg in context.input_messages if msg.text and msg.text.strip())
 
@@ -424,6 +429,8 @@ class CosmosMemoryContextProvider(ContextProvider):
             context: The invocation context with response populated.
             state: Provider-scoped mutable state.
         """
+        mark_feature_used(FeatureIndex.AZURE_COSMOS_MEMORY)
+
         # Get user_id and thread_id from provider-scoped state (falling back to the session id)
         user_id = self._resolve_user_id(state, session)
         thread_id = state.get("thread_id") or session.session_id or "default"

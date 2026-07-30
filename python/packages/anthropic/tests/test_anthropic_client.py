@@ -16,7 +16,6 @@ from agent_framework import (
     FunctionInvocationLayer,
     Message,
     SupportsChatGetResponse,
-    UsageDetails,
     tool,
 )
 from agent_framework._settings import load_settings
@@ -33,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from agent_framework_anthropic import AnthropicClient, RawAnthropicClient
 from agent_framework_anthropic._chat_client import AnthropicSettings
+from agent_framework_anthropic._feature_usage import FeatureIndex
 
 # Test constants
 VALID_PNG_BASE64 = b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
@@ -1606,10 +1606,12 @@ async def test_inner_get_response(mock_anthropic_client: MagicMock) -> None:
     messages = [Message(role="user", contents=["Hi"])]
     chat_options = ChatOptions(max_tokens=10)
 
-    response = await client._inner_get_response(  # type: ignore[attr-defined]
-        messages=messages, options=chat_options
-    )
+    with patch("agent_framework_anthropic._chat_client.mark_feature_used") as mark_feature_used:
+        response = await client._inner_get_response(  # type: ignore[attr-defined]
+            messages=messages, options=chat_options
+        )
 
+    mark_feature_used.assert_called_once_with(FeatureIndex.ANTHROPIC)
     assert response is not None
     assert response.response_id == "msg_test"
     assert len(response.messages) == 1

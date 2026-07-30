@@ -10,11 +10,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, ov
 
 from agent_framework._clients import BaseEmbeddingClient
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import USER_AGENT_KEY
+from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings, UsageDetails
 from agent_framework.observability import EmbeddingTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 
+from ._feature_usage import FeatureIndex
 from ._shared import AzureTokenProvider, load_openai_service_settings
 
 if sys.version_info >= (3, 13):
@@ -68,6 +69,7 @@ class RawOpenAIEmbeddingClient(
     """Raw OpenAI embedding client without telemetry."""
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
 
     @overload
     def __init__(
@@ -276,6 +278,8 @@ class RawOpenAIEmbeddingClient(
             raise ValueError("model is required")
 
         kwargs: dict[str, Any] = {"input": list(values), "model": model}
+        if self._FEATURE_USAGE_INDEX is not None:
+            mark_feature_used(self._FEATURE_USAGE_INDEX)
         if dimensions := opts.get("dimensions"):
             kwargs["dimensions"] = dimensions
         if encoding_format := opts.get("encoding_format"):

@@ -39,6 +39,7 @@ from copilot.session_events import (
 from copilot.tools import ToolInvocation, ToolResult
 
 from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions, RawGitHubCopilotAgent
+from agent_framework_github_copilot._feature_usage import FeatureIndex
 
 
 def copilot_options(options: GitHubCopilotOptions) -> GitHubCopilotOptions:
@@ -431,8 +432,10 @@ class TestGitHubCopilotAgentRun:
         mock_session.send_and_wait.return_value = assistant_message_event
 
         agent = GitHubCopilotAgent(client=mock_client)
-        response = await agent.run("Hello")
+        with patch("agent_framework_github_copilot._agent.mark_feature_used") as mark_feature_used:
+            response = await agent.run("Hello")
 
+        mark_feature_used.assert_called_once_with(FeatureIndex.GITHUB_COPILOT)
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
         assert response.messages[0].role == "assistant"

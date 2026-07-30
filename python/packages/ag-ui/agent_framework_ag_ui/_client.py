@@ -24,10 +24,12 @@ from agent_framework import (
     ResponseStream,
 )
 from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from agent_framework.observability import ChatTelemetryLayer
 
 from ._event_converters import AGUIEventConverter
+from ._feature_usage import FeatureIndex
 from ._http_service import AGUIHttpService, _serialize_available_interrupts, _serialize_resume
 from ._message_adapters import agent_framework_messages_to_agui
 from ._utils import convert_tools_to_agui_format
@@ -398,6 +400,7 @@ class AGUIChatClient(
         Yields:
             ChatResponseUpdate objects
         """
+        mark_feature_used(FeatureIndex.AG_UI)
         messages_to_send, state = self._extract_state_from_messages(messages)
 
         thread_id = self._get_thread_id(options)

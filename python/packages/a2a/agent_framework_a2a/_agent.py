@@ -42,10 +42,12 @@ from agent_framework import (
     normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._types import AgentRunInputs
 from agent_framework.observability import AgentTelemetryLayer
 from google.protobuf.json_format import MessageToDict
 
+from ._feature_usage import FeatureIndex
 from ._utils import get_uri_data
 
 if sys.version_info >= (3, 11):
@@ -542,6 +544,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             session: The agent session for context providers.
             session_context: The session context for context providers.
         """
+        mark_feature_used(FeatureIndex.A2A)
+
         if session_context is None:
             session_context = SessionContext(input_messages=[], options={})
 

@@ -32,6 +32,9 @@ from agent_framework import (
     SupportsAgentRun,
     Workflow,
 )
+from agent_framework._telemetry import mark_feature_used
+
+from ._feature_usage import FeatureIndex
 
 
 class SessionStore:
@@ -187,6 +190,7 @@ class AgentState(Generic[AgentT]):
             self._cached_target = target
         self._session_store: SessionStore = session_store if session_store is not None else SessionStore()
         self._session_locks: dict[str, asyncio.Lock] = {}
+        mark_feature_used(FeatureIndex.HOSTING)
 
     async def get_target(self) -> AgentT:
         """Return the resolved target.
@@ -312,6 +316,7 @@ class WorkflowState(Generic[WorkflowT]):
         self._target_lock = asyncio.Lock()
         if not callable(target) and not inspect.isawaitable(target):
             self._cached_target = target
+        mark_feature_used(FeatureIndex.HOSTING)
 
     async def get_target(self) -> WorkflowT:
         """Return the resolved target.

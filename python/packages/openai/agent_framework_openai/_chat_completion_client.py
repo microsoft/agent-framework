@@ -23,7 +23,7 @@ from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._docstrings import apply_layered_docstring
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import USER_AGENT_KEY
+from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -59,6 +59,7 @@ from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel
 
 from ._exceptions import OpenAIContentFilterException
+from ._feature_usage import FeatureIndex
 from ._shared import (
     PROMPT_CACHE_BREAKPOINT_KEY,
     AzureTokenProvider,
@@ -238,6 +239,7 @@ class RawOpenAIChatCompletionClient(
     """
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
 
     @overload
     def __init__(
@@ -566,15 +568,20 @@ class RawOpenAIChatCompletionClient(
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
         options_dict = self._prepare_options(messages, options)
+        extra_headers = cast("Mapping[str, Any] | None", kwargs.get("extra_headers"))
 
         if stream:
-            # Streaming mode
-            options_dict["stream_options"] = {"include_usage": True}
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 client = self.client
+                if self._FEATURE_USAGE_INDEX is not None:
+                    mark_feature_used(self._FEATURE_USAGE_INDEX)
+                request_options = dict(options_dict)
+                request_options["stream_options"] = {"include_usage": True}
+                if extra_headers is not None:
+                    request_options["extra_headers"] = dict(extra_headers)
                 try:
-                    async for chunk in await client.chat.completions.create(stream=True, **options_dict):
+                    async for chunk in await client.chat.completions.create(stream=True, **request_options):
                         if len(chunk.choices) == 0 and chunk.usage is None:
                             continue
                         yield self._parse_response_update_from_openai(chunk)
@@ -605,9 +612,14 @@ class RawOpenAIChatCompletionClient(
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
             client = self.client
+            if self._FEATURE_USAGE_INDEX is not None:
+                mark_feature_used(self._FEATURE_USAGE_INDEX)
+            request_options = dict(options_dict)
+            if extra_headers is not None:
+                request_options["extra_headers"] = dict(extra_headers)
             try:
                 return self._parse_response_from_openai(
-                    await client.chat.completions.create(stream=False, **options_dict), options
+                    await client.chat.completions.create(stream=False, **request_options), options
                 )
             except BadRequestError as ex:
                 if ex.code == "content_filter":

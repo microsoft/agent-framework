@@ -17,6 +17,7 @@ from typing import (
 )
 
 from ._sessions import ContextProvider
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import ChatResponse, Content, Message
 
 if TYPE_CHECKING:
@@ -1539,6 +1540,7 @@ class CompactionProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Compact messages already present in the context from earlier providers."""
+        mark_feature_used(FeatureIndex.CORE_COMPACTION_PROVIDER)
         if self.before_strategy is None:
             return
 

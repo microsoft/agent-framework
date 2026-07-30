@@ -7,12 +7,14 @@ import re
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
+import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import (
     Agent,
     ChatResponse,
     Content,
     Message,
+    ResponseStream,
     SupportsChatGetResponse,
     SupportsCodeInterpreterTool,
     SupportsFileSearchTool,
@@ -21,6 +23,8 @@ from agent_framework import (
     SupportsWebSearchTool,
     tool,
 )
+from agent_framework._telemetry import FeatureIndex as CoreFeatureIndex
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import ChatClientException, SettingNotFoundError
 from openai import BadRequestError
 from openai.types.chat.chat_completion import ChatCompletion, Choice
@@ -33,6 +37,7 @@ from agent_framework_openai._chat_completion_client import (
     _AZURE_WEB_SEARCH_UNSUPPORTED_MSG,
 )
 from agent_framework_openai._exceptions import OpenAIContentFilterException
+from agent_framework_openai._feature_usage import FeatureIndex
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -1893,6 +1898,41 @@ async def test_streaming_exception_handling(
     ):
         async for _ in client._inner_get_response(messages=messages, stream=True, options={}):  # type: ignore
             pass
+
+
+async def test_streaming_feature_is_marked_when_request_is_sent(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+
+    async def create(**kwargs: Any) -> Any:
+        async def chunks() -> Any:
+            if False:
+                yield None
+
+        return chunks()
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["test"])],
+            stream=True,
+            options={},
+        )
+        assert isinstance(stream, ResponseStream)
+        token = telemetry.get_feature_token()
+        assert token is None or not int(token.split(".", 1)[1], 16) & (1 << FeatureIndex.OPENAI)
+
+        mark_feature_used(CoreFeatureIndex.CORE_AGENT)
+        async for _ in stream:
+            pass
+
+    token = telemetry.get_feature_token()
+    assert token is not None
+    mask = int(token.split(".", 1)[1], 16)
+    assert mask & (1 << FeatureIndex.OPENAI)
+    assert mask & (1 << CoreFeatureIndex.CORE_AGENT)
 
 
 # region Integration Tests

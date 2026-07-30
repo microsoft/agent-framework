@@ -28,7 +28,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE, normalize_tools
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
@@ -54,6 +54,8 @@ from anthropic.types.beta.beta_code_execution_tool_result_error import (
 )
 from anthropic.types.beta.beta_encrypted_code_execution_result_block import BetaEncryptedCodeExecutionResultBlock
 from pydantic import BaseModel
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
@@ -550,6 +552,7 @@ class RawAnthropicClient(
                 # each message_delta carries the running total), so thread a per-stream
                 # accumulator to _process_stream_event to emit increments instead.
                 emitted_usage: dict[str, int] = {}
+                mark_feature_used(FeatureIndex.ANTHROPIC)
                 async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
                     parsed_chunk = self._process_stream_event(chunk, emitted_usage)
                     if parsed_chunk:
@@ -559,6 +562,7 @@ class RawAnthropicClient(
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
+            mark_feature_used(FeatureIndex.ANTHROPIC)
             message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
             return self._process_message(message, options)
 
