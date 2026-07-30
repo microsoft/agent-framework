@@ -40,6 +40,7 @@ from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework._tools import (
     _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY,  # type: ignore
     _collect_approval_responses,  # type: ignore
+    _get_tool_map,  # type: ignore
     _replace_approval_contents_with_results,  # type: ignore
     _TOOL_APPROVAL_STATE_KEY,  # type: ignore
     _try_execute_function_call_groups,  # type: ignore
@@ -1308,8 +1309,17 @@ async def _resolve_approval_responses(
 
     approved_function_result_groups: list[list[Content]] = []
 
-    # Execute approved tool calls
-    if approved_responses and tools:
+    # Partition approved responses into static (execute now) and deferred (execute during run)
+    tool_map = _get_tool_map(tools) if tools else {}
+    static_approved: list[Content] = []
+
+    for approval in approved_responses:
+        tool_name = approval.function_call.name if approval.function_call else None
+        if tool_name in tool_map:
+            static_approved.append(approval)
+
+    # Execute only statically-available approved tool calls
+    if static_approved and tools:
         client = getattr(agent, "client", None)
         config = normalize_function_invocation_configuration(getattr(client, "function_invocation_configuration", None))
         middleware_pipeline = FunctionMiddlewarePipeline(
@@ -1321,7 +1331,7 @@ async def _resolve_approval_responses(
         try:
             approved_function_result_groups, _ = await _try_execute_function_call_groups(
                 custom_args=tool_kwargs,
-                function_calls=approved_responses,
+                function_calls=static_approved,
                 tools=tools,
                 middleware_pipeline=middleware_pipeline,
                 config=config,
@@ -1330,10 +1340,11 @@ async def _resolve_approval_responses(
             logger.exception("Failed to execute approved tool calls; injecting error results: %s", e)
             approved_function_result_groups = []
 
-    # Normalize one group per approval and collect only terminal results for TOOL_CALL_RESULT events.
+    # Normalize one group per static approval and collect only terminal results for TOOL_CALL_RESULT events.
+    # Deferred provider-injected approvals are left in messages for ToolApprovalMiddleware to process.
     replacement_groups: list[list[Content]] = []
     approved_results: list[Content] = []
-    for idx, approval in enumerate(approved_responses):
+    for idx, approval in enumerate(static_approved):
         result_group = approved_function_result_groups[idx] if idx < len(approved_function_result_groups) else []
         if not result_group:
             func_call = approval.function_call
@@ -1395,6 +1406,39 @@ def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
     messages[:] = result
 
 
+def _confirm_changes_target_call_id(
+    snapshot_messages: list[dict[str, Any]],
+    confirm_call_id: str,
+    approval_payload: Mapping[str, Any],
+) -> str | None:
+    explicit_call_id = approval_payload.get("function_call_id")
+    if explicit_call_id:
+        return str(explicit_call_id)
+
+    for snapshot_message in snapshot_messages:
+        if normalize_agui_role(snapshot_message.get("role", "")) != "assistant":
+            continue
+        tool_calls = snapshot_message.get("tool_calls") or snapshot_message.get("toolCalls")
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, Mapping) or str(tool_call.get("id") or "") != confirm_call_id:
+                continue
+            function = tool_call.get("function")
+            if not isinstance(function, Mapping) or function.get("name") != "confirm_changes":
+                return None
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    return None
+            if isinstance(arguments, Mapping) and arguments.get("function_call_id"):
+                return str(arguments["function_call_id"])
+            return None
+    return None
+
+
 def _clean_resolved_approvals_from_snapshot(
     snapshot_messages: list[dict[str, Any]],
     resolved_messages: list[Message],
@@ -1428,9 +1472,6 @@ def _clean_resolved_approvals_from_snapshot(
                 )
                 result_by_call_id[str(content.call_id)] = result_text
 
-    if not result_by_call_id:
-        return
-
     for snap_msg in snapshot_messages:
         if normalize_agui_role(snap_msg.get("role", "")) != "tool":
             continue
@@ -1449,12 +1490,25 @@ def _clean_resolved_approvals_from_snapshot(
         # Find matching tool result by toolCallId
         tool_call_id = snap_msg.get("toolCallId") or snap_msg.get("tool_call_id") or ""
         replacement = result_by_call_id.get(str(tool_call_id))
-        if replacement is not None:
-            snap_msg["content"] = replacement
-            logger.info(
-                "Replaced approval payload in snapshot for tool_call_id=%s with actual result",
-                tool_call_id,
+        if replacement is None:
+            target_call_id = _confirm_changes_target_call_id(
+                snapshot_messages,
+                str(tool_call_id),
+                parsed,
             )
+            if target_call_id is None:
+                continue
+            if parsed.get("accepted"):
+                replacement = result_by_call_id.get(target_call_id)
+                if replacement is None:
+                    continue
+            else:
+                replacement = "Changes declined."
+        snap_msg["content"] = replacement
+        logger.info(
+            "Replaced approval payload in snapshot for tool_call_id=%s with resolved content",
+            tool_call_id,
+        )
 
 
 def _snapshot_tool_call_ids(message: Mapping[str, Any]) -> list[str]:

@@ -1684,9 +1684,17 @@ class RawOpenAIChatClient(
                     )
                     if function_call:
                         all_messages.append(function_call)
-                case "function_approval_response" | "function_approval_request":
+                case "function_approval_request":
                     if request_uses_service_side_storage:
                         continue
+                    prepared = self._prepare_content_for_openai(
+                        message.role,
+                        content,
+                        replays_local_storage=replays_local_storage,
+                    )
+                    if prepared:
+                        all_messages.append(prepared)
+                case "function_approval_response":
                     prepared = self._prepare_content_for_openai(
                         message.role,
                         content,

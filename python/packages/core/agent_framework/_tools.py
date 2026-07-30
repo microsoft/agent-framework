@@ -1942,6 +1942,25 @@ def _clear_internal_conversation_id(response: ChatResponse[Any]) -> ChatResponse
     return response
 
 
+def _is_hosted_tool_approval(content: Any) -> bool:
+    """Check if a function_approval_request/response is for a hosted tool (e.g. MCP).
+
+    Hosted tool approvals have a server_label in function_call.additional_properties
+    and should be passed through to the API untouched rather than processed locally.
+    """
+    fc = getattr(content, "function_call", None)
+    if fc is None:
+        return False
+    ap = getattr(fc, "additional_properties", None)
+    return bool(ap and ap.get("server_label"))
+
+
+def _is_unexecutable_local_tool_content(content: Content) -> bool:
+    if _is_actionable_function_call(content):
+        return True
+    return content.type == "function_approval_request" and not _is_hosted_tool_approval(content)
+
+
 def _response_has_visible_content(response: ChatResponse[Any]) -> bool:
     for message in response.messages:
         for content in message.contents:
@@ -1953,19 +1972,36 @@ def _response_has_visible_content(response: ChatResponse[Any]) -> bool:
     return False
 
 
-def _ensure_function_invocation_limit_fallback_response(response: ChatResponse[Any]) -> ChatResponse[Any]:
-    if _response_has_visible_content(response):
-        return response
+def _response_has_hosted_tool_approval(response: ChatResponse[Any]) -> bool:
+    return any(
+        content.type == "function_approval_request" and _is_hosted_tool_approval(content)
+        for message in response.messages
+        for content in message.contents
+    )
+
+
+def _drop_unexecutable_tool_contents_from_response(response: ChatResponse[Any]) -> None:
+    for message in response.messages:
+        if any(_is_unexecutable_local_tool_content(content) for content in message.contents):
+            message.contents = [
+                content for content in message.contents if not _is_unexecutable_local_tool_content(content)
+            ]
+
+
+def _ensure_function_invocation_limit_fallback_response(response: ChatResponse[Any]) -> bool:
+    _drop_unexecutable_tool_contents_from_response(response)
+    if _response_has_visible_content(response) or _response_has_hosted_tool_approval(response):
+        return False
 
     from ._types import Content, Message
 
     fallback_content = Content.from_text(_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT)
-    if response.messages:
+    if response.messages and not response.messages[-1].contents:
         response.messages[-1].role = "assistant"
         response.messages[-1].contents = [fallback_content]
     else:
         response.messages.append(Message(role="assistant", contents=[fallback_content]))
-    return response
+    return True
 
 
 def _function_invocation_limit_fallback_update() -> ChatResponseUpdate:
@@ -1976,6 +2012,28 @@ def _function_invocation_limit_fallback_update() -> ChatResponseUpdate:
         role="assistant",
         finish_reason="stop",
     )
+
+
+def _update_has_meaningful_metadata(update: ChatResponseUpdate) -> bool:
+    return any((
+        update.author_name is not None,
+        update.response_id is not None,
+        update.message_id is not None,
+        update.conversation_id is not None,
+        update.model is not None,
+        update.created_at is not None,
+        update.finish_reason is not None,
+        update.continuation_token is not None,
+        bool(update.additional_properties),
+        update.raw_representation is not None,
+    ))
+
+
+def _drop_unexecutable_tool_contents_from_update(update: ChatResponseUpdate) -> ChatResponseUpdate | None:
+    if not any(_is_unexecutable_local_tool_content(content) for content in update.contents):
+        return update
+    update.contents = [content for content in update.contents if not _is_unexecutable_local_tool_content(content)]
+    return update if update.contents or _update_has_meaningful_metadata(update) else None
 
 
 def _extract_tools(
@@ -1990,19 +2048,6 @@ def _extract_tools(
         ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None
     """
     return options.get("tools") if options else None
-
-
-def _is_hosted_tool_approval(content: Any) -> bool:
-    """Check if a function_approval_request/response is for a hosted tool (e.g. MCP).
-
-    Hosted tool approvals have a server_label in function_call.additional_properties
-    and should be passed through to the API untouched rather than processed locally.
-    """
-    fc = getattr(content, "function_call", None)
-    if fc is None:
-        return False
-    ap = getattr(fc, "additional_properties", None)
-    return bool(ap and ap.get("server_label"))
 
 
 def _get_tool_approval_state(invocation_session: AgentSession | None) -> dict[str, Any] | None:
@@ -2886,7 +2931,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             if options.get("tool_choice") == "none" and _function_call_limit_reached(
                 total_function_calls, max_function_calls
             ):
-                response = _ensure_function_invocation_limit_fallback_response(response)
+                _ensure_function_invocation_limit_fallback_response(response)
             aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
             _update_continuation_state(
                 request_kwargs,
@@ -2937,7 +2982,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 client_kwargs=request_kwargs,
             ),
         )
-        response = _ensure_function_invocation_limit_fallback_response(response)
+        _ensure_function_invocation_limit_fallback_response(response)
         aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
         _update_continuation_state(
             request_kwargs,
@@ -3011,16 +3056,24 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 ),
             )
             await inner_stream
+            drop_unexecutable_calls = options.get("tool_choice") == "none" and _function_call_limit_reached(
+                total_function_calls,
+                max_function_calls,
+            )
             async for update in inner_stream:
+                if drop_unexecutable_calls:
+                    update = _drop_unexecutable_tool_contents_from_update(update)
+                    if update is None:
+                        continue
                 yield update
 
             response = await inner_stream.get_final_response()
-            response_had_visible_content = _response_has_visible_content(response)
             function_call_limit_reached = options.get("tool_choice") == "none" and _function_call_limit_reached(
                 total_function_calls, max_function_calls
             )
+            fallback_added = False
             if function_call_limit_reached:
-                response = _ensure_function_invocation_limit_fallback_response(response)
+                fallback_added = _ensure_function_invocation_limit_fallback_response(response)
             _update_continuation_state(
                 request_kwargs,
                 response,
@@ -3033,7 +3086,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 for message in response.messages
                 for item in message.contents
             ):
-                if function_call_limit_reached and not response_had_visible_content:
+                if fallback_added:
                     yield _function_invocation_limit_fallback_update()
                 return
 
@@ -3082,17 +3135,19 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         await final_inner_stream
         async for update in final_inner_stream:
+            update = _drop_unexecutable_tool_contents_from_update(update)
+            if update is None:
+                continue
             yield update
         final_response = await final_inner_stream.get_final_response()
-        final_response_had_visible_content = _response_has_visible_content(final_response)
-        final_response = _ensure_function_invocation_limit_fallback_response(final_response)
+        fallback_added = _ensure_function_invocation_limit_fallback_response(final_response)
         _update_continuation_state(
             request_kwargs,
             final_response,
             session=invocation_session,
             options=options,
         )
-        if not final_response_had_visible_content:
+        if fallback_added:
             yield _function_invocation_limit_fallback_update()
 
     @overload

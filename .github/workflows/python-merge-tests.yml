@@ -675,9 +675,12 @@ jobs:
        needs.paths-filter.outputs.coreChanged == 'true')
     runs-on: ubuntu-latest
     environment: integration
+    permissions:
+      copilot-requests: write
+      contents: read
     timeout-minutes: 60
     env:
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      COPILOT_GITHUB_TOKEN: ${{ github.token }}
       GITHUB_COPILOT_TIMEOUT: "120"
     defaults:
       run:

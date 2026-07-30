@@ -7784,9 +7784,9 @@ def test_prepare_messages_keeps_function_call_without_storage() -> None:
     assert output_item["call_id"] == "call_1"
 
 
-def test_prepare_messages_strips_approval_items_under_storage() -> None:
-    """Approval request/response items also carry server-issued IDs and must be stripped under
-    storage. Without storage they are kept (#3295)."""
+@pytest.mark.parametrize("approved", [True, False], ids=["approved", "rejected"])
+def test_prepare_messages_strips_approval_request_but_keeps_response_under_storage(approved: bool) -> None:
+    """Stored requests are not replayed, but the new approval decision must reach the service."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     function_call = Content.from_function_call(
@@ -7799,7 +7799,7 @@ def test_prepare_messages_strips_approval_items_under_storage() -> None:
         function_call=function_call,
     )
     approval_response = Content.from_function_approval_response(
-        approved=True,
+        approved=approved,
         id="approval_req_1",
         function_call=function_call,
     )
@@ -7811,7 +7811,9 @@ def test_prepare_messages_strips_approval_items_under_storage() -> None:
     storage_on = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=True)
     storage_on_types = [item.get("type") for item in storage_on]
     assert "mcp_approval_request" not in storage_on_types
-    assert "mcp_approval_response" not in storage_on_types
+    assert storage_on_types == ["mcp_approval_response"]
+    assert storage_on[0]["approval_request_id"] == "approval_req_1"
+    assert storage_on[0]["approve"] is approved
 
     storage_off = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
     storage_off_types = [item.get("type") for item in storage_off]
