@@ -170,6 +170,7 @@ jobs:
         id: review
         working-directory: ${{ env.DEVFLOW_PATH }}
         env:
+          DEVFLOW_TOKEN: ${{ secrets.DEVFLOW_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
           SK_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
@@ -178,4 +179,5 @@ jobs:
           uv run python scripts/trigger_pr_review.py \
             --pr-url "$PR_URL" \
             --github-username "$GITHUB_ACTOR" \
+            --review-compare \
             --no-require-comment-selection
