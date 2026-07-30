@@ -1024,23 +1024,20 @@ class ToolResultCompactionStrategy:
             if group_id in keep_ids:
                 continue
             group_msgs = grouped.get(group_id, [])
-            included_group_msgs = [msg for msg in group_msgs if not msg.additional_properties.get(EXCLUDED_KEY, False)]
-            # Build a call_id → function_name map from function_call contents.
             call_id_to_name: dict[str, str] = {}
-            for msg in included_group_msgs:
+            tool_results: list[str] = []
+            for msg in group_msgs:
+                if msg.additional_properties.get(EXCLUDED_KEY, False):
+                    continue
                 for content in msg.contents:
                     if content.type == "function_call" and content.call_id and content.name:
                         call_id_to_name[content.call_id] = content.name
                     elif content.type == "mcp_server_tool_call" and content.call_id and content.tool_name:
                         call_id_to_name[content.call_id] = content.tool_name
-            # Collect tool results with the function name for context.
-            tool_results: list[str] = []
-            for msg in included_group_msgs:
-                for content in msg.contents:
-                    if content.type == "function_result":
+                    elif content.type == "function_result":
                         result_text = content.result if isinstance(content.result, str) else str(content.result)
-                        func_name = call_id_to_name.get(content.call_id or "", "")
-                        label = f"{func_name}: {result_text}" if func_name else result_text
+                        tool_name = call_id_to_name.get(content.call_id or "", "")
+                        label = f"{tool_name}: {result_text}" if tool_name else result_text
                         tool_results.append(label.strip())
                     elif content.type == "mcp_server_tool_result":
                         result_text = _tool_result_text(content.output)
