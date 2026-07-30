@@ -522,6 +522,8 @@ def _function_pair_reannotation_start(messages: Sequence[Message], start_index: 
                 if not candidates:
                     continue
                 if message_index >= start_index:
+                    # Keep every earlier candidate in the re-annotation slice. Otherwise an ambiguous result can
+                    # appear unambiguous when an older declaration is hidden outside the slice.
                     matching_indices.extend(index for index in candidates if index < start_index)
                 if len(candidates) == 1:
                     candidates.pop()

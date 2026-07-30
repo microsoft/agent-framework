@@ -481,6 +481,9 @@ def test_extend_compaction_messages_keeps_ambiguous_reused_call_id_unpaired() ->
     messages = [_assistant_function_call("duplicate")]
     annotate_message_groups(messages)
     extend_compaction_messages(messages, [Message(role="assistant", contents=["between declarations"])])
+    first_declaration_group = _group_id(messages[0])
+    first_declaration_index = _group_index(messages[0])
+    intervening_group = _group_id(messages[1])
 
     extend_compaction_messages(
         messages,
@@ -492,6 +495,9 @@ def test_extend_compaction_messages_keeps_ambiguous_reused_call_id_unpaired() ->
     )
 
     result_group = _group_id(messages[4])
+    assert _group_id(messages[0]) == first_declaration_group
+    assert _group_index(messages[0]) == first_declaration_index
+    assert _group_id(messages[1]) == intervening_group
     assert result_group != _group_id(messages[0])
     assert result_group != _group_id(messages[2])
 
