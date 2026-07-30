@@ -67,6 +67,7 @@ from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias,
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import ApprovalMode, FunctionTool
 
 if TYPE_CHECKING:
@@ -2416,6 +2417,7 @@ class SkillsProvider(ContextProvider):
             context: Session context to extend with instructions and tools.
             state: Mutable per-run state dictionary (unused by this provider).
         """
+        mark_feature_used(FeatureIndex.CORE_SKILLS_PROVIDER)
         source_context = SkillsSourceContext(agent=agent, session=session)
         skills, instructions, tools = await self._create_context(source_context)
 
@@ -2904,6 +2906,7 @@ class FileSkillsSource(SkillsSource):
         Returns:
             A list of discovered file-based skills.
         """
+        mark_feature_used(FeatureIndex.CORE_FILE_SKILLS_SOURCE)
         skills: dict[str, FileSkill] = {}
 
         discovered = FileSkillsSource._discover_skill_directories(self._skill_paths)
@@ -3609,6 +3612,7 @@ class InMemorySkillsSource(SkillsSource):
         Returns:
             A list of :class:`Skill` instances.
         """
+        mark_feature_used(FeatureIndex.CORE_IN_MEMORY_SKILLS_SOURCE)
         return self._skills
 
 
@@ -4947,6 +4951,7 @@ class MCPSkillsSource(SkillsSource):
         Returns:
             A list of discovered :class:`Skill` instances.
         """
+        mark_feature_used(FeatureIndex.CORE_MCP_SKILLS_SOURCE)
         index = await self._try_read_index()
 
         skill_md_entries: list[_McpSkillIndexEntry] = []

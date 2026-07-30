@@ -923,7 +923,7 @@ class TestFoundryEvals:
         mock_project.get_openai_client.return_value = mock_oai
         fe = FoundryEvals(project_client=mock_project, model="gpt-4o")
         assert fe.name == "Microsoft Foundry"
-        mock_project.get_openai_client.assert_called_once()
+        mock_project.get_openai_client.assert_called_once_with()
 
     def test_constructor_no_client_auto_creates_from_env(self) -> None:
         """When no client/project_client given, auto-creates FoundryChatClient from env."""

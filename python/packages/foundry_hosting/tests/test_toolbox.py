@@ -9,11 +9,11 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-from agent_framework import SkillsProvider, SkillsSourceContext, SupportsAgentRun
+from agent_framework import MCPStreamableHTTPTool, SkillsProvider, SkillsSourceContext, SupportsAgentRun
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
     reset_request_context,
@@ -21,6 +21,7 @@ from azure.ai.agentserver.core import (
 )
 
 from agent_framework_foundry_hosting import FoundryToolbox
+from agent_framework_foundry_hosting._feature_usage import FeatureIndex
 from agent_framework_foundry_hosting._toolbox import (
     _FoundryToolboxSkillsSource,
     _resolve_toolbox_endpoint,
@@ -117,6 +118,27 @@ def test_init_derives_name_and_defaults() -> None:
     assert toolbox.url == "https://h/toolboxes/sales/mcp?api-version=v1"
     # Toolboxes expose tools, not prompts.
     assert toolbox.load_prompts_flag is False
+
+
+def test_toolbox_owns_feature_index_53() -> None:
+    assert FeatureIndex.FOUNDRY_TOOLBOX == 53
+
+
+async def test_toolbox_marks_feature_on_successful_connect_not_construction() -> None:
+    with (
+        patch.object(MCPStreamableHTTPTool, "connect", new=AsyncMock()) as connect,
+        patch("agent_framework_foundry_hosting._toolbox.mark_feature_used") as mark_used,
+    ):
+        toolbox = FoundryToolbox(
+            _FakeCredential(),  # type: ignore
+            url="https://h/toolboxes/sales/mcp?api-version=v1",
+        )
+        mark_used.assert_not_called()
+
+        await toolbox.connect()
+
+    connect.assert_awaited_once_with(reset=False)
+    mark_used.assert_called_once_with(FeatureIndex.FOUNDRY_TOOLBOX)
 
 
 async def test_auth_flow_injects_bearer_token() -> None:

@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, cast
 
 from agent_framework import AgentResponse, AgentResponseUpdate, ChatOptions, Content, Message, ResponseStream
+from agent_framework._telemetry import mark_feature_used
 from agent_framework_hosting import AgentRunArgs
 from openai.types.responses import (
     Response as OpenAIResponse,
@@ -36,6 +37,8 @@ from openai.types.responses import (
     ResponseOutputText,
 )
 from pydantic import TypeAdapter, ValidationError
+
+from ._feature_usage import FeatureIndex
 
 _RESPONSE_OUTPUT_ITEM_ADAPTER: TypeAdapter[Any] = TypeAdapter(ResponseOutputItem)
 
@@ -179,6 +182,7 @@ def responses_to_run(body: Mapping[str, Any]) -> AgentRunArgs:
     Raises:
         ValueError: If the request body has invalid ``input``.
     """
+    mark_feature_used(FeatureIndex.HOSTING_RESPONSES)
     messages = messages_from_responses_input(body.get("input"))
     options: dict[str, Any] = {}
     for key, value in body.items():
@@ -211,6 +215,7 @@ def responses_from_run(
     Returns:
         Responses-compatible JSON payload.
     """
+    mark_feature_used(FeatureIndex.HOSTING_RESPONSES)
     output_items = _result_to_output_items(result, status="completed")
     response_kwargs: dict[str, Any] = {
         "id": response_id,
@@ -894,6 +899,7 @@ async def responses_from_streaming_run(
     model: str | None = None
     updates: list[AgentResponseUpdate] = []
     try:
+        mark_feature_used(FeatureIndex.HOSTING_RESPONSES)
         async for update in stream:
             updates.append(update)
             if model is None:
