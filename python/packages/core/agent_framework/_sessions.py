@@ -1209,7 +1209,7 @@ class InMemoryHistoryProvider(HistoryProvider):
             return
         existing = state.get("messages", [])
         existing_id = {id(m) for m in existing}
-        new_messages = []
+        new_messages: list[Message] = []
         for msg in messages:
             if id(msg) not in existing_id:
                 existing_id.add(id(msg))

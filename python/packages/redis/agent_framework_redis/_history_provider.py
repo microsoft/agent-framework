@@ -155,7 +155,7 @@ class RedisHistoryProvider(HistoryProvider):
         key = self._redis_key(session_id)
         existing_message = await self.get_messages(session_id, state=state, **kwargs)
         existing_identities: set[MessageIdentity] = {get_message_identity(m) for m in existing_message}
-        new_messages = []
+        new_messages: list[Message] = []
         for msg in messages:
             identity = get_message_identity(msg)
             if identity not in existing_identities:
