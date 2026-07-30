@@ -20,6 +20,7 @@ from .._clients import SupportsChatGetResponse
 from .._compaction import group_messages
 from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import AgentSession, FileHistoryProvider, HistoryProvider, JsonDumps, JsonLoads, SessionContext
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import tool
 from .._types import ChatResponse, Message
 from ..exceptions import ChatClientException
@@ -979,8 +980,10 @@ class MemoryContextProvider(HistoryProvider):
             consolidation_client: Optional chat client override used only for consolidation so the
                 cleanup pass can use a cheaper or faster model than the main agent client.
             history_message_filter: Optional callback that can rewrite or drop messages before transcript save.
-            history_dumps: Callable used to serialize transcript JSONL.
-            history_loads: Callable used to deserialize transcript JSONL and state JSON.
+            history_dumps: Deprecated callback forwarded to ``FileHistoryProvider.dumps``.
+                Omit it to use msgspec JSON.
+            history_loads: Deprecated callback forwarded to ``FileHistoryProvider.loads``.
+                Omit it to use msgspec JSON.
         """
         super().__init__(
             source_id=source_id,
@@ -1170,6 +1173,7 @@ class MemoryContextProvider(HistoryProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject ``MEMORY.md`` and selected topic files before the model runs."""
+        mark_feature_used(FeatureIndex.CORE_MEMORY_PROVIDER)
         state.clear()
         state.update(self.store.export_provider_state(session))
 

@@ -240,7 +240,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      COPILOT_GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
       GITHUB_COPILOT_MODEL: claude-opus-4.6
     defaults:
       run:

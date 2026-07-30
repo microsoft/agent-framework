@@ -17,7 +17,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypedDict
 
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
+from agent_framework._telemetry import mark_feature_used
 from mem0 import AsyncMemory, AsyncMemoryClient
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -109,6 +112,7 @@ class Mem0ContextProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Search Mem0 for relevant memories and add to the session context."""
+        mark_feature_used(FeatureIndex.MEM0)
         self._validate_filters()
         input_text = "\n".join(msg.text for msg in context.input_messages if msg and msg.text and msg.text.strip())
         if not input_text.strip():
@@ -200,6 +204,7 @@ class Mem0ContextProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Store request/response messages to Mem0 for future retrieval."""
+        mark_feature_used(FeatureIndex.MEM0)
         self._validate_filters()
 
         messages_to_store: list[Message] = list(context.input_messages)

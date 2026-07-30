@@ -10,6 +10,7 @@ from agent_framework import Embedding, GeneratedEmbeddings
 
 from agent_framework_mistral import MistralEmbeddingClient, MistralEmbeddingOptions
 from agent_framework_mistral._embedding_client import _load_mistral_client_class  # pyright: ignore[reportPrivateUsage]
+from agent_framework_mistral._feature_usage import FeatureIndex
 
 # region: Unit Tests
 
@@ -137,7 +138,10 @@ async def test_mistral_embedding_get_embeddings() -> None:
     mock_response.model = "mistral-embed"
     mock_response.usage = MagicMock(prompt_tokens=10, total_tokens=10)
 
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
+    with (
+        patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls,
+        patch("agent_framework_mistral._embedding_client.mark_feature_used") as mark_feature_used,
+    ):
         mock_client = MagicMock()
         mock_client.embeddings = MagicMock()
         mock_client.embeddings.create_async = AsyncMock(return_value=mock_response)
@@ -146,6 +150,7 @@ async def test_mistral_embedding_get_embeddings() -> None:
         client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
         result = await client.get_embeddings(["hello", "world"])
 
+        mark_feature_used.assert_called_once_with(FeatureIndex.MISTRAL)
         assert isinstance(result, GeneratedEmbeddings)
         assert len(result) == 2
         assert result[0].vector == [0.1, 0.2, 0.3]

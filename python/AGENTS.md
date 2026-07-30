@@ -39,6 +39,13 @@ team norms from a single conversation without explicit confirmation.
   match the feature-lifecycle stages documented in the
   `python-feature-lifecycle` skill.
 
+## Changelog Ownership
+
+- Individual feature, fix, documentation, and dependency PRs must not update
+  `python/CHANGELOG.md`.
+- CHANGELOG entries and release sections are assembled centrally during the
+  Python release-preparation workflow.
+
 ## Pull Request Description Guidance
 
 When preparing a PR description:

@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
 from .._sessions import AgentSession, ContextProvider, SessionContext
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import tool
 from .._types import Message
 
@@ -272,6 +273,7 @@ class AgentModeProvider(ContextProvider):
             context: The session context to receive instructions and tools.
             state: Per-provider invocation state.
         """
+        mark_feature_used(FeatureIndex.CORE_AGENT_MODE_PROVIDER)
         del agent, state
         current_mode = get_agent_mode(
             session,

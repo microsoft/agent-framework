@@ -11,26 +11,26 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 
 | # | Sample | Description |
 |---|--------|-------------|
-| 1 | [Basic](responses/01_basic/) | A minimal agent demonstrating basic request/response interaction and multi-turn conversations using `previous_response_id`. |
-| 2 | [Tools](responses/02_tools/) | An agent with local tools (e.g., weather lookup), demonstrating how to register and invoke custom tool functions alongside the LLM. |
-| 3 | [MCP](responses/03_mcp/) | An agent connected to a remote MCP server (GitHub), demonstrating external MCP tool provider integration. |
-| 4 | [Foundry Toolbox](responses/04_foundry_toolbox/) | An agent using Azure Foundry Toolbox, demonstrating toolbox provisioning and querying available tools at runtime. |
-| 5 | [Workflows](responses/05_workflows/) | An agent with a multi-step orchestrated workflow, demonstrating chaining prompts through an orchestrated flow. |
-| 6 | [Files](responses/06_files/) | An agent demonstrating how to work with files in a hosted agent session, including uploading files to a hosted agent session and having the agent read and manipulate those files at runtime. |
-| 7 | [Observability](responses/07_observability/) | A sample demonstrating how to enable observability for the agent deployed to Foundry. |
-| 8 | [Azure AI Search RAG](responses/08_azure_search_rag/) | An agent with Retrieval Augmented Generation (RAG) capabilities backed by Azure AI Search, grounding answers in documents indexed in a pre-provisioned search index. |
-| 9 | [Foundry Skills](responses/09_foundry_skills/) | An agent that uploads `SKILL.md` files to the Foundry Skills REST API and downloads them at startup, decoupling tone/policy guidelines from agent code. |
-| 10 | [Foundry Memory](responses/10_foundry_memory/) | An agent with persistent semantic memory backed by a Microsoft Foundry Memory Store, using `FoundryMemoryProvider` to remember user facts across sessions. |
-| 11 | [Monty CodeAct](responses/11_monty_codeact/) | An agent with a Monty-backed CodeAct context provider, exposing a single `execute_code` tool that runs Python in a [pydantic-monty](https://github.com/pydantic/monty) interpreter and invokes typed host tools (`compute`, `fetch_data`) from inside the sandbox. Uses the beta `agent-framework-monty` package. |
-| 12 | [Foundry Toolbox MCP Skills](responses/12_foundry_toolbox_mcp_skills/) | An agent that discovers MCP-based skills attached to a Foundry Toolbox and serves them via `SkillsProvider(MCPSkillsSource(...))`, fetching `SKILL.md` bodies and supplementary resources on demand. |
+| 1 | [Basic](responses/basic/) | A minimal agent demonstrating basic request/response interaction and multi-turn conversations using `previous_response_id`. |
+| 2 | [Tools](responses/tools/) | An agent with local tools (e.g., weather lookup), demonstrating how to register and invoke custom tool functions alongside the LLM. |
+| 3 | [MCP](responses/mcp/) | An agent connected to a remote MCP server (GitHub), demonstrating external MCP tool provider integration. |
+| 4 | [Foundry Toolbox](responses/foundry_toolbox/) | An agent using Azure Foundry Toolbox, demonstrating toolbox provisioning and querying available tools at runtime. |
+| 5 | [Workflows](responses/workflows/) | An agent with a multi-step orchestrated workflow, demonstrating chaining prompts through an orchestrated flow. |
+| 6 | [Files](responses/files/) | An agent demonstrating how to work with files in a hosted agent session, including uploading files to a hosted agent session and having the agent read and manipulate those files at runtime. |
+| 7 | [Observability](responses/observability/) | A sample demonstrating how to enable observability for the agent deployed to Foundry. |
+| 8 | [Azure AI Search RAG](responses/azure_search_rag/) | An agent with Retrieval Augmented Generation (RAG) capabilities backed by Azure AI Search, grounding answers in documents indexed in a pre-provisioned search index. |
+| 9 | [Foundry Skills](responses/foundry_skills/) | An agent that uploads `SKILL.md` files to the Foundry Skills REST API and downloads them at startup, decoupling tone/policy guidelines from agent code. |
+| 10 | [Foundry Memory](responses/foundry_memory/) | An agent with persistent semantic memory backed by a Microsoft Foundry Memory Store, using `FoundryMemoryProvider` to remember user facts across sessions. |
+| 11 | [Monty CodeAct](responses/monty_codeact/) | An agent with a Monty-backed CodeAct context provider, exposing a single `execute_code` tool that runs Python in a [pydantic-monty](https://github.com/pydantic/monty) interpreter and invokes typed host tools (`compute`, `fetch_data`) from inside the sandbox. Uses the beta `agent-framework-monty` package. |
+| 12 | [Foundry Toolbox MCP Skills](responses/foundry_toolbox_mcp_skills/) | An agent that discovers MCP-based skills attached to a Foundry Toolbox and serves them via `SkillsProvider(MCPSkillsSource(...))`, fetching `SKILL.md` bodies and supplementary resources on demand. |
 | 13 | [Using deployed agent](responses/using_deployed_agent.py) | A sample demonstrating how to invoke an agent that has already been deployed to Foundry, showing how to interact with a hosted agent in code. |
 
 ### Invocations API
 
 | # | Sample | Description |
 |---|--------|-------------|
-| 1 | [Basic](invocations/01_basic/) | A minimal agent demonstrating basic request/response using the invocations protocol. |
-| 2 | [Break Glass](invocations/02_break_glass/) | An agent demonstrating a "break glass" scenario where customizations of the API behaviors are needed, allowing for more direct control over how requests and responses are handled by the hosting layer. |
+| 1 | [Basic](invocations/basic/) | A minimal agent demonstrating basic request/response using the invocations protocol. |
+| 2 | [Break Glass](invocations/break_glass/) | An agent demonstrating a "break glass" scenario where customizations of the API behaviors are needed, allowing for more direct control over how requests and responses are handled by the hosting layer. |
 
 ## Running the Agent Host Locally
 
@@ -53,7 +53,7 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 mkdir hosted-agent-framework-agent && cd hosted-agent-framework-agent
 
 # Initialize from the manifest
-azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/python/samples/04-hosting/foundry-hosted-agents/responses/01_basic/agent.manifest.yaml
+azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/python/samples/04-hosting/foundry-hosted-agents/responses/basic/agent.manifest.yaml
 ```
 
 Follow the instructions from `azd ai agent init` to complete the agent initialization. If you don't have an existing Foundry project and a model deployment, `azd ai agent init` will guide you through creating them.

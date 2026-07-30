@@ -509,7 +509,7 @@ jobs:
       contents: read
     timeout-minutes: 60
     env:
-      COPILOT_GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
       GITHUB_COPILOT_TIMEOUT: "120"
     defaults:
       run:

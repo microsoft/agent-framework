@@ -39,6 +39,8 @@ If the user states target versions or a date explicitly, use exactly what they s
 
 ## Non-negotiable rules
 
+- **Release workflow owns the CHANGELOG**: individual feature/fix PRs do not edit
+  `python/CHANGELOG.md`; this workflow creates the entries centrally from merged changes.
 - **CHANGELOG-driven bumps**: only packages mentioned in the new CHANGELOG section get version bumps. Exceptions: root follows core (==pin); user-opted cohort bump on betas.
 - **Follow `python-package-management` for package lifecycle and versioning rules** — do not duplicate those
   rules in this release workflow.
@@ -143,6 +145,9 @@ git log --name-only --format='' ${LAST_RELEASED_TAG}..${RELEASE_BASE} \
 Root `agent-framework` is touched when `python/pyproject.toml`, `python/agent_framework_meta/`, or root `README.md` substantive content changed.
 
 ### 4. Draft CHANGELOG entries (THIS DRIVES THE BUMP LIST)
+
+Individual feature/fix PRs intentionally do not add CHANGELOG entries. During release preparation, derive this section
+centrally from the merged PRs since the last released tag.
 
 Locate `## [Unreleased]` and the top existing release header. INSERT a new section between them.
 

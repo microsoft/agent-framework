@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from typing import Any, Final
 
 try:
-    _version = importlib.metadata.version(__name__)
+    _version = importlib.metadata.version("agent-framework-core")
 except importlib.metadata.PackageNotFoundError:
     _version = "0.0.0"  # Fallback for development mode
 __version__: Final[str] = _version
@@ -194,11 +194,13 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "AgentSession",
         "ContextProvider",
         "FileHistoryProvider",
+        "FileSessionStore",
         "HistoryProvider",
         "InMemoryHistoryProvider",
         "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
         "MessageInjectionMiddleware",
         "ServiceSessionId",
+        "SessionStore",
         "SessionContext",
         "enqueue_messages",
         "register_state_type",
@@ -455,6 +457,7 @@ __all__ = [
     "FileMemoryProvider",
     "FileSearchMatch",
     "FileSearchResult",
+    "FileSessionStore",
     "FileSkill",
     "FileSkillScript",
     "FileSkillsSource",
@@ -520,6 +523,7 @@ __all__ = [
     "SelectiveToolCallCompactionStrategy",
     "ServiceSessionId",
     "SessionContext",
+    "SessionStore",
     "SingleEdgeGroup",
     "Skill",
     "SkillFrontmatter",

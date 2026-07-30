@@ -29,7 +29,7 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import IS_TELEMETRY_ENABLED, get_user_agent
 from agent_framework.observability import AgentTelemetryLayer, ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -38,6 +38,11 @@ from azure.core.credentials_async import AsyncTokenCredential
 
 from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 
+from ._feature_usage import (
+    FeatureIndex,
+    create_feature_usage_policy,
+    create_foundry_feature_usage_http_client,
+)
 from ._tools import _sanitize_foundry_response_tool  # pyright: ignore[reportPrivateUsage]
 
 if sys.version_info >= (3, 13):
@@ -174,6 +179,7 @@ class RawFoundryAgentChatClient(
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.FOUNDRY_AGENT
 
     def __init__(
         self,
@@ -251,8 +257,10 @@ class RawFoundryAgentChatClient(
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": resolved_endpoint,
                 "credential": credential,
-                "user_agent": get_user_agent(),
+                "per_retry_policies": [create_feature_usage_policy()],
             }
+            if IS_TELEMETRY_ENABLED:
+                project_client_kwargs["user_agent"] = get_user_agent()
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             self.project_client = AIProjectClient(**project_client_kwargs)
@@ -261,6 +269,8 @@ class RawFoundryAgentChatClient(
         openai_client_kwargs: dict[str, Any] = {}
         if default_headers:
             openai_client_kwargs["default_headers"] = dict(default_headers)
+        if self._should_close_client:
+            openai_client_kwargs["http_client"] = create_foundry_feature_usage_http_client()
         if allow_preview:
             openai_client_kwargs["agent_name"] = self.agent_name
         openai_client = self.project_client.get_openai_client(**openai_client_kwargs)
@@ -274,6 +284,7 @@ class RawFoundryAgentChatClient(
             tokenizer=tokenizer,
             additional_properties=additional_properties,
         )
+        self.model = ""  # Foundry agents resolve model server-side; ignore env vars (issue #7272).
 
     @override
     def as_agent(
@@ -378,7 +389,7 @@ class RawFoundryAgentChatClient(
         if not self.allow_preview:
             extra_body.setdefault("agent_reference", _build_agent_reference(self.agent_name, self.agent_version))
             should_strip_model = _uses_foundry_agent_session(conversation_id) or (
-                conversation_id is None and options.get("model") is None
+                conversation_id is None and not options.get("model")
             )
             if should_strip_model:
                 run_options.pop("model", None)
@@ -798,7 +809,7 @@ class RawFoundryAgent(
             Foundry conversation ID.
         """
         client = cast(RawFoundryAgentChatClient, self.client)
-        conversation = await client.project_client.get_openai_client().conversations.create()
+        conversation = await client.client.conversations.create()
         return self.get_session(service_session_id=conversation.id, session_id=session_id)
 
     @override

@@ -36,6 +36,7 @@ from agent_framework import (
     included_token_count,
 )
 from agent_framework._compaction import (
+    _select_summary_input_groups,
     _serialize_message,
     append_compaction_message,
     extend_compaction_messages,
@@ -796,6 +797,54 @@ class _EmptySummarizer:
         return ChatResponse(messages=[Message(role="assistant", contents=["   "])])
 
 
+class _ScriptedSummarizer:
+    def __init__(self, outcomes: list[str | Exception]) -> None:
+        self.outcomes = outcomes
+
+    async def get_response(
+        self,
+        messages: list[Message],
+        *,
+        stream: bool = False,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return ChatResponse(messages=[Message(role="assistant", contents=[outcome])])
+
+
+class _RecordingSummarizer:
+    def __init__(self) -> None:
+        self.requests: list[list[Message]] = []
+
+    async def get_response(
+        self,
+        messages: list[Message],
+        *,
+        stream: bool = False,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        self.requests.append(messages)
+        return ChatResponse(messages=[Message(role="assistant", contents=["budgeted summary"])])
+
+
+class _CharacterCountTokenizer:
+    def count_tokens(self, text: str) -> int:
+        return len(text)
+
+
+class _RecordingCharacterCountTokenizer:
+    def __init__(self) -> None:
+        self.seen_texts: list[str] = []
+
+    def count_tokens(self, text: str) -> int:
+        self.seen_texts.append(text)
+        return len(text)
+
+
 async def test_summarization_strategy_adds_bidirectional_trace_links() -> None:
     messages = [
         Message(role="user", contents=["u1"]),
@@ -827,6 +876,102 @@ async def test_summarization_strategy_adds_bidirectional_trace_links() -> None:
             assert message.additional_properties.get(EXCLUDED_KEY) is True
 
 
+async def test_summarization_strategy_bounds_summary_input_to_complete_groups() -> None:
+    summarizer = _RecordingSummarizer()
+    messages = [
+        Message(role="user", contents=["first old " * 20]),
+        Message(role="assistant", contents=["second oversized " * 120]),
+        Message(role="user", contents=["third should wait"]),
+        Message(role="assistant", contents=["fourth should wait"]),
+        Message(role="user", contents=["recent user"]),
+        Message(role="assistant", contents=["recent assistant"]),
+    ]
+    first_old_message = messages[0]
+    oversized_message = messages[1]
+    strategy = SummarizationStrategy(
+        client=summarizer,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        target_count=2,
+        threshold=0,
+        max_summary_input_tokens=1_000,
+        tokenizer=_CharacterCountTokenizer(),
+    )
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert len(summarizer.requests) == 1
+    summary_request_text = summarizer.requests[0][1].text
+    assert summary_request_text is not None
+    assert "first old" in summary_request_text
+    assert "second oversized" not in summary_request_text
+    assert first_old_message.additional_properties.get(EXCLUDED_KEY) is True
+    assert oversized_message.additional_properties.get(EXCLUDED_KEY) is not True
+    summary = next(message for message in messages if _group_unknown_value(message, SUMMARY_OF_MESSAGE_IDS_KEY))
+    summarized_message_ids = _group_unknown_value(summary, SUMMARY_OF_MESSAGE_IDS_KEY)
+    assert isinstance(summarized_message_ids, list)
+    assert first_old_message.message_id in summarized_message_ids
+    assert oversized_message.message_id not in summarized_message_ids
+
+
+async def test_summarization_strategy_skips_oversized_first_group() -> None:
+    summarizer = _RecordingSummarizer()
+    messages = [
+        Message(role="user", contents=["oversized first group " * 120]),
+        Message(role="assistant", contents=["small later group"]),
+        Message(role="user", contents=["recent user"]),
+        Message(role="assistant", contents=["recent assistant"]),
+    ]
+    oversized_message = messages[0]
+    small_message = messages[1]
+    strategy = SummarizationStrategy(
+        client=summarizer,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        target_count=2,
+        threshold=0,
+        max_summary_input_tokens=1_000,
+        tokenizer=_CharacterCountTokenizer(),
+    )
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert len(summarizer.requests) == 1
+    summary_request_text = summarizer.requests[0][1].text
+    assert summary_request_text is not None
+    assert "oversized first group" not in summary_request_text
+    assert "small later group" in summary_request_text
+    assert oversized_message.additional_properties.get(EXCLUDED_KEY) is not True
+    assert small_message.additional_properties.get(EXCLUDED_KEY) is True
+
+
+def test_summary_input_selection_does_not_retokenize_selected_transcript() -> None:
+    tokenizer = _RecordingCharacterCountTokenizer()
+    groups = [
+        ("group_1", [Message(role="user", contents=["first"])]),
+        ("group_2", [Message(role="assistant", contents=["second"])]),
+        ("group_3", [Message(role="user", contents=["third"])]),
+    ]
+
+    selected_group_ids, selected_messages = _select_summary_input_groups(
+        groups,
+        prompt="prompt",
+        max_summary_input_tokens=1_000,
+        tokenizer=tokenizer,
+    )
+
+    assert selected_group_ids == ["group_1", "group_2", "group_3"]
+    assert selected_messages == [message for _, group_messages in groups for message in group_messages]
+    assert (
+        "\n".join([
+            "1. [user] first",
+            "2. [assistant] second",
+            "3. [user] third",
+        ])
+        not in tokenizer.seen_texts
+    )
+
+
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(
     caplog: Any,
 ) -> None:
@@ -847,6 +992,57 @@ async def test_summarization_strategy_returns_false_when_summary_generation_fail
     assert changed is False
     assert any("summary generation failed" in record.message for record in caplog.records)
     assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+async def test_summarization_strategy_escalates_repeated_summary_failures(caplog: Any) -> None:
+    messages = [
+        Message(role="user", contents=["u1"]),
+        Message(role="assistant", contents=["a1"]),
+        Message(role="user", contents=["u2"]),
+        Message(role="assistant", contents=["a2"]),
+        Message(role="user", contents=["u3"]),
+        Message(role="assistant", contents=["a3"]),
+    ]
+    strategy = SummarizationStrategy(client=_FailingSummarizer(), target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    annotate_message_groups(messages)
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        assert await strategy(messages) is False
+        assert await strategy(messages) is False
+        assert await strategy(messages) is False
+        assert await strategy(messages) is False
+
+    error_records = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(error_records) == 1
+    assert "failed 3 consecutive times" in error_records[0].message
+
+
+async def test_summarization_strategy_resets_failure_escalation_after_success(
+    caplog: Any,
+) -> None:
+    summarizer = _ScriptedSummarizer([
+        RuntimeError("first failure"),
+        RuntimeError("second failure"),
+        "recovered summary",
+        RuntimeError("third failure"),
+        RuntimeError("fourth failure"),
+    ])
+    strategy = SummarizationStrategy(client=summarizer, target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        for _ in range(5):
+            messages = [
+                Message(role="user", contents=["u1"]),
+                Message(role="assistant", contents=["a1"]),
+                Message(role="user", contents=["u2"]),
+                Message(role="assistant", contents=["a2"]),
+                Message(role="user", contents=["u3"]),
+                Message(role="assistant", contents=["a3"]),
+            ]
+            annotate_message_groups(messages)
+            await strategy(messages)
+
+    assert not any(record.levelno == logging.ERROR for record in caplog.records)
 
 
 async def test_summarization_strategy_returns_false_when_summary_is_empty(

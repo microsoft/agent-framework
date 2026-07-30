@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -22,7 +23,7 @@ from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._docstrings import apply_layered_docstring
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import USER_AGENT_KEY
+from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._tools import (
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -58,6 +59,7 @@ from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel
 
 from ._exceptions import OpenAIContentFilterException
+from ._feature_usage import FeatureIndex
 from ._shared import (
     PROMPT_CACHE_BREAKPOINT_KEY,
     AzureTokenProvider,
@@ -115,6 +117,23 @@ _AZURE_WEB_SEARCH_UNSUPPORTED_MSG = (
 )
 
 DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION = "2024-12-01-preview"
+
+# The Chat Completions API validates a message ``name`` against ``^[^\s<|\\/>]+$``, so an
+# author name containing whitespace (or ``< | \ / >``) fails the whole request with a 400.
+# Mirrors SanitizeAuthorName in the .NET client (dotnet/extensions): strip characters outside
+# ``[a-zA-Z0-9_]``, drop the name entirely when nothing remains, truncate to 64 characters.
+# See https://github.com/microsoft/agent-framework/issues/7126
+_INVALID_AUTHOR_NAME_RE = re.compile(r"[^a-zA-Z0-9_]+")
+_MAX_AUTHOR_NAME_LENGTH = 64
+
+
+def _sanitize_author_name(name: str | None) -> str | None:
+    """Sanitize an author name for use as the Chat Completions message ``name`` field."""
+    if not name:
+        return None
+    sanitized = _INVALID_AUTHOR_NAME_RE.sub("", name)
+    return sanitized[:_MAX_AUTHOR_NAME_LENGTH] if sanitized else None
+
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
@@ -220,6 +239,7 @@ class RawOpenAIChatCompletionClient(
     """
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
 
     @overload
     def __init__(
@@ -548,15 +568,20 @@ class RawOpenAIChatCompletionClient(
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         # prepare
         options_dict = self._prepare_options(messages, options)
+        extra_headers = cast("Mapping[str, Any] | None", kwargs.get("extra_headers"))
 
         if stream:
-            # Streaming mode
-            options_dict["stream_options"] = {"include_usage": True}
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 client = self.client
+                if self._FEATURE_USAGE_INDEX is not None:
+                    mark_feature_used(self._FEATURE_USAGE_INDEX)
+                request_options = dict(options_dict)
+                request_options["stream_options"] = {"include_usage": True}
+                if extra_headers is not None:
+                    request_options["extra_headers"] = dict(extra_headers)
                 try:
-                    async for chunk in await client.chat.completions.create(stream=True, **options_dict):
+                    async for chunk in await client.chat.completions.create(stream=True, **request_options):
                         if len(chunk.choices) == 0 and chunk.usage is None:
                             continue
                         yield self._parse_response_update_from_openai(chunk)
@@ -587,9 +612,14 @@ class RawOpenAIChatCompletionClient(
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
             client = self.client
+            if self._FEATURE_USAGE_INDEX is not None:
+                mark_feature_used(self._FEATURE_USAGE_INDEX)
+            request_options = dict(options_dict)
+            if extra_headers is not None:
+                request_options["extra_headers"] = dict(extra_headers)
             try:
                 return self._parse_response_from_openai(
-                    await client.chat.completions.create(stream=False, **options_dict), options
+                    await client.chat.completions.create(stream=False, **request_options), options
                 )
             except BadRequestError as ex:
                 if ex.code == "content_filter":
@@ -957,8 +987,8 @@ class RawOpenAIChatCompletionClient(
                 else:
                     content_value = "\n".join(content.text for content in text_contents if content.text)
                 sys_args: dict[str, Any] = {"role": message.role, "content": content_value}
-                if message.author_name:
-                    sys_args["name"] = message.author_name
+                if author_name := _sanitize_author_name(message.author_name):
+                    sys_args["name"] = author_name
                 return [sys_args]
             return []
 
@@ -972,8 +1002,8 @@ class RawOpenAIChatCompletionClient(
             args: dict[str, Any] = {
                 "role": message.role,
             }
-            if message.author_name and message.role != "tool":
-                args["name"] = message.author_name
+            if message.role != "tool" and (author_name := _sanitize_author_name(message.author_name)):
+                args["name"] = author_name
             if "reasoning_details" in message.additional_properties and (
                 details := message.additional_properties["reasoning_details"]
             ):
@@ -1029,8 +1059,8 @@ class RawOpenAIChatCompletionClient(
                     "content": "",
                     "reasoning_details": pending_reasoning,
                 }
-                if message.author_name and message.role != "tool":
-                    pending_args["name"] = message.author_name
+                if message.role != "tool" and (author_name := _sanitize_author_name(message.author_name)):
+                    pending_args["name"] = author_name
                 all_messages.append(pending_args)
 
         # Flatten text-only content lists to plain strings for broader
