@@ -843,6 +843,8 @@ public sealed class CosmosChatHistoryProviderTests : IAsyncLifetime, IDisposable
 
         // Assert
         Assert.Equal(messages.Count, retrievedMessages.Count);
+        // Batch writes share a Unix-seconds timestamp, so this test intentionally verifies page completeness
+        // without asserting relative order among tied messages.
         Assert.Equal(
             messages.Select(message => message.Text).Order(),
             retrievedMessages.Select(message => message.Text).Order());

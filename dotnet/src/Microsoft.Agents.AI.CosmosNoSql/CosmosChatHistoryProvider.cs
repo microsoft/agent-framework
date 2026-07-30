@@ -224,8 +224,10 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
     /// <param name="session">The agent session to get state from.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>
-    /// The messages in the same order used by the agent invocation pipeline. When
-    /// <see cref="MaxMessagesToRetrieve"/> is set, only the most recent messages up to that limit are returned.
+    /// The messages in the timestamp-based order used by the agent invocation pipeline. Messages with equal stored
+    /// timestamps have no guaranteed relative order. When <see cref="MaxMessagesToRetrieve"/> is set, messages with
+    /// the latest timestamps are selected; if the limit intersects a timestamp tie, which tied messages are included
+    /// is unspecified.
     /// </returns>
     /// <remarks>
     /// This method returns messages as stored and does not apply the output filter or chat-history source attribution
