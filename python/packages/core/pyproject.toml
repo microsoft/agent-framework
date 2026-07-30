@@ -23,6 +23,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
+    "msgspec>=0.20.0,<0.22",
     "typing-extensions>=4.15.0,<5",
     "pydantic>=2,<3",
     "python-dotenv>=1,<2",
@@ -127,6 +128,10 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
+
+[tool.poe.tasks.dependency-pyright]
+help = "Run Pyright over core implementation files for isolated dependency validation."
+cmd = "pyright --project pyrightconfig.dependency.json"
 
 [tool.poe.tasks.mypy]
 help = "Run MyPy for this package."

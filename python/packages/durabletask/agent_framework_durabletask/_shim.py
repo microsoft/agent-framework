@@ -13,9 +13,11 @@ from abc import ABC, abstractmethod
 from typing import Any, Generic, Literal, TypeVar
 
 from agent_framework import AgentSession, ServiceSessionId, SupportsAgentRun, normalize_messages
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._types import AgentRunInputs
 
 from ._executors import DurableAgentExecutor
+from ._feature_usage import FeatureIndex
 from ._models import DurableAgentSession
 
 # TypeVar for the task type returned by executors
@@ -127,6 +129,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
             options=options,
         )
 
+        mark_feature_used(FeatureIndex.DURABLETASK)
         return self._executor.run_durable_agent(
             agent_name=self.name,
             run_request=run_request,

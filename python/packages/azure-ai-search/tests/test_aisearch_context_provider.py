@@ -20,6 +20,7 @@ from agent_framework_azure_ai_search._context_provider import (
     KnowledgeBaseOutputModeLiteral,
     RetrievalReasoningEffortLiteral,
 )
+from agent_framework_azure_ai_search._feature_usage import FeatureIndex
 
 # -- Helpers -------------------------------------------------------------------
 
@@ -52,6 +53,17 @@ class MockSearchResults:
         doc = self._docs[self._index]
         self._index += 1
         return doc
+
+
+async def test_before_run_marks_azure_ai_search_used() -> None:
+    provider = object.__new__(AzureAISearchContextProvider)
+    context = Mock(spec=SessionContext)
+    context.input_messages = []
+
+    with patch("agent_framework_azure_ai_search._context_provider.mark_feature_used") as mark_feature_used:
+        await provider.before_run(agent=Mock(), session=Mock(spec=AgentSession), context=context, state={})
+
+    mark_feature_used.assert_called_once_with(FeatureIndex.AZURE_AI_SEARCH)
 
 
 def _make_mock_index(

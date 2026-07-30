@@ -8,11 +8,11 @@ on:
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
-  # GitHub Copilot configuration
+  GITHUB_TOKEN: ${{ github.token }}
   GITHUB_COPILOT_MODEL: auto
-  COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
 
 permissions:
+  copilot-requests: write
   contents: read
   id-token: write
 

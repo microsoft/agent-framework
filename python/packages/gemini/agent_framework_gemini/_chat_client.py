@@ -29,7 +29,7 @@ from agent_framework import (
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework._types import _get_data_bytes  # type: ignore[reportPrivateUsage]
 from agent_framework.exceptions import ContentError
 from agent_framework.observability import ChatTelemetryLayer
@@ -37,6 +37,8 @@ from google import genai
 from google.auth.credentials import Credentials
 from google.genai import types
 from pydantic import BaseModel
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -539,6 +541,7 @@ class RawGeminiChatClient(
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 validated = await self._validate_options(options)
                 model, contents, config = self._prepare_request(messages, validated)
+                mark_feature_used(FeatureIndex.GEMINI)
                 generate_content_stream = cast(
                     Callable[..., Awaitable[AsyncIterable[types.GenerateContentResponse]]],
                     cast(Any, self._genai_client.aio.models).generate_content_stream,
@@ -555,6 +558,7 @@ class RawGeminiChatClient(
         async def _get_response() -> ChatResponse:
             validated = await self._validate_options(options)
             model, contents, config = self._prepare_request(messages, validated)
+            mark_feature_used(FeatureIndex.GEMINI)
             raw = await self._genai_client.aio.models.generate_content(model=model, contents=contents, config=config)  # type: ignore[arg-type]
             return self._process_generate_response(raw, response_format=validated.get("response_format"))
 
@@ -890,9 +894,14 @@ class RawGeminiChatClient(
             kwargs["response_schema"] = response_schema
         elif (schema := self._extract_response_schema(response_format)) is not None:
             kwargs["response_schema"] = schema
-        if tools := self._prepare_tools(options):
+        tools = self._prepare_tools(options)
+        if tools:
             kwargs["tools"] = tools
-        if tool_config := self._prepare_tool_config(options.get("tool_choice")):
+        tool_config = self._prepare_tool_config(options.get("tool_choice"))
+        if tools and not self._vertexai and self._requires_server_side_tool_invocations(tools):
+            tool_config = tool_config or types.ToolConfig()
+            tool_config.include_server_side_tool_invocations = True
+        if tool_config:
             kwargs["tool_config"] = tool_config
         if thinking_config := options.get("thinking_config"):
             thinking_config_kwargs = {k: v for k, v in thinking_config.items() if v is not None}
@@ -975,7 +984,7 @@ class RawGeminiChatClient(
             types.FunctionDeclaration(
                 name=tool.name,
                 description=tool.description or "",
-                parameters=tool.parameters(),  # type: ignore[arg-type]
+                parameters_json_schema=tool.parameters(),
             )
             for tool in tools_option
             if isinstance(tool, FunctionTool)
@@ -987,6 +996,20 @@ class RawGeminiChatClient(
         result.extend(tool for tool in tools_option if isinstance(tool, types.Tool))
 
         return result or None
+
+    @staticmethod
+    def _requires_server_side_tool_invocations(tools: Sequence[types.Tool]) -> bool:
+        """Return whether Gemini Developer API requires server-side tool invocation reporting."""
+        has_function_declarations = any(tool.function_declarations for tool in tools)
+        return has_function_declarations and any(RawGeminiChatClient._has_server_side_tool(tool) for tool in tools)
+
+    @staticmethod
+    def _has_server_side_tool(tool: types.Tool) -> bool:
+        """Return whether the Gemini tool declares a native server-side tool."""
+        return any(
+            field_name != "function_declarations" and getattr(tool, field_name, None) is not None
+            for field_name in type(tool).model_fields
+        )
 
     def _prepare_tool_config(self, tool_choice: Any) -> types.ToolConfig | None:
         """Build a Gemini ``ToolConfig`` from the framework ``tool_choice`` value.
