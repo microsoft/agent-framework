@@ -133,6 +133,7 @@ include = [
   "lightning/agent_framework_lab_lightning",
   "tau2/agent_framework_lab_tau2",
 ]
+extraPaths = ["common"]
 exclude = ['gaia/tests', 'lightning/tests', 'tau2/tests', 'namespace', '**/samples']
 
 [tool.bandit]
