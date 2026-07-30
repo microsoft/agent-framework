@@ -94,7 +94,6 @@ class MistralChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
         - ``store``
         - ``user``
         - ``conversation_id``
-        - ``n``
     """
 
     safe_prompt: bool
@@ -108,9 +107,6 @@ class MistralChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
 
     guardrails: list[dict[str, Any]]
     """Guardrail configurations applied to the request."""
-
-    n: None
-    """Not supported. The framework expects a single completion per request."""
 
     prompt_cache_key: str
     """Cache key shared by requests with the same prompt prefix."""
