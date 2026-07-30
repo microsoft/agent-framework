@@ -48,6 +48,7 @@ from mcp.types import ErrorData
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework_foundry_hosting._responses import FileBasedFunctionApprovalStorage
 from agent_framework_foundry_hosting._responses import (
     _AZURE_RESPONSES_MESSAGE_ROLE_TYPE,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
@@ -4435,11 +4436,17 @@ class TestApprovalStoragePath:
         """In hosted mode with valid HOME, approvals must be under $HOME/.function_approvals/."""
         monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
         monkeypatch.setenv("HOME", "/home/testuser")
-        server = ResponsesHostServer(MagicMock(), store=InMemoryResponseProvider())
-        approval_path = server._approval_storage_path
-        actual_normalized = approval_path.replace("\\", "/")
+        server = ResponsesHostServer(MagicMock(context_providers=[]), store=InMemoryResponseProvider())
+        actual_normalized = server._approval_storage_path.replace("\\", "/")
         assert actual_normalized.endswith("/home/testuser/.function_approvals/approval_requests.json")
         assert not actual_normalized.startswith("/.function_approvals")
+        assert isinstance(server._approval_storage, FileBasedFunctionApprovalStorage)
+        storage_normalized = server._approval_storage._storage_path.replace("\\", "/")
+        assert storage_normalized.endswith("/home/testuser/.function_approvals/approval_requests.json")
+        user_storage = server._approval_storage_for_user("test-user")  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(user_storage, FileBasedFunctionApprovalStorage)
+        user_normalized = user_storage._storage_path.replace("\\", "/") # pyright: ignore[reportPrivateUsage]
+        assert user_normalized.endswith("/home/testuser/.function_approvals/test-user/approval_requests.json")
 
     def test_hosted_without_home_env_uses_default_session_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When HOME is unset in hosted mode, fall back to /home/session/.function_approvals/."""

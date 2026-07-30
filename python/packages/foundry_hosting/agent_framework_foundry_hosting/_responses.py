@@ -416,8 +416,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     def _resolve_approval_storage_path(is_hosted: bool) -> str:
         """Resolve function approval storage path.
 
-        Hosted: $HOME/.function_approval/approval_requests.json.
-        Local: {cwd}/.fucntion_approval/approval_requests.json.
+        Hosted: $HOME/.function_approvals/approval_requests.json.
+        Local: {cwd}/.function_approvals/approval_requests.json.
         """
         if not is_hosted:
             return os.path.join(os.getcwd(), ".function_approvals", "approval_requests.json")
@@ -485,7 +485,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         self._agent = agent
         self._approval_storage = (
-            FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH)
+            FileBasedFunctionApprovalStorage(self._approval_storage_path)
             if self.config.is_hosted
             else InMemoryFunctionApprovalStorage()
         )
@@ -552,7 +552,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         storage = self._approval_storages_by_user.get(user_id)
         if storage is None:
             storage = FileBasedFunctionApprovalStorage(
-                _approval_storage_path_for_user(self.FUNCTION_APPROVAL_STORAGE_PATH, user_id)
+                _approval_storage_path_for_user(self._approval_storage_path, user_id)
             )
             self._approval_storages_by_user[user_id] = storage
         return storage
