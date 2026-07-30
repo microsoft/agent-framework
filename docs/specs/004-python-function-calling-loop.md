@@ -474,7 +474,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | AG-UI approval-time follow-up | The full grouped user-input pause remains in message history and emits no synthetic `TOOL_CALL_RESULT`. | `test_resolve_approval_responses_preserves_follow_up_user_input_group` |
 | AG-UI approval execution failure | A grouped executor failure becomes one deterministic terminal error result for the approved call. | `test_resolve_approval_responses_returns_failure_when_grouped_execution_raises` |
 | AG-UI no-approval path | Ordinary tool results do not gain an extra approval result event. | `test_no_approval_no_extra_tool_result` |
-| AG-UI `confirm_changes` snapshot | The synthetic confirmation result is replaced only by the result for its original function call; rejection and missing-result fallbacks contain no approval payload. | `packages/ag-ui/tests/ag_ui/test_confirm_changes_snapshot.py` |
+| AG-UI `confirm_changes` snapshot | An accepted synthetic confirmation is replaced only when its original function call has a real result; rejection is cleaned explicitly, and missing accepted results remain inert. | `packages/ag-ui/tests/ag_ui/test_confirm_changes_snapshot.py` |
 | AG-UI malformed `confirm_changes` metadata | Non-list tool-call metadata and malformed argument JSON are ignored without guessing a target call. | `test_confirm_changes_target_ignores_non_list_tool_calls`, `test_confirm_changes_target_rejects_malformed_arguments_json` |
 | Compaction pair integrity | Function call/result groups remain atomic. | `packages/core/tests/core/test_compaction.py::test_group_annotations_keep_tool_call_and_tool_result_atomic`, `test_group_annotations_include_reasoning_in_tool_call_group` |
 

@@ -1499,7 +1499,9 @@ def _clean_resolved_approvals_from_snapshot(
             if target_call_id is None:
                 continue
             if parsed.get("accepted"):
-                replacement = result_by_call_id.get(target_call_id, "Changes confirmed and applied successfully.")
+                replacement = result_by_call_id.get(target_call_id)
+                if replacement is None:
+                    continue
             else:
                 replacement = "Changes declined."
         snap_msg["content"] = replacement

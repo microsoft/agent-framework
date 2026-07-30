@@ -135,12 +135,13 @@ def test_confirm_changes_snapshot_cleans_rejection_without_results() -> None:
     assert snapshot_messages[1]["content"] == "Changes declined."
 
 
-def test_confirm_changes_snapshot_does_not_join_unrelated_results_when_target_is_missing() -> None:
+def test_confirm_changes_snapshot_keeps_accepted_payload_when_target_result_is_missing() -> None:
     snapshot_messages = _confirm_snapshot(
         original_call_id="call_target",
         confirm_call_id="call_confirm",
         accepted=True,
     )
+    original_content = snapshot_messages[1]["content"]
     resolved_messages = [
         Message(
             role="tool",
@@ -153,4 +154,4 @@ def test_confirm_changes_snapshot_does_not_join_unrelated_results_when_target_is
 
     _clean_resolved_approvals_from_snapshot(snapshot_messages, resolved_messages)
 
-    assert snapshot_messages[1]["content"] == "Changes confirmed and applied successfully."
+    assert snapshot_messages[1]["content"] == original_content
