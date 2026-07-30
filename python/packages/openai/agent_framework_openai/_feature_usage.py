@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
+import contextlib
 from enum import IntEnum
 
 import httpx
@@ -18,6 +20,16 @@ _AZURE_OPENAI_ORIGIN_SUFFIXES = (
     "openai.azure.com",
     "services.ai.azure.com",
 )
+
+
+class _FeatureUsageAsyncHttpxClient(DefaultAsyncHttpxClient):
+    """OpenAI-default HTTP client that preserves the SDK's GC cleanup behavior."""
+
+    def __del__(self) -> None:
+        if self.is_closed:
+            return
+        with contextlib.suppress(Exception):
+            asyncio.get_running_loop().create_task(self.aclose())
 
 
 def _is_approved_origin(url: httpx.URL | str, suffixes: tuple[str, ...]) -> bool:
@@ -41,4 +53,4 @@ def create_feature_usage_http_client(
             else remove_feature_token(user_agent)
         )
 
-    return DefaultAsyncHttpxClient(event_hooks={"request": [stamp_feature_usage]})
+    return _FeatureUsageAsyncHttpxClient(event_hooks={"request": [stamp_feature_usage]})

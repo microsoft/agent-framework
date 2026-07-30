@@ -226,7 +226,7 @@ class RawFoundryChatClient(
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": project_endpoint,
                 "credential": credential,
-                "custom_hook_policy": create_feature_usage_policy(),
+                "per_retry_policies": [create_feature_usage_policy()],
             }
             if IS_TELEMETRY_ENABLED:
                 project_client_kwargs["user_agent"] = get_user_agent()

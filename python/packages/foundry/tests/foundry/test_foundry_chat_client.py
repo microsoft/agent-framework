@@ -291,8 +291,10 @@ def test_init_with_project_endpoint_creates_project_client() -> None:
     assert factory.call_args.kwargs["credential"] is credential
     assert factory.call_args.kwargs["allow_preview"] is True
     assert factory.call_args.kwargs["user_agent"] == get_user_agent()
-    assert isinstance(factory.call_args.kwargs["custom_hook_policy"], FeatureUsagePolicy)
-    assert "user_agent_policy" not in factory.call_args.kwargs
+    policies = factory.call_args.kwargs["per_retry_policies"]
+    assert len(policies) == 1
+    assert isinstance(policies[0], FeatureUsagePolicy)
+    assert "custom_hook_policy" not in factory.call_args.kwargs
 
 
 def test_init_with_empty_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:

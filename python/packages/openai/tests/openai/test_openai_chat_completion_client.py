@@ -1921,6 +1921,9 @@ async def test_streaming_feature_is_marked_when_request_is_sent(
             options={},
         )
         assert isinstance(stream, ResponseStream)
+        token = telemetry.get_feature_token()
+        assert token is None or not int(token.split(".", 1)[1], 16) & (1 << FeatureIndex.OPENAI)
+
         mark_feature_used(CoreFeatureIndex.CORE_AGENT)
         async for _ in stream:
             pass

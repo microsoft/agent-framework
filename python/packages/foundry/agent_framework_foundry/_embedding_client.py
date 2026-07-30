@@ -157,12 +157,17 @@ class RawFoundryEmbeddingClient(
         client_kwargs: dict[str, Any] = {
             "endpoint": resolved_endpoint,
             "credential": credential,
-            "custom_hook_policy": create_feature_usage_policy(),
         }
         if IS_TELEMETRY_ENABLED:
             client_kwargs["user_agent"] = get_user_agent()
-        self._text_client = text_client or EmbeddingsClient(**client_kwargs)
-        self._image_client = image_client or ImageEmbeddingsClient(**client_kwargs)
+        self._text_client = text_client or EmbeddingsClient(
+            **client_kwargs,
+            per_retry_policies=[create_feature_usage_policy()],
+        )
+        self._image_client = image_client or ImageEmbeddingsClient(
+            **client_kwargs,
+            per_retry_policies=[create_feature_usage_policy()],
+        )
         self._endpoint = resolved_endpoint
         super().__init__(additional_properties=additional_properties)
 

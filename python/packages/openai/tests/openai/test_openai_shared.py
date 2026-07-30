@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import TracebackType
 from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import agent_framework._telemetry as telemetry
 import httpx
@@ -100,6 +101,18 @@ async def test_feature_usage_hook_stamps_approved_origin_and_strips_custom_origi
 
     assert approved.headers["User-Agent"] == f"{AGENT_FRAMEWORK_USER_AGENT} sdk/1.0 (feat=v1.1)"
     assert custom.headers["User-Agent"] == AGENT_FRAMEWORK_USER_AGENT
+
+
+async def test_feature_usage_http_client_preserves_sdk_gc_cleanup() -> None:
+    client = create_feature_usage_http_client()
+    close = AsyncMock()
+
+    with patch.object(client, "aclose", close):
+        cast(Any, client).__del__()
+        await asyncio.sleep(0)
+
+    close.assert_awaited_once()
+    await client.aclose()
 
 
 async def test_ensure_async_token_provider_wraps_sync_provider() -> None:

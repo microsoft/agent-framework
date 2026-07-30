@@ -211,13 +211,13 @@ class TestRawFoundryEmbeddingClient:
                 endpoint="https://env.inference.ai.azure.com",
                 credential=ANY,
                 user_agent=get_user_agent(),
-                custom_hook_policy=ANY,
+                per_retry_policies=[ANY],
             )
             image_client_type.assert_called_once_with(
                 endpoint="https://env.inference.ai.azure.com",
                 credential=ANY,
                 user_agent=get_user_agent(),
-                custom_hook_policy=ANY,
+                per_retry_policies=[ANY],
             )
 
     def test_image_model_from_env(self) -> None:

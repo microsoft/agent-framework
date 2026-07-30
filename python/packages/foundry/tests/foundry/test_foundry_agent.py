@@ -137,8 +137,10 @@ def test_raw_foundry_agent_chat_client_creates_project_client_with_feature_polic
             agent_name="test-agent",
         )
 
-    assert isinstance(factory.call_args.kwargs["custom_hook_policy"], FeatureUsagePolicy)
-    assert "user_agent_policy" not in factory.call_args.kwargs
+    policies = factory.call_args.kwargs["per_retry_policies"]
+    assert len(policies) == 1
+    assert isinstance(policies[0], FeatureUsagePolicy)
+    assert "custom_hook_policy" not in factory.call_args.kwargs
 
 
 async def test_foundry_agent_basic_call_does_not_request_unsupported_encrypted_reasoning() -> None:
