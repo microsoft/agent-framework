@@ -9,7 +9,7 @@ import warnings
 from functools import wraps
 from pathlib import Path
 from typing import Annotated, Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import agent_framework._telemetry as telemetry
 import pytest
@@ -230,6 +230,7 @@ def test_init() -> None:
     assert client.model == _TEST_FOUNDRY_MODEL
     assert client.project_client is mock_project_client
     assert isinstance(client, SupportsChatGetResponse)
+    mock_project_client.get_openai_client.assert_called_once_with()
 
 
 def test_raw_foundry_chat_client_init_uses_explicit_parameters() -> None:
@@ -269,6 +270,7 @@ def test_init_with_default_header() -> None:
         assert client.default_headers is not None
         assert key in client.default_headers
         assert client.default_headers[key] == value
+    project_client.get_openai_client.assert_called_once_with(default_headers=default_headers)
 
 
 def test_init_with_project_endpoint_creates_project_client() -> None:
@@ -295,6 +297,7 @@ def test_init_with_project_endpoint_creates_project_client() -> None:
     assert len(policies) == 1
     assert isinstance(policies[0], FeatureUsagePolicy)
     assert "custom_hook_policy" not in factory.call_args.kwargs
+    project_client.get_openai_client.assert_called_once_with(http_client=ANY)
 
 
 def test_init_with_empty_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:

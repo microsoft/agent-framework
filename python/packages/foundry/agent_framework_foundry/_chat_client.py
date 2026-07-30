@@ -209,12 +209,13 @@ class RawFoundryChatClient(
 
         project_endpoint = foundry_settings.get("project_endpoint")
 
+        owns_project_client = project_client is None
         if project_endpoint is None and project_client is None:
             raise ValueError(
                 "Either 'project_endpoint' or 'project_client' is required. "
                 "Set project_endpoint via parameter or 'FOUNDRY_PROJECT_ENDPOINT' environment variable."
             )
-        if not project_client:
+        if project_client is None:
             if not project_endpoint:
                 raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
@@ -237,7 +238,8 @@ class RawFoundryChatClient(
         openai_kwargs: dict[str, Any] = {}
         if default_headers:
             openai_kwargs["default_headers"] = default_headers
-        openai_kwargs["http_client"] = create_foundry_feature_usage_http_client()
+        if owns_project_client:
+            openai_kwargs["http_client"] = create_foundry_feature_usage_http_client()
 
         super().__init__(
             model=resolved_model,

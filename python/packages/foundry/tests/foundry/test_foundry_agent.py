@@ -123,7 +123,7 @@ def test_raw_foundry_agent_chat_client_init_with_agent_name() -> None:
 
     assert client.agent_name == "test-agent"
     assert client.agent_version == "1.0"
-    mock_project.get_openai_client.assert_called_once_with(http_client=ANY)
+    mock_project.get_openai_client.assert_called_once_with()
 
 
 def test_raw_foundry_agent_chat_client_creates_project_client_with_feature_policy() -> None:
@@ -141,6 +141,7 @@ def test_raw_foundry_agent_chat_client_creates_project_client_with_feature_polic
     assert len(policies) == 1
     assert isinstance(policies[0], FeatureUsagePolicy)
     assert "custom_hook_policy" not in factory.call_args.kwargs
+    mock_project.get_openai_client.assert_called_once_with(http_client=ANY)
 
 
 async def test_foundry_agent_basic_call_does_not_request_unsupported_encrypted_reasoning() -> None:
@@ -238,7 +239,6 @@ def test_raw_foundry_agent_chat_client_init_passes_agent_name_when_preview_enabl
     mock_project.get_openai_client.assert_called_once_with(
         agent_name="hosted-agent",
         default_headers={"x-test": "1"},
-        http_client=ANY,
     )
 
 
@@ -1154,12 +1154,13 @@ async def test_foundry_agent_create_conversation_returns_agent_session() -> None
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = openai_client
     agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
+    mock_project.get_openai_client.reset_mock()
 
     session = await agent.create_conversation()
 
     assert isinstance(session, AgentSession)
     assert session.service_session_id == "conv_123"
-    mock_project.get_openai_client.assert_called()
+    mock_project.get_openai_client.assert_not_called()
     openai_client.conversations.create.assert_awaited_once_with()
 
 
@@ -1171,11 +1172,13 @@ async def test_foundry_agent_create_conversation_accepts_local_session_id() -> N
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = openai_client
     agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
+    mock_project.get_openai_client.reset_mock()
 
     session = await agent.create_conversation(session_id="local-session")
 
     assert session.session_id == "local-session"
     assert session.service_session_id == "conv_123"
+    mock_project.get_openai_client.assert_not_called()
 
 
 def test_foundry_agent_init() -> None:

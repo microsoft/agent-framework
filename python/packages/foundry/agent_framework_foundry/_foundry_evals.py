@@ -47,7 +47,7 @@ from agent_framework._telemetry import mark_feature_used
 from openai import AsyncOpenAI
 
 from ._chat_client import FoundryChatClient
-from ._feature_usage import FeatureIndex, create_foundry_feature_usage_http_client
+from ._feature_usage import FeatureIndex
 
 if TYPE_CHECKING:
     from azure.ai.projects.aio import AIProjectClient
@@ -667,7 +667,7 @@ def _resolve_openai_client(
             return client.client
         return client
     if project_client is not None:
-        oai = project_client.get_openai_client(http_client=create_foundry_feature_usage_http_client())
+        oai = project_client.get_openai_client()
         if oai is None:  # pyright: ignore[reportUnnecessaryComparison]
             raise ValueError("project_client.get_openai_client() returned None. Check project configuration.")
         if not isinstance(oai, AsyncOpenAI):

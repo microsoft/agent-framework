@@ -269,7 +269,8 @@ class RawFoundryAgentChatClient(
         openai_client_kwargs: dict[str, Any] = {}
         if default_headers:
             openai_client_kwargs["default_headers"] = dict(default_headers)
-        openai_client_kwargs["http_client"] = create_foundry_feature_usage_http_client()
+        if self._should_close_client:
+            openai_client_kwargs["http_client"] = create_foundry_feature_usage_http_client()
         if allow_preview:
             openai_client_kwargs["agent_name"] = self.agent_name
         openai_client = self.project_client.get_openai_client(**openai_client_kwargs)
@@ -808,9 +809,7 @@ class RawFoundryAgent(
             Foundry conversation ID.
         """
         client = cast(RawFoundryAgentChatClient, self.client)
-        conversation = await client.project_client.get_openai_client(
-            http_client=create_foundry_feature_usage_http_client()
-        ).conversations.create()
+        conversation = await client.client.conversations.create()
         return self.get_session(service_session_id=conversation.id, session_id=session_id)
 
     @override
