@@ -96,19 +96,53 @@ def _force_blank_tool_choice_none_fallback(
     chat_client_base._get_streaming_response = _get_streaming_response
 
 
-def _post_limit_tool_content(
+def _post_limit_local_tool_content(
     content_type: Literal["function_call", "function_approval_request"],
 ) -> Content:
-    function_call = Content.from_function_call(call_id="call_2", name="lookup", arguments='{"key": "b"}')
+    function_call = Content.from_function_call(call_id="local_call_2", name="lookup", arguments='{"key": "b"}')
     if content_type == "function_call":
         return function_call
-    return Content.from_function_approval_request(id="approval_2", function_call=function_call)
+    return Content.from_function_approval_request(id="local_approval_2", function_call=function_call)
+
+
+def _post_limit_informational_transcript() -> list[Content]:
+    return [
+        Content.from_function_call(
+            call_id="provider_call_2",
+            name="provider_lookup",
+            arguments='{"key": "b"}',
+            informational_only=True,
+        ),
+        Content.from_function_result(call_id="provider_call_2", result="Value for b"),
+        Content.from_text("Provider completed the lookup."),
+    ]
+
+
+def _post_limit_hosted_approval_request() -> Content:
+    function_call = Content.from_function_call(
+        call_id="hosted_call_2",
+        name="hosted_lookup",
+        arguments='{"key": "b"}',
+        additional_properties={"server_label": "hosted_server"},
+    )
+    return Content.from_function_approval_request(id="hosted_approval_2", function_call=function_call)
+
+
+def _configure_function_invocation_limit(
+    chat_client_base: Any,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+) -> None:
+    if limit_type == "max_function_calls":
+        chat_client_base.function_invocation_configuration["max_iterations"] = 10
+        chat_client_base.function_invocation_configuration["max_function_calls"] = 1
+    else:
+        chat_client_base.function_invocation_configuration["max_iterations"] = 1
 
 
 def _force_tool_content_tool_choice_none_stream(
     chat_client_base: Any,
     *,
-    content: Content,
+    contents: Sequence[Content],
     additional_properties: dict[str, Any] | None = None,
     finish_reason: Literal["stop", "length", "tool_calls", "content_filter"] | None = None,
 ) -> None:
@@ -125,7 +159,7 @@ def _force_tool_content_tool_choice_none_stream(
 
         updates = (
             ChatResponseUpdate(
-                contents=[content],
+                contents=list(contents),
                 role="assistant",
                 additional_properties=additional_properties,
                 finish_reason=finish_reason,
@@ -3724,13 +3758,13 @@ async def test_streaming_max_function_calls_blank_final_fallback_synthesizes_upd
 @pytest.mark.parametrize("content_type", ["function_call", "function_approval_request"])
 async def test_function_invocation_limit_drops_unexecutable_tool_content(
     chat_client_base: SupportsChatGetResponse,
-    limit_type: str,
+    limit_type: Literal["max_function_calls", "max_iterations"],
     content_type: Literal["function_call", "function_approval_request"],
 ) -> None:
     """Tool content returned after the active limit is not exposed without a terminal result."""
     _force_blank_tool_choice_none_fallback(
         chat_client_base,
-        final_contents=[_post_limit_tool_content(content_type)],
+        final_contents=[_post_limit_local_tool_content(content_type)],
     )
     exec_counter = 0
 
@@ -3748,11 +3782,7 @@ async def test_function_invocation_limit_drops_unexecutable_tool_content(
             )
         )
     ]
-    if limit_type == "max_function_calls":
-        chat_client_base.function_invocation_configuration["max_iterations"] = 10  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    else:
-        chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
 
     response = await chat_client_base.get_response(
         [Message(role="user", contents=["look up key"])],
@@ -3781,13 +3811,13 @@ async def test_function_invocation_limit_drops_unexecutable_tool_content(
 @pytest.mark.parametrize("content_type", ["function_call", "function_approval_request"])
 async def test_streaming_function_invocation_limit_drops_unexecutable_tool_content(
     chat_client_base: SupportsChatGetResponse,
-    limit_type: str,
+    limit_type: Literal["max_function_calls", "max_iterations"],
     content_type: Literal["function_call", "function_approval_request"],
 ) -> None:
     """Tool content returned after the active limit is not exposed without a terminal result."""
     _force_tool_content_tool_choice_none_stream(
         chat_client_base,
-        content=_post_limit_tool_content(content_type),
+        contents=[_post_limit_local_tool_content(content_type)],
     )
     exec_counter = 0
 
@@ -3805,11 +3835,7 @@ async def test_streaming_function_invocation_limit_drops_unexecutable_tool_conte
             ),
         ],
     ]
-    if limit_type == "max_function_calls":
-        chat_client_base.function_invocation_configuration["max_iterations"] = 10  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    else:
-        chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
 
     updates = [
         update
@@ -3840,13 +3866,13 @@ async def test_streaming_function_invocation_limit_drops_unexecutable_tool_conte
 @pytest.mark.parametrize("content_type", ["function_call", "function_approval_request"])
 async def test_streaming_function_invocation_limit_preserves_metadata_after_tool_content_is_dropped(
     chat_client_base: SupportsChatGetResponse,
-    limit_type: str,
+    limit_type: Literal["max_function_calls", "max_iterations"],
     content_type: Literal["function_call", "function_approval_request"],
 ) -> None:
     """Metadata-only chunks survive when their unexecutable function call content is removed."""
     _force_tool_content_tool_choice_none_stream(
         chat_client_base,
-        content=_post_limit_tool_content(content_type),
+        contents=[_post_limit_local_tool_content(content_type)],
         additional_properties={"provider_metadata": "keep"},
         finish_reason="stop",
     )
@@ -3863,11 +3889,7 @@ async def test_streaming_function_invocation_limit_preserves_metadata_after_tool
             ),
         ],
     ]
-    if limit_type == "max_function_calls":
-        chat_client_base.function_invocation_configuration["max_iterations"] = 10  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-    else:
-        chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
 
     updates = [
         update
@@ -3884,6 +3906,259 @@ async def test_streaming_function_invocation_limit_preserves_metadata_after_tool
     ]
     assert len(metadata_updates) == 1
     assert metadata_updates[0].contents == []
+
+
+@pytest.mark.parametrize("limit_type", ["max_function_calls", "max_iterations"])
+async def test_function_invocation_limit_preserves_provider_executed_tool_pair(
+    chat_client_base: SupportsChatGetResponse,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+) -> None:
+    """Provider-executed tool transcripts remain complete after the local invocation limit."""
+    provider_transcript = _post_limit_informational_transcript()
+    final_contents = [_post_limit_local_tool_content("function_call"), *provider_transcript]
+    _force_blank_tool_choice_none_fallback(chat_client_base, final_contents=final_contents)
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+            )
+        )
+    ]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["look up key"])],
+        options={"tool_choice": "auto", "tools": [lookup_func]},
+    )
+
+    assert exec_counter == 1
+    assert response.messages[-1].contents == provider_transcript
+    assert response.messages[-1].text == "Provider completed the lookup."
+
+
+@pytest.mark.parametrize("limit_type", ["max_function_calls", "max_iterations"])
+async def test_streaming_function_invocation_limit_preserves_provider_executed_tool_pair(
+    chat_client_base: SupportsChatGetResponse,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+) -> None:
+    """Streaming preserves provider-executed calls with their paired results after the local limit."""
+    provider_transcript = _post_limit_informational_transcript()
+    final_contents = [_post_limit_local_tool_content("function_call"), *provider_transcript]
+    _force_tool_content_tool_choice_none_stream(chat_client_base, contents=final_contents)
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
+
+    updates = [
+        update
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["look up key"])],
+            options={"tool_choice": "auto", "tools": [lookup_func]},
+            stream=True,
+        )
+    ]
+    provider_contents = [
+        content for update in updates for content in update.contents if content.call_id == "provider_call_2"
+    ]
+
+    assert exec_counter == 1
+    assert [content.type for content in provider_contents] == ["function_call", "function_result"]
+    assert not any(content.call_id == "local_call_2" for update in updates for content in update.contents)
+    assert any(update.text == "Provider completed the lookup." for update in updates)
+    assert not any(update.text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT for update in updates)
+
+
+async def test_function_invocation_limit_appends_fallback_after_provider_executed_tool_pair(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Fallback text is added without replacing a provider-owned call/result pair."""
+    provider_transcript = _post_limit_informational_transcript()[:2]
+    final_contents = [_post_limit_local_tool_content("function_call"), *provider_transcript]
+    _force_blank_tool_choice_none_fallback(chat_client_base, final_contents=final_contents)
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        return f"Value for {key}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+            )
+        )
+    ]
+    _configure_function_invocation_limit(chat_client_base, "max_function_calls")
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["look up key"])],
+        options={"tool_choice": "auto", "tools": [lookup_func]},
+    )
+
+    assert response.messages[-2].contents == provider_transcript
+    assert response.messages[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
+async def test_streaming_function_invocation_limit_appends_fallback_after_provider_executed_tool_pair(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Streaming emits fallback text after preserving a provider-owned call/result pair."""
+    provider_transcript = _post_limit_informational_transcript()[:2]
+    final_contents = [_post_limit_local_tool_content("function_call"), *provider_transcript]
+    _force_tool_content_tool_choice_none_stream(chat_client_base, contents=final_contents)
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    _configure_function_invocation_limit(chat_client_base, "max_function_calls")
+
+    updates = [
+        update
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["look up key"])],
+            options={"tool_choice": "auto", "tools": [lookup_func]},
+            stream=True,
+        )
+    ]
+    provider_contents = [
+        content for update in updates for content in update.contents if content.call_id == "provider_call_2"
+    ]
+
+    assert [content.type for content in provider_contents] == ["function_call", "function_result"]
+    assert not any(content.call_id == "local_call_2" for update in updates for content in update.contents)
+    assert updates[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
+@pytest.mark.parametrize("limit_type", ["max_function_calls", "max_iterations"])
+async def test_function_invocation_limit_preserves_hosted_approval_request(
+    chat_client_base: SupportsChatGetResponse,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+) -> None:
+    """Hosted approvals remain available to the caller after the local invocation limit."""
+    hosted_approval = _post_limit_hosted_approval_request()
+    final_contents = [_post_limit_local_tool_content("function_approval_request"), hosted_approval]
+    _force_blank_tool_choice_none_fallback(chat_client_base, final_contents=final_contents)
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+            )
+        )
+    ]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["look up key"])],
+        options={"tool_choice": "auto", "tools": [lookup_func]},
+    )
+
+    assert exec_counter == 1
+    assert any(
+        content.type == "function_approval_request" and content.id == "hosted_approval_2"
+        for message in response.messages
+        for content in message.contents
+    )
+    assert not any(
+        content.type == "function_approval_request" and content.id == "local_approval_2"
+        for message in response.messages
+        for content in message.contents
+    )
+    assert not any(
+        content.text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+        for message in response.messages
+        for content in message.contents
+    )
+
+
+@pytest.mark.parametrize("limit_type", ["max_function_calls", "max_iterations"])
+async def test_streaming_function_invocation_limit_preserves_hosted_approval_request(
+    chat_client_base: SupportsChatGetResponse,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+) -> None:
+    """Streaming keeps hosted approvals actionable after the local invocation limit."""
+    hosted_approval = _post_limit_hosted_approval_request()
+    final_contents = [_post_limit_local_tool_content("function_approval_request"), hosted_approval]
+    _force_tool_content_tool_choice_none_stream(chat_client_base, contents=final_contents)
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
+
+    updates = [
+        update
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["look up key"])],
+            options={"tool_choice": "auto", "tools": [lookup_func]},
+            stream=True,
+        )
+    ]
+
+    assert exec_counter == 1
+    assert any(
+        content.type == "function_approval_request" and content.id == "hosted_approval_2"
+        for update in updates
+        for content in update.contents
+    )
+    assert not any(
+        content.type == "function_approval_request" and content.id == "local_approval_2"
+        for update in updates
+        for content in update.contents
+    )
+    assert not any(update.text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT for update in updates)
 
 
 async def test_streaming_function_invocation_config_enabled_false(chat_client_base: SupportsChatGetResponse):
