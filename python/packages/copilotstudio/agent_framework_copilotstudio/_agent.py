@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Sequence
-from typing import Any, Literal, TypedDict, overload
+from typing import Any, Literal, TypedDict, cast, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -116,11 +116,14 @@ class CopilotStudioAgent(BaseAgent):
             custom_power_platform_cloud: Custom Power Platform cloud URL if using
                 a custom environment.
             client_session_settings: Optional keyword arguments forwarded to the underlying
-                aiohttp ``ClientSession`` used by the created client. Only applied when the agent
-                builds the client internally (ignored when ``client`` or ``settings`` is provided).
-                Defaults to ``read_bufsize`` of ``DEFAULT_READ_BUFSIZE`` (1 MiB) so large Copilot
-                Studio activities do not trigger ``aiohttp`` ``LineTooLong`` errors; override
-                ``read_bufsize`` here to raise or lower that limit.
+                aiohttp ``ClientSession`` used by the created client. Only used when the agent
+                builds the client from scratch (ignored when ``client`` or ``settings`` is provided).
+                Whenever the agent builds the client itself (including when only ``settings`` is
+                provided), ``read_bufsize`` defaults to ``DEFAULT_READ_BUFSIZE`` (1 MiB) so large
+                Copilot Studio activities do not trigger ``aiohttp`` ``LineTooLong`` errors; set
+                ``read_bufsize`` (here or on the provided ``settings.client_session_settings``) to
+                raise or lower that limit. When you pass a fully built ``client``, configure
+                ``read_bufsize`` on its ``ConnectionSettings.client_session_settings`` yourself.
             username: Optional username for token acquisition.
             token_cache: Optional token cache for storing authentication tokens.
             scopes: Optional list of authentication scopes. Defaults to Power Platform
@@ -176,6 +179,11 @@ class CopilotStudioAgent(BaseAgent):
                     custom_power_platform_cloud=custom_power_platform_cloud,
                     client_session_settings=resolved_session_settings,
                 )
+            else:
+                # User supplied their own ConnectionSettings but no client, so the agent still builds
+                # the client. Ensure the read_bufsize default is present without overriding an explicit value.
+                supplied_session_settings = cast("dict[str, Any]", settings.client_session_settings)  # pyright: ignore[reportUnknownMemberType]
+                supplied_session_settings.setdefault("read_bufsize", DEFAULT_READ_BUFSIZE)
 
             if not token:
                 if not resolved_client_id:
