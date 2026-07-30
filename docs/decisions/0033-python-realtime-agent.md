@@ -195,6 +195,17 @@ The exact method names are implementation details, but the type must make lifecy
 inputs and translate them into provider-level realtime events. Provider sessions should not own these agent-level
 conveniences.
 
+`RealtimeConversation.send(...)` normalization must be deterministic:
+
+| Input to `send(...)` | Normalization |
+| --- | --- |
+| `str`, `Content`, `Message`, or sequences of those | Reuse the same `AgentRunInputs` / `normalize_messages(...)` path used by `agent.run(...)`, then convert normalized `Message` values to provider conversation events. |
+| `RealtimeEvent` | Send as-is to the provider session. |
+
+Realtime should not invent a second input-normalization stack. The provider-specific mapper starts from normalized
+`Message` objects and converts their contents to the matching provider realtime events, for example input text, input
+audio, or function result events.
+
 Illustrative shape:
 
 ```python
@@ -244,6 +255,10 @@ class RealtimeConversation:
   receive task, drains/terminates queues, and surfaces receive-loop failures.
 - **Preserve session state**. Durable continuation values discovered during the live conversation are copied back to the
   associated `RealtimeAgentSession` / `AgentSession` when they are future-call continuation state.
+- **Finalize authored turns, not protocol noise**. When the conversation closes, only authored user, assistant, and tool
+  turns should flow through the normal `SessionContext` / context-provider history path. Control events, VAD events,
+  rate-limit events, raw audio-buffer events, and provider lifecycle events remain in the update stream and raw
+  representations; they should not be persisted as durable chat messages.
 
 `RealtimeConversation` should not:
 
@@ -311,7 +326,8 @@ Entering and exiting the async context should be deterministic:
   `create_response=True`.
 - `__aexit__` stops accepting new sends, requests provider/session close, cancels the receive loop if it is still
   running, drains or terminates the update stream, propagates receive-loop errors unless already superseded by the context
-  exception, and writes durable continuation state back to the associated `AgentSession`.
+  exception, writes durable continuation state back to the associated `AgentSession`, and runs normal context-provider
+  finalization only for authored messages that should become durable history.
 - `close()` should be idempotent and should perform the same cleanup as `__aexit__`.
 
 ### Audio I/O and hosted media bridges
@@ -319,10 +335,9 @@ Entering and exiting the async context should be deterministic:
 `RealtimeConversation` should start with one send path: text, messages, content, audio content, and explicit realtime events
 are sent through `conversation.send(...)`. Audio is emitted as `AgentResponseUpdate` content.
 
-The framework should define small provider-neutral audio bridge shapes, for example an audio frame type and source/sink
-protocols, so callers can connect microphone/speaker helpers or hosted media streams to `RealtimeConversation`. Concrete
-device drivers and ACS-specific web apps should remain samples or optional integrations, but users should not have to
-drop below the agent/conversation API to build the common loops:
+Samples should prove audio bridge shapes before the framework defines shared source/sink protocols. Concrete device
+drivers and ACS-specific web apps should remain samples or optional integrations. The first implementation should still
+make these common loops possible through `RealtimeConversation`:
 
 - local microphone -> `conversation.send(Content.from_data(...))`;
 - conversation audio content -> local speaker;
@@ -330,12 +345,17 @@ drop below the agent/conversation API to build the common loops:
 - conversation audio content -> ACS websocket audio data;
 - VAD/barge-in events -> local or hosted "stop current playback" signal.
 
+For direct realtime models that support truncation, audio sinks may need to report playback progress back to the
+conversation. For example, OpenAI-style truncation needs the response item id, content index, and `audio_end_ms` so the
+provider does not retain transcript/audio that was generated but never heard after barge-in. The first implementation can
+keep this as a small optional sink-to-conversation callback or event, but it must not ignore the problem: without a
+playback-progress path, later turns can reason over unheard words.
+
 A dedicated low-latency audio callback can be added later if the content-update path is not smooth enough for local
 speaker playback, WebRTC tracks, or ACS websocket forwarding.
 
-Do not add a broad audio framework in the first implementation. The first implementation should use the smallest bridge
-contracts proven by one local mic/speaker sample and one hosted media stream sample, if those samples are part of the
-same work. Otherwise leave concrete bridge helpers for a later slice.
+Do not add a broad audio framework in the first implementation. Shared audio source/sink protocols are deferred until at
+least two concrete examples prove the same shape.
 
 ### Direct realtime model path
 
@@ -345,6 +365,15 @@ Add provider-neutral direct realtime client/session protocols in core. The shape
 - a realtime session sends `RealtimeEvent` commands;
 - a realtime session yields provider events mapped to `AgentResponseUpdate`;
 - raw provider events remain reachable through `raw_representation`.
+
+The provider-level input and output shape is deliberately not `AgentResponseUpdate`:
+
+- client input is `RealtimeEvent` commands and provider options;
+- client output is `AsyncIterable[RealtimeEvent]`;
+- `RealtimeConversation` accepts user conveniences such as `str`, `Message`, and `Content`, normalizes them with the
+  existing `AgentRunInputs` / `normalize_messages(...)` path, and maps them to provider events;
+- audio-only input and output use `Content.from_data(..., media_type="audio/...")` at the agent layer and
+  `RealtimeEvent.content` at the provider/session boundary.
 
 Add `RawRealtimeAgent` / `RealtimeAgent` over this client/session shape:
 
@@ -382,6 +411,11 @@ contract fits realtime. Current `AgentMiddlewareLayer` is shaped around the chat
 chat options, tool forwarding, compaction, tokenizer, and chat/function middleware forwarding. If `RawRealtimeAgent.run`
 does not intentionally support that same compatible shape, the realtime implementation should factor out the reusable
 middleware/telemetry pieces or add small realtime-specific adapter layers rather than inheriting chat assumptions.
+
+Middleware and telemetry support for audio-only interactions should be explicit. Middleware that only inspects text must
+not assume every update has text. Telemetry should record provider/model/session metadata and timing, but raw audio
+payloads should not be captured by default. Token/usage metrics are provider-dependent for realtime audio and should be
+best-effort rather than required for every event.
 
 OpenAI realtime is the first provider implementation and belongs in `agent-framework-openai`, for example as
 `RawOpenAIRealtimeClient` / `OpenAIRealtimeClient`. Core must not take an OpenAI SDK dependency.
@@ -449,9 +483,9 @@ available, inner-agent response start/end, TTS audio start/end, interruption, ca
 `RealtimeConversation` is live runtime state. `AgentSession` is durable serialized state. Do not store sockets, tasks, audio
 streams, or provider session objects in `AgentSession`.
 
-Add a `RealtimeAgentSession` only for durable state and compatibility checks. It can carry service-owned continuation
-state through `service_session_id` and namespaced serializable state where needed. Following ADR 0029, values are placed
-by lifecycle:
+Use `AgentSession` first for durable state and compatibility checks. Add `RealtimeAgentSession` only when a concrete
+provider needs typed durable realtime state that cannot be represented clearly with `AgentSession.service_session_id` or
+namespaced serializable state. Following ADR 0029, values are placed by lifecycle:
 
 - future-call continuation -> `AgentSession.service_session_id` or namespaced session state;
 - single response/event identity -> response/update/event metadata;
@@ -491,6 +525,15 @@ The first direct realtime implementation should open a fresh ephemeral realtime 
 input, requests or commits a response, drains until the terminal response event, and closes the live session. Warm
 connection reuse is a later optimization because it complicates cancellation, session compatibility, and resource
 ownership.
+
+Bounded `run(...)` needs a terminal-error contract in addition to terminal response events. Some realtime providers emit
+recoverable `error` events and keep the session open. If an error is correlated to the current input or response request,
+the bounded run should fail or finalize with an error instead of waiting forever for a response-done event that will not
+arrive. A timeout/cancellation fallback is also required for missing terminal events.
+
+Streaming `run(..., stream=True)` must also clean up deterministically if the caller stops iteration early. The
+implementation must provide an explicit close/cancel path or a stream wrapper that closes the ephemeral realtime session
+and receive task when iteration is abandoned. Breaking out after one update must not leave a live socket behind.
 
 Sandwich `run(...)` follows the same half-duplex projection: it processes one input turn through STT if needed, runs the
 inner agent, optionally synthesizes audio, emits updates, and closes live resources.
@@ -1135,7 +1178,7 @@ differs where Python needs a more idiomatic or practical shape:
 
 ## More Information
 
-- .NET realtime ADR draft: `https://github.com/rogerbarreto/agent-framework-public/blob/features/realtime-agent/docs/decisions/0030-realtime-ai-agent.md`
-- Semantic Kernel realtime client ADR: `https://github.com/microsoft/semantic-kernel/blob/main/docs/decisions/0065-realtime-api-clients.md`
+- [.NET realtime ADR draft](https://github.com/rogerbarreto/agent-framework-public/blob/features/realtime-agent/docs/decisions/0030-realtime-ai-agent.md)
+- [Semantic Kernel realtime client ADR](https://github.com/microsoft/semantic-kernel/blob/main/docs/decisions/0065-realtime-api-clients.md)
 - Python session identity ADR: [`0029-python-agent-session-identity.md`](0029-python-agent-session-identity.md)
 - Provider package separation ADR: [`0021-provider-leading-clients.md`](0021-provider-leading-clients.md)
