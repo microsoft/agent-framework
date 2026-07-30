@@ -115,6 +115,13 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
             return new AgentResponse(new ChatMessage(ChatRole.Assistant, [nextQueuedItem]));
         }
 
+        // When the caller did not supply a session, create one and use it for every inner call.
+        // The auto-approval loop re-invokes the inner agent with only the injected approval
+        // responses; without a session the inner agent has no conversation history to reconstruct
+        // the original request, which produces an empty request to the underlying service. Threading
+        // a session preserves the history across re-invocations.
+        session ??= await this.InnerAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
         // 3. Call the inner agent in a loop. If the inner agent returns approval requests
         //    that are ALL auto-approved by standing rules, we immediately re-call with the
         //    collected approval responses injected. This avoids returning empty responses.
@@ -157,6 +164,11 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
             yield return new AgentResponseUpdate(ChatRole.Assistant, [nextQueuedItem]);
             yield break;
         }
+
+        // When the caller did not supply a session, create one and use it for every inner call so
+        // conversation history is preserved across auto-approval re-invocations. See the non-streaming
+        // RunCoreAsync for details.
+        session ??= await this.InnerAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
         // 3. Stream from the inner agent in a loop. If all approval requests from the stream
         //    are auto-approved by standing rules, we immediately re-stream with the collected

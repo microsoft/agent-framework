@@ -62,7 +62,6 @@ from agent_framework._types import (
     TextSpanRegion,
     UsageDetails,
     detect_media_type_from_base64,
-    prepend_instructions_to_messages,
     validate_tool_mode,
 )
 from agent_framework.exceptions import (
@@ -1377,7 +1376,6 @@ class RawOpenAIChatClient(
             "logit_bias",  # not supported
             "seed",  # not supported
             "stop",  # not supported
-            "instructions",  # already added as system message
             "response_format",  # handled separately
             "conversation_id",  # handled separately
             "tool_choice",  # handled separately
@@ -1389,15 +1387,6 @@ class RawOpenAIChatClient(
             raise ChatClientInvalidRequestException(
                 "prompt_cache_options requires openai>=2.45.0; upgrade the openai package to use it."
             )
-
-        # messages
-        # Handle instructions by prepending to messages as system message
-        # Only prepend instructions for the first turn (when no conversation/response ID exists)
-        conversation_id = options.get("conversation_id")
-        if (instructions := options.get("instructions")) and not conversation_id:
-            # First turn: prepend instructions as system message
-            messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
-        # Continuation turn: instructions already exist in conversation context, skip prepending
         request_uses_service_side_storage = False
         for key in ("conversation_id", "previous_response_id", "conversation"):
             value = options.get(key)
@@ -1695,9 +1684,17 @@ class RawOpenAIChatClient(
                     )
                     if function_call:
                         all_messages.append(function_call)
-                case "function_approval_response" | "function_approval_request":
+                case "function_approval_request":
                     if request_uses_service_side_storage:
                         continue
+                    prepared = self._prepare_content_for_openai(
+                        message.role,
+                        content,
+                        replays_local_storage=replays_local_storage,
+                    )
+                    if prepared:
+                        all_messages.append(prepared)
+                case "function_approval_response":
                     prepared = self._prepare_content_for_openai(
                         message.role,
                         content,
@@ -3382,6 +3379,10 @@ class RawOpenAIChatClient(
             total_token_count=usage.total_tokens,
         )
         if usage.input_tokens_details:
+            cache_write_tokens = cast("int | None", getattr(usage.input_tokens_details, "cache_write_tokens", None))
+            if cache_write_tokens is not None:
+                details["openai.cache_write_tokens"] = cache_write_tokens
+                details["cache_creation_input_token_count"] = cache_write_tokens
             cached_tokens = cast("int | None", getattr(usage.input_tokens_details, "cached_tokens", None))
             if cached_tokens is not None:
                 details["openai.cached_input_tokens"] = cached_tokens

@@ -40,6 +40,7 @@ from fastapi.params import Depends
 from fastapi.testclient import TestClient
 
 from agent_framework_ag_ui import (
+    AGUIRequest,
     AGUIThreadSnapshot,
     InMemoryAGUIThreadSnapshotStore,
     add_agent_framework_fastapi_endpoint,
@@ -5160,3 +5161,177 @@ def test_workflow_factory_cache_is_scoped_by_snapshot_scope():
 
     runner.clear_thread_workflow("thread-1")
     assert runner._resolve_workflow("thread-1", "tenant-b") is not workflow_b
+
+
+async def test_workflow_factory_cache_is_scoped_by_resolver_without_snapshot_store():
+    """Snapshot Scope resolver scopes live workflow_factory instances even without snapshot persistence."""
+
+    @executor(id="responder")
+    async def responder(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+        del message
+        await ctx.yield_output("Workflow response")
+
+    created_workflows: list[Any] = []
+
+    def factory(thread_id: str) -> Any:
+        del thread_id
+        workflow = WorkflowBuilder(start_executor=responder).build()
+        created_workflows.append(workflow)
+        return workflow
+
+    def resolve_scope(request: AGUIRequest) -> str:
+        forwarded_props = request.forwarded_props
+        assert forwarded_props is not None
+        tenant = forwarded_props["tenant"]
+        assert isinstance(tenant, str)
+        return tenant
+
+    app = FastAPI()
+    runner = AgentFrameworkWorkflow(workflow_factory=factory)
+    add_agent_framework_fastapi_endpoint(
+        app,
+        runner,
+        path="/workflow",
+        snapshot_scope_resolver=resolve_scope,
+    )
+    client = TestClient(app)
+
+    response_a = client.post(
+        "/workflow",
+        json={
+            "thread_id": "thread-1",
+            "messages": [{"role": "user", "content": "Hello tenant A"}],
+            "forwardedProps": {"tenant": "tenant-a"},
+        },
+    )
+    response_b = client.post(
+        "/workflow",
+        json={
+            "thread_id": "thread-1",
+            "messages": [{"role": "user", "content": "Hello tenant B"}],
+            "forwardedProps": {"tenant": "tenant-b"},
+        },
+    )
+    response_a_again = client.post(
+        "/workflow",
+        json={
+            "thread_id": "thread-1",
+            "messages": [{"role": "user", "content": "Hello tenant A again"}],
+            "forwardedProps": {"tenant": "tenant-a"},
+        },
+    )
+
+    assert response_a.status_code == 200
+    assert response_b.status_code == 200
+    assert response_a_again.status_code == 200
+    assert len(created_workflows) == 2
+    assert (
+        runner._resolve_workflow("thread-1", "tenant-a")  # pyright: ignore[reportPrivateUsage]
+        is created_workflows[0]
+    )
+    assert (
+        runner._resolve_workflow("thread-1", "tenant-b")  # pyright: ignore[reportPrivateUsage]
+        is created_workflows[1]
+    )
+
+
+async def test_endpoint_agent_approval_deferred_provider_tool_executes(streaming_chat_client_stub) -> None:
+    """A provider-injected tool approved via AG-UI executes in-run instead of being rejected.
+
+    Regression for #7043. A tool registered by a context provider during ``before_run`` is
+    absent from the transport's static tool map, so ``_resolve_approval_responses`` must defer
+    it (not execute or reject it) and leave it for the in-run ``ToolApprovalMiddleware`` to run.
+    This drives the full pause -> approve -> resume flow with a real provider-injected tool and
+    asserts the approved side effect actually happens without any rejection/failure result.
+
+    The deferred tool result must still be returned to AG-UI exactly once.
+    """
+    side_effects: list[str] = []
+    state = {"phase": "pause"}
+
+    def provider_write() -> str:
+        side_effects.append("wrote")
+        return "wrote to disk"
+
+    provider_tool = FunctionTool(
+        name="provider_write",
+        description="Write to disk (provider-injected)",
+        func=provider_write,
+        approval_mode="always_require",
+    )
+
+    class ToolInjectingProvider(ContextProvider):
+        """Registers a tool during before_run, mimicking FileAccessProvider/CodeInterpreterProvider."""
+
+        async def before_run(self, *, agent, session, context, state) -> None:  # type: ignore[override]  # pyrefly: ignore  # ty: ignore
+            del agent, session, state
+            context.extend_tools(self.source_id, [provider_tool])
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        if state["phase"] == "pause":
+            yield ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_provider", name="provider_write", arguments="{}")],
+                role="assistant",
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+
+    # provider_write is intentionally NOT in the static tools list -- it is only injected via before_run.
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[],
+        middleware=[ToolApprovalMiddleware()],
+        context_providers=[ToolInjectingProvider(source_id="tool_injector")],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        path="/approval",
+    )
+    client = TestClient(app)
+
+    # Pause: the harness surfaces the provider-injected tool for approval, nothing executes yet.
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-provider",
+            "messages": [{"role": "user", "content": "Write something"}],
+        },
+    )
+    assert pause_response.status_code == 200
+    pause_finished = [event for event in _decode_sse_events(pause_response) if event.get("type") == "RUN_FINISHED"]
+    assert [interrupt["id"] for interrupt in _run_finished_interrupts(pause_finished[-1])] == ["call_provider"]
+    assert side_effects == []
+
+    # Resume with approval: the deferred provider tool runs during agent.run.
+    state["phase"] = "resume"
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume",
+            "threadId": "thread-provider",
+            "messages": [],
+            "resume": [{"interruptId": "call_provider", "status": "resolved", "payload": {"accepted": True}}],
+        },
+    )
+    assert resume_response.status_code == 200
+    resume_events = _decode_sse_events(resume_response)
+    resume_text = json.dumps(resume_events)
+
+    # The approved provider tool actually executed -- its side effect fired.
+    assert side_effects == ["wrote"]
+    tool_results = [event for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"]
+    assert [(event["toolCallId"], event["content"]) for event in tool_results] == [("call_provider", "wrote to disk")]
+    # And it was neither rejected nor reported as a transport failure (the #7043 bug).
+    assert "Tool call invocation was rejected" not in resume_text
+    assert "Tool call invocation failed" not in resume_text
+    assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
