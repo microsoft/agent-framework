@@ -106,18 +106,18 @@ def _unambiguous_function_call_result_pairs(messages: Sequence[Message]) -> list
     pairs: list[tuple[int, int]] = []
 
     for message_index, message in enumerate(messages):
-        if message.role == "assistant":
-            for content in message.contents:
-                if content.type == "function_call" and content.call_id:
-                    unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
-        elif message.role == "tool":
-            for content in message.contents:
-                if content.type != "function_result" or not content.call_id:
-                    continue
-                candidates = unmatched_declaration_indices.get(content.call_id)
-                if candidates is None or len(candidates) != 1:
-                    continue
-                pairs.append((candidates.pop(), message_index))
+        if message.role not in ("assistant", "tool"):
+            continue
+        for content in message.contents:
+            if message.role == "assistant" and content.type == "function_call" and content.call_id:
+                unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
+                continue
+            if content.type != "function_result" or not content.call_id:
+                continue
+            candidates = unmatched_declaration_indices.get(content.call_id)
+            if candidates is None or len(candidates) != 1:
+                continue
+            pairs.append((candidates.pop(), message_index))
     return pairs
 
 
@@ -510,23 +510,23 @@ def _function_pair_reannotation_start(messages: Sequence[Message], start_index: 
     unmatched_declaration_indices: dict[str, list[int]] = {}
     matching_indices: list[int] = []
     for message_index, message in enumerate(messages):
-        if message.role == "assistant":
-            for content in message.contents:
-                if content.type == "function_call" and content.call_id:
-                    unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
-        elif message.role == "tool":
-            for content in message.contents:
-                if content.type != "function_result" or not content.call_id:
-                    continue
-                candidates = unmatched_declaration_indices.get(content.call_id)
-                if not candidates:
-                    continue
-                if message_index >= start_index:
-                    # Keep every earlier candidate in the re-annotation slice. Otherwise an ambiguous result can
-                    # appear unambiguous when an older declaration is hidden outside the slice.
-                    matching_indices.extend(index for index in candidates if index < start_index)
-                if len(candidates) == 1:
-                    candidates.pop()
+        if message.role not in ("assistant", "tool"):
+            continue
+        for content in message.contents:
+            if message.role == "assistant" and content.type == "function_call" and content.call_id:
+                unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
+                continue
+            if content.type != "function_result" or not content.call_id:
+                continue
+            candidates = unmatched_declaration_indices.get(content.call_id)
+            if not candidates:
+                continue
+            if message_index >= start_index:
+                # Keep every earlier candidate in the re-annotation slice. Otherwise an ambiguous result can
+                # appear unambiguous when an older declaration is hidden outside the slice.
+                matching_indices.extend(index for index in candidates if index < start_index)
+            if len(candidates) == 1:
+                candidates.pop()
     if not matching_indices:
         return start_index
 

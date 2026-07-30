@@ -49,6 +49,16 @@ def _assistant_function_call(call_id: str) -> Message:
     )
 
 
+def _assistant_function_call_with_result(call_id: str, result: str) -> Message:
+    return Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id=call_id, name="tool", arguments='{"value":"x"}'),
+            Content.from_function_result(call_id=call_id, result=result),
+        ],
+    )
+
+
 def _assistant_mcp_call(call_id: str) -> Message:
     return Message(
         role="assistant",
@@ -311,6 +321,42 @@ def test_group_annotations_pair_completed_reused_call_id_occurrences() -> None:
     assert _group_id(messages[2]) == _group_id(messages[4])
     assert _group_id(messages[0]) != _group_id(messages[2])
     assert _group_id(messages[3]) != _group_id(messages[2])
+
+
+def test_group_annotations_close_assistant_embedded_result_before_reused_call_id() -> None:
+    messages = [
+        _assistant_function_call_with_result("reused", "first"),
+        _assistant_function_call("reused"),
+        Message(role="assistant", contents=["approval completed"]),
+        _tool_result("reused", "second"),
+    ]
+
+    annotate_message_groups(messages)
+
+    first_occurrence_group = _group_id(messages[0])
+    second_occurrence_group = _group_id(messages[1])
+    assert first_occurrence_group is not None
+    assert second_occurrence_group is not None
+    assert _group_id(messages[3]) == second_occurrence_group
+    assert first_occurrence_group != second_occurrence_group
+    assert _group_id(messages[2]) != second_occurrence_group
+
+
+async def test_sliding_window_does_not_retain_orphan_result_after_assistant_embedded_result() -> None:
+    messages = [
+        _assistant_function_call_with_result("reused", "first"),
+        _assistant_function_call("reused"),
+        Message(role="assistant", contents=["approval completed"]),
+    ]
+    annotate_message_groups(messages)
+    extend_compaction_messages(messages, [_tool_result("reused", "second")])
+
+    await SlidingWindowStrategy(keep_last_groups=2, preserve_system=False)(messages)
+
+    assert messages[0].additional_properties[EXCLUDED_KEY] is True
+    assert messages[1].additional_properties[EXCLUDED_KEY] is False
+    assert messages[3].additional_properties[EXCLUDED_KEY] is False
+    assert _group_id(messages[1]) == _group_id(messages[3])
 
 
 async def test_sliding_window_keeps_reused_call_id_occurrences_atomic() -> None:
