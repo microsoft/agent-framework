@@ -3377,6 +3377,68 @@ async def test_declaration_only_tool(chat_client_base: SupportsChatGetResponse):
     assert len(function_results) == 0
 
 
+@pytest.mark.parametrize(
+    "argument_chunks",
+    [
+        ['{"location":', '"Seattle"}'],
+        ['{"location":"Seattle"}'],
+    ],
+    ids=["split-arguments", "single-chunk"],
+)
+async def test_streaming_declaration_only_tool_preserves_metadata_without_duplicate_arguments(
+    chat_client_base: SupportsChatGetResponse,
+    argument_chunks: list[str],
+) -> None:
+    """Declaration-only streaming emits metadata once without replaying already-streamed arguments."""
+    from agent_framework import FunctionTool
+
+    declaration_tool = FunctionTool(
+        name="get_weather",
+        func=None,
+        description="Get the weather",
+        input_model={"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]},
+    )
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_weather",
+                        name="get_weather",
+                        arguments=arguments,
+                    )
+                ],
+                role="assistant",
+            )
+            for arguments in argument_chunks
+        ]
+    ]
+
+    stream = chat_client_base.get_response(
+        [Message(role="user", contents=["What's the weather in Seattle?"])],
+        options={"tool_choice": "auto", "tools": [declaration_tool]},
+        stream=True,
+    )
+    metadata_updates: list[tuple[Any, str | None]] = []
+    async for update in stream:
+        for content in update.contents:
+            if content.type == "function_call" and content.call_id == "call_weather" and content.user_input_request:
+                metadata_updates.append((content.arguments, content.id))
+    final_response = await stream.get_final_response()
+    function_calls = [
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.call_id == "call_weather"
+    ]
+
+    assert metadata_updates == [(None, "call_weather")]
+    assert len(function_calls) == 1
+    assert function_calls[0].arguments == '{"location":"Seattle"}'
+    assert function_calls[0].user_input_request is True
+    assert function_calls[0].id == "call_weather"
+
+
 async def test_multiple_function_calls_parallel_execution(chat_client_base: SupportsChatGetResponse):
     """Test that multiple function calls are executed in parallel."""
     import asyncio

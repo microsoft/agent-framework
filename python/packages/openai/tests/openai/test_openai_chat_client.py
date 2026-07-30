@@ -4458,6 +4458,7 @@ def test_usage_details_with_cached_tokens() -> None:
     mock_usage.total_tokens = 275
     mock_usage.input_tokens_details = MagicMock()
     mock_usage.input_tokens_details.cached_tokens = 25
+    mock_usage.input_tokens_details.cache_write_tokens = None
     mock_usage.output_tokens_details = None
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
@@ -4466,6 +4467,46 @@ def test_usage_details_with_cached_tokens() -> None:
     assert details["input_token_count"] == 200
     assert details_dict["openai.cached_input_tokens"] == 25
     assert details["cache_read_input_token_count"] == 25
+
+
+def test_usage_details_with_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai with cache write tokens."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.input_tokens = 2000
+    mock_usage.output_tokens = 60
+    mock_usage.total_tokens = 2060
+    mock_usage.input_tokens_details = MagicMock()
+    mock_usage.input_tokens_details.cached_tokens = 0
+    mock_usage.input_tokens_details.cache_write_tokens = 1024
+    mock_usage.output_tokens_details = None
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore
+    assert details is not None
+    details_dict = cast("dict[str, Any]", details)
+    assert details_dict["openai.cache_write_tokens"] == 1024
+    assert details["cache_creation_input_token_count"] == 1024
+    assert details["cache_read_input_token_count"] == 0
+
+
+def test_usage_details_omits_missing_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai omits cache write tokens when the provider does not report them."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.input_tokens = 100
+    mock_usage.output_tokens = 20
+    mock_usage.total_tokens = 120
+    mock_usage.input_tokens_details = MagicMock(spec=["cached_tokens"])
+    mock_usage.input_tokens_details.cached_tokens = 10
+    mock_usage.output_tokens_details = None
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore
+    assert details is not None
+    assert "openai.cache_write_tokens" not in details
+    assert "cache_creation_input_token_count" not in details
+    assert details["cache_read_input_token_count"] == 10
 
 
 def test_usage_details_with_reasoning_tokens() -> None:
@@ -4498,12 +4539,15 @@ def test_usage_details_with_zero_cached_and_reasoning_tokens() -> None:
     mock_usage.total_tokens = 230
     mock_usage.input_tokens_details = MagicMock()
     mock_usage.input_tokens_details.cached_tokens = 0
+    mock_usage.input_tokens_details.cache_write_tokens = 0
     mock_usage.output_tokens_details = MagicMock()
     mock_usage.output_tokens_details.reasoning_tokens = 0
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
     details_dict = cast("dict[str, Any]", details)
+    assert details_dict["openai.cache_write_tokens"] == 0
+    assert details["cache_creation_input_token_count"] == 0
     assert details_dict["openai.cached_input_tokens"] == 0
     assert details["cache_read_input_token_count"] == 0
     assert details_dict["openai.reasoning_tokens"] == 0
@@ -4520,11 +4564,14 @@ def test_usage_details_omits_missing_cached_and_reasoning_tokens() -> None:
     mock_usage.total_tokens = 230
     mock_usage.input_tokens_details = MagicMock()
     mock_usage.input_tokens_details.cached_tokens = None
+    mock_usage.input_tokens_details.cache_write_tokens = None
     mock_usage.output_tokens_details = MagicMock()
     mock_usage.output_tokens_details.reasoning_tokens = None
 
     details = client._parse_usage_from_openai(mock_usage)  # type: ignore
     assert details is not None
+    assert "openai.cache_write_tokens" not in details
+    assert "cache_creation_input_token_count" not in details
     assert "openai.cached_input_tokens" not in details
     assert "cache_read_input_token_count" not in details
     assert "openai.reasoning_tokens" not in details

@@ -854,6 +854,10 @@ class RawOpenAIChatCompletionClient(
         if usage.prompt_tokens_details:
             if tokens := usage.prompt_tokens_details.audio_tokens:
                 details["prompt/audio_tokens"] = tokens
+            cache_write_tokens = cast("int | None", getattr(usage.prompt_tokens_details, "cache_write_tokens", None))
+            if cache_write_tokens is not None:
+                details["prompt/cache_write_tokens"] = cache_write_tokens
+                details["cache_creation_input_token_count"] = cache_write_tokens
             if (tokens := usage.prompt_tokens_details.cached_tokens) is not None:
                 details["prompt/cached_tokens"] = tokens
                 details["cache_read_input_token_count"] = tokens

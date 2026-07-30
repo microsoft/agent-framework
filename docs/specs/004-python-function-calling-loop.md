@@ -380,7 +380,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Calls across response messages | Every actionable call is executed once. | `test_base_client_executes_function_calls_across_multiple_response_messages` |
 | Parallel calls | Results retain the corresponding call ids and execution count. | `test_max_function_calls_limits_parallel_invocations`, `test_streaming_multiple_function_calls_parallel_execution` |
 | Informational-only call | The call is returned but not executed or approved. | `test_informational_only_function_call_is_not_invoked`, `test_informational_only_function_call_does_not_request_approval`, `test_streaming_informational_only_function_call_is_not_invoked` |
-| Declaration-only call | The call is surfaced as user input and is not executed. | `test_declaration_only_tool` |
+| Declaration-only call | The call is surfaced as user input and is not executed; streaming arguments appear once while finalized request metadata remains available. | `test_declaration_only_tool`, `test_streaming_declaration_only_tool_preserves_metadata_without_duplicate_arguments` |
 | Function invocation disabled | The client bypasses the invocation loop without losing invocation kwargs. | `test_function_invocation_config_enabled_false`, `test_function_invocation_config_enabled_false_preserves_invocation_kwargs`, `test_streaming_function_invocation_config_enabled_false` |
 | Runtime tool changes | Added tools become available on the next iteration and retain approval behavior. | `test_add_tools_available_next_iteration`, `test_add_tools_with_approval_required_tool` |
 
@@ -486,10 +486,7 @@ These scenarios are required but are not fully covered by merged tests on `main`
 
 | Gap | Tracking |
 |---|---|
-| Service-side storage sends the current approval response while omitting the stored request. | #7125 |
 | Service-owned `previous_response_id` continuation cannot execute a terminal approval again on a later turn. | #6851 |
-| A provider that ignores `tool_choice="none"` after an invocation limit cannot expose an unanswered call. | #7045 |
-| Declaration-only streaming preserves request metadata without duplicating arguments. | #6973 |
 
 Do not mark these rows covered by nearby tests; each needs a dedicated regression at the owning layer.
 
@@ -541,6 +538,9 @@ Before accepting an update, reviewers must confirm:
 - #7043 — provider-injected approval execution
 - #6828 — AG-UI `confirm_changes` snapshot correlation
 - #7212 — non-adjacent and reused-id compaction integrity
+- #7125 — service-side approval response serialization
+- #7045 — post-limit tool-content transcript integrity
+- #6973 — declaration-only streaming metadata and argument integrity
 - #6851 — duplicate side effects after approval continuation
 - #7383 — bind approval responses to framework-issued requests after this foundation merges
 - #6963 / #7095 — opaque reasoning-signature replay

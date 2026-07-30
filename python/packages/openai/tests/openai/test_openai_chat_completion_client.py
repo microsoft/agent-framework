@@ -1179,6 +1179,48 @@ def test_parse_usage_includes_standard_and_legacy_mapped_token_details() -> None
     assert details["cache_read_input_token_count"] == 0
 
 
+def test_parse_usage_with_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai maps cache write tokens to standard and legacy keys."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 2000
+    mock_usage.completion_tokens = 60
+    mock_usage.total_tokens = 2060
+    mock_usage.completion_tokens_details = None
+    mock_usage.prompt_tokens_details = MagicMock()
+    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.cached_tokens = 0
+    mock_usage.prompt_tokens_details.cache_write_tokens = 1024
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
+
+    details_dict = cast("dict[str, Any]", details)
+    assert details_dict["prompt/cache_write_tokens"] == 1024
+    assert details["cache_creation_input_token_count"] == 1024
+    assert details["cache_read_input_token_count"] == 0
+
+
+def test_parse_usage_omits_missing_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai omits cache write tokens when the provider does not report them."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 100
+    mock_usage.completion_tokens = 20
+    mock_usage.total_tokens = 120
+    mock_usage.completion_tokens_details = None
+    mock_usage.prompt_tokens_details = MagicMock(spec=["audio_tokens", "cached_tokens"])
+    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.cached_tokens = 10
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
+
+    assert "prompt/cache_write_tokens" not in details
+    assert "cache_creation_input_token_count" not in details
+    assert details["cache_read_input_token_count"] == 10
+
+
 def test_streaming_chunk_with_usage_and_text(
     openai_unit_test_env: dict[str, str],
 ) -> None:

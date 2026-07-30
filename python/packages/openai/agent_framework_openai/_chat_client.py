@@ -3379,6 +3379,10 @@ class RawOpenAIChatClient(
             total_token_count=usage.total_tokens,
         )
         if usage.input_tokens_details:
+            cache_write_tokens = cast("int | None", getattr(usage.input_tokens_details, "cache_write_tokens", None))
+            if cache_write_tokens is not None:
+                details["openai.cache_write_tokens"] = cache_write_tokens
+                details["cache_creation_input_token_count"] = cache_write_tokens
             cached_tokens = cast("int | None", getattr(usage.input_tokens_details, "cached_tokens", None))
             if cached_tokens is not None:
                 details["openai.cached_input_tokens"] = cached_tokens
