@@ -37,6 +37,10 @@ public sealed class SendActivityExecutorTest(ITestOutputHelper output) : Workflo
         ChatMessage message = Assert.Single(agentEvent.Response.Messages);
         Assert.Equal(ChatRole.Assistant, message.Role);
         Assert.Equal("Test activity message", message.Text);
+
+        AgentResponseUpdateEvent updateEvent = Assert.Single(events.OfType<AgentResponseUpdateEvent>());
+        Assert.Equal(agentEvent.Response.ResponseId, updateEvent.Update.ResponseId);
+        Assert.Equal(message.MessageId, updateEvent.Update.MessageId);
     }
 
     private SendActivity CreateModel(string displayName, string activityMessage, string? summary = null)

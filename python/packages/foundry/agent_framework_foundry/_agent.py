@@ -274,6 +274,7 @@ class RawFoundryAgentChatClient(
             tokenizer=tokenizer,
             additional_properties=additional_properties,
         )
+        self.model = ""  # Foundry agents resolve model server-side; ignore env vars (issue #7272).
 
     @override
     def as_agent(
@@ -330,6 +331,8 @@ class RawFoundryAgentChatClient(
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Prepare options for the Responses API and validate client-side tools."""
+        caller_requested_encrypted_reasoning = "reasoning.encrypted_content" in (options.get("include") or [])
+
         # Validate tools — only FunctionTool allowed
         tools = options.get("tools", [])
         if tools:
@@ -346,6 +349,16 @@ class RawFoundryAgentChatClient(
 
         # Call parent prepare_options (OpenAI Responses API format)
         run_options = await super()._prepare_options(prepared_messages, options, **kwargs)
+
+        # Foundry Agent deployments can reject the OpenAI client's automatic encrypted-reasoning
+        # opt-in even when the configured model otherwise supports reasoning. Preserve an explicit
+        # caller request, but do not add this provider capability implicitly.
+        if not caller_requested_encrypted_reasoning and isinstance(run_options.get("include"), list):
+            include = [item for item in run_options["include"] if item != "reasoning.encrypted_content"]
+            if include:
+                run_options["include"] = include
+            else:
+                run_options.pop("include")
 
         # Apply Azure AI schema transforms
         if "input" in run_options and isinstance(run_options["input"], list):
@@ -366,7 +379,7 @@ class RawFoundryAgentChatClient(
         if not self.allow_preview:
             extra_body.setdefault("agent_reference", _build_agent_reference(self.agent_name, self.agent_version))
             should_strip_model = _uses_foundry_agent_session(conversation_id) or (
-                conversation_id is None and options.get("model") is None
+                conversation_id is None and not options.get("model")
             )
             if should_strip_model:
                 run_options.pop("model", None)

@@ -25,8 +25,6 @@ on:
         required: true
       AZURE_SUBSCRIPTION_ID:
         required: true
-      COPILOT_GITHUB_TOKEN:
-        required: true
       FOUNDRY_MODELS_API_KEY:
         required: false
       OPENAI__APIKEY:
@@ -506,9 +504,12 @@ jobs:
     name: Python Integration Tests - GitHub Copilot
     runs-on: ubuntu-latest
     environment: integration
+    permissions:
+      copilot-requests: write
+      contents: read
     timeout-minutes: 60
     env:
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ github.token }}
       GITHUB_COPILOT_TIMEOUT: "120"
     defaults:
       run:

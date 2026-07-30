@@ -29,6 +29,7 @@ env:
   DEVFLOW_REF: main
   TARGET_REPO_PATH: ${{ github.workspace }}/target-repo
   DEVFLOW_PATH: ${{ github.workspace }}/devflow
+  MODEL_CONFIG_PATH: ${{ github.workspace }}/devflow/config.ci.yaml
 
 jobs:
   team_check:
@@ -80,13 +81,13 @@ jobs:
         uses: ./.github/actions/github-app-token
         with:
           mode: ${{ vars.GH_APP_AUTH_MODE }}
-          azure-client-id: ${{ vars.GH_APP_AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ vars.GH_APP_AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ vars.GH_APP_AZURE_SUBSCRIPTION_ID }}
-          key-vault-name: ${{ vars.GH_APP_KEY_VAULT_NAME }}
-          key-name: ${{ vars.GH_APP_KEY_NAME }}
-          github-app-client-id: ${{ vars.GH_APP_CLIENT_ID }}
-          github-app-installation-id: ${{ vars.GH_APP_INSTALLATION_ID }}
+          azure-client-id: ${{ secrets.GH_APP_AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.GH_APP_AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.GH_APP_AZURE_SUBSCRIPTION_ID }}
+          key-vault-name: ${{ secrets.GH_APP_KEY_VAULT_NAME }}
+          key-name: ${{ secrets.GH_APP_KEY_NAME }}
+          github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
           repository: ${{ github.repository }}
           fallback-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
 
@@ -124,6 +125,11 @@ jobs:
         || needs.team_check.outputs.is_team_member == 'false'
       }}
     environment: integration
+    permissions:
+      copilot-requests: write
+      contents: read
+      id-token: write
+      issues: write
     timeout-minutes: 60
 
     steps:
@@ -172,7 +178,7 @@ jobs:
         id: spam
         working-directory: ${{ env.DEVFLOW_PATH }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           DEVFLOW_TOKEN: ${{ secrets.DEVFLOW_TOKEN }}
           SK_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
@@ -197,8 +203,7 @@ jobs:
         id: repro
         working-directory: ${{ env.DEVFLOW_PATH }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_COPILOT_TOKEN: ${{ secrets.GH_COPILOT_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           # Not seen by the agent prompt; used only to push a paper-trail
           # branch back to maf-dashboard at run end.
           DEVFLOW_TOKEN: ${{ secrets.DEVFLOW_TOKEN }}

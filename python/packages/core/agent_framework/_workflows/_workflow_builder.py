@@ -3,7 +3,6 @@
 import logging
 import sys
 import uuid
-import warnings
 from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
@@ -101,7 +100,9 @@ class WorkflowBuilder:
         """Initialize the WorkflowBuilder.
 
         Args:
-            max_iterations: Maximum number of iterations for workflow convergence. Default is 100.
+            max_iterations: Maximum number of iterations for workflow convergence. The first
+                iteration is the initial run of the start executor, and each subsequent iteration
+                is a superstep. Default is 100.
             name: A human-readable name for the workflow builder. This name will be the identifier
                 for all workflow instances created from this builder. If not provided, a unique name
                 will be generated. This will be useful for versioning, monitoring, checkpointing, and
@@ -120,14 +121,13 @@ class WorkflowBuilder:
                 Pass ``"all_other"`` to select every executor with declared workflow output types
                 that is not selected by ``output_from``.
                 If neither ``output_from`` nor ``intermediate_output_from`` is provided,
-                omitted-selection compatibility behavior applies and every ``yield_output`` produces
-                ``type='output'``. If either is provided, explicit mode applies: listed
+                every ``yield_output`` produces ``type='output'``. If either is provided,
+                explicit mode applies: listed
                 workflow-output executors emit ``output``, listed intermediate executors emit
                 ``intermediate``, and unlisted executor yields are hidden.
 
                 Output selection behavior:
-                - Omit both selections: every ``yield_output`` emits ``output`` for compatibility,
-                  with a deprecation warning.
+                - Omit both selections: every ``yield_output`` emits ``output``.
                 - ``output_from="all"``: every output-capable executor emits ``output``.
                 - ``output_from=[A]``: only A emits ``output``; other executor payloads are hidden.
                 - ``output_from=[A], intermediate_output_from="all_other"``: A emits ``output``;
@@ -156,8 +156,7 @@ class WorkflowBuilder:
         # being created for the same agent.
         self._agent_wrappers: dict[str, Executor] = {}
 
-        # ``None`` for both means omitted-selection compatibility behavior
-        # (every yield_output produces type='output').
+        # ``None`` for both means the default all-output behavior.
         # If either is provided, explicit mode applies and unlisted executor yields are hidden.
         self._output_from: _OutputSelection = self._coerce_output_from(output_from)
         self._intermediate_output_from: _IntermediateOutputSelection = self._coerce_intermediate_output_from(
@@ -794,7 +793,7 @@ class WorkflowBuilder:
                 print(events.get_outputs())  # []
                 print(events.get_intermediate_outputs())  # outputs from planner and answerer
 
-                # Explicitly preserve all-output behavior without relying on omitted-selection compatibility.
+                # Explicitly select all output-capable executors.
                 workflow = (
                     WorkflowBuilder(start_executor=planner, output_from="all").add_edge(planner, answerer).build()
                 )
@@ -810,16 +809,6 @@ class WorkflowBuilder:
                 if not self._start_executor:
                     raise ValueError(
                         "Starting executor must be set via the start_executor constructor parameter before building."
-                    )
-
-                if self._output_from is None and self._intermediate_output_from is None:
-                    warnings.warn(
-                        "WorkflowBuilder built without explicit output_from or intermediate_output_from; "
-                        "every yield_output produces type='output' for compatibility. Pass output_from='all', "
-                        "output_from=[...], or intermediate_output_from=[...] to opt into explicit designation - "
-                        "explicit designation will be required in a future version.",
-                        DeprecationWarning,
-                        stacklevel=2,
                     )
 
                 start_executor = self._start_executor
