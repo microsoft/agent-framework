@@ -10,13 +10,12 @@ from agent_framework import (
     FunctionInvocationContext,
     MiddlewareTermination,
 )
-from agent_hooks import Decision, Transform, Verdict
-
 from agent_framework_agent_hooks import (
     AgentHooksChatMiddleware,
     AgentHooksFunctionMiddleware,
     agent_hooks_middleware,
 )
+from agent_hooks import Decision, Transform, Verdict
 
 
 class _AllowAll:
