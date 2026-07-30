@@ -214,17 +214,25 @@ dev = [
     { name = "pytest", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
+[package.dev-dependencies]
+test = [
+    { name = "agent-framework-orchestrations", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", specifier = ">=0.1.19,<0.2" },
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "fastapi", specifier = ">=0.121.0,<0.138.1" },
+    { name = "fastapi", specifier = ">=0.121.0,<0.140.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = "==0.28.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.1.1" },
     { name = "sse-starlette", specifier = ">=3.4.5,<4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0,<1" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+test = [{ name = "agent-framework-orchestrations", editable = "packages/orchestrations" }]
 
 [[package]]
 name = "agent-framework-anthropic"

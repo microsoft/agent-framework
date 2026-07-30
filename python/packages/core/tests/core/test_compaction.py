@@ -12,6 +12,7 @@ from agent_framework import (
     GROUP_ANNOTATION_KEY,
     GROUP_HAS_REASONING_KEY,
     GROUP_ID_KEY,
+    GROUP_INDEX_KEY,
     GROUP_KIND_KEY,
     GROUP_TOKEN_COUNT_KEY,
     SUMMARIZED_BY_SUMMARY_ID_KEY,
@@ -35,6 +36,7 @@ from agent_framework import (
     included_token_count,
 )
 from agent_framework._compaction import (
+    _select_summary_input_groups,
     _serialize_message,
     append_compaction_message,
     extend_compaction_messages,
@@ -45,6 +47,16 @@ def _assistant_function_call(call_id: str) -> Message:
     return Message(
         role="assistant",
         contents=[Content.from_function_call(call_id=call_id, name="tool", arguments='{"value":"x"}')],
+    )
+
+
+def _assistant_function_call_with_result(call_id: str, result: str) -> Message:
+    return Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id=call_id, name="tool", arguments='{"value":"x"}'),
+            Content.from_function_result(call_id=call_id, result=result),
+        ],
     )
 
 
@@ -111,6 +123,14 @@ def _group_kind(message: Message) -> str | None:
         return None
     value = annotation.get(GROUP_KIND_KEY)
     return value if isinstance(value, str) else None
+
+
+def _group_index(message: Message) -> int | None:
+    annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if not isinstance(annotation, dict):
+        return None
+    value = annotation.get(GROUP_INDEX_KEY)
+    return value if isinstance(value, int) else None
 
 
 def _group_has_reasoning(message: Message) -> bool | None:
@@ -186,6 +206,178 @@ def test_group_annotations_handle_same_message_reasoning_and_function_calls() ->
     assert _group_has_reasoning(messages[1]) is True
 
 
+def test_group_annotations_pair_nonadjacent_function_result_by_call_id() -> None:
+    messages = [
+        _assistant_reasoning_and_function_calls("c1"),
+        Message(role="assistant", contents=["approval completed"]),
+        _tool_result("c1", "ok"),
+    ]
+
+    annotate_message_groups(messages)
+
+    call_group = _group_id(messages[0])
+    assert call_group is not None
+    assert _group_id(messages[2]) == call_group
+    assert _group_index(messages[2]) == _group_index(messages[0])
+    assert _group_has_reasoning(messages[2]) is True
+    assert _group_id(messages[1]) != call_group
+
+
+def test_group_annotations_pair_multiple_nonadjacent_results_with_declaration() -> None:
+    messages = [
+        _assistant_reasoning_and_function_calls("c1", "c2"),
+        Message(role="assistant", contents=["first approval"]),
+        _tool_result("c1", "ok1"),
+        Message(role="assistant", contents=["second approval"]),
+        _tool_result("c2", "ok2"),
+    ]
+
+    annotate_message_groups(messages)
+
+    call_group = _group_id(messages[0])
+    assert call_group is not None
+    assert _group_id(messages[2]) == call_group
+    assert _group_id(messages[4]) == call_group
+    assert _group_index(messages[2]) == _group_index(messages[0])
+    assert _group_index(messages[4]) == _group_index(messages[0])
+
+
+def test_group_annotations_merge_declaration_groups_for_combined_result_message() -> None:
+    messages = [
+        _assistant_function_call("c1"),
+        Message(role="assistant", contents=["between calls"]),
+        _assistant_function_call("c2"),
+        Message(role="assistant", contents=["approval completed"]),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="c1", result="ok1"),
+                Content.from_function_result(call_id="c2", result="ok2"),
+            ],
+        ),
+    ]
+
+    annotate_message_groups(messages)
+
+    call_group = _group_id(messages[0])
+    assert call_group is not None
+    assert _group_id(messages[2]) == call_group
+    assert _group_id(messages[4]) == call_group
+    assert _group_index(messages[2]) == _group_index(messages[0])
+    assert _group_index(messages[4]) == _group_index(messages[0])
+
+
+def test_group_annotations_leave_unmatched_result_separate_from_pending_call() -> None:
+    messages = [
+        _assistant_function_call("pending"),
+        Message(role="assistant", contents=["waiting"]),
+        _tool_result("unknown", "result"),
+    ]
+
+    annotate_message_groups(messages)
+
+    assert _group_id(messages[0]) != _group_id(messages[2])
+
+
+def test_group_annotations_do_not_pair_result_before_declaration() -> None:
+    messages = [
+        _tool_result("late", "result"),
+        Message(role="assistant", contents=["between"]),
+        _assistant_function_call("late"),
+    ]
+
+    annotate_message_groups(messages)
+
+    assert _group_id(messages[0]) != _group_id(messages[2])
+
+
+def test_group_annotations_do_not_pair_ambiguous_duplicate_call_ids() -> None:
+    messages = [
+        _assistant_function_call("duplicate"),
+        Message(role="assistant", contents=["between declarations"]),
+        _assistant_function_call("duplicate"),
+        Message(role="assistant", contents=["before result"]),
+        _tool_result("duplicate", "result"),
+    ]
+
+    annotate_message_groups(messages)
+
+    result_group = _group_id(messages[4])
+    assert result_group != _group_id(messages[0])
+    assert result_group != _group_id(messages[2])
+
+
+def test_group_annotations_pair_completed_reused_call_id_occurrences() -> None:
+    messages = [
+        _assistant_function_call("reused"),
+        _tool_result("reused", "first"),
+        _assistant_function_call("reused"),
+        Message(role="assistant", contents=["approval completed"]),
+        _tool_result("reused", "second"),
+    ]
+
+    annotate_message_groups(messages)
+
+    assert _group_id(messages[0]) == _group_id(messages[1])
+    assert _group_id(messages[2]) == _group_id(messages[4])
+    assert _group_id(messages[0]) != _group_id(messages[2])
+    assert _group_id(messages[3]) != _group_id(messages[2])
+
+
+def test_group_annotations_close_assistant_embedded_result_before_reused_call_id() -> None:
+    messages = [
+        _assistant_function_call_with_result("reused", "first"),
+        _assistant_function_call("reused"),
+        Message(role="assistant", contents=["approval completed"]),
+        _tool_result("reused", "second"),
+    ]
+
+    annotate_message_groups(messages)
+
+    first_occurrence_group = _group_id(messages[0])
+    second_occurrence_group = _group_id(messages[1])
+    assert first_occurrence_group is not None
+    assert second_occurrence_group is not None
+    assert _group_id(messages[3]) == second_occurrence_group
+    assert first_occurrence_group != second_occurrence_group
+    assert _group_id(messages[2]) != second_occurrence_group
+
+
+async def test_sliding_window_does_not_retain_orphan_result_after_assistant_embedded_result() -> None:
+    messages = [
+        _assistant_function_call_with_result("reused", "first"),
+        _assistant_function_call("reused"),
+        Message(role="assistant", contents=["approval completed"]),
+    ]
+    annotate_message_groups(messages)
+    extend_compaction_messages(messages, [_tool_result("reused", "second")])
+
+    await SlidingWindowStrategy(keep_last_groups=2, preserve_system=False)(messages)
+
+    assert messages[0].additional_properties[EXCLUDED_KEY] is True
+    assert messages[1].additional_properties[EXCLUDED_KEY] is False
+    assert messages[3].additional_properties[EXCLUDED_KEY] is False
+    assert _group_id(messages[1]) == _group_id(messages[3])
+
+
+async def test_sliding_window_keeps_reused_call_id_occurrences_atomic() -> None:
+    messages = [
+        _assistant_function_call("reused"),
+        _tool_result("reused", "first"),
+        _assistant_function_call("reused"),
+        Message(role="assistant", contents=["approval completed"]),
+        _tool_result("reused", "second"),
+    ]
+    annotate_message_groups(messages)
+
+    await SlidingWindowStrategy(keep_last_groups=1, preserve_system=False)(messages)
+
+    assert messages[2].additional_properties[EXCLUDED_KEY] is True
+    assert messages[4].additional_properties[EXCLUDED_KEY] is True
+    assert _group_id(messages[2]) == _group_id(messages[4])
+    assert messages[3].additional_properties[EXCLUDED_KEY] is False
+
+
 async def test_sliding_window_keeps_reasoning_and_mcp_call_atomic() -> None:
     messages = [
         Message(role="system", contents=["system"]),
@@ -256,6 +448,105 @@ def test_extend_compaction_messages_preserves_existing_annotations_and_tokens() 
     assert _group_id(messages[1]) == old_group_id
     assert _token_count(messages[0]) == old_token_count
     assert isinstance(_token_count(messages[1]), int)
+
+
+def test_extend_compaction_messages_pairs_nonadjacent_result_incrementally() -> None:
+    tokenizer = CharacterEstimatorTokenizer()
+    messages = [
+        _assistant_function_call("c4"),
+        Message(role="assistant", contents=["approval completed"]),
+    ]
+    annotate_message_groups(messages, tokenizer=tokenizer)
+    call_group = _group_id(messages[0])
+    intervening_group = _group_id(messages[1])
+
+    extend_compaction_messages(messages, [_tool_result("c4", "ok")], tokenizer=tokenizer)
+
+    assert _group_id(messages[0]) == call_group
+    assert _group_id(messages[1]) == intervening_group
+    assert _group_id(messages[2]) == call_group
+    assert _group_index(messages[2]) == _group_index(messages[0])
+    assert isinstance(_token_count(messages[2]), int)
+
+    append_compaction_message(
+        messages,
+        Message(role="assistant", contents=["final answer"]),
+        tokenizer=tokenizer,
+    )
+
+    assert _group_id(messages[3]) not in {call_group, intervening_group}
+    assert _group_index(messages[3]) == 2
+
+
+def test_extend_compaction_messages_reincludes_excluded_declaration_for_new_result() -> None:
+    messages = [
+        _assistant_function_call("c5"),
+        Message(role="assistant", contents=["approval pending"]),
+    ]
+    annotate_message_groups(messages)
+    messages[0].additional_properties[EXCLUDED_KEY] = True
+
+    extend_compaction_messages(messages, [_tool_result("c5", "ok")])
+
+    assert messages[0].additional_properties[EXCLUDED_KEY] is False
+    assert messages[2].additional_properties[EXCLUDED_KEY] is False
+    assert _group_id(messages[2]) == _group_id(messages[0])
+
+
+def test_extend_compaction_messages_preserves_adjacent_duplicate_call_pair() -> None:
+    messages = [
+        _assistant_function_call("duplicate"),
+        Message(role="assistant", contents=["between declarations"]),
+        _assistant_function_call("duplicate"),
+    ]
+    annotate_message_groups(messages)
+
+    extend_compaction_messages(messages, [_tool_result("duplicate", "result")])
+
+    result_group = _group_id(messages[3])
+    assert result_group != _group_id(messages[0])
+    assert result_group == _group_id(messages[2])
+
+
+def test_extend_compaction_messages_pairs_completed_reused_call_id_occurrence() -> None:
+    messages = [
+        _assistant_function_call("reused"),
+        _tool_result("reused", "first"),
+        _assistant_function_call("reused"),
+        Message(role="assistant", contents=["approval completed"]),
+    ]
+    annotate_message_groups(messages)
+    second_call_group = _group_id(messages[2])
+
+    extend_compaction_messages(messages, [_tool_result("reused", "second")])
+
+    assert _group_id(messages[4]) == second_call_group
+    assert _group_id(messages[4]) != _group_id(messages[0])
+
+
+def test_extend_compaction_messages_keeps_ambiguous_reused_call_id_unpaired() -> None:
+    messages = [_assistant_function_call("duplicate")]
+    annotate_message_groups(messages)
+    extend_compaction_messages(messages, [Message(role="assistant", contents=["between declarations"])])
+    first_declaration_group = _group_id(messages[0])
+    first_declaration_index = _group_index(messages[0])
+    intervening_group = _group_id(messages[1])
+
+    extend_compaction_messages(
+        messages,
+        [
+            _assistant_function_call("duplicate"),
+            Message(role="assistant", contents=["before result"]),
+            _tool_result("duplicate", "result"),
+        ],
+    )
+
+    result_group = _group_id(messages[4])
+    assert _group_id(messages[0]) == first_declaration_group
+    assert _group_index(messages[0]) == first_declaration_index
+    assert _group_id(messages[1]) == intervening_group
+    assert result_group != _group_id(messages[0])
+    assert result_group != _group_id(messages[2])
 
 
 def test_append_compaction_message_annotates_new_message() -> None:
@@ -383,6 +674,35 @@ async def test_truncation_strategy_keeps_latest_group_when_it_exceeds_target() -
     assert included_messages(messages) == messages
 
 
+async def test_truncation_strategy_keeps_nonadjacent_tool_pair_atomic() -> None:
+    tokenizer = CharacterEstimatorTokenizer()
+    messages = [
+        Message(role="user", contents=["original request " + "x" * 1600]),
+        _assistant_function_call("call-1"),
+        Message(role="assistant", contents=["intervening approval traffic " + "y" * 1600]),
+        _tool_result("call-1", "result"),
+        Message(role="user", contents=["follow up " + "z" * 400]),
+    ]
+    strategy = TruncationStrategy(
+        max_n=600,
+        compact_to=520,
+        tokenizer=tokenizer,
+    )
+    annotate_message_groups(messages, tokenizer=tokenizer)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    declared = {
+        content.call_id for message in projected for content in message.contents if content.type == "function_call"
+    }
+    results = {
+        content.call_id for message in projected for content in message.contents if content.type == "function_result"
+    }
+    assert declared == results
+
+
 def test_truncation_strategy_validates_token_targets() -> None:
     try:
         TruncationStrategy(max_n=3, compact_to=4)
@@ -477,6 +797,54 @@ class _EmptySummarizer:
         return ChatResponse(messages=[Message(role="assistant", contents=["   "])])
 
 
+class _ScriptedSummarizer:
+    def __init__(self, outcomes: list[str | Exception]) -> None:
+        self.outcomes = outcomes
+
+    async def get_response(
+        self,
+        messages: list[Message],
+        *,
+        stream: bool = False,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return ChatResponse(messages=[Message(role="assistant", contents=[outcome])])
+
+
+class _RecordingSummarizer:
+    def __init__(self) -> None:
+        self.requests: list[list[Message]] = []
+
+    async def get_response(
+        self,
+        messages: list[Message],
+        *,
+        stream: bool = False,
+        options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        self.requests.append(messages)
+        return ChatResponse(messages=[Message(role="assistant", contents=["budgeted summary"])])
+
+
+class _CharacterCountTokenizer:
+    def count_tokens(self, text: str) -> int:
+        return len(text)
+
+
+class _RecordingCharacterCountTokenizer:
+    def __init__(self) -> None:
+        self.seen_texts: list[str] = []
+
+    def count_tokens(self, text: str) -> int:
+        self.seen_texts.append(text)
+        return len(text)
+
+
 async def test_summarization_strategy_adds_bidirectional_trace_links() -> None:
     messages = [
         Message(role="user", contents=["u1"]),
@@ -508,6 +876,102 @@ async def test_summarization_strategy_adds_bidirectional_trace_links() -> None:
             assert message.additional_properties.get(EXCLUDED_KEY) is True
 
 
+async def test_summarization_strategy_bounds_summary_input_to_complete_groups() -> None:
+    summarizer = _RecordingSummarizer()
+    messages = [
+        Message(role="user", contents=["first old " * 20]),
+        Message(role="assistant", contents=["second oversized " * 120]),
+        Message(role="user", contents=["third should wait"]),
+        Message(role="assistant", contents=["fourth should wait"]),
+        Message(role="user", contents=["recent user"]),
+        Message(role="assistant", contents=["recent assistant"]),
+    ]
+    first_old_message = messages[0]
+    oversized_message = messages[1]
+    strategy = SummarizationStrategy(
+        client=summarizer,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        target_count=2,
+        threshold=0,
+        max_summary_input_tokens=1_000,
+        tokenizer=_CharacterCountTokenizer(),
+    )
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert len(summarizer.requests) == 1
+    summary_request_text = summarizer.requests[0][1].text
+    assert summary_request_text is not None
+    assert "first old" in summary_request_text
+    assert "second oversized" not in summary_request_text
+    assert first_old_message.additional_properties.get(EXCLUDED_KEY) is True
+    assert oversized_message.additional_properties.get(EXCLUDED_KEY) is not True
+    summary = next(message for message in messages if _group_unknown_value(message, SUMMARY_OF_MESSAGE_IDS_KEY))
+    summarized_message_ids = _group_unknown_value(summary, SUMMARY_OF_MESSAGE_IDS_KEY)
+    assert isinstance(summarized_message_ids, list)
+    assert first_old_message.message_id in summarized_message_ids
+    assert oversized_message.message_id not in summarized_message_ids
+
+
+async def test_summarization_strategy_skips_oversized_first_group() -> None:
+    summarizer = _RecordingSummarizer()
+    messages = [
+        Message(role="user", contents=["oversized first group " * 120]),
+        Message(role="assistant", contents=["small later group"]),
+        Message(role="user", contents=["recent user"]),
+        Message(role="assistant", contents=["recent assistant"]),
+    ]
+    oversized_message = messages[0]
+    small_message = messages[1]
+    strategy = SummarizationStrategy(
+        client=summarizer,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        target_count=2,
+        threshold=0,
+        max_summary_input_tokens=1_000,
+        tokenizer=_CharacterCountTokenizer(),
+    )
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    assert len(summarizer.requests) == 1
+    summary_request_text = summarizer.requests[0][1].text
+    assert summary_request_text is not None
+    assert "oversized first group" not in summary_request_text
+    assert "small later group" in summary_request_text
+    assert oversized_message.additional_properties.get(EXCLUDED_KEY) is not True
+    assert small_message.additional_properties.get(EXCLUDED_KEY) is True
+
+
+def test_summary_input_selection_does_not_retokenize_selected_transcript() -> None:
+    tokenizer = _RecordingCharacterCountTokenizer()
+    groups = [
+        ("group_1", [Message(role="user", contents=["first"])]),
+        ("group_2", [Message(role="assistant", contents=["second"])]),
+        ("group_3", [Message(role="user", contents=["third"])]),
+    ]
+
+    selected_group_ids, selected_messages = _select_summary_input_groups(
+        groups,
+        prompt="prompt",
+        max_summary_input_tokens=1_000,
+        tokenizer=tokenizer,
+    )
+
+    assert selected_group_ids == ["group_1", "group_2", "group_3"]
+    assert selected_messages == [message for _, group_messages in groups for message in group_messages]
+    assert (
+        "\n".join([
+            "1. [user] first",
+            "2. [assistant] second",
+            "3. [user] third",
+        ])
+        not in tokenizer.seen_texts
+    )
+
+
 async def test_summarization_strategy_returns_false_when_summary_generation_fails(
     caplog: Any,
 ) -> None:
@@ -528,6 +992,57 @@ async def test_summarization_strategy_returns_false_when_summary_generation_fail
     assert changed is False
     assert any("summary generation failed" in record.message for record in caplog.records)
     assert all(message.additional_properties.get(EXCLUDED_KEY) is not True for message in messages)
+
+
+async def test_summarization_strategy_escalates_repeated_summary_failures(caplog: Any) -> None:
+    messages = [
+        Message(role="user", contents=["u1"]),
+        Message(role="assistant", contents=["a1"]),
+        Message(role="user", contents=["u2"]),
+        Message(role="assistant", contents=["a2"]),
+        Message(role="user", contents=["u3"]),
+        Message(role="assistant", contents=["a3"]),
+    ]
+    strategy = SummarizationStrategy(client=_FailingSummarizer(), target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    annotate_message_groups(messages)
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        assert await strategy(messages) is False
+        assert await strategy(messages) is False
+        assert await strategy(messages) is False
+        assert await strategy(messages) is False
+
+    error_records = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(error_records) == 1
+    assert "failed 3 consecutive times" in error_records[0].message
+
+
+async def test_summarization_strategy_resets_failure_escalation_after_success(
+    caplog: Any,
+) -> None:
+    summarizer = _ScriptedSummarizer([
+        RuntimeError("first failure"),
+        RuntimeError("second failure"),
+        "recovered summary",
+        RuntimeError("third failure"),
+        RuntimeError("fourth failure"),
+    ])
+    strategy = SummarizationStrategy(client=summarizer, target_count=2, threshold=0)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        for _ in range(5):
+            messages = [
+                Message(role="user", contents=["u1"]),
+                Message(role="assistant", contents=["a1"]),
+                Message(role="user", contents=["u2"]),
+                Message(role="assistant", contents=["a2"]),
+                Message(role="user", contents=["u3"]),
+                Message(role="assistant", contents=["a3"]),
+            ]
+            annotate_message_groups(messages)
+            await strategy(messages)
+
+    assert not any(record.levelno == logging.ERROR for record in caplog.records)
 
 
 async def test_summarization_strategy_returns_false_when_summary_is_empty(

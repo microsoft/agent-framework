@@ -4,14 +4,12 @@ import asyncio
 import logging
 import sys
 import types
-import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ._workflow import Workflow
 
-from ._checkpoint_encoding import decode_checkpoint_value
 from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._events import (
     WorkflowEvent,
@@ -36,7 +34,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ExecutionContext:
-    """Context for tracking a single sub-workflow execution."""
+    """Legacy per-execution bookkeeping.
+
+    Retained only to decode checkpoints written before the sub-workflow's own checkpoint was
+    embedded (see ``WorkflowExecutor.on_checkpoint_restore``). It is no longer used at runtime -
+    the wrapped sub-workflow is the single source of truth for its pending requests.
+    """
 
     # The ID of the execution context
     execution_id: str
@@ -161,11 +164,9 @@ class WorkflowExecutor(Executor):
         # The response handler expects a SubWorkflowResponseMessage wrapping the response data.
 
     ### State Management
-    WorkflowExecutor maintains execution state across request/response cycles:
-    - Tracks pending requests by request_id
-    - Accumulates responses until all expected responses are received
-    - Resumes sub-workflow execution with complete response batch
-    - Handles concurrent executions and multiple pending requests
+    WorkflowExecutor keeps no request/response bookkeeping of its own. The wrapped sub-workflow
+    is the single source of truth for its pending requests; responses are forwarded to it and
+    validated against its own pending request_info events.
 
     ## Type System Integration
     WorkflowExecutor inherits its type signature from the wrapped workflow:
@@ -194,46 +195,21 @@ class WorkflowExecutor(Executor):
     - Converts to error event in parent context
     - Provides detailed error information including sub-workflow ID
 
-    ## Concurrent Execution Support
-    WorkflowExecutor fully supports multiple concurrent sub-workflow executions:
-
-    ### Per-Execution State Isolation
-    Each sub-workflow invocation creates an isolated ExecutionContext:
-
-    .. code-block:: python
-
-        # Multiple concurrent invocations are supported
-        workflow_executor = WorkflowExecutor(my_workflow, id="concurrent_executor")
-
-        # Each invocation gets its own execution context
-        # Execution 1: processes input_1 independently
-        # Execution 2: processes input_2 independently
-        # No state interference between executions
-
-    ### Request/Response Coordination
-    Responses are correctly routed to the originating execution:
-    - Each execution tracks its own pending requests and expected responses
-    - Request-to-execution mapping ensures responses reach the correct sub-workflow
-    - Response accumulation is isolated per execution
-    - Automatic cleanup when execution completes
-
-    ### Memory Management
-    - Unlimited concurrent executions supported
-    - Each execution has unique UUID-based identification
-    - Cleanup of completed execution contexts
-    - Thread-safe state management for concurrent access
-
-    ### Important Considerations
-    **Shared Workflow Instance**: All concurrent executions use the same underlying workflow instance.
-    For proper isolation, ensure that the wrapped workflow and its executors are stateless.
+    ## Overlapping Executions
+    A ``WorkflowExecutor`` wraps a single shared sub-workflow instance and keeps no per-execution
+    state. If a new input arrives while the sub-workflow still has pending request_info events from
+    an unfinished request/response cycle, the new input advances the shared sub-workflow state and
+    can interfere with that cycle - a response arriving later may apply to a sub-workflow that has
+    moved on. This is allowed but logs a warning, and is only safe when the wrapped workflow (and
+    its executors) are stateless.
 
     .. code-block:: python
 
-        # Avoid: Stateful executor with instance variables
+        # Avoid: stateful executor whose instance variables are shared across overlapping runs
         class StatefulExecutor(Executor):
             def __init__(self):
                 super().__init__(id="stateful")
-                self.data = []  # This will be shared across concurrent executions!
+                self.data = []  # Shared across overlapping sub-workflow executions!
 
     ## Integration with Parent Workflows
     Parent workflows can intercept sub-workflow requests:
@@ -255,12 +231,18 @@ class WorkflowExecutor(Executor):
                     # Forward to external handler
                     await ctx.request_info(request.source_event, response_type=request.source_event.response_type)
 
+    ## Checkpointing
+    The provided sub workflow may not have its own checkpoint storage. The sub workflow checkpointed states will
+    be managed by the parent workflow.
+
     ## Implementation Notes
-    - Sub-workflows run to completion before processing their results
-    - Event processing is atomic - all outputs are forwarded before requests
-    - Response accumulation ensures sub-workflows receive complete response batches
-    - Execution state is maintained for proper resumption after external requests
-    - Concurrent executions are fully isolated and do not interfere with each other
+    - Sub-workflows run to completion (or to idle-with-pending-requests) before their results are processed
+    - Event processing is ordered - outputs are forwarded before requests
+    - Responses are forwarded to the sub-workflow as they arrive; the sub-workflow tracks its own
+      pending requests and resumes when they are answered
+    - The WorkflowExecutor keeps no per-execution bookkeeping; the sub-workflow is the single source
+      of truth for its pending requests. Starting a new execution while the sub-workflow still has
+      pending requests logs a warning and is only safe when the wrapped workflow is stateless
     """
 
     def __init__(
@@ -274,19 +256,18 @@ class WorkflowExecutor(Executor):
         """Initialize the WorkflowExecutor.
 
         Args:
-            workflow: The workflow to execute as a sub-workflow.
+            workflow: The workflow to execute as a sub-workflow. This workflow instance (including
+                the executor instances within it) must be unique. If the same instances are shared
+                across multiple WorkflowExecutor instances, it may lead to incorrect behavior.
             id: Unique identifier for this executor.
-            allow_direct_output: Whether to allow direct output from the sub-workflow.
-                                 By default, outputs from the sub-workflow are sent to
-                                 other executors in the parent workflow as messages.
-                                 When this is set to true, the outputs are yielded
-                                 directly from the WorkflowExecutor to the parent
-                                 workflow's event stream.
-            propagate_request: Whether to propagate requests from the sub-workflow to the
-                               parent workflow. If set to true, requests from the sub-workflow
-                               will be propagated as the original WorkflowEvent to the parent
-                               workflow. Otherwise, they will be wrapped in a SubWorkflowRequestMessage,
-                               which should be handled by an executor in the parent workflow.
+            allow_direct_output: Whether to allow direct output from the sub-workflow. By default,
+                outputs from the sub-workflow are sent to other executors in the parent workflow as
+                messages. When this is set to true, the outputs are yielded directly from the
+                WorkflowExecutor to the parent workflow's event stream.
+            propagate_request: Whether to propagate requests from the sub-workflow to the parent
+                workflow. If set to true, requests from the sub-workflow will be propagated as the
+                original WorkflowEvent to the parent workflow. Otherwise, they will be wrapped in a
+                SubWorkflowRequestMessage, which should be handled by an executor in the parent workflow.
 
         Keyword Args:
             **kwargs: Additional keyword arguments passed to the parent constructor.
@@ -294,12 +275,16 @@ class WorkflowExecutor(Executor):
         super().__init__(id, **kwargs)
         self.workflow = workflow
         self.allow_direct_output = allow_direct_output
-
-        # Track execution contexts for concurrent sub-workflow executions
-        self._execution_contexts: dict[str, ExecutionContext] = {}  # execution_id -> ExecutionContext
-        # Map request_id to execution_id for response routing
-        self._request_to_execution: dict[str, str] = {}  # request_id -> execution_id
         self._propagate_request = propagate_request
+
+        if self.workflow._runner_context.has_checkpointing():  # type: ignore
+            logger.warning(
+                "Sub workflow %s has its own checkpoint storage configured. "
+                "Sub workflow states are checkpointed by the parent workflow at superstep boundaries. "
+                "Additional checkpointing is only needed if you need to persist sub workflow state "
+                "independently of the parent workflow. ",
+                self.workflow.id,
+            )
 
     @property
     def input_types(self) -> list[type[Any] | types.UnionType]:
@@ -351,11 +336,10 @@ class WorkflowExecutor(Executor):
             # Always handle SubWorkflowResponseMessage
             return True
 
-        if (
-            message.original_request_info_event is not None
-            and message.original_request_info_event.request_id in self._request_to_execution
-        ):
-            # Handle propagated responses for known requests
+        if message.original_request_info_event is not None:
+            # A propagated response is target-routed back to the executor that issued the request,
+            # so if one reaches this WorkflowExecutor it belongs to our sub-workflow. _handle_response
+            # validates it against the sub-workflow's pending requests and ignores anything unknown.
             return True
 
         # For other messages, only handle if the wrapped workflow can accept them as input
@@ -372,58 +356,52 @@ class WorkflowExecutor(Executor):
             input_data: The input data to send to the sub-workflow.
             ctx: The workflow context from the parent.
         """
-        # Create execution context for this sub-workflow run
-        execution_id = str(uuid.uuid4())
-        execution_context = ExecutionContext(
-            execution_id=execution_id,
-            collected_responses={},
-            expected_response_count=0,
-            pending_requests={},
+        # The sub-workflow is a single shared instance. If it still has pending request_info events
+        # from an unfinished request/response cycle, a new input advances its shared state and can
+        # interfere with that cycle - a response arriving later may apply to a sub-workflow that has
+        # moved on. We allow it (the sub-workflow may be stateless) but warn so the risk is visible.
+        pending_requests = await self.workflow._runner_context.get_pending_request_info_events()  # pyright: ignore[reportPrivateUsage]
+        if pending_requests:
+            logger.warning(
+                f"WorkflowExecutor {self.id} received a new input message while its sub-workflow "
+                f"({self.workflow.id}) still has {len(pending_requests)} pending request(s) from an "
+                f"unfinished request/response cycle. The sub-workflow is a single shared instance, so the "
+                f"new input advances shared state and can interfere with the in-flight cycle. Ensure the "
+                f"sub-workflow is stateless, or complete the pending cycle before sending new input."
+            )
+
+        logger.debug(f"WorkflowExecutor {self.id} starting sub-workflow {self.workflow.id}")
+
+        # Get kwargs from parent workflow's State to propagate to subworkflow
+        parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+
+        # Extract invocation kwargs recognised by Workflow.run()
+        # The state stores resolved format (with __global__ wrapper for global kwargs).
+        # Unwrap __global__ before passing to the subworkflow so it gets re-resolved
+        # against the subworkflow's own executor IDs.
+        fi_kwargs: dict[str, Any] | None = None
+        ci_kwargs: dict[str, Any] | None = None
+        for key in ("function_invocation_kwargs", "client_kwargs"):
+            resolved = parent_kwargs.get(key)
+            if isinstance(resolved, dict):
+                # Unwrap global sentinel; pass per-executor dicts as-is
+                unwrapped: dict[str, Any] = resolved.get(GLOBAL_KWARGS_KEY, resolved)  # type: ignore
+                if key == "function_invocation_kwargs":
+                    fi_kwargs = unwrapped  # type: ignore
+                else:
+                    ci_kwargs = unwrapped  # type: ignore
+
+        # Run the sub-workflow and collect all events, passing parent kwargs
+        result = await self.workflow.run(
+            input_data,
+            function_invocation_kwargs=fi_kwargs,  # type: ignore
+            client_kwargs=ci_kwargs,  # type: ignore
         )
-        self._execution_contexts[execution_id] = execution_context
 
-        logger.debug(f"WorkflowExecutor {self.id} starting sub-workflow {self.workflow.id} execution {execution_id}")
+        logger.debug(f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} completed with {len(result)} events")
 
-        try:
-            # Get kwargs from parent workflow's State to propagate to subworkflow
-            parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
-
-            # Extract invocation kwargs recognised by Workflow.run()
-            # The state stores resolved format (with __global__ wrapper for global kwargs).
-            # Unwrap __global__ before passing to the subworkflow so it gets re-resolved
-            # against the subworkflow's own executor IDs.
-            fi_kwargs: dict[str, Any] | None = None
-            ci_kwargs: dict[str, Any] | None = None
-            for key in ("function_invocation_kwargs", "client_kwargs"):
-                resolved = parent_kwargs.get(key)
-                if isinstance(resolved, dict):
-                    # Unwrap global sentinel; pass per-executor dicts as-is
-                    unwrapped: dict[str, Any] = resolved.get(GLOBAL_KWARGS_KEY, resolved)  # type: ignore
-                    if key == "function_invocation_kwargs":
-                        fi_kwargs = unwrapped  # type: ignore
-                    else:
-                        ci_kwargs = unwrapped  # type: ignore
-
-            # Run the sub-workflow and collect all events, passing parent kwargs
-            result = await self.workflow.run(
-                input_data,
-                function_invocation_kwargs=fi_kwargs,  # type: ignore
-                client_kwargs=ci_kwargs,  # type: ignore
-            )
-
-            logger.debug(
-                f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} "
-                f"execution {execution_id} completed with {len(result)} events"
-            )
-
-            # Process the workflow result using shared logic
-            await self._process_workflow_result(result, execution_context, ctx)
-        finally:
-            # Clean up execution context if it's completed (no pending requests)
-            if execution_id in self._execution_contexts:
-                exec_ctx = self._execution_contexts[execution_id]
-                if not exec_ctx.pending_requests:
-                    del self._execution_contexts[execution_id]
+        # Process the workflow result using shared logic
+        await self._process_workflow_result(result, ctx)
 
     @handler
     async def handle_message_wrapped_request_response(
@@ -433,8 +411,8 @@ class WorkflowExecutor(Executor):
     ) -> None:
         """Handle response from parent for a forwarded request.
 
-        This handler accumulates responses and only resumes the sub-workflow
-        when all expected responses have been received for that execution.
+        Forwards the response to the sub-workflow, which resumes and validates it against its
+        own pending requests.
 
         Args:
             response: The response to a previous request.
@@ -474,61 +452,44 @@ class WorkflowExecutor(Executor):
     async def on_checkpoint_save(self) -> dict[str, Any]:
         """Get the current state of the WorkflowExecutor for checkpointing purposes."""
         return {
-            "execution_contexts": {
-                execution_id: execution_context for execution_id, execution_context in self._execution_contexts.items()
-            },
-            "request_to_execution": dict(self._request_to_execution),
+            # The sub-workflow's own checkpoint carries everything needed to resume: shared state,
+            # executor snapshots, in-flight messages, and pending request_info events. The
+            # WorkflowExecutor keeps no separate request/response bookkeeping of its own. The
+            # sub-workflow is quiescent here: it ran to idle within this parent superstep before
+            # the parent checkpoints.
+            "sub_workflow_checkpoint": await self.workflow._runner.build_checkpoint(),  # pyright: ignore[reportPrivateUsage]
         }
 
     @override
     async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
         """Restore the WorkflowExecutor state from a checkpoint snapshot."""
-        # Validate the state contains the right keys
-        if "execution_contexts" not in state:
-            raise KeyError("Missing 'execution_contexts' in WorkflowExecutor state.")
-        if "request_to_execution" not in state:
-            raise KeyError("Missing 'request_to_execution' in WorkflowExecutor state.")
+        # The storage backend fully materializes the checkpoint on load, checkpointed data arrives as live objects.
+        sub_workflow_checkpoint = state.get("sub_workflow_checkpoint")
+        if sub_workflow_checkpoint is not None:
+            await self.workflow._runner.restore_checkpoint(sub_workflow_checkpoint)  # pyright: ignore[reportPrivateUsage]
+            return
 
-        # Validate the execution contexts stored in the state have the right keys and values
-        execution_contexts: dict[str, ExecutionContext] | None = None
-        try:
-            execution_contexts = {
-                key: decode_checkpoint_value(value) for key, value in state["execution_contexts"].items()
-            }
-        except Exception as ex:
-            raise RuntimeError("Failed to deserialize execution context.") from ex
-
-        if not all(
-            isinstance(key, str) and isinstance(value, ExecutionContext) for key, value in execution_contexts.items()
-        ):
-            raise ValueError("Execution contexts must have 'str' as key and 'ExecutionContext' as value.")
-        if not all(key == value.execution_id for key, value in execution_contexts.items()):
-            raise ValueError("Execution contexts must have matching keys and IDs.")
-
-        # Validate the request_to_execution map contain the right data
-        request_to_execution = state["request_to_execution"]
-        if not all(isinstance(key, str) and isinstance(value, str) for key, value in request_to_execution.items()):
-            raise ValueError("Request to execution map must have 'str' as key and 'str' as value.")
-        if not all(value in execution_contexts for value in request_to_execution.values()):
-            raise ValueError(
-                "'request_to_execution` contains unknown execution ID that is not part of the execution contexts."
-            )
-
-        self._execution_contexts = execution_contexts
-        self._request_to_execution = request_to_execution
-
-        # Add the `request_info_event`s back to the sub workflow.
-        # This is only a temporary solution to rehydrate the sub workflow with the requests.
-        # The proper way would be to rehydrate the workflow from a checkpoint on a Workflow
-        # API instead of the '_runner_context' object that should be hidden. And the sub workflow
-        # should be rehydrated from a checkpoint object instead of from a subset of the state.
-        # TODO(@taochen): Issue #1614 - how to handle the case when the parent workflow has checkpointing
-        # set up but not the sub workflow?
-        request_info_events = [
-            request_info_event
-            for execution_context in self._execution_contexts.values()
-            for request_info_event in execution_context.pending_requests.values()
-        ]
+        # Backward-compatibility fallback for checkpoints written before the sub-workflow checkpoint
+        # was embedded. Those stored per-execution bookkeeping; recover only the pending
+        # request_info events so the sub-workflow re-emits its pending requests. The sub-workflow's
+        # deeper executor/shared state cannot be restored from these older checkpoints.
+        legacy_execution_contexts = state.get("execution_contexts")
+        if not legacy_execution_contexts:
+            return
+        request_info_events: list[WorkflowEvent[Any]] = []
+        for execution_context in legacy_execution_contexts.values():
+            if isinstance(execution_context, ExecutionContext):
+                request_info_events.extend(execution_context.pending_requests.values())
+                if execution_context.collected_responses:
+                    logger.warning(
+                        "WorkflowExecutor %s restored legacy checkpoint with collected responses for "
+                        "execution_id %s. The sub-workflow is the single source of truth for its pending "
+                        "requests, so these responses will be ignored. Resume instead from a checkpoint created "
+                        "prior to any responses being collected if legacy request/response state must be "
+                        "preserved. Legacy execution contexts for sub-workflows will be removed in a future release.",
+                        self.id,
+                        execution_context.execution_id,
+                    )
         await asyncio.gather(*[
             self.workflow._runner_context.add_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
             for event in request_info_events
@@ -537,7 +498,6 @@ class WorkflowExecutor(Executor):
     async def _process_workflow_result(
         self,
         result: WorkflowRunResult,
-        execution_context: ExecutionContext,
         ctx: WorkflowContext[Any],
     ) -> None:
         """Process the result from a workflow execution.
@@ -547,7 +507,6 @@ class WorkflowExecutor(Executor):
 
         Args:
             result: The workflow execution result.
-            execution_context: The execution context for this sub-workflow run.
             ctx: The workflow context.
         """
         # Collect all events from the workflow
@@ -586,10 +545,6 @@ class WorkflowExecutor(Executor):
         for event in request_info_events:
             request_id = event.request_id
             response_type = event.response_type
-            # Track the pending request in execution context
-            execution_context.pending_requests[request_id] = event
-            # Map request to execution for response routing
-            self._request_to_execution[request_id] = execution_context.execution_id
             if self._propagate_request:
                 # In a workflow where the parent workflow does not handle the request, the request
                 # should be propagated via the `request_info` mechanism to an external source. And
@@ -599,9 +554,6 @@ class WorkflowExecutor(Executor):
                 # In a workflow where the parent workflow has an executor that may intercept the
                 # request and handle it directly, a message should be sent.
                 await ctx.send_message(SubWorkflowRequestMessage(source_event=event, executor_id=self.id))
-
-        # Update expected response count for this execution
-        execution_context.expected_response_count = len(request_info_events)
 
         # Handle final state
         if workflow_run_state == WorkflowRunState.FAILED:
@@ -621,26 +573,18 @@ class WorkflowExecutor(Executor):
                 await ctx.add_event(error_event)
         elif workflow_run_state == WorkflowRunState.IDLE:
             # Sub-workflow is idle - nothing more to do now
-            logger.debug(
-                f"Sub-workflow {self.workflow.id} is idle with {len(self._execution_contexts)} active executions"
-            )
+            logger.debug(f"Sub-workflow {self.workflow.id} is idle")
         elif workflow_run_state == WorkflowRunState.CANCELLED:
             # Sub-workflow was cancelled - treat as completion
-            logger.debug(
-                f"Sub-workflow {self.workflow.id} was cancelled with {len(self._execution_contexts)} active executions"
-            )
+            logger.debug(f"Sub-workflow {self.workflow.id} was cancelled")
         elif workflow_run_state == WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS:
             # Sub-workflow is still running with pending requests
             logger.debug(
-                f"Sub-workflow {self.workflow.id} is still in progress with {len(request_info_events)} "
-                f"pending requests with {len(self._execution_contexts)} active executions"
+                f"Sub-workflow {self.workflow.id} is still in progress with {len(request_info_events)} pending requests"
             )
         elif workflow_run_state == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS:
             # Sub-workflow is idle but has pending requests
-            logger.debug(
-                f"Sub-workflow {self.workflow.id} is idle with pending requests: "
-                f"{len(request_info_events)} with {len(self._execution_contexts)} active executions"
-            )
+            logger.debug(f"Sub-workflow {self.workflow.id} is idle with pending requests: {len(request_info_events)}")
         else:
             raise RuntimeError(f"Unexpected workflow run state: {workflow_run_state}")
 
@@ -650,48 +594,17 @@ class WorkflowExecutor(Executor):
         response: Any,
         ctx: WorkflowContext[Any],
     ) -> None:
-        execution_id = self._request_to_execution.get(request_id)
-        if not execution_id or execution_id not in self._execution_contexts:
+        # The sub-workflow is the source of truth for what it is awaiting. Validate the response
+        # against its pending requests and ignore anything unknown or already handled.
+        pending_requests = await self.workflow._runner_context.get_pending_request_info_events()  # pyright: ignore[reportPrivateUsage]
+        if request_id not in pending_requests:
             logger.warning(
-                f"WorkflowExecutor {self.id} received response for unknown request_id: {request_id}. "
-                "This response will be ignored."
+                f"WorkflowExecutor {self.id} received a response for an unknown or already-handled "
+                f"request_id: {request_id}. This response will be ignored."
             )
             return
 
-        execution_context = self._execution_contexts[execution_id]
-
-        # Check if we have this pending request in the execution context
-        if request_id not in execution_context.pending_requests:
-            logger.warning(
-                f"WorkflowExecutor {self.id} received response for unknown request_id: "
-                f"{request_id} in execution {execution_id}, ignoring"
-            )
-            return
-
-        # Remove the request from pending list and request mapping
-        execution_context.pending_requests.pop(request_id, None)
-        self._request_to_execution.pop(request_id, None)
-
-        # Accumulate the response in this execution's context
-        execution_context.collected_responses[request_id] = response
-        # Check if we have all expected responses for this execution
-        if len(execution_context.collected_responses) < execution_context.expected_response_count:
-            logger.debug(
-                f"WorkflowExecutor {self.id} execution {execution_id} waiting for more responses: "
-                f"{len(execution_context.collected_responses)}/{execution_context.expected_response_count} received"
-            )
-            return  # Wait for more responses
-
-        # Send all collected responses to the sub-workflow
-        responses_to_send = dict(execution_context.collected_responses)
-        execution_context.collected_responses.clear()  # Clear for next batch
-
-        try:
-            # Resume the sub-workflow with all collected responses
-            result = await self.workflow.run(responses=responses_to_send)
-            # Process the workflow result using shared logic
-            await self._process_workflow_result(result, execution_context, ctx)
-        finally:
-            # Clean up execution context if it's completed (no pending requests)
-            if not execution_context.pending_requests:
-                del self._execution_contexts[execution_id]
+        # Forward the response to the sub-workflow, which resumes and validates it against its own
+        # pending requests, then process whatever the sub-workflow produces.
+        result = await self.workflow.run(responses={request_id: response})
+        await self._process_workflow_result(result, ctx)

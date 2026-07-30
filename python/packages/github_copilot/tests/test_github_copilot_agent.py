@@ -3475,11 +3475,44 @@ class TestGitHubCopilotAttachments:
 
 
 # ---------------------------------------------------------------------------
-# Integration tests — require COPILOT_GITHUB_TOKEN env var
+# Integration tests — require GitHub Actions auth or explicit local opt-in
 # ---------------------------------------------------------------------------
+def _copilot_integration_configured() -> bool:
+    actions_auth = os.getenv("GITHUB_ACTIONS", "").lower() == "true" and bool(os.getenv("GITHUB_TOKEN", "").strip())
+    local_opt_in = os.getenv("RUN_COPILOT_INTEGRATION_TESTS", "").lower() == "true"
+    return actions_auth or local_opt_in
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        ({}, False),
+        ({"GITHUB_TOKEN": "unrelated-token"}, False),
+        ({"GITHUB_ACTIONS": "true"}, False),
+        ({"GITHUB_ACTIONS": "true", "GITHUB_TOKEN": "actions-token"}, True),
+        ({"RUN_COPILOT_INTEGRATION_TESTS": "true"}, True),
+    ],
+)
+def test_copilot_integration_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    environment: dict[str, str],
+    expected: bool,
+) -> None:
+    """Integration tests require Actions auth or an explicit local opt-in."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("RUN_COPILOT_INTEGRATION_TESTS", raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+
+    assert _copilot_integration_configured() is expected
+
+
 skip_if_copilot_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("COPILOT_GITHUB_TOKEN", "") == "",
-    reason="No COPILOT_GITHUB_TOKEN provided; skipping integration tests.",
+    not _copilot_integration_configured(),
+    reason=(
+        "GitHub Actions auth is unavailable and RUN_COPILOT_INTEGRATION_TESTS is not true; skipping integration tests."
+    ),
 )
 
 

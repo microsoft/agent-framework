@@ -48,26 +48,33 @@ internal static class PortableValueExtensions
 
         if (formulaValues[0] is RecordValue recordValue)
         {
-            return FormulaValue.NewTable(ParseRecordType(recordValue), formulaValues.OfType<RecordValue>());
+            return FormulaValue.NewTable(ParseRecordType(recordValue), formulaValues.OfType<RecordValue>().ToArray());
         }
 
-        return
-            formulaValues[0] switch
-            {
-                PrimitiveValue<bool> => NewSingleColumnTable<bool>(),
-                PrimitiveValue<string> => NewSingleColumnTable<string>(),
-                PrimitiveValue<int> => NewSingleColumnTable<int>(),
-                PrimitiveValue<long> => NewSingleColumnTable<long>(),
-                PrimitiveValue<float> => NewSingleColumnTable<float>(),
-                PrimitiveValue<decimal> => NewSingleColumnTable<decimal>(),
-                PrimitiveValue<double> => NewSingleColumnTable<double>(),
-                PrimitiveValue<TimeSpan> => NewSingleColumnTable<TimeSpan>(),
-                PrimitiveValue<DateTime> => NewSingleColumnTable<DateTime>(),
-                _ => throw new DeclarativeModelException($"Unsupported table element type: {formulaValues[0].Type.GetType().Name}"),
-            };
+        FormulaType elementType = formulaValues[0] switch
+        {
+            PrimitiveValue<bool>
+                or PrimitiveValue<string>
+                or PrimitiveValue<int>
+                or PrimitiveValue<long>
+                or PrimitiveValue<decimal>
+                or PrimitiveValue<float>
+                or PrimitiveValue<double>
+                or PrimitiveValue<TimeSpan>
+                or PrimitiveValue<DateTime> => formulaValues[0].Type,
+            _ => throw new DeclarativeModelException($"Unsupported table element type: {formulaValues[0].Type.GetType().Name}"),
+        };
 
-        TableValue NewSingleColumnTable<TValue>() =>
-            FormulaValue.NewSingleColumnTable(formulaValues.OfType<PrimitiveValue<TValue>>());
+        RecordType singleColumnType = RecordType.Empty().Add("Value", elementType);
+        RecordValue[] rows =
+        [
+            .. formulaValues.Select(
+                value =>
+                    FormulaValue.NewRecordFromFields(
+                        singleColumnType,
+                        new NamedValue("Value", value))),
+        ];
+        return FormulaValue.NewTable(singleColumnType, rows);
     }
 
     public static bool IsSystemType<TValue>(this PortableValue value, [NotNullWhen(true)] out TValue? typedValue) where TValue : struct
