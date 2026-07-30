@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using A2A.AspNetCore;
 using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Custom;
 using AgentWebChat.AgentHost.Utilities;
@@ -28,6 +27,15 @@ builder.AddDevUI();
 // Add OpenAI services
 builder.AddOpenAIChatCompletions();
 builder.AddOpenAIResponses();
+
+// IMPORTANT: In production, register a SessionIsolationKeyProvider to isolate sessions by authenticated caller.
+// Without this, contextId alone is the session key — any caller who knows a contextId can access that session.
+// Example using claims-based identity:
+// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+
+// By default, NoopAgentSessionStore is used — sessions are not persisted across requests.
+// To enable multi-turn conversations, register a session store explicitly, e.g.:
+// agentBuilder.WithInMemorySessionStore();
 
 var pirateAgentBuilder = builder.AddAIAgent(
     "pirate",
@@ -146,6 +154,14 @@ builder.Services.AddKeyedSingleton<AIAgent>("my-di-matchingname-agent", (sp, nam
         instructions: "you are a dependency inject agent. Tell me all about dependency injection.");
 });
 
+pirateAgentBuilder.AddA2AServer();
+knightsKnavesAgentBuilder.AddA2AServer();
+
+// IMPORTANT: In production, register a SessionIsolationKeyProvider to isolate sessions by authenticated caller.
+// Without this, contextId alone is the session key — any caller who knows a contextId can access that session.
+// Example using claims-based identity:
+// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+
 var app = builder.Build();
 
 app.MapOpenApi();
@@ -154,25 +170,29 @@ app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents 
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();
 
-// attach a2a with simple message communication
-app.MapA2A(pirateAgentBuilder, path: "/a2a/pirate");
-app.MapA2A(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves", agentCard: new()
-{
-    Name = "Knights and Knaves",
-    Description = "An agent that helps you solve the knights and knaves puzzle.",
-    Version = "1.0",
-
-    // Url can be not set, and SDK will help assign it.
-    // Url = "http://localhost:5390/a2a/knights-and-knaves"
-});
+// Expose A2A servers over HTTP with JSON payloads
+app.MapA2AHttpJson(pirateAgentBuilder, path: "/a2a/pirate");
+app.MapA2AHttpJson(knightsKnavesAgentBuilder, path: "/a2a/knights-and-knaves");
 
 app.MapDevUI();
 
 app.MapOpenAIResponses();
+app.MapOpenAIResponses(pirateAgentBuilder);
+app.MapOpenAIResponses(knightsKnavesAgentBuilder);
+app.MapOpenAIResponses(chemistryAgent);
+app.MapOpenAIResponses(mathsAgent);
+app.MapOpenAIResponses(literatureAgent);
+app.MapOpenAIResponses(scienceSequentialWorkflow);
+app.MapOpenAIResponses(scienceConcurrentWorkflow);
 app.MapOpenAIConversations();
 
 app.MapOpenAIChatCompletions(pirateAgentBuilder);
 app.MapOpenAIChatCompletions(knightsKnavesAgentBuilder);
+app.MapOpenAIChatCompletions(chemistryAgent);
+app.MapOpenAIChatCompletions(mathsAgent);
+app.MapOpenAIChatCompletions(literatureAgent);
+app.MapOpenAIChatCompletions(scienceSequentialWorkflow);
+app.MapOpenAIChatCompletions(scienceConcurrentWorkflow);
 
 // Map the agents HTTP endpoints
 app.MapAgentDiscovery("/agents");

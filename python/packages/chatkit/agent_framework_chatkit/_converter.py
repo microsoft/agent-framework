@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 import logging
-import sys
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 from agent_framework import (
     Content,
     Message,
 )
+from agent_framework._telemetry import mark_feature_used
 from chatkit.types import (
     AssistantMessageItem,
     Attachment,
@@ -21,6 +21,7 @@ from chatkit.types import (
     HiddenContextItem,
     ImageAttachment,
     SDKHiddenContextItem,
+    StructuredInputItem,
     TaskItem,
     ThreadItem,
     UserMessageItem,
@@ -30,10 +31,7 @@ from chatkit.types import (
     WorkflowItem,
 )
 
-if sys.version_info >= (3, 11):
-    from typing import assert_never  # type:ignore # pragma: no cover
-else:
-    from typing_extensions import assert_never  # type:ignore # pragma: no cover
+from ._feature_usage import FeatureIndex
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +100,7 @@ class ThreadItemConverter:
 
         # If only text and no attachments, use text parameter for simplicity
         if text_content.strip() and not data_contents:
-            user_message = Message(role="user", text=text_content.strip())
+            user_message = Message(role="user", contents=[text_content.strip()])
         else:
             # Build contents list with both text and attachments
             contents: list[Content] = []
@@ -116,7 +114,7 @@ class ThreadItemConverter:
         if item.quoted_text and is_last_message:
             quoted_context = Message(
                 role="user",
-                text=f"The user is referring to this in particular:\n{item.quoted_text}",
+                contents=[f"The user is referring to this in particular:\n{item.quoted_text}"],
             )
             # Prepend quoted context before the main message
             messages.insert(0, quoted_context)
@@ -211,9 +209,9 @@ class ThreadItemConverter:
                     content="User's email: user@example.com",
                 )
                 message = converter.hidden_context_to_input(hidden_item)
-                # Returns: Message(role=SYSTEM, text="<HIDDEN_CONTEXT>User's email: ...</HIDDEN_CONTEXT>")
+                # Returns: Message(role=SYSTEM, contents=["<HIDDEN_CONTEXT>User's email: ...</HIDDEN_CONTEXT>"])
         """
-        return Message(role="system", text=f"<HIDDEN_CONTEXT>{item.content}</HIDDEN_CONTEXT>")
+        return Message(role="system", contents=[f"<HIDDEN_CONTEXT>{item.content}</HIDDEN_CONTEXT>"])
 
     def tag_to_message_content(self, tag: UserMessageTagContent) -> Content:
         """Convert a ChatKit tag (@-mention) to Agent Framework content.
@@ -245,7 +243,7 @@ class ThreadItemConverter:
                 content = converter.tag_to_message_content(tag)
                 # Returns: Content.from_text(text="<TAG>Name:John Doe</TAG>")
         """
-        name = getattr(tag.data, "name", tag.text if hasattr(tag, "text") else "unknown")
+        name = tag.data.get("name", tag.text) if isinstance(tag.data, Mapping) else getattr(tag.data, "name", tag.text)
         return Content.from_text(text=f"<TAG>Name:{name}</TAG>")
 
     def task_to_input(self, item: TaskItem) -> Message | list[Message] | None:
@@ -292,7 +290,7 @@ class ThreadItemConverter:
             f"A message was displayed to the user that the following task was performed:\n<Task>\n{task_text}\n</Task>"
         )
 
-        return Message(role="user", text=text)
+        return Message(role="user", contents=[text])
 
     def workflow_to_input(self, item: WorkflowItem) -> Message | list[Message] | None:
         """Convert a ChatKit WorkflowItem to Agent Framework Message(s).
@@ -347,7 +345,7 @@ class ThreadItemConverter:
                 f"<Task>\n{task_text}\n</Task>"
             )
 
-            messages.append(Message(role="user", text=text))
+            messages.append(Message(role="user", contents=[text]))
 
         return messages if messages else None
 
@@ -375,13 +373,17 @@ class ThreadItemConverter:
             .. code-block:: python
 
                 # Widget item
-                from chatkit.widgets import Card, Text
+                from chatkit.widgets import WidgetTemplate
 
                 widget_item = WidgetItem(
                     id="widget_1",
                     thread_id="thread_1",
                     created_at=datetime.now(),
-                    widget=Card(children=[Text(value="Hello")]),
+                    widget=WidgetTemplate({
+                        "version": "1.0",
+                        "name": "greeting",
+                        "template": '{"type":"Card","children":[{"type":"Text","value":"Hello"}]}',
+                    }).build(),
                 )
                 message = converter.widget_to_input(widget_item)
                 # Returns message with JSON representation of the widget
@@ -389,7 +391,7 @@ class ThreadItemConverter:
         try:
             widget_json = item.widget.model_dump_json(exclude_unset=True, exclude_none=True)
             text = f"The following graphical UI widget (id: {item.id}) was displayed to the user:{widget_json}"
-            return Message(role="user", text=text)
+            return Message(role="user", contents=[text])
         except Exception:
             # If JSON serialization fails, skip the widget
             return None
@@ -415,7 +417,7 @@ class ThreadItemConverter:
         if not text_parts:
             return None
 
-        return Message(role="assistant", text="".join(text_parts))
+        return Message(role="assistant", contents=["".join(text_parts)])
 
     async def client_tool_call_to_input(self, item: ClientToolCallItem) -> Message | list[Message] | None:
         """Convert a ChatKit ClientToolCallItem to Agent Framework Message(s).
@@ -527,8 +529,14 @@ class ThreadItemConverter:
             case GeneratedImageItem():
                 # TODO(evmattso): Implement generated image handling in a future PR
                 return []
+            case StructuredInputItem():
+                # TODO(evmattso): Implement structured input handling in a future PR
+                return []
             case _:
-                assert_never(item)
+                # Unknown ThreadItem variant (e.g. types added in newer chatkit versions).
+                # Skip rather than fail so we remain forward-compatible with chatkit upgrades.
+                logger.debug("Skipping unsupported ThreadItem of type %s", type(item).__name__)
+                return []
 
     async def to_agent_input(
         self,
@@ -605,4 +613,5 @@ async def simple_to_agent_input(thread_items: Sequence[ThreadItem] | ThreadItem)
             # Convert multiple items
             messages = await simple_to_agent_input([user_message_item, assistant_message_item, task_item])
     """
+    mark_feature_used(FeatureIndex.CHATKIT)
     return await _DEFAULT_CONVERTER.to_agent_input(thread_items)

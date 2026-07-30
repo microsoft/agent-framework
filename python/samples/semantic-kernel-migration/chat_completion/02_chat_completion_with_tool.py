@@ -1,6 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "agent-framework-openai",
 #     "semantic-kernel",
 # ]
 # ///
@@ -23,7 +24,7 @@ load_dotenv()
 
 
 async def run_semantic_kernel() -> None:
-    from semantic_kernel.agents import ChatCompletionAgent, ChatHistoryAgentThread
+    from semantic_kernel.agents import ChatCompletionAgent
     from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion
     from semantic_kernel.functions import kernel_function
 
@@ -39,11 +40,7 @@ async def run_semantic_kernel() -> None:
         instructions="Answer menu questions accurately.",
         plugins=[SpecialsPlugin()],
     )
-    thread = ChatHistoryAgentThread()
-    response = await agent.get_response(
-        messages="What soup can I order today?",
-        thread=thread,
-    )
+    response = await agent.get_response("What soup can I order today?")
     print("[SK]", response.message.content)
 
 
@@ -62,12 +59,7 @@ async def run_agent_framework() -> None:
         instructions="Answer menu questions accurately.",
         tools=[specials],
     )
-    session = chat_agent.create_session()
-    reply = await chat_agent.run(
-        "What soup can I order today?",
-        session=session,
-        tool_choice="auto",
-    )
+    reply = await chat_agent.run("What soup can I order today?")
     print("[AF]", reply.text)
 
 

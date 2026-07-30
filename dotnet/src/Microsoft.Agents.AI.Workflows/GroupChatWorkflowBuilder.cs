@@ -12,12 +12,10 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <summary>
 /// Provides a builder for specifying group chat relationships between agents and building the resulting workflow.
 /// </summary>
-public sealed class GroupChatWorkflowBuilder
+public sealed class GroupChatWorkflowBuilder : OrchestrationBuilderBase<GroupChatWorkflowBuilder>
 {
     private readonly Func<IReadOnlyList<AIAgent>, GroupChatManager> _managerFactory;
     private readonly HashSet<AIAgent> _participants = new(AIAgentIDEqualityComparer.Instance);
-    private string _name = string.Empty;
-    private string _description = string.Empty;
 
     internal GroupChatWorkflowBuilder(Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) =>
         this._managerFactory = managerFactory;
@@ -45,28 +43,6 @@ public sealed class GroupChatWorkflowBuilder
     }
 
     /// <summary>
-    /// Sets the human-readable name for the workflow.
-    /// </summary>
-    /// <param name="name">The name of the workflow.</param>
-    /// <returns>This instance of the <see cref="GroupChatWorkflowBuilder"/>.</returns>
-    public GroupChatWorkflowBuilder WithName(string name)
-    {
-        this._name = name;
-        return this;
-    }
-
-    /// <summary>
-    /// Sets the description for the workflow.
-    /// </summary>
-    /// <param name="description">The description of what the workflow does.</param>
-    /// <returns>This instance of the <see cref="GroupChatWorkflowBuilder"/>.</returns>
-    public GroupChatWorkflowBuilder WithDescription(string description)
-    {
-        this._description = description;
-        return this;
-    }
-
-    /// <summary>
     /// Builds a <see cref="Workflow"/> composed of agents that operate via group chat, with the next
     /// agent to process messages selected by the group chat manager.
     /// </summary>
@@ -75,10 +51,14 @@ public sealed class GroupChatWorkflowBuilder
     {
         AIAgent[] agents = this._participants.ToArray();
 
+        // GroupChatHost owns the canonical conversation and broadcasts messages directly to every
+        // participant. Participants therefore must not echo their incoming messages back to the host
+        // (which would cause duplicates), but must still reframe other agents' assistant messages as
+        // user messages so each agent's own session reads coherently.
         AIAgentHostOptions options = new()
         {
             ReassignOtherAgentsAsUsers = true,
-            ForwardIncomingMessages = true
+            ForwardIncomingMessages = false
         };
 
         Dictionary<AIAgent, ExecutorBinding> agentMap = agents.ToDictionary(a => a, a => a.BindAsExecutor(options));
@@ -89,15 +69,7 @@ public sealed class GroupChatWorkflowBuilder
         ExecutorBinding host = groupChatHostFactory.BindExecutor(nameof(GroupChatHost));
         WorkflowBuilder builder = new(host);
 
-        if (!string.IsNullOrEmpty(this._name))
-        {
-            builder = builder.WithName(this._name);
-        }
-
-        if (!string.IsNullOrEmpty(this._description))
-        {
-            builder = builder.WithDescription(this._description);
-        }
+        this.ApplyMetadata(builder);
 
         foreach (var participant in agentMap.Values)
         {
@@ -106,6 +78,15 @@ public sealed class GroupChatWorkflowBuilder
                 .AddEdge(participant, host);
         }
 
-        return builder.WithOutputFrom(host).Build();
+        this.ApplyOutputDesignations(builder, agentMap, "group chat", () =>
+        {
+            builder.WithOutputFrom(host);
+            if (agentMap.Count > 0)
+            {
+                builder.WithIntermediateOutputFrom([.. agentMap.Values]);
+            }
+        });
+
+        return builder.Build();
     }
 }

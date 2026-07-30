@@ -32,7 +32,7 @@ def retrieve_company_report(company_code: str, detailed: bool) -> str:
 async def main() -> None:
     """Example of memory usage with local Mem0 OSS context provider."""
     print("=== Mem0 Context Provider Example ===")
-    # Each record in Mem0 should be associated with agent_id or user_id or application_id or thread_id.
+    # Each record in Mem0 should be associated with agent_id or user_id or application_id.
     # In this example, we associate Mem0 records with user_id.
     user_id = str(uuid.uuid4())
     # For Azure authentication, run `az login` command in terminal or replace AzureCliCredential with preferred

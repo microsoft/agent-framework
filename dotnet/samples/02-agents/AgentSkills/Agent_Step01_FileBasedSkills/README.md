@@ -6,7 +6,7 @@ This sample demonstrates how to use **file-based Agent Skills** with a `ChatClie
 
 - Discovering skills from `SKILL.md` files on disk via `AgentFileSkillsSource`
 - The progressive disclosure pattern: advertise → load → read resources → run scripts
-- Using the `AgentSkillsProvider` constructor with a skill directory path and script executor
+- Using the `AgentSkillsProvider` constructor with a skill directory path and script runner
 - Running file-based scripts (Python) via a subprocess-based executor
 
 ## Skills Included
@@ -30,7 +30,7 @@ Converts between common units (miles↔km, pounds↔kg) using a multiplication f
 
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-endpoint.openai.azure.com/"
-export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
 ### Run

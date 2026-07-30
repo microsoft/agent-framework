@@ -1,0 +1,5 @@
+{
+  "appHost": {
+    "path": "DevUIIntegration.AppHost/DevUIIntegration.AppHost.csproj"
+  }
+}

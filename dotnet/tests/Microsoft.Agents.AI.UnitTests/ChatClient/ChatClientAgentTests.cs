@@ -41,7 +41,7 @@ public partial class ChatClientAgentTests
         Assert.Equal("test description", agent.Description);
         Assert.Equal("test instructions", agent.Instructions);
         Assert.NotNull(agent.ChatClient);
-        Assert.Equal("FunctionInvokingChatClient", agent.ChatClient.GetType().Name);
+        Assert.Equal("ApprovalResponseBindingChatClient", agent.ChatClient.GetType().Name);
     }
 
     /// <summary>
@@ -379,12 +379,10 @@ public partial class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that RunAsync passes ChatOptions with null ConversationId when using regular AgentRunOptions.
-    /// When per-service-call persistence is active (default), the sentinel conversation ID is set on ChatOptions
-    /// and then stripped by ChatHistoryPersistingChatClient before reaching the inner client.
+    /// Verify that RunAsync passes null ChatOptions when using regular AgentRunOptions.
     /// </summary>
     [Fact]
-    public async Task RunAsyncPassesChatOptionsWithNullConversationIdWhenUsingRegularAgentRunOptionsAsync()
+    public async Task RunAsyncPassesNullChatOptionsWhenUsingRegularAgentRunOptionsAsync()
     {
         // Arrange
         ChatOptions? capturedOptions = null;
@@ -403,9 +401,8 @@ public partial class ChatClientAgentTests
         // Act
         await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
 
-        // Assert — the inner client receives ChatOptions with null ConversationId (sentinel was stripped)
-        Assert.NotNull(capturedOptions);
-        Assert.Null(capturedOptions!.ConversationId);
+        // Assert
+        Assert.Null(capturedOptions);
     }
 
     /// <summary>
@@ -467,7 +464,7 @@ public partial class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that RunAsync works with existing session and can retreive messages if the session has a ChatHistoryProvider.
+    /// Verify that RunAsync works with existing session and can retrieve messages if the session has a ChatHistoryProvider.
     /// </summary>
     [Fact]
     public async Task RunAsyncRetrievesMessagesFromSessionWhenSessionHasChatHistoryProviderAsync()
@@ -1399,8 +1396,9 @@ public partial class ChatClientAgentTests
         Assert.NotNull(result);
         Assert.IsType<IChatClient>(result, exactMatch: false);
 
-        // Note: The result will be the AgentInvokedChatClient wrapper, not the original mock
-        Assert.Equal("FunctionInvokingChatClient", result.GetType().Name);
+        // Note: The result will be the outermost decorator (ApprovalResponseBindingChatClient,
+        // added by default), not the original mock.
+        Assert.Equal("ApprovalResponseBindingChatClient", result.GetType().Name);
     }
 
     /// <summary>

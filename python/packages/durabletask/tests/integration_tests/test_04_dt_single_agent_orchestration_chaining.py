@@ -11,9 +11,20 @@ Tests orchestration patterns with sequential agent calls:
 
 import json
 import logging
+from typing import Any, Protocol
 
 import pytest
 from durabletask.client import OrchestrationStatus
+
+from agent_framework_durabletask import DurableAIAgentClient
+
+
+class AgentClientFactoryProtocol(Protocol):
+    """Protocol for the agent client factory fixture."""
+
+    @classmethod
+    def create(cls, max_poll_retries: int = 90) -> tuple[Any, DurableAIAgentClient]: ...
+
 
 # Agent name from the 04_single_agent_orchestration_chaining sample
 WRITER_AGENT_NAME: str = "WriterAgent"
@@ -36,7 +47,7 @@ class TestSingleAgentOrchestrationChaining:
     """Test suite for single agent orchestration with chaining."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, agent_client_factory: type, orchestration_helper) -> None:
+    def setup(self, agent_client_factory: type[AgentClientFactoryProtocol], orchestration_helper) -> None:
         """Setup test fixtures."""
         # Create agent client using the factory fixture
         self.dts_client, self.agent_client = agent_client_factory.create()

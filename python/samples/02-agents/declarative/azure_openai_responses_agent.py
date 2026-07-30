@@ -14,7 +14,13 @@ async def main():
     """Create an agent from a declarative yaml specification and run it."""
     # get the path
     current_path = Path(__file__).parent
-    yaml_path = current_path.parent.parent.parent.parent / "agent-samples" / "azure" / "AzureOpenAIResponses.yaml"
+    yaml_path = (
+        current_path.parent.parent.parent.parent
+        / "declarative-agents"
+        / "agent-samples"
+        / "azure"
+        / "AzureOpenAIResponses.yaml"
+    )
     # load the yaml from the path
     with yaml_path.open("r") as f:
         yaml_str = f.read()
@@ -25,7 +31,11 @@ async def main():
     # Use response.value with try/except for safe parsing
     try:
         parsed = response.value
-        print("Agent response:", parsed.model_dump_json(indent=2))
+        model_dump_json = getattr(parsed, "model_dump_json", None)
+        if callable(model_dump_json):
+            print("Agent response:", model_dump_json(indent=2))
+        else:
+            print("Agent response:", response.text)
     except Exception:
         print("Agent response:", response.text)
 

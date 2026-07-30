@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import uuid
 from collections.abc import (
     AsyncIterable,
     Awaitable,
@@ -23,6 +24,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
@@ -31,6 +33,7 @@ from agent_framework import (
     UsageDetails,
 )
 from agent_framework._settings import load_settings
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
@@ -43,20 +46,22 @@ from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
 from pydantic import BaseModel
 
+from ._feature_usage import FeatureIndex
+
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 
 __all__ = ["OllamaChatClient", "OllamaChatOptions"]
@@ -77,7 +82,7 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
 
     Keys:
         # Inherited from ChatOptions (mapped to Ollama options):
-        model_id: The model name, translates to ``model`` in Ollama API.
+        model: The model name, translates to ``model`` in Ollama API.
         temperature: Sampling temperature, translates to ``options.temperature``.
         top_p: Nucleus sampling, translates to ``options.top_p``.
         max_tokens: Maximum tokens to generate, translates to ``options.num_predict``.
@@ -87,7 +92,8 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
         presence_penalty: Presence penalty, translates to ``options.presence_penalty``.
         tools: List of function tools.
         response_format: Output format, translates to ``format``.
-            Use 'json' for JSON mode or a JSON schema dict for structured output.
+            Use 'json' for JSON mode, a JSON schema dict, or a Pydantic model class
+            (converted to its JSON schema) for structured output.
 
         # Options not supported in Ollama:
         tool_choice: Ollama only supports auto tool choice.
@@ -229,7 +235,6 @@ class OllamaChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
 
 
 OLLAMA_OPTION_TRANSLATIONS: dict[str, str] = {
-    "model_id": "model",
     "response_format": "format",
 }
 """Maps ChatOptions keys to Ollama API parameter names."""
@@ -278,7 +283,7 @@ class OllamaSettings(TypedDict, total=False):
     """Ollama settings."""
 
     host: str | None
-    model_id: str | None
+    model: str | None
 
 
 logger = logging.getLogger("agent_framework.ollama")
@@ -299,7 +304,7 @@ class OllamaChatClient(
         *,
         host: str | None = None,
         client: AsyncClient | None = None,
-        model_id: str | None = None,
+        model: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
@@ -312,7 +317,7 @@ class OllamaChatClient(
             host: Ollama server URL, if none `http://localhost:11434` is used.
                 Can be set via the OLLAMA_HOST env variable.
             client: An optional Ollama Client instance. If not provided, a new instance will be created.
-            model_id: The Ollama chat model ID to use. Can be set via the OLLAMA_MODEL_ID env variable.
+            model: The Ollama chat model to use. Can be set via the OLLAMA_MODEL env variable.
             additional_properties: Additional properties stored on the client instance.
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.
@@ -322,14 +327,14 @@ class OllamaChatClient(
         ollama_settings = load_settings(
             OllamaSettings,
             env_prefix="OLLAMA_",
-            required_fields=["model_id"],
+            required_fields=["model"],
             host=host,
-            model_id=model_id,
+            model=model,
             env_file_encoding=env_file_encoding,
             env_file_path=env_file_path,
         )
 
-        self.model_id = ollama_settings["model_id"]  # type: ignore[assignment, reportTypedDictNotRequiredAccess]
+        self.model = ollama_settings["model"]  # type: ignore[assignment, reportTypedDictNotRequiredAccess]
         # we can just pass in None for the host, the default is set by the Ollama package.
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
         # Save Host URL for serialization with to_dict()
@@ -356,6 +361,7 @@ class OllamaChatClient(
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 validated_options = await self._validate_options(options)
                 options_dict = self._prepare_options(messages, validated_options)
+                mark_feature_used(FeatureIndex.OLLAMA)
                 try:
                     response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
                         stream=True,
@@ -374,6 +380,7 @@ class OllamaChatClient(
         async def _get_response() -> ChatResponse:
             validated_options = await self._validate_options(options)
             options_dict = self._prepare_options(messages, validated_options)
+            mark_feature_used(FeatureIndex.OLLAMA)
             try:
                 response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
                     stream=False,
@@ -383,7 +390,10 @@ class OllamaChatClient(
             except Exception as ex:
                 raise ChatClientException(f"Ollama chat request failed : {ex}", ex) from ex
 
-            return self._parse_response_from_ollama(response)
+            return self._parse_response_from_ollama(
+                response,
+                response_format=validated_options.get("response_format"),
+            )
 
         return _get_response()
 
@@ -411,8 +421,15 @@ class OllamaChatClient(
                 translated_key = OLLAMA_MODEL_OPTION_TRANSLATIONS.get(key, key)
                 model_options[translated_key] = value
             else:
-                # Apply top-level translations (e.g., model_id -> model)
+                # Apply top-level translations (e.g., response_format -> format)
                 translated_key = OLLAMA_OPTION_TRANSLATIONS.get(key, key)
+                if translated_key == "format" and isinstance(value, type) and issubclass(value, BaseModel):
+                    # Ollama's `format` accepts '', 'json', or a JSON-schema dict, not a
+                    # Pydantic model class. Convert the class to its JSON schema, matching
+                    # OpenAIChatClient/FoundryChatClient and Ollama's documented usage
+                    # (https://ollama.com/blog/structured-outputs). The original class is
+                    # kept in `options` for typed parsing of the response.
+                    value = value.model_json_schema()
                 run_options[translated_key] = value
 
         # Add model options to run_options if any
@@ -425,11 +442,11 @@ class OllamaChatClient(
         if "messages" not in run_options:
             raise ChatClientInvalidRequestException("Messages are required for chat completions")
 
-        # model id
+        # model
         if not run_options.get("model"):
-            if not self.model_id:
-                raise ValueError("model_id must be a non-empty string")
-            run_options["model"] = self.model_id
+            if not self.model:
+                raise ValueError("model must be a non-empty string")
+            run_options["model"] = self.model
 
         # tools
         tools = options.get("tools")
@@ -514,7 +531,10 @@ class OllamaChatClient(
                     tool_text = "\n".join(text_parts) if text_parts else ""
                 else:
                     tool_text = str(item.result) if item.result is not None else ""
-                messages.append(OllamaMessage(role="tool", content=tool_text, tool_name=item.call_id))
+
+                # Get the tool name directly from the content item.
+                tool_name = getattr(item, "name", "") or ""
+                messages.append(OllamaMessage(role="tool", content=tool_text, tool_name=tool_name))
         return messages
 
     def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Content]:
@@ -528,35 +548,82 @@ class OllamaChatClient(
             contents.extend(tool_calls)
         return contents
 
+    def _get_finish_reason_from_ollama(self, response: OllamaChatResponse) -> FinishReason | None:
+        if response.message.tool_calls:
+            return FinishReason("tool_calls")
+        return FinishReason(response.done_reason) if response.done_reason else None
+
     def _parse_streaming_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponseUpdate:
         contents = self._parse_contents_from_ollama(response)
+        finish_reason = None
+        if response.done:
+            usage_details = UsageDetails(
+                **{
+                    key: value
+                    for key, value in {
+                        "input_token_count": response.prompt_eval_count,
+                        "output_token_count": response.eval_count,
+                        "total_token_count": response.prompt_eval_count + response.eval_count
+                        if isinstance(response.prompt_eval_count, int) and isinstance(response.eval_count, int)
+                        else None,
+                    }.items()
+                    if isinstance(value, int)
+                }
+            )
+            if usage_details:
+                contents.append(Content.from_usage(usage_details, raw_representation=response))
+            finish_reason = self._get_finish_reason_from_ollama(response)
         return ChatResponseUpdate(
             contents=contents,
             role="assistant",
-            model_id=response.model,
+            model=response.model,
             created_at=response.created_at,
+            finish_reason=finish_reason,
         )
 
-    def _parse_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponse:
+    def _parse_response_from_ollama(
+        self,
+        response: OllamaChatResponse,
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse:
         contents = self._parse_contents_from_ollama(response)
+        usage_details = UsageDetails(
+            **{
+                key: value
+                for key, value in {
+                    "input_token_count": response.prompt_eval_count,
+                    "output_token_count": response.eval_count,
+                    "total_token_count": response.prompt_eval_count + response.eval_count
+                    if isinstance(response.prompt_eval_count, int) and isinstance(response.eval_count, int)
+                    else None,
+                }.items()
+                if isinstance(value, int)
+            }
+        )
+        finish_reason = self._get_finish_reason_from_ollama(response)
 
         return ChatResponse(
             messages=[Message(role="assistant", contents=contents)],
-            model_id=response.model,
+            model=response.model,
             created_at=response.created_at,
-            usage_details=UsageDetails(
-                input_token_count=response.prompt_eval_count,
-                output_token_count=response.eval_count,
-            ),
+            finish_reason=finish_reason,
+            usage_details=usage_details or None,
+            response_format=response_format,
         )
 
     def _parse_tool_calls_from_ollama(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Content]:
         resp: list[Content] = []
         for tool in tool_calls:
+            name = tool.function.name
+            args = tool.function.arguments if isinstance(tool.function.arguments, dict) else {}
+
+            unique_call_id = str(uuid.uuid4())
+
             fcc = Content.from_function_call(
-                call_id=tool.function.name,  # Use name of function as call ID since Ollama doesn't provide a call ID
-                name=tool.function.name,
-                arguments=tool.function.arguments if isinstance(tool.function.arguments, dict) else "",
+                call_id=unique_call_id,
+                name=name,
+                arguments=args,
                 raw_representation=tool.function,
             )
             resp.append(fcc)

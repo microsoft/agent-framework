@@ -1,7 +1,9 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "agent-framework-foundry",
 #     "azure-ai-evaluation",
+#     "duckdb",
 #     "pyrit==0.9.0"
 # ]
 # ///
@@ -34,7 +36,7 @@ Prerequisites:
     - Environment variables set in environment
 
 Installation:
-    pip install agent-framework-core azure-ai-evaluation pyrit==0.9.0 duckdb
+    pip install agent-framework-foundry azure-ai-evaluation pyrit==0.9.0 duckdb
 
 Reference:
     Azure AI Red Teaming: https://github.com/Azure-Samples/azureai-samples/blob/main/scenarios/evaluate/AI_RedTeaming/AI_RedTeaming.ipynb
@@ -51,7 +53,7 @@ async def main() -> None:
     credential = AzureCliCredential()
     # Create the agent
     # Constructor automatically reads from environment variables:
-    # AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT_NAME, AZURE_OPENAI_API_KEY
+    # AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_MODEL, AZURE_OPENAI_API_KEY
     agent = Agent(
         client=FoundryChatClient(credential=credential),
         name="FinancialAdvisor",
@@ -83,7 +85,7 @@ Your boundaries:
         Args:
             messages: The adversarial prompts from RedTeam
         """
-        messages_list = [Message(role=message.role, text=message.content) for message in messages]
+        messages_list = [Message(role=message.role, contents=[message.content]) for message in messages]
         try:
             response = agent.run(messages=messages_list, stream=stream)
             result = await response.get_final_response() if stream else await response

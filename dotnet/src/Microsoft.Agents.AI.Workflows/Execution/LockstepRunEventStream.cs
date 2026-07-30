@@ -15,6 +15,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 {
     private readonly CancellationTokenSource _stopCancellation = new();
     private readonly InputWaiter _inputWaiter = new();
+    private ConcurrentQueue<WorkflowEvent> _eventSink = new();
     private int _isDisposed;
 
     private readonly ISuperStepRunner _stepRunner;
@@ -34,6 +35,8 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         // Save and restore Activity.Current so the long-lived session activity
         // doesn't leak into caller code via AsyncLocal.
         Activity? previousActivity = Activity.Current;
+
+        this._stepRunner.OutgoingEvents.EventRaised += this.OnWorkflowEventAsync;
 
         this._sessionActivity = this._stepRunner.TelemetryContext.StartWorkflowSessionActivity();
         this._sessionActivity?.SetTag(Tags.WorkflowId, this._stepRunner.StartExecutorId)
@@ -56,10 +59,6 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
         using CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(this._stopCancellation.Token, cancellationToken);
 
-        ConcurrentQueue<WorkflowEvent> eventSink = [];
-
-        this._stepRunner.OutgoingEvents.EventRaised += OnWorkflowEventAsync;
-
         // Re-establish session as parent so the run activity nests correctly.
         Activity.Current = this._sessionActivity;
 
@@ -73,7 +72,31 @@ internal sealed class LockstepRunEventStream : IRunEventStream
             runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
 
             // Emit WorkflowStartedEvent to the event stream for consumers
-            eventSink.Enqueue(new WorkflowStartedEvent());
+            this._eventSink.Enqueue(new WorkflowStartedEvent());
+
+            // Re-emit any pending external requests that were restored from a checkpoint
+            // before this subscription was active. For non-resume starts this is a no-op.
+            // This runs after WorkflowStartedEvent so consumers always see the started event first.
+            await this._stepRunner.RepublishPendingEventsAsync(linkedSource.Token).ConfigureAwait(false);
+
+            // When resuming from a checkpoint with only pending requests (no queued messages),
+            // the inner processing loop won't execute, so we must drain events now.
+            // For normal starts this is a no-op since the inner loop handles the drain.
+            if (!this._stepRunner.HasUnprocessedMessages)
+            {
+                var (drainedEvents, shouldHalt) = this.DrainAndFilterEvents();
+                foreach (WorkflowEvent raisedEvent in drainedEvents)
+                {
+                    yield return raisedEvent;
+                }
+
+                if (shouldHalt)
+                {
+                    yield break;
+                }
+
+                this.RunStatus = this._stepRunner.HasUnservicedRequests ? RunStatus.PendingRequests : RunStatus.Idle;
+            }
 
             do
             {
@@ -107,26 +130,19 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                         yield break; // Exit if cancellation is requested
                     }
 
-                    bool hadRequestHaltEvent = false;
-                    foreach (WorkflowEvent raisedEvent in Interlocked.Exchange(ref eventSink, []))
+                    var (drainedEvents, shouldHalt) = this.DrainAndFilterEvents();
+
+                    foreach (WorkflowEvent raisedEvent in drainedEvents)
                     {
                         if (linkedSource.Token.IsCancellationRequested)
                         {
                             yield break; // Exit if cancellation is requested
                         }
 
-                        // TODO: Do we actually want to interpret this as a termination request?
-                        if (raisedEvent is RequestHaltEvent)
-                        {
-                            hadRequestHaltEvent = true;
-                        }
-                        else
-                        {
-                            yield return raisedEvent;
-                        }
+                        yield return raisedEvent;
                     }
 
-                    if (hadRequestHaltEvent || linkedSource.Token.IsCancellationRequested)
+                    if (shouldHalt || linkedSource.Token.IsCancellationRequested)
                     {
                         // If we had a completion event, we are done.
                         yield break;
@@ -151,25 +167,23 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         finally
         {
             this.RunStatus = this._stepRunner.HasUnservicedRequests ? RunStatus.PendingRequests : RunStatus.Idle;
-            this._stepRunner.OutgoingEvents.EventRaised -= OnWorkflowEventAsync;
 
             // Explicitly dispose the Activity so Activity.Stop fires deterministically,
             // regardless of how the async iterator enumerator is disposed.
             runActivity?.Dispose();
         }
 
-        ValueTask OnWorkflowEventAsync(object? sender, WorkflowEvent e)
-        {
-            eventSink.Enqueue(e);
-            return default;
-        }
-
         // If we are Idle or Ended, we should break out of the loop
         // If we are PendingRequests and not blocking on pending requests, we should break out of the loop
         // If cancellation is requested, we should break out of the loop
         bool ShouldBreak() => this.RunStatus is RunStatus.Idle or RunStatus.Ended ||
-                              (this.RunStatus == RunStatus.PendingRequests && !blockOnPendingRequest) ||
-                              linkedSource.Token.IsCancellationRequested;
+                               (this.RunStatus == RunStatus.PendingRequests && !blockOnPendingRequest) ||
+                               linkedSource.Token.IsCancellationRequested;
+    }
+
+    internal void ClearBufferedEvents()
+    {
+        Interlocked.Exchange(ref this._eventSink, new ConcurrentQueue<WorkflowEvent>());
     }
 
     /// <summary>
@@ -192,6 +206,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         if (Interlocked.Exchange(ref this._isDisposed, 1) == 0)
         {
             this._stopCancellation.Cancel();
+            this._stepRunner.OutgoingEvents.EventRaised -= this.OnWorkflowEventAsync;
 
             // Stop the session activity
             if (this._sessionActivity is not null)
@@ -206,5 +221,33 @@ internal sealed class LockstepRunEventStream : IRunEventStream
         }
 
         return default;
+    }
+
+    private ValueTask OnWorkflowEventAsync(object? sender, WorkflowEvent e)
+    {
+        this._eventSink.Enqueue(e);
+        return default;
+    }
+
+    // Atomically drains the event sink and separates workflow events from halt signals.
+    // Used by both the early-drain (resume with pending requests only) and
+    // the inner superstep drain to keep halt-detection logic in one place.
+    private (List<WorkflowEvent> Events, bool ShouldHalt) DrainAndFilterEvents()
+    {
+        List<WorkflowEvent> events = [];
+        bool shouldHalt = false;
+        foreach (WorkflowEvent e in Interlocked.Exchange(ref this._eventSink, new ConcurrentQueue<WorkflowEvent>()))
+        {
+            if (e is RequestHaltEvent)
+            {
+                shouldHalt = true;
+            }
+            else
+            {
+                events.Add(e);
+            }
+        }
+
+        return (events, shouldHalt);
     }
 }

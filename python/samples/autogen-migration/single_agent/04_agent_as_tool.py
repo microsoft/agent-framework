@@ -61,7 +61,8 @@ async def run_agent_framework() -> None:
     client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create specialized writer agent
-    writer = Agent(client=client,
+    writer = Agent(
+        client=client,
         name="writer",
         instructions="You are a creative writer. Write short, engaging content.",
     )
@@ -75,7 +76,8 @@ async def run_agent_framework() -> None:
     )
 
     # Create coordinator agent with writer tool
-    coordinator = Agent(client=client,
+    coordinator = Agent(
+        client=client,
         name="coordinator",
         instructions="You coordinate with specialized agents. Delegate writing tasks to the writer agent.",
         tools=[writer_tool],

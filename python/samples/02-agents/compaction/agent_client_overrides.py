@@ -57,17 +57,17 @@ class InspectingChatClient(BaseChatClient[Any]):
         self.last_messages = list(messages)
 
         async def _get_response() -> ChatResponse:
-            return ChatResponse(messages=[Message(role="assistant", text="done")])
+            return ChatResponse(messages=[Message(role="assistant", contents=["done"])])
 
         return _get_response()
 
 
 def _build_messages() -> list[Message]:
     return [
-        Message(role="user", text="Collect the deployment requirements."),
-        Message(role="assistant", text="I will gather the constraints first."),
-        Message(role="user", text="Summarize the rollout risks."),
-        Message(role="assistant", text="The main risks are drift, downtime, and rollback gaps."),
+        Message(role="user", contents=["Collect the deployment requirements."]),
+        Message(role="assistant", contents=["I will gather the constraints first."]),
+        Message(role="user", contents=["Summarize the rollout risks."]),
+        Message(role="assistant", contents=["The main risks are drift, downtime, and rollback gaps."]),
     ]
 
 

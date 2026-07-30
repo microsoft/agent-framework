@@ -1,6 +1,6 @@
 # Foundry Provider Samples
 
-This folder contains Azure AI Foundry and Foundry Local samples for Agent Framework.
+This folder contains Microsoft Foundry and Foundry Local samples for Agent Framework.
 
 ## FoundryAgent Samples
 
@@ -9,7 +9,6 @@ This folder contains Azure AI Foundry and Foundry Local samples for Agent Framew
 | [`foundry_agent_basic.py`](foundry_agent_basic.py) | Foundry Agent basic example |
 | [`foundry_agent_custom_client.py`](foundry_agent_custom_client.py) | Foundry Agent custom client configuration |
 | [`foundry_agent_hosted.py`](foundry_agent_hosted.py) | Foundry Agent for hosted agents |
-| [`foundry_agent_with_env_vars.py`](foundry_agent_with_env_vars.py) | Foundry Agent using environment variables |
 | [`foundry_agent_with_function_tools.py`](foundry_agent_with_function_tools.py) | Foundry Agent with local function tools |
 
 ## FoundryChatClient Samples
@@ -27,6 +26,8 @@ This folder contains Azure AI Foundry and Foundry Local samples for Agent Framew
 | [`foundry_chat_client_with_hosted_mcp.py`](foundry_chat_client_with_hosted_mcp.py) | Foundry Chat Client with hosted MCP |
 | [`foundry_chat_client_with_local_mcp.py`](foundry_chat_client_with_local_mcp.py) | Foundry Chat Client with local MCP |
 | [`foundry_chat_client_with_session.py`](foundry_chat_client_with_session.py) | Foundry Chat Client with session management |
+| [`foundry_chat_client_with_toolbox.py`](foundry_chat_client_with_toolbox.py) | Foundry Chat Client connected to a toolbox via its MCP endpoint using `MCPStreamableHTTPTool` |
+| [`foundry_chat_client_with_toolbox_skills.py`](foundry_chat_client_with_toolbox_skills.py) | Foundry Chat Client that discovers MCP-based skills from a Foundry Toolbox endpoint via `MCPSkillsSource` (uses an Azure AD bearer token and the toolbox preview header) |
 
 ## FoundryLocalClient Samples
 
@@ -45,4 +46,4 @@ This folder contains Azure AI Foundry and Foundry Local samples for Agent Framew
 
 ### Environment Variables
 
-- `FOUNDRY_LOCAL_MODEL_ID`: Optional model alias/ID to use by default when `model_id` is not passed to `FoundryLocalClient`.
+- `FOUNDRY_LOCAL_MODEL`: Optional model alias/ID to use by default when `model` is not passed to `FoundryLocalClient`.

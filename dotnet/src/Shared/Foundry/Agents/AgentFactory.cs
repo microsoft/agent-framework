@@ -12,13 +12,13 @@ namespace Shared.Foundry;
 
 internal static class AgentFactory
 {
-    public static async ValueTask<AgentVersion> CreateAgentAsync(
+    public static async ValueTask<ProjectsAgentVersion> CreateAgentAsync(
         this AIProjectClient aiProjectClient,
         string agentName,
-        AgentDefinition agentDefinition,
+        ProjectsAgentDefinition agentDefinition,
         string agentDescription)
     {
-        AgentVersionCreationOptions options =
+        ProjectsAgentVersionCreationOptions options =
             new(agentDefinition)
             {
                 Description = agentDescription,
@@ -29,7 +29,7 @@ internal static class AgentFactory
                     },
             };
 
-        AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(agentName, options).ConfigureAwait(false);
+        ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(agentName, options).ConfigureAwait(false);
 
         Console.ForegroundColor = ConsoleColor.Cyan;
         try

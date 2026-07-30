@@ -56,8 +56,10 @@ class PurviewPolicyMiddleware(AgentMiddleware):
           2. First message whose additional_properties contains 'conversation_id'
           3. None: the downstream processor will generate a new UUID
         """
-        if context.session and context.session.service_session_id:
-            return context.session.service_session_id
+        if context.session:
+            service_session_id = context.session.service_session_id
+            if isinstance(service_session_id, str) and service_session_id:
+                return service_session_id
 
         for message in context.messages:
             conversation_id = message.additional_properties.get("conversation_id")
@@ -70,7 +72,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         self,
         context: AgentContext,
         call_next: Callable[[], Awaitable[None]],
-    ) -> None:  # type: ignore[override]
+    ) -> None:
         resolved_user_id: str | None = None
         session_id: str | None = None
         try:
@@ -82,10 +84,13 @@ class PurviewPolicyMiddleware(AgentMiddleware):
             if should_block_prompt:
                 from agent_framework import AgentResponse, Message
 
+                msg = self._settings.get("blocked_prompt_message", None) or "Prompt blocked by policy"
+
                 context.result = AgentResponse(
                     messages=[
                         Message(
-                            role="system", text=self._settings.get("blocked_prompt_message", "Prompt blocked by policy")
+                            role="system",
+                            contents=[msg],
                         )
                     ]
                 )
@@ -119,11 +124,13 @@ class PurviewPolicyMiddleware(AgentMiddleware):
                 if should_block_response:
                     from agent_framework import AgentResponse, Message
 
+                    msg = self._settings.get("blocked_response_message", None) or "Response blocked by policy"
+
                     context.result = AgentResponse(
                         messages=[
                             Message(
                                 role="system",
-                                text=self._settings.get("blocked_response_message", "Response blocked by policy"),
+                                contents=[msg],
                             )
                         ]
                     )
@@ -177,7 +184,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         self,
         context: ChatContext,
         call_next: Callable[[], Awaitable[None]],
-    ) -> None:  # type: ignore[override]
+    ) -> None:
         resolved_user_id: str | None = None
         session_id: str | None = None
         try:
@@ -189,7 +196,8 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                 from agent_framework import ChatResponse, Message
 
                 blocked_message = Message(
-                    role="system", text=self._settings.get("blocked_prompt_message", "Prompt blocked by policy")
+                    role="system",
+                    contents=[self._settings.get("blocked_prompt_message", None) or "Prompt blocked by policy"],
                 )
                 context.result = ChatResponse(messages=[blocked_message])
                 raise MiddlewareTermination
@@ -224,7 +232,9 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
 
                         blocked_message = Message(
                             role="system",
-                            text=self._settings.get("blocked_response_message", "Response blocked by policy"),
+                            contents=[
+                                self._settings.get("blocked_response_message", None) or "Response blocked by policy"
+                            ],
                         )
                         context.result = ChatResponse(messages=[blocked_message])
             else:

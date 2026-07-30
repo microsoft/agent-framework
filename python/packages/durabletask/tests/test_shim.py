@@ -6,7 +6,7 @@ Focuses on critical message normalization, delegation, and protocol compliance.
 Run with: pytest tests/test_shim.py -v
 """
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
@@ -41,8 +41,8 @@ def mock_executor() -> Mock:
 
         opts = dict(options) if options else {}
         response_format = opts.pop("response_format", None)
-        enable_tool_calls = opts.pop("enable_tool_calls", True)
-        wait_for_response = opts.pop("wait_for_response", True)
+        enable_tool_calls = cast("bool", opts.pop("enable_tool_calls", True))
+        wait_for_response = cast("bool", opts.pop("wait_for_response", True))
         return RunRequest(
             message=message,
             correlation_id=str(uuid.uuid4()),
@@ -77,7 +77,7 @@ class TestDurableAIAgentMessageNormalization:
 
     def test_run_accepts_chat_message(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run accepts and normalizes Message objects."""
-        chat_msg = Message(role="user", text="Test message")
+        chat_msg = Message(role="user", contents=["Test message"])
         test_agent.run(chat_msg)
 
         mock_executor.run_durable_agent.assert_called_once()
@@ -95,8 +95,8 @@ class TestDurableAIAgentMessageNormalization:
     def test_run_accepts_list_of_chat_messages(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify run accepts and joins list of Message objects."""
         messages = [
-            Message(role="user", text="Message 1"),
-            Message(role="assistant", text="Message 2"),
+            Message(role="user", contents=["Message 1"]),
+            Message(role="assistant", contents=["Message 2"]),
         ]
         test_agent.run(messages)
 
@@ -147,7 +147,7 @@ class TestDurableAISupportsAgentRunCompliance:
 
     def test_agent_implements_protocol(self, test_agent: DurableAIAgent[Any]) -> None:
         """Verify DurableAIAgent implements SupportsAgentRun."""
-        assert isinstance(test_agent, SupportsAgentRun)
+        assert isinstance(test_agent, SupportsAgentRun)  # pyrefly: ignore[unsafe-overlap]
 
     def test_agent_has_required_properties(self, test_agent: DurableAIAgent[Any]) -> None:
         """Verify DurableAIAgent has all required SupportsAgentRun properties."""

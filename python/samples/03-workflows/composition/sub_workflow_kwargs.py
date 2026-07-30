@@ -33,8 +33,8 @@ Key Concepts:
 - Useful for passing authentication tokens, configuration, or request context
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 
@@ -84,7 +84,7 @@ async def main() -> None:
     # Create chat client
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -140,8 +140,7 @@ async def main() -> None:
     async for event in outer_workflow.run(
         "Please fetch my profile data and then call the users service.",
         stream=True,
-        user_token=user_token,
-        service_config=service_config,
+        function_invocation_kwargs={"user_token": user_token, "service_config": service_config},
     ):
         if event.type == "output":
             output_data = event.data

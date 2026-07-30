@@ -5,7 +5,7 @@ This sample demonstrates running both the worker and client in a single process
 for multiple agents with different tools. The worker registers two agents
 (WeatherAgent and MathAgent), each with their own specialized capabilities.
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT_NAME
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_MODEL
 - Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running (e.g., using Docker)
 To run this sample:
@@ -15,9 +15,9 @@ To run this sample:
 import logging
 
 # Import helper functions from worker and client modules
-from client import get_client, run_client
+from client import get_client, run_client  # pyrefly: ignore[missing-import]
 from dotenv import load_dotenv
-from worker import get_worker, setup_worker
+from worker import get_worker, setup_worker  # pyrefly: ignore[missing-import]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, force=True)
@@ -29,7 +29,8 @@ def main():
     logger.debug("Starting Durable Task Multi-Agent Sample (Combined Worker + Client)...")
     silent_handler = logging.NullHandler()
     # Create and start the worker using helper function and context manager
-    with get_worker(log_handler=silent_handler) as dts_worker:
+    dts_worker = get_worker(log_handler=silent_handler)
+    with dts_worker:
         # Register agents using helper function
         setup_worker(dts_worker)
         # Start the worker

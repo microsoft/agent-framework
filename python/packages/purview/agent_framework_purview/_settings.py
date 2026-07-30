@@ -8,7 +8,7 @@ from pydantic import BaseModel
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 
 class PurviewLocationType(str, Enum):

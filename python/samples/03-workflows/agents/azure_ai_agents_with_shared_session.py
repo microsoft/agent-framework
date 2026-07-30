@@ -38,8 +38,8 @@ Demonstrate:
 - Setting up a shared thread between agents.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- AZURE_AI_MODEL_DEPLOYMENT_NAME must be set to your Azure OpenAI model deployment name.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with agents, workflows, and executors in the agent framework.
 """
@@ -60,7 +60,7 @@ async def intercept_agent_response(
 async def main() -> None:
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -92,9 +92,10 @@ async def main() -> None:
 
     result = await workflow.run(
         "Write a tagline for a budget-friendly eBike.",
-        # Keyword arguments will be passed to each agent call.
-        # Setting store=False to avoid storing messages in the service for this example.
-        options={"store": False},
+        # client_kwargs are forwarded to each underlying chat client call.
+        # store=False tells the model API not to persist messages server-side
+        # for this example.
+        client_kwargs={"store": False},
     )
 
     # The final state should be IDLE since the workflow no longer has messages to

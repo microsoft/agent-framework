@@ -17,6 +17,9 @@ for executing shell commands in a managed container environment hosted by OpenAI
 
 The shell tool allows the model to run commands like listing files, running scripts,
 or performing system operations within a secure, sandboxed container.
+
+Currently not all models support the shell tool. Refer to the OpenAI documentation
+for the list of supported models: https://developers.openai.com/api/docs/models/
 """
 
 
@@ -24,7 +27,10 @@ async def main() -> None:
     """Example showing how to use the shell tool with OpenAI Chat."""
     print("=== OpenAI Chat Client Agent with Shell Tool Example ===")
 
-    client = OpenAIChatClient()
+    # Currently not all models support the shell tool. Refer to the OpenAI
+    # documentation for the list of supported models:
+    # https://developers.openai.com/api/docs/models/
+    client = OpenAIChatClient(model="gpt-5.4-nano")
 
     # Create a hosted shell tool with the default auto container environment
     shell_tool = client.get_shell_tool()

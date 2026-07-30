@@ -51,15 +51,15 @@ class LocalSummaryClient:
         options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        return ChatResponse(messages=[Message(role="assistant", text=f"Summary for {len(messages)} messages.")])
+        return ChatResponse(messages=[Message(role="assistant", contents=[f"Summary for {len(messages)} messages."])])
 
 
 async def main() -> None:
     # 1. Build one baseline history and print it once.
     messages = [
-        Message(role="system", text="You are a helpful assistant."),
-        Message(role="user", text="Plan a data migration."),
-        Message(role="assistant", text="I will gather requirements."),
+        Message(role="system", contents=["You are a helpful assistant."]),
+        Message(role="user", contents=["Plan a data migration."]),
+        Message(role="assistant", contents=["I will gather requirements."]),
         Message(
             role="assistant",
             contents=[
@@ -79,9 +79,9 @@ async def main() -> None:
                 )
             ],
         ),
-        Message(role="assistant", text="I found three core tables."),
-        Message(role="user", text="Estimate effort and risks."),
-        Message(role="assistant", text="Primary risk is schema drift."),
+        Message(role="assistant", contents=["I found three core tables."]),
+        Message(role="user", contents=["Estimate effort and risks."]),
+        Message(role="assistant", contents=["Primary risk is schema drift."]),
     ]
     print("\n--- Before compaction ---")
     print(f"Message count: {len(messages)}")

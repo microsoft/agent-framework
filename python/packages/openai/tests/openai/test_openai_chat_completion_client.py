@@ -3,14 +3,18 @@
 import inspect
 import json
 import os
-from typing import Any
+import re
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
+import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import (
+    Agent,
     ChatResponse,
     Content,
     Message,
+    ResponseStream,
     SupportsChatGetResponse,
     SupportsCodeInterpreterTool,
     SupportsFileSearchTool,
@@ -19,6 +23,8 @@ from agent_framework import (
     SupportsWebSearchTool,
     tool,
 )
+from agent_framework._telemetry import FeatureIndex as CoreFeatureIndex
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import ChatClientException, SettingNotFoundError
 from openai import BadRequestError
 from openai.types.chat.chat_completion import ChatCompletion, Choice
@@ -27,7 +33,11 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_openai import OpenAIChatCompletionClient, RawOpenAIChatCompletionClient
+from agent_framework_openai._chat_completion_client import (
+    _AZURE_WEB_SEARCH_UNSUPPORTED_MSG,
+)
 from agent_framework_openai._exceptions import OpenAIContentFilterException
+from agent_framework_openai._feature_usage import FeatureIndex
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -70,20 +80,30 @@ def test_init_uses_explicit_parameters() -> None:
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
+def test_agent_accepts_openai_chat_completion_clients() -> None:
+    raw_client = RawOpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
+
+
 def test_supports_web_search_only() -> None:
     assert not isinstance(OpenAIChatCompletionClient, SupportsCodeInterpreterTool)
-    assert isinstance(OpenAIChatCompletionClient, SupportsWebSearchTool)
+    assert isinstance(OpenAIChatCompletionClient, SupportsWebSearchTool)  # pyrefly: ignore[unsafe-overlap]
     assert not isinstance(OpenAIChatCompletionClient, SupportsImageGenerationTool)
     assert not isinstance(OpenAIChatCompletionClient, SupportsMCPTool)
     assert not isinstance(OpenAIChatCompletionClient, SupportsFileSearchTool)
 
 
 def test_init_prefers_openai_chat_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
-    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_chat_model_id")
+    monkeypatch.setenv("OPENAI_CHAT_COMPLETION_MODEL", "test_chat_model")
 
     open_ai_chat_completion = OpenAIChatCompletionClient()
 
-    assert open_ai_chat_completion.model == "test_chat_model_id"
+    assert open_ai_chat_completion.model == "test_chat_model"
 
 
 def test_init_validation_fail() -> None:
@@ -92,12 +112,12 @@ def test_init_validation_fail() -> None:
         OpenAIChatCompletionClient(api_key="34523", model={"test": "dict"})  # type: ignore
 
 
-def test_init_model_id_constructor(openai_unit_test_env: dict[str, str]) -> None:
+def test_init_model_constructor(openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
-    model_id = "test_model_id"
-    open_ai_chat_completion = OpenAIChatCompletionClient(model=model_id)
+    model = "test_model"
+    open_ai_chat_completion = OpenAIChatCompletionClient(model=model)
 
-    assert open_ai_chat_completion.model == model_id
+    assert open_ai_chat_completion.model == model
     assert isinstance(open_ai_chat_completion, SupportsChatGetResponse)
 
 
@@ -141,18 +161,18 @@ def test_init_base_url_from_settings_env() -> None:
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_MODEL"]], indirect=True)
-def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
+def test_init_with_empty_model(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(SettingNotFoundError):
         OpenAIChatCompletionClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
-    model_id = "test_model_id"
+    model = "test_model"
 
     with pytest.raises(SettingNotFoundError):
         OpenAIChatCompletionClient(
-            model=model_id,
+            model=model,
         )
 
 
@@ -196,7 +216,7 @@ async def test_content_filter_exception_handling(
 ) -> None:
     """Test that content filter errors are properly handled."""
     client = OpenAIChatCompletionClient()
-    messages = [Message(role="user", text="test message")]
+    messages = [Message(role="user", contents=["test message"])]
 
     # Create a mock BadRequestError with content_filter code
     mock_response = MagicMock()
@@ -237,6 +257,63 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     assert result["tools"] == [dict_tool]
 
 
+def test_mcp_tool_dict_passed_through_to_chat_api(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that MCP tool dicts are passed through unchanged by the chat client.
+
+    The Chat Completions API does not support "type": "mcp" tools. MCP tools
+    should be used with the Responses API client instead. This test documents
+    that the chat client passes dict-based tools through without filtering,
+    so callers must use the correct client for MCP tools.
+    """
+    client = OpenAIChatCompletionClient()
+
+    mcp_tool = {
+        "type": "mcp",
+        "server_label": "Microsoft_Learn_MCP",
+        "server_url": "https://learn.microsoft.com/api/mcp",
+    }
+
+    result = client._prepare_tools_for_openai(mcp_tool)
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    # The chat client passes dict tools through unchanged, including unsupported types
+    assert result["tools"][0]["type"] == "mcp"
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_dict_causes_api_rejection(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that MCP tool dicts passed to the Chat Completions API cause a rejection.
+
+    The Chat Completions API only supports "type": "function" tools.
+    When an MCP tool dict reaches the API, it returns a 400 error.
+    This regression test for #4861 verifies the chat client does not
+    silently drop or transform MCP dicts, so callers get a clear error
+    rather than a silent no-op.
+    """
+    client = OpenAIChatCompletionClient()
+    messages = [Message(role="user", contents=["test message"])]
+
+    mcp_tool = {
+        "type": "mcp",
+        "server_label": "Microsoft_Learn_MCP",
+        "server_url": "https://learn.microsoft.com/api/mcp",
+    }
+
+    mock_response = MagicMock()
+    mock_error = BadRequestError(
+        message="Invalid tool type: mcp",
+        response=mock_response,
+        body={"error": {"code": "invalid_request", "message": "Invalid tool type: mcp"}},
+    )
+    mock_error.code = "invalid_request"
+
+    with (
+        patch.object(client.client.chat.completions, "create", side_effect=mock_error),
+        pytest.raises(ChatClientException),
+    ):
+        await client._inner_get_response(messages=messages, options={"tools": mcp_tool})  # type: ignore
+
+
 def test_prepare_tools_with_single_function_tool(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -274,7 +351,7 @@ def get_weather(location: str) -> str:
 async def test_exception_message_includes_original_error_details() -> None:
     """Test that exception messages include original error details in the new format."""
     client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
-    messages = [Message(role="user", text="test message")]
+    messages = [Message(role="user", contents=["test message"])]
 
     mock_response = MagicMock()
     original_error_message = "Invalid API request format"
@@ -402,7 +479,7 @@ def test_function_result_exception_handling(openai_unit_test_env: dict[str, str]
             Content.from_function_result(
                 call_id="call-123",
                 result="Error: Function failed.",
-                exception=test_exception,
+                exception=str(test_exception),
             )
         ],
     )
@@ -734,7 +811,7 @@ def test_parse_text_reasoning_content_from_response(
         choices=[
             Choice(
                 index=0,
-                message=ChatCompletionMessage(
+                message=cast(Any, ChatCompletionMessage)(
                     role="assistant",
                     content="The answer is 42.",
                     reasoning_details=mock_reasoning_details,
@@ -786,7 +863,7 @@ def test_parse_text_reasoning_content_from_streaming_chunk(
         choices=[
             ChunkChoice(
                 index=0,
-                delta=ChunkChoiceDelta(
+                delta=cast(Any, ChunkChoiceDelta)(
                     role="assistant",
                     content="Partial answer",
                     reasoning_details=mock_reasoning_details,
@@ -844,6 +921,90 @@ def test_prepare_message_with_text_reasoning_content(
     assert prepared[0]["reasoning_details"] == mock_reasoning_data
     # Should also have the text content (flattened to string for text-only)
     assert prepared[0]["content"] == "The answer is 42."
+
+
+def test_prepare_message_with_unprotected_text_reasoning_content(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text_reasoning(id="rs_abc123", text="Foundry summary")],
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert prepared == [{"role": "assistant", "content": "Foundry summary"}]
+
+
+def test_prepare_message_sanitizes_author_name(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that author_name is sanitized before being sent as the message ``name``.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/7126
+    OpenAI validates the Chat Completions message ``name`` against ``^[^\\s<|\\\\/>]+$``, so an
+    agent display name containing a space (e.g. "My Agent") previously failed every request
+    with a 400. Sanitization mirrors SanitizeAuthorName in the .NET client: characters outside
+    ``[a-zA-Z0-9_]`` are removed and the result is truncated to 64 characters.
+    """
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="My Agent",
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert prepared == [{"role": "assistant", "name": "MyAgent", "content": "hello"}]
+
+    # System/developer path sanitizes too.
+    system_message = Message(
+        role="system",
+        contents=[Content.from_text(text="be helpful")],
+        author_name="orchestrator/planner",
+    )
+
+    assert client._prepare_message_for_openai(system_message) == [
+        {"role": "system", "content": "be helpful", "name": "orchestratorplanner"}
+    ]
+
+    # A name with no valid characters is omitted rather than sent empty.
+    invalid_only = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="<|/\\>",
+    )
+
+    assert client._prepare_message_for_openai(invalid_only) == [{"role": "assistant", "content": "hello"}]
+
+    # Long names are truncated to 64 characters.
+    long_name = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="a" * 100,
+    )
+
+    assert client._prepare_message_for_openai(long_name)[0]["name"] == "a" * 64
+
+
+def test_prepare_message_keeps_valid_author_name(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """A name that is already valid for the Chat Completions API is passed through unchanged."""
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="Agent_42",
+    )
+
+    assert client._prepare_message_for_openai(message) == [
+        {"role": "assistant", "name": "Agent_42", "content": "hello"}
+    ]
 
 
 def test_prepare_message_with_only_text_reasoning_content(
@@ -1004,6 +1165,31 @@ def test_function_approval_content_is_skipped_in_preparation(
     assert prepared_mixed[0]["content"] == "I need approval for this action."
 
 
+def test_mixed_approval_resume_roles_serialize_function_result_as_tool(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    follow_up_request = Content.from_oauth_consent_request(consent_link="https://example.com/consent")
+    follow_up_request.call_id = "call_paused"
+    messages = [
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_completed", result="completed")],
+        ),
+        Message(role="assistant", contents=[follow_up_request]),
+    ]
+
+    prepared = client._prepare_messages_for_openai(messages)
+
+    assert prepared[0] == {
+        "role": "tool",
+        "tool_call_id": "call_completed",
+        "content": "completed",
+    }
+    assert prepared[1]["role"] == "assistant"
+    assert "tool_call_id" not in prepared[1]
+
+
 def test_usage_content_in_streaming_response(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -1040,6 +1226,74 @@ def test_usage_content_in_streaming_response(
     assert usage_content.usage_details["input_token_count"] == 100
     assert usage_content.usage_details["output_token_count"] == 50
     assert usage_content.usage_details["total_token_count"] == 150
+
+
+def test_parse_usage_includes_standard_and_legacy_mapped_token_details() -> None:
+    """Test _parse_usage_from_openai emits standard and legacy mapped token details."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 100
+    mock_usage.completion_tokens = 50
+    mock_usage.total_tokens = 150
+    mock_usage.completion_tokens_details = MagicMock()
+    mock_usage.completion_tokens_details.accepted_prediction_tokens = None
+    mock_usage.completion_tokens_details.audio_tokens = None
+    mock_usage.completion_tokens_details.reasoning_tokens = 0
+    mock_usage.completion_tokens_details.rejected_prediction_tokens = None
+    mock_usage.prompt_tokens_details = MagicMock()
+    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.cached_tokens = 0
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
+
+    details_dict = cast("dict[str, Any]", details)
+    assert details_dict["completion/reasoning_tokens"] == 0
+    assert details["reasoning_output_token_count"] == 0
+    assert details_dict["prompt/cached_tokens"] == 0
+    assert details["cache_read_input_token_count"] == 0
+
+
+def test_parse_usage_with_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai maps cache write tokens to standard and legacy keys."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 2000
+    mock_usage.completion_tokens = 60
+    mock_usage.total_tokens = 2060
+    mock_usage.completion_tokens_details = None
+    mock_usage.prompt_tokens_details = MagicMock()
+    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.cached_tokens = 0
+    mock_usage.prompt_tokens_details.cache_write_tokens = 1024
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
+
+    details_dict = cast("dict[str, Any]", details)
+    assert details_dict["prompt/cache_write_tokens"] == 1024
+    assert details["cache_creation_input_token_count"] == 1024
+    assert details["cache_read_input_token_count"] == 0
+
+
+def test_parse_usage_omits_missing_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai omits cache write tokens when the provider does not report them."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 100
+    mock_usage.completion_tokens = 20
+    mock_usage.total_tokens = 120
+    mock_usage.completion_tokens_details = None
+    mock_usage.prompt_tokens_details = MagicMock(spec=["audio_tokens", "cached_tokens"])
+    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.cached_tokens = 10
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
+
+    assert "prompt/cache_write_tokens" not in details
+    assert "cache_creation_input_token_count" not in details
+    assert details["cache_read_input_token_count"] == 10
 
 
 def test_streaming_chunk_with_usage_and_text(
@@ -1121,12 +1375,12 @@ def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
     assert message.contents[0].text == "I cannot provide that information."
 
 
-def test_prepare_options_without_model_id(openai_unit_test_env: dict[str, str]) -> None:
-    """Test that prepare_options raises error when model_id is not set."""
+def test_prepare_options_without_model(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that prepare_options raises error when model is not set."""
     client = OpenAIChatCompletionClient()
-    client.model = None  # Remove model_id
+    cast(Any, client).model = None  # Remove model
 
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
 
     with pytest.raises(ValueError, match="model must be a non-empty string"):
         client._prepare_options(messages, {})
@@ -1158,13 +1412,46 @@ def test_prepare_tools_with_web_search_no_location(
     assert result["web_search_options"] == {}
 
 
+def test_prepare_tools_with_web_search_on_azure_raises(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that web search raises ValueError when configured with Azure endpoint."""
+    client = OpenAIChatCompletionClient(
+        azure_endpoint="https://test.openai.azure.com",
+        model="gpt-4o-mini",
+        api_key="test-key",
+    )
+
+    web_search_tool = OpenAIChatCompletionClient.get_web_search_tool()
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(_AZURE_WEB_SEARCH_UNSUPPORTED_MSG),
+    ):
+        client._prepare_tools_for_openai([web_search_tool])
+
+
+def test_prepare_tools_with_web_search_on_openai_allowed(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that web search works normally on non-Azure client."""
+    client = OpenAIChatCompletionClient()
+
+    web_search_tool = OpenAIChatCompletionClient.get_web_search_tool()
+
+    result = client._prepare_tools_for_openai([web_search_tool])
+
+    # Non-Azure client should include web_search_options
+    assert "web_search_options" in result
+
+
 def test_prepare_options_with_instructions(
     openai_unit_test_env: dict[str, str],
 ) -> None:
     """Test that instructions are prepended as system message."""
     client = OpenAIChatCompletionClient()
 
-    messages = [Message(role="user", text="Hello")]
+    messages = [Message(role="user", contents=["Hello"])]
     options = {"instructions": "You are a helpful assistant."}
 
     prepared_options = client._prepare_options(messages, options)
@@ -1174,6 +1461,32 @@ def test_prepare_options_with_instructions(
     assert len(prepared_options["messages"]) == 2
     assert prepared_options["messages"][0]["role"] == "system"
     assert prepared_options["messages"][0]["content"] == "You are a helpful assistant."
+
+
+def test_prepare_options_with_instructions_no_duplicate(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that duplicate system message from instructions is not added again.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/5049
+    """
+    client = OpenAIChatCompletionClient()
+
+    # Simulate messages that already contain the system instruction
+    messages = [
+        Message(role="system", contents=["You are a helpful assistant."]),
+        Message(role="user", contents=["Hello"]),
+    ]
+    options = {"instructions": "You are a helpful assistant."}
+
+    prepared_options = client._prepare_options(messages, options)
+
+    # Should NOT duplicate the system message
+    assert "messages" in prepared_options
+    assert len(prepared_options["messages"]) == 2
+    assert prepared_options["messages"][0]["role"] == "system"
+    assert prepared_options["messages"][0]["content"] == "You are a helpful assistant."
+    assert prepared_options["messages"][1]["role"] == "user"
 
 
 def test_prepare_message_with_author_name(openai_unit_test_env: dict[str, str]) -> None:
@@ -1333,7 +1646,7 @@ def test_tool_choice_required_with_function_name(
     """Test that tool_choice with required mode and function name is correctly prepared."""
     client = OpenAIChatCompletionClient()
 
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
     options = {
         "tools": [get_weather],
         "tool_choice": {"mode": "required", "required_function_name": "get_weather"},
@@ -1347,11 +1660,62 @@ def test_tool_choice_required_with_function_name(
     assert prepared_options["tool_choice"]["function"]["name"] == "get_weather"
 
 
+def test_tool_choice_allowed_tools_falls_back_to_mode(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that tool_choice with allowed_tools falls back to plain mode (Chat Completions API unsupported)."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    options = {
+        "tools": [get_weather],
+        "tool_choice": {"mode": "auto", "allowed_tools": ["get_weather"]},
+    }
+
+    prepared_options = client._prepare_options(messages, options)
+
+    assert prepared_options["tool_choice"] == "auto"
+
+
+def test_tool_choice_allowed_tools_required_mode_falls_back(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that tool_choice with allowed_tools and required mode falls back to 'required'."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    options = {
+        "tools": [get_weather],
+        "tool_choice": {"mode": "required", "allowed_tools": ["get_weather"]},
+    }
+
+    prepared_options = client._prepare_options(messages, options)
+
+    assert prepared_options["tool_choice"] == "required"
+
+
+def test_tool_choice_auto_dict_without_allowed_tools(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that tool_choice dict with mode auto and no allowed_tools falls through to plain 'auto'."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    options = {
+        "tools": [get_weather],
+        "tool_choice": {"mode": "auto"},
+    }
+
+    prepared_options = client._prepare_options(messages, options)
+
+    assert prepared_options["tool_choice"] == "auto"
+
+
 def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) -> None:
     """Test that response_format as dict is passed through directly."""
     client = OpenAIChatCompletionClient()
 
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
     custom_format = {
         "type": "json_schema",
         "json_schema": {"name": "Test", "schema": {"type": "object"}},
@@ -1362,6 +1726,84 @@ def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) 
 
     # Should pass through the dict directly
     assert prepared_options["response_format"] == custom_format
+
+
+def test_response_format_raw_schema_dict_is_wrapped(openai_unit_test_env: dict[str, str]) -> None:
+    """A raw JSON-Schema dict is wrapped in the json_schema envelope (parity with the Responses client)."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    raw_schema = {
+        "type": "object",
+        "properties": {"word": {"type": "string"}},
+        "required": ["word"],
+    }
+
+    prepared_options = client._prepare_options(messages, {"response_format": raw_schema})
+
+    assert prepared_options["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "response",
+            "schema": {
+                "type": "object",
+                "properties": {"word": {"type": "string"}},
+                "required": ["word"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    }
+
+
+def test_response_format_raw_schema_title_becomes_name(openai_unit_test_env: dict[str, str]) -> None:
+    """A raw schema's title is popped into the envelope name (strict mode rejects unknown keys)."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    raw_schema = {"type": "object", "title": "Word", "properties": {"word": {"type": "string"}}}
+
+    prepared_options = client._prepare_options(messages, {"response_format": raw_schema})
+
+    wrapped = prepared_options["response_format"]
+    assert wrapped["json_schema"]["name"] == "Word"
+    assert "title" not in wrapped["json_schema"]["schema"]
+
+
+def test_response_format_json_object_dict_passthrough(openai_unit_test_env: dict[str, str]) -> None:
+    """Valid non-json_schema response_format types still pass through unchanged."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+
+    prepared_options = client._prepare_options(messages, {"response_format": {"type": "json_object"}})
+
+    assert prepared_options["response_format"] == {"type": "json_object"}
+
+
+def test_parse_response_with_dict_response_format(openai_unit_test_env: dict[str, str]) -> None:
+    """Chat completions should parse dict response_format values into response.value."""
+    client = OpenAIChatCompletionClient()
+    response = client._parse_response_from_openai(
+        ChatCompletion(
+            id="test-response",
+            object="chat.completion",
+            created=1234567890,
+            model="gpt-4o-mini",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(role="assistant", content='{"answer": "Hello"}'),
+                    finish_reason="stop",
+                )
+            ],
+        ),
+        options={"response_format": {"type": "object", "properties": {"answer": {"type": "string"}}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["answer"] == "Hello"
 
 
 def test_multiple_function_calls_in_single_message(
@@ -1395,7 +1837,7 @@ def test_prepare_options_removes_parallel_tool_calls_when_no_tools(
     """Test that parallel_tool_calls is removed when no tools are present."""
     client = OpenAIChatCompletionClient()
 
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
     options = {"allow_multiple_tool_calls": True}
 
     prepared_options = client._prepare_options(messages, options)
@@ -1404,11 +1846,32 @@ def test_prepare_options_removes_parallel_tool_calls_when_no_tools(
     assert "parallel_tool_calls" not in prepared_options
 
 
+def test_openai_chat_completion_options_declares_verbosity_field() -> None:
+    """OpenAIChatCompletionOptions declares verbosity as a typed Literal field."""
+    from typing import get_args, get_type_hints
+
+    from agent_framework_openai import OpenAIChatCompletionOptions
+
+    annotations = get_type_hints(OpenAIChatCompletionOptions)
+    assert "verbosity" in annotations
+    assert {"low", "medium", "high"} <= set(get_args(annotations["verbosity"]))
+
+
+def test_prepare_options_forwards_verbosity(openai_unit_test_env: dict[str, str]) -> None:
+    """Verbosity passes through unchanged for the Chat Completions API."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    prepared_options = client._prepare_options(messages, {"verbosity": "low"})
+
+    assert prepared_options["verbosity"] == "low"
+
+
 def test_prepare_options_excludes_conversation_id(openai_unit_test_env: dict[str, str]) -> None:
     """Test that conversation_id is excluded from prepared options for chat completions."""
     client = OpenAIChatCompletionClient()
 
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
     options = {"conversation_id": "12345", "temperature": 0.7}
 
     prepared_options = client._prepare_options(messages, options)
@@ -1424,7 +1887,7 @@ async def test_streaming_exception_handling(
 ) -> None:
     """Test that streaming errors are properly handled."""
     client = OpenAIChatCompletionClient()
-    messages = [Message(role="user", text="test")]
+    messages = [Message(role="user", contents=["test"])]
 
     # Create a mock error during streaming
     mock_error = Exception("Streaming error")
@@ -1435,6 +1898,41 @@ async def test_streaming_exception_handling(
     ):
         async for _ in client._inner_get_response(messages=messages, stream=True, options={}):  # type: ignore
             pass
+
+
+async def test_streaming_feature_is_marked_when_request_is_sent(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+
+    async def create(**kwargs: Any) -> Any:
+        async def chunks() -> Any:
+            if False:
+                yield None
+
+        return chunks()
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["test"])],
+            stream=True,
+            options={},
+        )
+        assert isinstance(stream, ResponseStream)
+        token = telemetry.get_feature_token()
+        assert token is None or not int(token.split(".", 1)[1], 16) & (1 << FeatureIndex.OPENAI)
+
+        mark_feature_used(CoreFeatureIndex.CORE_AGENT)
+        async for _ in stream:
+            pass
+
+    token = telemetry.get_feature_token()
+    assert token is not None
+    mask = int(token.split(".", 1)[1], 16)
+    assert mask & (1 << FeatureIndex.OPENAI)
+    assert mask & (1 << CoreFeatureIndex.CORE_AGENT)
 
 
 # region Integration Tests
@@ -1482,6 +1980,12 @@ class OutputStruct(BaseModel):
             False,
             id="tool_choice_required",
         ),
+        param(
+            "tool_choice",
+            {"mode": "auto", "allowed_tools": ["get_weather"]},
+            False,
+            id="tool_choice_allowed_tools",
+        ),
         param("response_format", OutputStruct, True, id="response_format_pydantic"),
         param(
             "response_format",
@@ -1512,6 +2016,27 @@ class OutputStruct(BaseModel):
             True,
             id="response_format_runtime_json_schema",
         ),
+        param(
+            "response_format",
+            {
+                "title": "WeatherDigest",
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"},
+                    "conditions": {"type": "string"},
+                    "temperature_c": {"type": "number"},
+                    "advisory": {"type": "string"},
+                },
+                "required": [
+                    "location",
+                    "conditions",
+                    "temperature_c",
+                    "advisory",
+                ],
+            },
+            True,
+            id="response_format_raw_json_schema",
+        ),
     ],
 )
 async def test_integration_options(
@@ -1532,14 +2057,14 @@ async def test_integration_options(
     # Prepare test message
     if option_name.startswith("tools") or option_name.startswith("tool_choice"):
         # Use weather-related prompt for tool tests
-        messages = [Message(role="user", text="What is the weather in Seattle?")]
+        messages = [Message(role="user", contents=["What is the weather in Seattle?"])]
     elif option_name.startswith("response_format"):
         # Use prompt that works well with structured output
-        messages = [Message(role="user", text="The weather in Seattle is sunny")]
-        messages.append(Message(role="user", text="What is the weather in Seattle?"))
+        messages = [Message(role="user", contents=["The weather in Seattle is sunny"])]
+        messages.append(Message(role="user", contents=["What is the weather in Seattle?"]))
     else:
         # Generic prompt for simple options
-        messages = [Message(role="user", text="Say 'Hello World' briefly.")]
+        messages = [Message(role="user", contents=["Say 'Hello World' briefly."])]
 
     # Build options dict
     options: dict[str, Any] = {option_name: option_value}
@@ -1549,11 +2074,15 @@ async def test_integration_options(
         options["tools"] = [get_weather]
 
     # Test streaming mode
-    response = await client.get_response(
-        messages=messages,
-        stream=True,
-        options=options,
-    ).get_final_response()
+    response = (
+        await cast(Any, client)
+        .get_response(
+            messages=messages,
+            stream=True,
+            options=options,
+        )
+        .get_final_response()
+    )
 
     assert response is not None
     assert isinstance(response, ChatResponse)
@@ -1578,12 +2107,10 @@ async def test_integration_options(
                 assert isinstance(response.value, OutputStruct)
                 assert "seattle" in response.value.location.lower()
             else:
-                # Runtime JSON schema
-                assert response.value is None, "No structured output, can't parse any json."
-                response_value = json.loads(response.text)
-                assert isinstance(response_value, dict)
-                assert "location" in response_value
-                assert "seattle" in response_value["location"].lower()
+                assert response.value is not None
+                assert isinstance(response.value, dict)
+                assert "location" in response.value
+                assert "seattle" in response.value["location"].lower()
 
 
 @pytest.mark.flaky
@@ -1595,11 +2122,11 @@ async def test_integration_web_search() -> None:
     for streaming in [False, True]:
         # Use static method for web search tool
         web_search_tool = OpenAIChatCompletionClient.get_web_search_tool()
-        content = {
+        weather_content: dict[str, Any] = {
             "messages": [
                 Message(
                     role="user",
-                    text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                    contents=["Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer."],
                 )
             ],
             "options": {
@@ -1608,9 +2135,9 @@ async def test_integration_web_search() -> None:
             },
         }
         if streaming:
-            response = await client.get_response(stream=True, **content).get_final_response()
+            response = await client.get_response(stream=True, **weather_content).get_final_response()
         else:
-            response = await client.get_response(**content)
+            response = await client.get_response(**weather_content)
 
         assert response is not None
         assert isinstance(response, ChatResponse)
@@ -1627,11 +2154,11 @@ async def test_integration_web_search() -> None:
                 },
             }
         )
-        content = {
+        content: dict[str, Any] = {
             "messages": [
                 Message(
                     role="user",
-                    text="What is the current weather? Do not ask for my current location.",
+                    contents=["What is the current weather? Do not ask for my current location."],
                 )
             ],
             "options": {
@@ -1644,3 +2171,300 @@ async def test_integration_web_search() -> None:
         else:
             response = await client.get_response(**content)
         assert response.text is not None
+
+
+# region Tests for #5732 — streaming chunk with null delta
+
+
+def test_streaming_chunk_with_null_delta_is_skipped(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Regression test for #5732: non-compliant providers send delta=null on finish chunks.
+
+    Some OpenAI-compatible providers (e.g. Azure OpenAI with certain configs) send
+    ``"delta": null`` instead of the spec-compliant ``"delta": {}`` on the final
+    finish-reason chunk.  This used to raise ``AttributeError: 'NoneType' object
+    has no attribute 'content'``.
+    """
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice
+
+    client = OpenAIChatCompletionClient()
+
+    # Simulate a finish chunk where delta is None (non-compliant provider behaviour).
+    mock_chunk = ChatCompletionChunk.model_construct(
+        id="test-chunk-finish",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4.1",
+        choices=[
+            Choice.model_construct(
+                index=0,
+                delta=None,  # type: ignore[arg-type]
+                finish_reason="stop",
+            )
+        ],
+        usage=None,
+    )
+
+    # Should not raise AttributeError
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    assert update.finish_reason == "stop"
+    assert update.contents == []
+
+
+def test_streaming_chunk_with_null_delta_preserves_finish_reason(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """finish_reason must be captured even when delta is None.
+
+    Ensures the ``continue`` guard does not skip finish_reason extraction.
+    """
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice
+
+    client = OpenAIChatCompletionClient()
+
+    mock_chunk = ChatCompletionChunk.model_construct(
+        id="test-chunk-length",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4.1",
+        choices=[
+            Choice.model_construct(
+                index=0,
+                delta=None,  # type: ignore[arg-type]
+                finish_reason="length",
+            )
+        ],
+        usage=None,
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    assert update.finish_reason == "length"
+    assert update.contents == []
+
+
+def test_streaming_chunk_with_empty_delta_is_not_skipped(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Spec-compliant finish chunks with an empty delta object must still be processed.
+
+    The OpenAI spec sends ``"delta": {}`` (not null) on finish chunks.  These
+    should pass through without error and produce no content.
+    """
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice, ChoiceDelta
+
+    client = OpenAIChatCompletionClient()
+
+    mock_chunk = ChatCompletionChunk(
+        id="test-chunk-empty-delta",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4o",
+        choices=[
+            Choice(
+                index=0,
+                delta=ChoiceDelta(),
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    assert update.finish_reason == "stop"
+    assert update.contents == []
+
+
+def test_streaming_chunk_with_null_delta_and_usage(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Usage data in the same chunk as a null delta must still be recorded."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice
+    from openai.types.completion_usage import CompletionUsage
+
+    client = OpenAIChatCompletionClient()
+
+    mock_chunk = ChatCompletionChunk.model_construct(
+        id="test-chunk-usage-null-delta",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4.1",
+        choices=[
+            Choice.model_construct(
+                index=0,
+                delta=None,  # type: ignore[arg-type]
+                finish_reason="stop",
+            )
+        ],
+        usage=CompletionUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    assert update.finish_reason == "stop"
+    content_types = [c.type for c in update.contents]
+    assert "usage" in content_types
+    assert "text" not in content_types
+
+
+def test_streaming_chunk_with_null_delta_no_tool_calls_parsed(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Tool-call parsing must be skipped when delta is None."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, Choice
+
+    client = OpenAIChatCompletionClient()
+
+    mock_chunk = ChatCompletionChunk.model_construct(
+        id="test-chunk-no-tools",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="gpt-4.1",
+        choices=[
+            Choice.model_construct(
+                index=0,
+                delta=None,  # type: ignore[arg-type]
+                finish_reason="tool_calls",
+            )
+        ],
+        usage=None,
+    )
+
+    update = client._parse_response_update_from_openai(mock_chunk)
+
+    assert update.finish_reason == "tool_calls"
+    assert not any(c.type == "function_call" for c in update.contents)
+
+
+# endregion
+
+
+# region Prompt cache breakpoints and options
+
+
+def test_prepare_message_text_prompt_cache_breakpoint_keeps_parts() -> None:
+    """A text part with a breakpoint stays in list form and carries the key."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text(
+        "stable prefix",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    msgs = client._prepare_message_for_openai(Message(role="user", contents=[content]))
+    assert isinstance(msgs[0]["content"], list)
+    assert msgs[0]["content"][0] == {
+        "type": "text",
+        "text": "stable prefix",
+        "prompt_cache_breakpoint": {"mode": "explicit"},
+    }
+
+
+def test_prepare_message_text_without_breakpoint_flattens_to_string() -> None:
+    """Text-only content without a breakpoint keeps the plain-string form."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    msgs = client._prepare_message_for_openai(Message(role="user", contents=[Content.from_text("hello")]))
+    assert msgs[0]["content"] == "hello"
+
+
+def test_prepare_message_system_prompt_cache_breakpoint_keeps_parts() -> None:
+    """A system message with a breakpoint keeps typed content parts."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text(
+        "system prefix",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    msgs = client._prepare_message_for_openai(Message(role="system", contents=[content]))
+    assert isinstance(msgs[0]["content"], list)
+    assert msgs[0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_message_system_without_breakpoint_keeps_string_form() -> None:
+    """System messages without a breakpoint keep the joined-string form."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    msgs = client._prepare_message_for_openai(Message(role="system", contents=[Content.from_text("plain system")]))
+    assert msgs[0]["content"] == "plain system"
+
+
+def test_prepare_message_system_non_mapping_breakpoint_stays_string_form() -> None:
+    """A non-mapping breakpoint value must not switch a system message to list content.
+
+    Only a mapping value is a real breakpoint, so a malformed value leaves the message
+    in its default plain-string form rather than an empty shape change.
+    """
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text("system prefix", additional_properties={"prompt_cache_breakpoint": "explicit"})
+    msgs = client._prepare_message_for_openai(Message(role="system", contents=[content]))
+    assert msgs[0]["content"] == "system prefix"
+    assert "prompt_cache_breakpoint" not in json.dumps(msgs)
+
+
+def test_prepare_message_developer_prompt_cache_breakpoint_keeps_parts() -> None:
+    """A developer message with a breakpoint keeps typed content parts, like system."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text(
+        "developer prefix",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    msgs = client._prepare_message_for_openai(Message(role="developer", contents=[content]))
+    assert isinstance(msgs[0]["content"], list)
+    assert msgs[0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_message_developer_non_mapping_breakpoint_stays_string_form() -> None:
+    """A non-mapping breakpoint value must not switch a developer message to list content."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text("developer prefix", additional_properties={"prompt_cache_breakpoint": "explicit"})
+    msgs = client._prepare_message_for_openai(Message(role="developer", contents=[content]))
+    assert msgs[0]["content"] == "developer prefix"
+    assert "prompt_cache_breakpoint" not in json.dumps(msgs)
+
+
+def test_prepare_message_user_non_mapping_breakpoint_stays_string_form() -> None:
+    """A non-mapping breakpoint value on a user message flattens to a string, same as the other roles."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    content = Content.from_text("user prefix", additional_properties={"prompt_cache_breakpoint": "explicit"})
+    msgs = client._prepare_message_for_openai(Message(role="user", contents=[content]))
+    assert msgs[0]["content"] == "user prefix"
+    assert "prompt_cache_breakpoint" not in json.dumps(msgs)
+
+
+def test_prepare_content_for_openai_image_prompt_cache_breakpoint() -> None:
+    """An image part carries an explicit prompt cache breakpoint onto the request."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    image = Content.from_uri(
+        uri="https://example.com/x.png",
+        media_type="image/png",
+        additional_properties={"prompt_cache_breakpoint": {"mode": "explicit"}},
+    )
+    part = client._prepare_content_for_openai(image)
+    assert part["type"] == "image_url"
+    assert part["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
+def test_prepare_options_prompt_cache_options_passthrough() -> None:
+    """Request-level prompt_cache_options reaches the Chat Completions run options."""
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    run_options = client._prepare_options(
+        [Message(role="user", contents=[Content.from_text("hi")])],
+        {"model": "test-model", "prompt_cache_options": {"mode": "explicit", "ttl": "30m"}},
+    )
+    assert run_options["prompt_cache_options"] == {"mode": "explicit", "ttl": "30m"}
+
+
+def test_prepare_options_prompt_cache_options_guarded_on_old_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Setting prompt_cache_options on an openai too old to send it raises a clear error."""
+    from agent_framework.exceptions import ChatClientInvalidRequestException
+
+    import agent_framework_openai._chat_completion_client as chat_completion_module
+
+    monkeypatch.setattr(chat_completion_module, "_prompt_cache_options_supported", False)
+    client = OpenAIChatCompletionClient(api_key="test-api-key", model="test-model")
+    with pytest.raises(ChatClientInvalidRequestException, match="openai>=2.45.0"):
+        client._prepare_options(
+            [Message(role="user", contents=[Content.from_text("hi")])],
+            {"model": "test-model", "prompt_cache_options": {"mode": "explicit"}},
+        )
+
+
+# endregion

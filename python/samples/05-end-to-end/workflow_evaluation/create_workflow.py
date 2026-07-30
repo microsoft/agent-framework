@@ -106,11 +106,15 @@ class ResearchLead(Executor):
         messages = [
             Message(
                 role="system",
-                text="You are a travel planning coordinator. Summarize findings from multiple specialized travel agents and provide a clear, comprehensive travel plan based on the user's query.",
+                contents=[
+                    "You are a travel planning coordinator. Summarize findings from multiple specialized travel agents and provide a clear, comprehensive travel plan based on the user's query."
+                ],
             ),
             Message(
                 role="user",
-                text=f"Original query: {user_query}\n\nFindings from specialized travel agents:\n{summary_text}\n\nPlease provide a comprehensive travel plan based on these findings.",
+                contents=[
+                    f"Original query: {user_query}\n\nFindings from specialized travel agents:\n{summary_text}\n\nPlease provide a comprehensive travel plan based on these findings."
+                ],
             ),
         ]
 
@@ -145,14 +149,14 @@ class ResearchLead(Executor):
 
 
 async def run_workflow_with_response_tracking(
-    query: str, client: FoundryChatClient | None = None, deployment_name: str | None = None
+    query: str, client: FoundryChatClient | None = None, model: str | None = None
 ) -> dict:
     """Run multi-agent workflow and track conversation IDs, response IDs, and interaction sequence.
 
     Args:
         query: The user query to process through the multi-agent workflow
         client: Optional FoundryChatClient instance
-        deployment_name: Optional model deployment name for the workflow agents
+        model: Optional model for the workflow agents
 
     Returns:
         Dictionary containing interaction sequence, conversation/response IDs, and conversation analysis
@@ -166,7 +170,7 @@ async def run_workflow_with_response_tracking(
                 )
 
                 async with project_client:
-                    client = FoundryChatClient(project_client=project_client, model=deployment_name)
+                    client = FoundryChatClient(project_client=project_client, model=model)
                     return await _run_workflow_with_client(query, client)
         except Exception as e:
             print(f"Error during workflow execution: {e}")
@@ -347,11 +351,11 @@ def _track_agent_ids(event, agent, response_ids, conversation_ids):
         conversation_ids[agent].append(raw.conversation_id)
 
 
-async def create_and_run_workflow(deployment_name: str | None = None):
+async def create_and_run_workflow(model: str | None = None):
     """Run the workflow evaluation and display results.
 
     Args:
-        deployment_name: Optional model deployment name for the workflow agents
+        model: Optional model for the workflow agents
 
     Returns:
         Dictionary containing agents data with conversation IDs, response IDs, and query information
@@ -365,7 +369,7 @@ async def create_and_run_workflow(deployment_name: str | None = None):
     query = example_queries[0]
     print(f"Query: {query}\n")
 
-    result = await run_workflow_with_response_tracking(query, model=deployment_name)
+    result = await run_workflow_with_response_tracking(query, model=model)
 
     # Create output data structure
     output_data = {"agents": {}, "query": result["query"], "output": result.get("output", "")}

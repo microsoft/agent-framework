@@ -79,6 +79,15 @@ internal class DurableAIAgentProxy(string name, IDurableAgentClient agentClient)
         RunRequest request = new([.. messages], responseFormat, enableToolCalls, enableToolNames);
         AgentSessionId sessionId = durableSession.SessionId;
 
+        // The session must belong to this agent.
+        if (!string.Equals(sessionId.Name, this.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                $"The provided session belongs to agent '{sessionId.Name}' but was passed to agent '{this.Name}'. " +
+                "Sessions cannot be reused across agents.",
+                paramName: nameof(session));
+        }
+
         AgentRunHandle agentRunHandle = await this._agentClient.RunAgentAsync(sessionId, request, cancellationToken);
 
         if (isFireAndForget)

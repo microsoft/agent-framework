@@ -19,6 +19,7 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowMessage,
 )
+from agent_framework._workflows._runner_context import YieldOutputClassifier, YieldOutputEventType
 from agent_framework._workflows._state import State
 
 
@@ -41,6 +42,7 @@ class CapturingRunnerContext(RunnerContext):
         self._pending_request_info_events: dict[str, WorkflowEvent[Any]] = {}
         self._workflow_id: str | None = None
         self._streaming: bool = False
+        self._yield_output_classifier: YieldOutputClassifier = lambda _executor_id: "output"
 
     # region Messaging
 
@@ -113,6 +115,18 @@ class CapturingRunnerContext(RunnerContext):
         """Checkpointing not supported in activity context."""
         raise NotImplementedError("Checkpointing is not supported in Azure Functions activity context")
 
+    async def build_checkpoint(
+        self,
+        workflow_name: str,
+        graph_signature_hash: str,
+        state: State,
+        previous_checkpoint_id: str | None,
+        iteration_count: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> WorkflowCheckpoint:
+        """Checkpointing not supported in activity context."""
+        raise NotImplementedError("Checkpointing is not supported in Azure Functions activity context")
+
     async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:
         """Checkpointing not supported in activity context."""
         raise NotImplementedError("Checkpointing is not supported in Azure Functions activity context")
@@ -143,6 +157,14 @@ class CapturingRunnerContext(RunnerContext):
     def is_streaming(self) -> bool:
         """Check if streaming mode is enabled (always False in activity context)."""
         return self._streaming
+
+    def set_yield_output_classifier(self, classifier: YieldOutputClassifier) -> None:
+        """Set the classifier used by WorkflowContext.yield_output()."""
+        self._yield_output_classifier = classifier
+
+    def classify_yielded_output(self, executor_id: str) -> YieldOutputEventType | None:
+        """Classify an executor's yield_output payload as output, intermediate, or hidden."""
+        return self._yield_output_classifier(executor_id)
 
     # endregion Workflow Configuration
 

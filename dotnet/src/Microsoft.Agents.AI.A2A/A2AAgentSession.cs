@@ -5,6 +5,8 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+using TaskState = A2A.TaskState;
+
 namespace Microsoft.Agents.AI.A2A;
 
 /// <summary>
@@ -18,10 +20,11 @@ public sealed class A2AAgentSession : AgentSession
     }
 
     [JsonConstructor]
-    internal A2AAgentSession(string? contextId, string? taskId, AgentSessionStateBag? stateBag) : base(stateBag ?? new())
+    internal A2AAgentSession(string? contextId, string? taskId, TaskState? taskState, AgentSessionStateBag? stateBag) : base(stateBag ?? new())
     {
         this.ContextId = contextId;
         this.TaskId = taskId;
+        this.TaskState = taskState;
     }
 
     /// <summary>
@@ -35,6 +38,12 @@ public sealed class A2AAgentSession : AgentSession
     /// </summary>
     [JsonPropertyName("taskId")]
     public string? TaskId { get; internal set; }
+
+    /// <summary>
+    /// Gets the state of the task the agent is currently working on.
+    /// </summary>
+    [JsonPropertyName("taskState")]
+    public TaskState? TaskState { get; internal set; }
 
     /// <inheritdoc/>
     internal JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
@@ -57,5 +66,5 @@ public sealed class A2AAgentSession : AgentSession
 
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     private string DebuggerDisplay =>
-        $"ContextId = {this.ContextId}, TaskId = {this.TaskId}, StateBag Count = {this.StateBag.Count}";
+        $"ContextId = {this.ContextId}, TaskId = {this.TaskId}, TaskState = {this.TaskState}, StateBag Count = {this.StateBag.Count}";
 }

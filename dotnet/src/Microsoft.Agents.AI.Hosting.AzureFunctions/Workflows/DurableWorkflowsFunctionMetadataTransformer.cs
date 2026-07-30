@@ -89,7 +89,7 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
             // Register a status endpoint if opted in via AddWorkflow(exposeStatusEndpoint: true).
             if (this._options.IsStatusEndpointEnabled(workflow.Key))
             {
-                string statusFunctionName = $"{BuiltInFunctions.HttpPrefix}{workflow.Key}-status";
+                string statusFunctionName = $"{BuiltInFunctions.HttpPrefix}{workflow.Key}{BuiltInFunctions.StatusFunctionSuffix}";
                 if (registeredFunctions.Add(statusFunctionName))
                 {
                     this._logger.LogRegisteringWorkflowTrigger(workflow.Key, statusFunctionName, "http-status");
@@ -105,7 +105,7 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
             bool hasRequestPorts = workflow.Value.ReflectExecutors().Values.Any(b => b is RequestPortBinding);
             if (hasRequestPorts)
             {
-                string respondFunctionName = $"{BuiltInFunctions.HttpPrefix}{workflow.Key}-respond";
+                string respondFunctionName = $"{BuiltInFunctions.HttpPrefix}{workflow.Key}{BuiltInFunctions.RespondFunctionSuffix}";
                 if (registeredFunctions.Add(respondFunctionName))
                 {
                     this._logger.LogRegisteringWorkflowTrigger(workflow.Key, respondFunctionName, "http-respond");

@@ -14,7 +14,8 @@ from agent_framework import (  # Core chat primitives used to build requests
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to declare a Python function as a workflow executor
 )
-from agent_framework.foundry import FoundryChatClient  # Thin client wrapper for Azure OpenAI chat models
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions  # Thin client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from dotenv import load_dotenv
 from pydantic import BaseModel  # Structured outputs for safer parsing
@@ -36,7 +37,7 @@ Purpose:
 - Illustrate how to transform one agent's structured result into a new AgentExecutorRequest for a downstream agent.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - You understand the basics of WorkflowBuilder, executors, and events in this framework.
 - You know the concept of edge conditions and how they gate routes using a predicate function.
 - Azure OpenAI access is configured for FoundryChatClient. You should be logged in with Azure CLI (AzureCliCredential)
@@ -129,7 +130,7 @@ async def to_email_assistant_request(
     """
     # Bridge executor. Converts a structured DetectionResult into a Message and forwards it as a new request.
     detection = DetectionResult.model_validate_json(response.agent_response.text)
-    user_msg = Message("user", text=detection.email_content)
+    user_msg = Message("user", contents=[detection.email_content])
     await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 
@@ -139,7 +140,7 @@ def create_spam_detector_agent() -> Agent:
     return Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         instructions=(
@@ -148,7 +149,7 @@ def create_spam_detector_agent() -> Agent:
             "Include the original email content in email_content."
         ),
         name="spam_detection_agent",
-        default_options={"response_format": DetectionResult},
+        default_options=OpenAIChatOptions[Any](response_format=DetectionResult),
     )
 
 
@@ -158,7 +159,7 @@ def create_email_assistant_agent() -> Agent:
     return Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         instructions=(
@@ -167,7 +168,7 @@ def create_email_assistant_agent() -> Agent:
             "Return JSON with a single field 'response' containing the drafted reply."
         ),
         name="email_assistant_agent",
-        default_options={"response_format": EmailResponse},
+        default_options=OpenAIChatOptions[Any](response_format=EmailResponse),
     )
 
 
@@ -200,7 +201,7 @@ async def main() -> None:
 
     # Execute the workflow. Since the start is an AgentExecutor, pass an AgentExecutorRequest.
     # The workflow completes when it becomes idle (no more work to do).
-    request = AgentExecutorRequest(messages=[Message("user", text=email)], should_respond=True)
+    request = AgentExecutorRequest(messages=[Message("user", contents=[email])], should_respond=True)
     events = await workflow.run(request)
     outputs = events.get_outputs()
     if outputs:

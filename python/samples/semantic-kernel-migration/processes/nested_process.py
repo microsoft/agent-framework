@@ -1,6 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "agent-framework-core",
 #     "semantic-kernel",
 # ]
 # ///

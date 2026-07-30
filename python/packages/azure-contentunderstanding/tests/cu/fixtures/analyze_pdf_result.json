@@ -1,0 +1,23 @@
+{
+  "analyzerId": "prebuilt-documentSearch",
+  "apiVersion": "2025-11-01",
+  "createdAt": "2026-03-21T22:44:09Z",
+  "contents": [
+    {
+      "path": "input1",
+      "markdown": "# Contoso Q1 2025 Financial Summary\n\nTotal revenue for Q1 2025 was $42.7 million, an increase of 18% over Q1 2024.\nOperating expenses were $31.2 million. Net profit was $11.5 million. The largest\nrevenue segment was Cloud Services at $19.3 million, followed by Professional\nServices at $14.8 million and Product Licensing at $8.6 million. Headcount at end of\nQ1 was 1,247 employees across 8 offices worldwide.\n\n<!-- PageBreak -->\n\n\n# Contoso Q2 2025 Financial Summary\n\nTotal revenue for Q2 2025 was $48.1 million, an increase of 22% over Q2 2024.\nOperating expenses were $33.9 million. Net profit was $14.2 million. Cloud Services\ngrew to $22.5 million, Professional Services was $15.7 million, and Product Licensing\nwas $9.9 million. The company opened a new office in Tokyo, bringing the total to 9\noffices. Headcount grew to 1,389 employees.\n\n<!-- PageBreak -->\n\n\n## Contoso Product Roadmap 2025\n\nThree major product launches are planned for 2025: (1) Contoso CloudVault - an\nenterprise document storage solution, launching August 2025, with an expected price\nof $29.99/user/month. (2) Contoso DataPulse - a real-time analytics dashboard,\nlaunching October 2025. (3) Contoso SecureLink - a zero-trust networking product,\nlaunching December 2025. Total R&D; budget for 2025 is $18.4 million.\n\n<!-- PageBreak -->\n\n\n# Contoso Employee Satisfaction Survey Results\n\nThe annual employee satisfaction survey was completed in March 2025 with a 87%\nresponse rate. Overall satisfaction score was 4.2 out of 5.0. Work-life balance scored\n3.8/5.0. Career growth opportunities scored 3.9/5.0. Compensation satisfaction\nscored 3.6/5.0. The top requested improvement was 'more flexible remote work\noptions' cited by 62% of respondents. Employee retention rate for the trailing 12\nmonths was 91%.\n\n<!-- PageBreak -->\n\n\n## Contoso Partnership Announcements\n\nContoso announced three strategic partnerships in H1 2025: (1) A joint venture with\nMeridian Technologies for AI-powered document processing, valued at $5.2 million\nover 3 years. (2) A distribution agreement with Pacific Rim Solutions covering 12\ncountries in Asia-Pacific. (3) A technology integration partnership with NovaBridge\nSystems for unified identity management. The Chief Partnership Officer, Helena\nNakagawa, stated the partnerships are expected to generate an additional $15 million\nin revenue by 2027.\n",
+      "fields": {
+        "Summary": {
+          "type": "string",
+          "valueString": "The document provides a comprehensive overview of Contoso's key business metrics and initiatives for 2025, including financial performance for Q1 and Q2 with revenue, expenses, and profit details; a product roadmap with three major launches and R&D budget; employee satisfaction survey results highlighting scores and retention; and strategic partnership announcements expected to boost future revenue.",
+          "confidence": 0.46
+        }
+      },
+      "kind": "document",
+      "startPageNumber": 1,
+      "endPageNumber": 5,
+      "mimeType": "application/pdf",
+      "analyzerId": "prebuilt-documentSearch"
+    }
+  ]
+}

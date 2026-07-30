@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import Any
 
-from agent_framework import Agent, AgentSession, BaseHistoryProvider, Message
+from agent_framework import Agent, AgentSession, HistoryProvider, Message
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
@@ -20,7 +20,7 @@ preferred storage solution (database, file system, etc.).
 """
 
 
-class CustomHistoryProvider(BaseHistoryProvider):
+class CustomHistoryProvider(HistoryProvider):
     """Implementation of custom history provider.
     In real applications, this can be an implementation of relational database or vector store."""
 

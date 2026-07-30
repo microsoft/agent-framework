@@ -6,6 +6,9 @@ Claude Agent with Session Management
 This sample demonstrates session management with ClaudeAgent, showing
 persistent conversation capabilities. Sessions are automatically persisted
 by the Claude Code CLI.
+
+Environment variables:
+- ANTHROPIC_API_KEY: Your Anthropic API key
 """
 
 import asyncio
@@ -14,7 +17,11 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.anthropic import ClaudeAgent
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @tool

@@ -58,7 +58,6 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
     public override async ValueTask HandleAsync(TInput message, IWorkflowContext context, CancellationToken cancellationToken)
     {
         DeclarativeWorkflowContext declarativeContext = new(context, this._state);
-        await this.ExecuteAsync(message, declarativeContext, cancellationToken).ConfigureAwait(false);
 
         ChatMessage input = (this._inputTransform ?? DefaultInputTransform).Invoke(message);
 
@@ -69,7 +68,13 @@ public abstract class RootExecutor<TInput> : Executor<TInput>, IResettableExecut
         await declarativeContext.QueueConversationUpdateAsync(this._conversationId, isExternal: true, cancellationToken).ConfigureAwait(false);
 
         ChatMessage inputMessage = await this._agentProvider.CreateMessageAsync(this._conversationId, input, cancellationToken).ConfigureAwait(false);
-        await declarativeContext.SetLastMessageAsync(inputMessage).ConfigureAwait(false);
+
+        // Use the original input for System.LastMessage to ensure Text is preserved (the
+        // service may strip text on round-trip), but substitute server-side media references
+        // (e.g., HostedFileContent) so subsequent actions don't re-upload large blobs.
+        await declarativeContext.SetLastMessageAsync(input.MergeForLastMessage(inputMessage)).ConfigureAwait(false);
+
+        await this.ExecuteAsync(message, declarativeContext, cancellationToken).ConfigureAwait(false);
 
         await declarativeContext.SendResultMessageAsync(this.Id, cancellationToken).ConfigureAwait(false);
     }

@@ -29,7 +29,7 @@ class _FakeTask(TaskBase):
     def __init__(self, task_id: int = 1):
         super().__init__(task_id, [])
         self._set_is_scheduled(False)
-        self.action_repr = []
+        self.action_repr: list[Any] = []  # pyrefly: ignore[bad-override-mutable-attribute]
         self.state = TaskState.RUNNING
 
 
@@ -90,7 +90,7 @@ def executor_with_uuid() -> tuple[Any, Mock, str]:
 
     executor = AzureFunctionsAgentExecutor(context)
     test_uuid_hex = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    executor.generate_unique_id = Mock(return_value=test_uuid_hex)
+    executor.generate_unique_id = Mock(return_value=test_uuid_hex)  # type: ignore[method-assign]
 
     return executor, context, test_uuid_hex
 
@@ -112,7 +112,7 @@ def executor_with_multiple_uuids() -> tuple[Any, Mock, list[str]]:
         "dddddddd-dddd-dddd-dddd-dddddddddddd",
         "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
     ]
-    executor.generate_unique_id = Mock(side_effect=uuid_hexes)
+    executor.generate_unique_id = Mock(side_effect=uuid_hexes)  # type: ignore[method-assign]
 
     return executor, context, uuid_hexes
 
@@ -155,7 +155,7 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task completion
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentResponse(messages=[Message(role="assistant", text="Test response")]).to_dict()
+        entity_task.result = AgentResponse(messages=[Message(role="assistant", contents=["Test response"])]).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()
@@ -197,7 +197,9 @@ class TestAgentResponseHelpers:
 
         # Simulate successful entity task with JSON response
         entity_task.state = TaskState.SUCCEEDED
-        entity_task.result = AgentResponse(messages=[Message(role="assistant", text='{"answer": "42"}')]).to_dict()
+        entity_task.result = AgentResponse(
+            messages=[Message(role="assistant", contents=['{"answer": "42"}'])]
+        ).to_dict()
 
         # Clear pending_tasks to simulate that parent has processed the child
         task.pending_tasks.clear()

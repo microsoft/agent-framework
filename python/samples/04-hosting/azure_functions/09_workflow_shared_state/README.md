@@ -69,14 +69,14 @@ Use the `demo.http` file with REST Client extension or curl:
 
 ### Test Spam Email
 ```bash
-curl -X POST http://localhost:7071/api/workflow/run \
+curl -X POST http://localhost:7071/api/workflow/email_triage_shared_state/run \
   -H "Content-Type: application/json" \
   -d '"URGENT! You have won $1,000,000! Click here to claim!"'
 ```
 
 ### Test Legitimate Email
 ```bash
-curl -X POST http://localhost:7071/api/workflow/run \
+curl -X POST http://localhost:7071/api/workflow/email_triage_shared_state/run \
   -H "Content-Type: application/json" \
   -d '"Hi team, reminder about our meeting tomorrow at 10 AM."'
 ```

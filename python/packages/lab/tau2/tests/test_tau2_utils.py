@@ -2,6 +2,13 @@
 
 """Tests for tau2 utils module."""
 
+import pytest
+
+try:
+    from litellm import completion as _litellm_completion  # noqa: F401
+except Exception:
+    pytest.skip("LiteLLM import surface required by tau2 is unavailable.", allow_module_level=True)
+
 from agent_framework import Content, FunctionTool, Message
 from agent_framework_lab_tau2._tau2_utils import (
     convert_agent_framework_messages_to_tau2_messages,
@@ -37,7 +44,7 @@ def test_convert_tau2_tool_to_function_tool_basic():
     tau2_tool = _DummyTau2Tool(name="lookup_booking", description="Lookup booking by id.")
 
     # Convert the tool
-    tool = convert_tau2_tool_to_function_tool(tau2_tool)
+    tool = convert_tau2_tool_to_function_tool(tau2_tool)  # ty: ignore[invalid-argument-type]  # pyrefly: ignore[bad-argument-type]  # pyright: ignore[reportArgumentType]
 
     # Verify the conversion
     assert isinstance(tool, FunctionTool)
@@ -45,6 +52,7 @@ def test_convert_tau2_tool_to_function_tool_basic():
     assert tool.description == tau2_tool._get_description()
     assert tool.input_model == tau2_tool.params
 
+    assert tool.func is not None
     result = tool.func(param="ABC123")
     assert isinstance(result, _DummyToolResult)
     assert result.output == "ABC123"
@@ -60,7 +68,7 @@ def test_convert_tau2_tool_to_function_tool_multiple_tools():
     ]
 
     # Convert multiple tools
-    function_tools = [convert_tau2_tool_to_function_tool(tool) for tool in tools]
+    function_tools = [convert_tau2_tool_to_function_tool(tool) for tool in tools]  # ty: ignore[invalid-argument-type]  # pyrefly: ignore[bad-argument-type]  # pyright: ignore[reportArgumentType]
 
     # Verify all conversions
     for tool, tau2_tool in zip(function_tools, tools, strict=False):
@@ -151,9 +159,7 @@ def test_convert_agent_framework_messages_to_tau2_messages_with_function_result(
 
 def test_convert_agent_framework_messages_to_tau2_messages_with_error():
     """Test converting function result with error."""
-    function_result = Content.from_function_result(
-        call_id="call_456", result="Error occurred", exception=Exception("Test error")
-    )
+    function_result = Content.from_function_result(call_id="call_456", result="Error occurred", exception="Test error")
 
     messages = [Message(role="tool", contents=[function_result])]
 

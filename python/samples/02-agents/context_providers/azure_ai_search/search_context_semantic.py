@@ -25,14 +25,14 @@ This sample demonstrates how to use Azure AI Search with semantic mode for RAG
 
 Prerequisites:
 1. An Azure AI Search service with a search index
-2. An Azure AI Foundry project with a model deployment
+2. A Microsoft Foundry project with a model deployment
 3. Set the following environment variables:
    - AZURE_SEARCH_ENDPOINT: Your Azure AI Search endpoint
    - AZURE_SEARCH_API_KEY: (Optional) Your search API key - if not provided, uses AzureCliCredential for Entra ID
    - AZURE_SEARCH_INDEX_NAME: Your search index name
-   - FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
-   - AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name (e.g., "gpt-4o")
-   - AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: (Optional) Your Azure OpenAI embedding deployment for hybrid search
+   - FOUNDRY_PROJECT_ENDPOINT: Your Microsoft Foundry project endpoint
+   - FOUNDRY_MODEL: Your model deployment name (e.g., "gpt-4o")
+   - AZURE_OPENAI_EMBEDDING_MODEL: (Optional) Your Azure OpenAI embedding deployment for hybrid search
    - AZURE_OPENAI_ENDPOINT: (Optional) Your Azure OpenAI resource URL, required if using Azure OpenAI embeddings
 """
 
@@ -54,9 +54,9 @@ async def main() -> None:
     search_key = os.environ.get("AZURE_SEARCH_API_KEY")
     index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model_deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+    model_deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o")
     openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-    embedding_deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
+    embedding_deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_MODEL")
 
     embedding_client = None
     if openai_endpoint and embedding_deployment:
@@ -85,13 +85,12 @@ async def main() -> None:
     # Create agent with search context provider
     async with (
         search_provider,
-        FoundryChatClient(
-            project_endpoint=project_endpoint,
-            model_model=model_deployment,
-            credential=credential,
-        ) as client,
         Agent(
-            client=client,
+            client=FoundryChatClient(
+                project_endpoint=project_endpoint,
+                model=model_deployment,
+                credential=credential,
+            ),
             name="SearchAgent",
             instructions=(
                 "You are a helpful assistant. Use the provided context from the "

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated
 from agent_framework import Message, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import get_tracer
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
@@ -18,13 +19,20 @@ if TYPE_CHECKING:
 
 """
 This sample shows how you can configure observability of an application with zero code changes.
-It relies on the OpenTelemetry auto-instrumentation capabilities, and the observability setup
-is done via environment variables.
 
-Follow the install guidance from https://opentelemetry.io/docs/zero-code/python/ to install the OpenTelemetry CLI tool,
-when using `uv` there are some additional steps, so follow the instructions carefully.
+Agent Framework is natively instrumented with OpenTelemetry, so no auto-instrumentation of the
+framework itself is required. Running the `opentelemetry-instrument` CLI wrapper simply configures
+the global tracer/meter providers and exporters from environment variables (or CLI flags) at
+process startup, so the application code does not need to set them up explicitly. The native
+spans/metrics emitted by Agent Framework are then picked up by that globally configured pipeline.
 
-And setup a local OpenTelemetry Collector instance to receive the traces and metrics (and update the endpoint below).
+See: https://opentelemetry.io/docs/zero-code/python/
+
+Install the OpenTelemetry CLI tool following the guidance above (when using `uv` there are some
+additional steps, so follow the instructions carefully).
+
+Then setup a local OpenTelemetry Collector instance to receive the traces and metrics (and update
+the endpoint below).
 
 Then you can run:
 ```bash
@@ -90,12 +98,19 @@ async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = Fals
     print(f"User: {message}")
     if stream:
         print("Assistant: ", end="")
-        async for chunk in client.get_response([Message(role="user", text=message)], tools=get_weather, stream=True):
+        async for chunk in client.get_response(
+            [Message(role="user", contents=[message])],
+            stream=True,
+            options={"tools": [get_weather]},
+        ):
             if chunk.text:
                 print(chunk.text, end="")
         print("")
     else:
-        response = await client.get_response([Message(role="user", text=message)], tools=get_weather)
+        response = await client.get_response(
+            [Message(role="user", contents=[message])],
+            options={"tools": [get_weather]},
+        )
         print(f"Assistant: {response}")
 
 
@@ -103,7 +118,7 @@ async def main() -> None:
     with get_tracer().start_as_current_span("Zero Code", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
-        client = FoundryChatClient()
+        client = FoundryChatClient(credential=AzureCliCredential())
 
         await run_chat_client(client, stream=True)
         await run_chat_client(client, stream=False)

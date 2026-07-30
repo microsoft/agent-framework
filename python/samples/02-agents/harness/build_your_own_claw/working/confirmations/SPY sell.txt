@@ -1,0 +1,6 @@
+TRADE CONFIRMATION
+Confirmation: TRADE-77CC88DD
+Date: 2024-05-08
+Symbol: SPY
+Action: SELL
+Quantity: 15

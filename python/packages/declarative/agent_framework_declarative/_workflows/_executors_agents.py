@@ -2,7 +2,7 @@
 
 """Agent invocation executors for declarative workflows.
 
-These executors handle invoking Azure AI Foundry agents and other AI agents,
+These executors handle invoking Microsoft Foundry agents and other AI agents,
 supporting both streaming responses and human-in-loop patterns.
 
 Aligned with .NET's InvokeAzureAgentExecutor behavior including:
@@ -371,7 +371,7 @@ def _normalize_variable_path(variable: str) -> str:
 
 
 class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
-    """Executor that invokes an Azure AI Foundry agent.
+    """Executor that invokes a Microsoft Foundry agent.
 
     This executor supports both Python-style and .NET-style YAML schemas:
 
@@ -640,7 +640,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
 
         # Add user input to conversation history first (via state.append only)
         if input_text:
-            user_message = Message(role="user", text=input_text)
+            user_message = Message(role="user", contents=[input_text])
             state.append(messages_path, user_message)
 
         # Get conversation history from state AFTER adding user message
@@ -717,7 +717,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 "Agent '%s': No messages in response, creating simple assistant message",
                 agent_name,
             )
-            assistant_message = Message(role="assistant", text=accumulated_response)
+            assistant_message = Message(role="assistant", contents=[accumulated_response])
             state.append(messages_path, assistant_message)
 
         # Store results in state - support both schema formats:

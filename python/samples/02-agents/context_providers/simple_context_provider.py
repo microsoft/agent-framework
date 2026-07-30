@@ -5,7 +5,14 @@ import os
 from contextlib import suppress
 from typing import Any
 
-from agent_framework import Agent, AgentSession, BaseContextProvider, SessionContext, SupportsChatGetResponse
+from agent_framework import (
+    Agent,
+    AgentSession,
+    ContextProvider,
+    SessionContext,
+    SupportsChatGetResponse,
+    register_state_type,
+)
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -20,7 +27,14 @@ class UserInfo(BaseModel):
     age: int | None = None
 
 
-class UserInfoMemory(BaseContextProvider):
+# In order for the State to be serialized well, we need to make sure to register
+# this class, and since this uses a Pydantic model, we do not need to tell the state
+# how to serialize/deserialize the object. Default Python types do not need to be
+# registered.
+register_state_type(UserInfo, type_id="sample_user_info")
+
+
+class UserInfoMemory(ContextProvider):
     DEFAULT_SOURCE_ID = "user_info_memory"
 
     def __init__(self, source_id: str = DEFAULT_SOURCE_ID, *, client: SupportsChatGetResponse, **kwargs: Any):
@@ -50,18 +64,23 @@ class UserInfoMemory(BaseContextProvider):
                 # Use the chat client to extract structured information
                 result = await self._chat_client.get_response(
                     messages=request_messages,  # type: ignore
-                    instructions="Extract the user's name and age from the message if present. "
-                    "If not present return nulls.",
-                    options={"response_format": UserInfo},
+                    options={
+                        "instructions": "Extract the user's name and age from the message if present. "
+                        "If not present return nulls.",
+                        "response_format": UserInfo,
+                    },
                 )
 
                 # Update user info with extracted data
                 with suppress(Exception):
                     extracted = result.value
-                    if state["user_info"].name is None and extracted.name:
-                        state["user_info"].name = extracted.name
-                    if state["user_info"].age is None and extracted.age:
-                        state["user_info"].age = extracted.age
+                    user_info = state["user_info"]
+                    if not isinstance(extracted, UserInfo) or not isinstance(user_info, UserInfo):
+                        return
+                    if user_info.name is None and extracted.name:
+                        user_info.name = extracted.name
+                    if user_info.age is None and extracted.age:
+                        user_info.age = extracted.age
 
     async def before_run(
         self,

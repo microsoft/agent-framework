@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Generic, Literal, cast, overload
+from typing import Any, ClassVar, Generic, Literal, cast, overload
 
 from agent_framework import (
     ChatAndFunctionMiddlewareTypes,
@@ -23,18 +23,20 @@ from agent_framework._settings import load_settings
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_completion_client import RawOpenAIChatCompletionClient
 from foundry_local import FoundryLocalManager
-from foundry_local.models import DeviceType
+from foundry_local.models import DeviceType, FoundryModelInfo
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
+from ._feature_usage import FeatureIndex
+
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 
 __all__ = [
@@ -60,7 +62,7 @@ class FoundryLocalChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModel
 
     Keys:
         # Inherited from ChatOptions (supported via OpenAI-compatible API):
-        model_id: The model identifier or alias (e.g., 'phi-4-mini').
+        model: The model identifier or alias (e.g., 'phi-4-mini').
         temperature: Sampling temperature (0-2).
         top_p: Nucleus sampling parameter.
         max_tokens: Maximum tokens to generate.
@@ -104,11 +106,6 @@ class FoundryLocalChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModel
     """Not applicable for local inference."""
 
 
-FOUNDRY_LOCAL_OPTION_TRANSLATIONS: dict[str, str] = {
-    "model_id": "model",
-}
-"""Maps ChatOptions keys to OpenAI API parameter names (for compatibility)."""
-
 FoundryLocalChatOptionsT = TypeVar(
     "FoundryLocalChatOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
@@ -143,6 +140,8 @@ class FoundryLocalClient(
     Generic[FoundryLocalChatOptionsT],
 ):
     """Foundry Local Chat completion class with middleware, telemetry, and function invocation support."""
+
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.FOUNDRY_LOCAL
 
     @overload
     def get_response(
@@ -295,8 +294,8 @@ class FoundryLocalClient(
                 # will take a long time as the model is loaded then.
                 # Alternatively, you could call the `download_model` and `load_model` methods
                 # on the `manager` property manually.
-                client.manager.download_model(alias_or_model_id="phi-4-mini", device=DeviceType.CPU)
-                client.manager.load_model(alias_or_model_id="phi-4-mini", device=DeviceType.CPU)
+                client.manager.download_model("phi-4-mini", device=DeviceType.CPU)
+                client.manager.load_model("phi-4-mini", device=DeviceType.CPU)
 
                 # You can also use the CLI:
                 `foundry model load phi-4-mini --device Auto`
@@ -325,11 +324,11 @@ class FoundryLocalClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        model_setting: str = settings["model"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+        model_setting: str = settings["model"]  # type: ignore[assignment]
 
         manager = FoundryLocalManager(bootstrap=bootstrap, timeout=timeout)
-        model_info = manager.get_model_info(
-            alias_or_model_id=model_setting,
+        model_info: FoundryModelInfo | None = manager.get_model_info(
+            model_setting,
             device=device,
         )
         if model_info is None:
@@ -340,8 +339,8 @@ class FoundryLocalClient(
             )
             raise ValueError(message)
         if prepare_model:
-            manager.download_model(alias_or_model_id=model_info.id, device=device)
-            manager.load_model(alias_or_model_id=model_info.id, device=device)
+            manager.download_model(model_info.id, device=device)
+            manager.load_model(model_info.id, device=device)
 
         super().__init__(
             model=model_info.id,

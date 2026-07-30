@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Foundry Memory Context Provider using BaseContextProvider.
+"""Foundry Memory Context Provider using ContextProvider.
 
 This module provides ``FoundryMemoryProvider``, built on
-:class:`BaseContextProvider`.
+:class:`ContextProvider`.
 """
 
 from __future__ import annotations
@@ -14,17 +14,19 @@ from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     AgentSession,
-    BaseContextProvider,
+    ContextProvider,
     Message,
     SessionContext,
     load_settings,
 )
+from agent_framework._telemetry import IS_TELEMETRY_ENABLED, get_user_agent, mark_feature_used
 from azure.ai.projects.aio import AIProjectClient
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from openai.types.responses import ResponseInputItemParam
+
+from ._feature_usage import FeatureIndex, create_feature_usage_policy
 
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # pragma: no cover
@@ -46,10 +48,10 @@ class FoundryProjectSettings(TypedDict, total=False):
     project_endpoint: str | None
 
 
-class FoundryMemoryProvider(BaseContextProvider):
-    """Foundry Memory context provider using the new BaseContextProvider hooks pattern.
+class FoundryMemoryProvider(ContextProvider):
+    """Foundry Memory context provider using the new ContextProvider hooks pattern.
 
-    Integrates Azure AI Foundry Memory Store for persistent semantic memory,
+    Integrates Microsoft Foundry Memory Store for persistent semantic memory,
     searching and storing memories via the Azure AI Projects SDK.
 
     Args:
@@ -118,9 +120,11 @@ class FoundryMemoryProvider(BaseContextProvider):
                 raise ValueError("Azure credential is required when project_client is not provided.")
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": resolved_endpoint,
-                "credential": credential,  # type: ignore[arg-type]
-                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+                "credential": credential,
+                "per_retry_policies": [create_feature_usage_policy()],
             }
+            if IS_TELEMETRY_ENABLED:
+                project_client_kwargs["user_agent"] = get_user_agent()
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             project_client = AIProjectClient(**project_client_kwargs)
@@ -164,6 +168,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         2. Searches for contextual memories based on input messages
         3. Combines and injects memories into the context
         """
+        mark_feature_used(FeatureIndex.FOUNDRY_MEMORY)
         # On first run, retrieve static memories (user profile memories)
         if not state.get("initialized"):
             try:
@@ -219,7 +224,7 @@ class FoundryMemoryProvider(BaseContextProvider):
                 if line_separated_memories:
                     context.extend_messages(
                         self.source_id,
-                        [Message(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")],
+                        [Message(role="user", contents=[f"{self.context_prompt}\n{line_separated_memories}"])],
                     )
         except Exception as e:
             # Log but don't fail - memory retrieval is non-critical

@@ -70,7 +70,7 @@ async def log_model_input(context: ChatContext, call_next: Any) -> None:
 
 
 async def main() -> None:
-    client = OpenAIChatClient(model_id="gpt-4o-mini")
+    client = OpenAIChatClient(model="gpt-4o-mini")
 
     # History provider loads/stores conversation messages in session.state.
     # skip_excluded=True means get_messages() will omit messages that were

@@ -1,16 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Sequence
+from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
 
+import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
     BaseAgent,
+    BaseChatClient,
+    ChatResponse,
     Content,
     Executor,
     Message,
@@ -23,6 +28,7 @@ from agent_framework import (
     WorkflowRunState,
     handler,
 )
+from agent_framework._telemetry import get_feature_token
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import (
     GroupChatRequestMessage,
@@ -35,6 +41,8 @@ from agent_framework.orchestrations import (
     MagenticProgressLedgerItem,
     StandardMagenticManager,
 )
+
+from agent_framework_orchestrations._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -155,11 +163,11 @@ class StubAgent(BaseAgent):
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Any:
         if stream:
             return self._run_stream()
 
-        async def _run() -> AgentResponse:
+        async def _run() -> AgentResponse[Any]:
             response = Message("assistant", [self._reply_text], author_name=self.name)
             return AgentResponse(messages=[response])
 
@@ -182,6 +190,17 @@ class DummyExec(Executor):
         pass
 
 
+def test_magentic_builder_marks_feature_with_custom_manager() -> None:
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+
+    MagenticBuilder(participants=[DummyExec("agentA")], manager=FakeManager()).build()
+
+    token = get_feature_token()
+    assert token is not None
+    assert int(token.split(".", 1)[1], 16) & (1 << FeatureIndex.ORCHESTRATION_MAGENTIC)
+
+
 async def test_magentic_builder_returns_workflow_and_runs() -> None:
     manager = FakeManager()
     agent = StubAgent(manager.next_speaker_name, "first draft")
@@ -190,22 +209,80 @@ async def test_magentic_builder_returns_workflow_and_runs() -> None:
 
     assert isinstance(workflow, Workflow)
 
-    outputs: list[Message] = []
+    updates: list[AgentResponseUpdate] = []
     orchestrator_event_count = 0
     async for event in workflow.run("compose summary", stream=True):
-        if event.type == "output":
-            msg = event.data
-            if isinstance(msg, list):
-                outputs.extend(cast(list[Message], msg))
+        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+            updates.append(event.data)
         elif event.type == "magentic_orchestrator":
             orchestrator_event_count += 1
 
-    assert outputs, "Expected a final output message"
-    assert len(outputs) >= 1
-    final = outputs[-1]
+    assert updates, "Expected a final output update"
+    final = updates[-1]
     assert final.text == manager.FINAL_ANSWER
     assert final.author_name == manager.name
     assert orchestrator_event_count > 0, "Expected orchestrator events to be emitted"
+
+
+async def test_magentic_final_answer_yields_update_in_streaming() -> None:
+    """In streaming mode, Magentic's manager final-answer surfaces as `AgentResponseUpdate`.
+
+    Mirrors AgentExecutor's mode-aware behavior: streaming workflows produce per-chunk
+    `AgentResponseUpdate` events; the synthesized final answer is logically a single chunk,
+    so it surfaces as a single `AgentResponseUpdate`.
+    """
+    manager = FakeManager()
+    workflow = MagenticBuilder(
+        participants=[StubAgent(manager.next_speaker_name, "first draft")],
+        manager=manager,
+    ).build()
+
+    terminal: AgentResponseUpdate | None = None
+    async for event in workflow.run("compose summary", stream=True):
+        if event.type == "output":
+            terminal = event.data
+
+    assert isinstance(terminal, AgentResponseUpdate), (
+        f"Expected AgentResponseUpdate in streaming mode, got {type(terminal).__name__}"
+    )
+    assert terminal.text == manager.FINAL_ANSWER
+    assert terminal.author_name == manager.name
+
+
+async def test_magentic_final_answer_yields_response_in_non_streaming() -> None:
+    """In non-streaming mode, Magentic's manager final-answer surfaces as `AgentResponse`."""
+    manager = FakeManager()
+    workflow = MagenticBuilder(
+        participants=[StubAgent(manager.next_speaker_name, "first draft")],
+        manager=manager,
+    ).build()
+
+    events = await workflow.run("compose summary")
+    outputs = [ev for ev in events if ev.type == "output"]
+    assert len(outputs) == 1
+    assert isinstance(outputs[0].data, AgentResponse)
+    assert outputs[0].data.messages[-1].text == manager.FINAL_ANSWER
+
+
+async def test_magentic_limit_termination_yields_update_in_streaming() -> None:
+    """In streaming mode, Magentic's round-limit termination surfaces as `AgentResponseUpdate`."""
+    manager = FakeManager(max_round_count=1)
+    workflow = MagenticBuilder(
+        participants=[DummyExec(name=manager.next_speaker_name)],
+        manager=manager,
+    ).build()
+
+    terminal: AgentResponseUpdate | None = None
+    async for event in workflow.run("round limit test", stream=True):
+        if event.type == "output":
+            terminal = event.data
+
+    assert isinstance(terminal, AgentResponseUpdate), (
+        f"Expected AgentResponseUpdate in streaming mode, got {type(terminal).__name__}"
+    )
+    # Either the final answer OR the round-limit termination message — both are valid terminal states
+    # for max_round_count=1; the precise one depends on FakeManager's progression.
+    assert terminal.text
 
 
 async def test_magentic_as_agent_does_not_accept_conversation() -> None:
@@ -250,7 +327,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert isinstance(req_event.data, MagenticPlanReviewRequest)
 
     completed = False
-    output: list[Message] | None = None
+    output: AgentResponseUpdate | None = None
     async for ev in wf.run(stream=True, responses={req_event.request_id: req_event.data.approve()}):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
@@ -261,8 +338,8 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
 
     assert completed
     assert output is not None
-    assert isinstance(output, list)
-    assert all(isinstance(msg, Message) for msg in output)
+    # Streaming mode: terminal output is AgentResponseUpdate.
+    assert isinstance(output, AgentResponseUpdate)
 
 
 async def test_magentic_plan_review_with_revise():
@@ -333,14 +410,12 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
         None,
     )
     assert idle_status is not None
-    # Check that we got workflow output via WorkflowEvent with type "output"
+    # Streaming mode: terminal output is AgentResponseUpdate.
     output_event = next((e for e in events if e.type == "output"), None)
     assert output_event is not None
     data = output_event.data
-    assert isinstance(data, list)
-    assert len(data) > 0  # type: ignore
-    assert data[-1].role == "assistant"  # type: ignore
-    assert all(isinstance(msg, Message) for msg in data)  # type: ignore
+    assert isinstance(data, AgentResponseUpdate)
+    assert data.role == "assistant"
 
 
 async def test_magentic_checkpoint_resume_round_trip():
@@ -416,17 +491,17 @@ class StubManagerAgent(BaseAgent):
         stream: bool = False,
         session: Any = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Any:
         if stream:
             return self._run_stream()
 
-        async def _run() -> AgentResponse:
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["ok"])])
 
         return _run()
 
     async def _run_stream(self) -> AsyncIterable[AgentResponseUpdate]:
-        yield AgentResponseUpdate(message_deltas=[Message("assistant", ["ok"])])
+        yield AgentResponseUpdate(contents=[Content.from_text(text="ok")])
 
 
 async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
@@ -439,7 +514,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
         return Message("assistant", ["GIVEN OR VERIFIED FACTS\n- fact1"])
 
     # First, patch to produce facts then plan
-    mgr._complete = fake_complete_plan  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_plan  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
 
     ctx = MagenticContext(task="T", participant_descriptions={"A": "desc"})
     combined = await mgr.plan(ctx.clone())
@@ -454,7 +529,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
             return Message("assistant", ["- new step"])
         return Message("assistant", ["GIVEN OR VERIFIED FACTS\n- updated"])
 
-    mgr._complete = fake_complete_replan  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_replan  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     combined2 = await mgr.replan(ctx.clone())
     assert "updated" in combined2.text or "new step" in combined2.text
 
@@ -474,7 +549,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
         )
         return Message("assistant", [json_text])
 
-    mgr._complete = fake_complete_ok  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_ok  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     ledger = await mgr.create_progress_ledger(ctx.clone())
     assert ledger.next_speaker.answer == "alice"
 
@@ -482,7 +557,7 @@ async def test_standard_manager_progress_ledger_success_and_error():
     async def fake_complete_bad(messages: list[Message], **kwargs: Any) -> Message:
         return Message("assistant", ["not-json"])
 
-    mgr._complete = fake_complete_bad  # type: ignore[attr-defined]
+    mgr._complete = fake_complete_bad  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
     with pytest.raises(RuntimeError):
         await mgr.create_progress_ledger(ctx.clone())
 
@@ -526,11 +601,11 @@ class StubThreadAgent(BaseAgent):
     def __init__(self, name: str | None = None) -> None:
         super().__init__(name=name or "agentA")
 
-    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs) -> Any:  # type: ignore[override]
         if stream:
             return self._run_stream()
 
-        async def _run():
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["thread-ok"], author_name=self.name)])
 
         return _run()
@@ -554,11 +629,11 @@ class StubAssistantsAgent(BaseAgent):
         super().__init__(name="agentA")
         self.client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
-    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs) -> Any:  # type: ignore[override]
         if stream:
             return self._run_stream()
 
-        async def _run():
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["assistants-ok"], author_name=self.name)])
 
         return _run()
@@ -574,18 +649,23 @@ class StubAssistantsAgent(BaseAgent):
 async def _collect_agent_responses_setup(participant: SupportsAgentRun) -> list[Message]:
     captured: list[Message] = []
 
-    wf = MagenticBuilder(participants=[participant], intermediate_outputs=True, manager=InvokeOnceManager()).build()
+    wf = MagenticBuilder(
+        participants=[participant],
+        output_from=[participant],
+        manager=InvokeOnceManager(),
+    ).build()
 
-    # Run a bounded stream to allow one invoke and then completion
+    # With output_from, participants are designated as outputs alongside
+    # the manager — so their streaming chunks surface as type='output' (not intermediate).
     events: list[WorkflowEvent] = []
-    async for ev in wf.run("task", stream=True):  # plan review disabled
+    async for ev in wf.run("task", stream=True):
         events.append(ev)
         # Capture streaming updates (type="output" with AgentResponseUpdate data)
         if ev.type == "output" and isinstance(ev.data, AgentResponseUpdate):
             captured.append(
                 Message(
                     role=ev.data.role or "assistant",
-                    text=ev.data.text or "",
+                    contents=[ev.data.text or ""],
                     author_name=ev.data.author_name,
                 )
             )
@@ -753,11 +833,9 @@ async def test_magentic_stall_and_reset_reach_limits():
     assert idle_status is not None
     output_event = next((e for e in events if e.type == "output"), None)
     assert output_event is not None
-    assert isinstance(output_event.data, list)
-    assert all(isinstance(msg, Message) for msg in output_event.data)  # type: ignore
-    assert len(output_event.data) > 0  # type: ignore
-    assert output_event.data[-1].text is not None  # type: ignore
-    assert output_event.data[-1].text == "Workflow terminated due to reaching maximum reset count."  # type: ignore
+    # Streaming mode: terminal output is AgentResponseUpdate.
+    assert isinstance(output_event.data, AgentResponseUpdate)
+    assert output_event.data.text == "Workflow terminated due to reaching maximum reset count."
 
 
 async def test_magentic_checkpoint_runtime_only() -> None:
@@ -928,6 +1006,33 @@ def test_magentic_builder_requires_exactly_one_manager_option():
         MagenticBuilder(participants=[agent], manager=manager, manager_factory=manager_factory)
 
 
+def test_magentic_with_custom_manager_does_not_warn_without_standard_manager_options(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING, logger="agent_framework_orchestrations._magentic")
+
+    MagenticBuilder(participants=[StubAgent("agentA", "reply")], manager=FakeManager())
+
+    assert "Custom manager provided; all other manager arguments will be ignored." not in caplog.text
+
+
+def test_magentic_with_custom_manager_factory_does_not_warn_without_standard_manager_options(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING, logger="agent_framework_orchestrations._magentic")
+
+    def manager_factory() -> MagenticManagerBase:
+        return FakeManager()
+
+    MagenticBuilder(participants=[StubAgent("agentA", "reply")], manager_factory=manager_factory)
+
+    assert "Custom manager provided; all other manager arguments will be ignored." not in caplog.text
+
+
+def test_magentic_with_custom_manager_warns_when_standard_manager_option_is_provided(caplog: Any) -> None:
+    caplog.set_level(logging.WARNING, logger="agent_framework_orchestrations._magentic")
+
+    MagenticBuilder(participants=[StubAgent("agentA", "reply")], manager=FakeManager(), max_stall_count=3)
+
+    assert "Custom manager provided; all other manager arguments will be ignored." in caplog.text
+
+
 async def test_magentic_with_manager_factory():
     """Test workflow creation using manager_factory."""
     factory_call_count = 0
@@ -976,6 +1081,20 @@ async def test_magentic_with_agent_factory():
             break
 
     assert event_count > 0
+
+
+def test_magentic_agent_factory_uses_default_max_stall_count() -> None:
+    def agent_factory() -> SupportsAgentRun:
+        return cast(SupportsAgentRun, StubManagerAgent())
+
+    participant = StubAgent("agentA", "reply from agentA")
+    workflow = MagenticBuilder(participants=[participant], manager_agent_factory=agent_factory).build()
+
+    orchestrator = next(e for e in workflow.executors.values() if isinstance(e, MagenticOrchestrator))
+    manager = orchestrator._manager  # type: ignore[reportPrivateUsage]
+
+    assert isinstance(manager, StandardMagenticManager)
+    assert manager.max_stall_count == 3
 
 
 async def test_magentic_manager_factory_reusable_builder():
@@ -1092,10 +1211,10 @@ async def test_standard_manager_propagates_session_to_agent():
             stream: bool = False,
             session: Any = None,
             **kwargs: Any,
-        ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        ) -> Any:
             captured_sessions.append(session)
 
-            async def _run() -> AgentResponse:
+            async def _run() -> AgentResponse[Any]:
                 return AgentResponse(messages=[Message("assistant", ["ok"])])
 
             return _run()
@@ -1106,39 +1225,95 @@ async def test_standard_manager_propagates_session_to_agent():
 
     await mgr.plan(ctx.clone())
 
-    # plan() calls _complete twice (facts + plan), both should receive the same session
+    # plan() calls _complete twice (facts + plan). Each call must receive a non-None
+    # session so context providers configured on the manager agent are still invoked
+    # (the original intent of regression #4371).
     assert len(captured_sessions) == 2
     assert all(s is not None for s in captured_sessions), "session must be passed to agent.run()"
-    assert captured_sessions[0] is captured_sessions[1], "same session instance must be reused across calls"
-    assert captured_sessions[0] is mgr._session
+    # Each call must use a *fresh* session rather than one shared, accumulating session.
+    # The manager re-passes the full conversation on every call, so a reused session
+    # would make the agent's history provider re-inject prior turns and duplicate the
+    # task/facts/plan each round. See test_standard_manager_does_not_duplicate_history.
+    assert captured_sessions[0] is not captured_sessions[1], "each call must use a fresh session"
 
 
-def test_standard_manager_checkpoint_preserves_session():
-    """Verify that checkpoint save/restore preserves the manager's session identity."""
-    agent = StubManagerAgent()
+async def test_standard_manager_does_not_duplicate_history():
+    """Regression: the manager must not re-send already-sent turns to the model.
+
+    The manager rebuilds the full conversation it wants the model to see on every call
+    (``[*chat_history, facts_user]`` then ``[*chat_history, facts_user, facts_msg, plan_user]``).
+    Previously it reused one persistent ``AgentSession`` across calls, so the agent's
+    default ``InMemoryHistoryProvider`` reloaded the first call's stored messages and
+    prepended them to the second call's input, duplicating the facts pre-survey (and, over
+    multiple rounds, compounding the whole task/facts/plan). This drives a real ``Agent``
+    through the real session machinery and asserts no such duplication reaches the client.
+    """
+    facts_marker = "Below I will present you a request."
+    plan_marker = "Fantastic. To address this request"
+
+    class RecordingChatClient(BaseChatClient):
+        """Captures the exact message list handed to the model on each call."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[list[Message]] = []
+
+        @override
+        def _inner_get_response(self, *, messages, stream, options, **kwargs):  # type: ignore[override]
+            # Snapshot the fully-merged messages (session history + input) the model sees.
+            self.calls.append(list(messages))
+
+            async def _get() -> ChatResponse:
+                return ChatResponse(messages=Message(role="assistant", contents=["recorded"]))
+
+            return _get()
+
+    client = RecordingChatClient()
+    agent = Agent(name="MagenticManager", client=client)
     mgr = StandardMagenticManager(agent=agent)
-    original_session_id = mgr._session.session_id
+    ctx = MagenticContext(task="Is the system healthy?", participant_descriptions={"a": "desc"})
+
+    await mgr.plan(ctx.clone())
+
+    # plan() makes two model calls: the facts call, then the plan call.
+    assert len(client.calls) == 2
+    facts_call, plan_call = client.calls
+
+    # The facts pre-survey is sent once on the facts call...
+    assert sum(facts_marker in m.text for m in facts_call) == 1
+    # ...and must appear exactly once on the plan call too (the manager includes it
+    # manually). A reused/accumulating session would make it appear twice.
+    assert sum(facts_marker in m.text for m in plan_call) == 1, "facts pre-survey duplicated across calls"
+    # The plan prompt itself is present exactly once on the plan call.
+    assert sum(plan_marker in m.text for m in plan_call) == 1
+
+
+def test_standard_manager_checkpoint_preserves_task_ledger():
+    """Checkpoint save/restore round-trips the manager's task ledger (its only persisted state)."""
+    from agent_framework_orchestrations._magentic import _MagenticTaskLedger  # type: ignore
+
+    mgr = StandardMagenticManager(agent=StubManagerAgent())
+    mgr.task_ledger = _MagenticTaskLedger(
+        facts=Message("assistant", ["Custom facts"]),
+        plan=Message("assistant", ["Custom plan"]),
+    )
 
     state = mgr.on_checkpoint_save()
-    assert "agent_session" in state
+    assert "task_ledger" in state
 
-    # Restore into a fresh manager and verify session_id is preserved
-    mgr2 = StandardMagenticManager(agent=agent)
-    assert mgr2._session.session_id != original_session_id
+    mgr2 = StandardMagenticManager(agent=StubManagerAgent())
+    assert mgr2.task_ledger is None
     mgr2.on_checkpoint_restore(state)
-    assert mgr2._session.session_id == original_session_id
+    assert mgr2.task_ledger is not None
+    assert mgr2.task_ledger.facts.text == "Custom facts"
+    assert mgr2.task_ledger.plan.text == "Custom plan"
 
 
 def test_standard_manager_checkpoint_restore_empty_state():
-    """Verify that restoring from a state without agent_session leaves the session intact."""
-    agent = StubManagerAgent()
-    mgr = StandardMagenticManager(agent=agent)
-    original_session = mgr._session
-    original_session_id = original_session.session_id
-
+    """Restoring from a state without a task ledger leaves the manager unchanged."""
+    mgr = StandardMagenticManager(agent=StubManagerAgent())
     mgr.on_checkpoint_restore({})
-    assert mgr._session is original_session
-    assert mgr._session.session_id == original_session_id
+    assert mgr.task_ledger is None
 
 
 # endregion

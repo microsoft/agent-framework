@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from agent_framework import Agent, AgentContext, AgentSession, FunctionInvocationContext, tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -63,7 +63,7 @@ def recall_findings(ctx: FunctionInvocationContext) -> str:
 async def main() -> None:
     print("=== Agent-as-Tool: Session Propagation ===\n")
 
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
 
     research_agent = Agent(
         client=client,

@@ -18,7 +18,7 @@ import pytest
 from agent_framework import Agent, AgentExecutor, FunctionExecutor, WorkflowBuilder
 
 # Import mock classes from conftest for direct use in some tests
-from conftest import MockBaseChatClient
+from conftest import MockBaseChatClient  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_devui._discovery import EntityDiscovery
 from agent_framework_devui._executor import AgentFrameworkExecutor, EntityNotFoundError
@@ -43,7 +43,7 @@ async def executor(test_entities_dir):
     return executor
 
 
-async def test_executor_entity_discovery(executor):
+async def test_executor_entity_discovery(executor: AgentFrameworkExecutor) -> None:
     """Test executor entity discovery."""
     entities = await executor.discover_entities()
 
@@ -65,7 +65,7 @@ async def test_executor_entity_discovery(executor):
         )
 
 
-async def test_executor_get_entity_info(executor):
+async def test_executor_get_entity_info(executor: AgentFrameworkExecutor) -> None:
     """Test getting entity info by ID."""
     entities = await executor.discover_entities()
     entity_id = entities[0].id
@@ -371,7 +371,7 @@ async def test_full_pipeline_workflow_events_are_json_serializable():
     assert final_response is not None
 
 
-async def test_get_entity_info_raises_for_invalid_id(executor):
+async def test_get_entity_info_raises_for_invalid_id(executor: AgentFrameworkExecutor) -> None:
     """Test that get_entity_info raises EntityNotFoundError for invalid ID."""
     with pytest.raises(EntityNotFoundError):
         executor.get_entity_info("nonexistent_agent")

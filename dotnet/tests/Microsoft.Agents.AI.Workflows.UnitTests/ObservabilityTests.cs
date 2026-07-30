@@ -133,31 +133,31 @@ public sealed class ObservabilityTests : IDisposable
         activityEvents.Should().Contain(e => e.Name == EventNames.WorkflowCompleted, "activity should have workflow completed event");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task CreatesWorkflowEndToEndActivities_WithCorrectName_DefaultAsync()
     {
         await this.TestWorkflowEndToEndActivitiesAsync("Default");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task CreatesWorkflowEndToEndActivities_WithCorrectName_OffThreadAsync()
     {
         await this.TestWorkflowEndToEndActivitiesAsync("OffThread");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task CreatesWorkflowEndToEndActivities_WithCorrectName_ConcurrentAsync()
     {
         await this.TestWorkflowEndToEndActivitiesAsync("Concurrent");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task CreatesWorkflowEndToEndActivities_WithCorrectName_LockstepAsync()
     {
         await this.TestWorkflowEndToEndActivitiesAsync("Lockstep");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task CreatesWorkflowActivities_WithCorrectNameAsync()
     {
         // Arrange
@@ -182,7 +182,7 @@ public sealed class ObservabilityTests : IDisposable
         tags.Should().ContainKey(Tags.WorkflowDefinition);
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task TelemetryDisabledByDefault_CreatesNoActivitiesAsync()
     {
         // Arrange
@@ -200,7 +200,7 @@ public sealed class ObservabilityTests : IDisposable
         capturedActivities.Should().BeEmpty("No activities should be created when telemetry is disabled (default).");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task WithOpenTelemetry_UsesProvidedActivitySourceAsync()
     {
         // Arrange
@@ -235,7 +235,7 @@ public sealed class ObservabilityTests : IDisposable
             "All activities should come from the user-provided ActivitySource.");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task DisableWorkflowBuild_PreventsWorkflowBuildActivityAsync()
     {
         // Arrange
@@ -255,7 +255,7 @@ public sealed class ObservabilityTests : IDisposable
             "WorkflowBuild activity should be disabled.");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task DisableWorkflowRun_PreventsWorkflowRunActivityAsync()
     {
         // Arrange
@@ -285,7 +285,7 @@ public sealed class ObservabilityTests : IDisposable
             "Other activities should still be created.");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task DisableExecutorProcess_PreventsExecutorProcessActivityAsync()
     {
         // Arrange
@@ -312,7 +312,7 @@ public sealed class ObservabilityTests : IDisposable
             "Other activities should still be created.");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task DisableEdgeGroupProcess_PreventsEdgeGroupProcessActivityAsync()
     {
         // Arrange
@@ -333,7 +333,7 @@ public sealed class ObservabilityTests : IDisposable
             "Other activities should still be created.");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task DisableMessageSend_PreventsMessageSendActivityAsync()
     {
         // Arrange
@@ -382,7 +382,7 @@ public sealed class ObservabilityTests : IDisposable
         return builder.WithOpenTelemetry(configure: opts => opts.DisableMessageSend = true).Build();
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task EnableSensitiveData_LogsExecutorInputAndOutputAsync()
     {
         // Arrange
@@ -413,7 +413,7 @@ public sealed class ObservabilityTests : IDisposable
         tags[Tags.ExecutorOutput].Should().Contain("HELLO", "Output should contain the transformed value.");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task EnableSensitiveData_Disabled_DoesNotLogInputOutputAsync()
     {
         // Arrange
@@ -442,7 +442,7 @@ public sealed class ObservabilityTests : IDisposable
         tags.Should().NotContainKey(Tags.ExecutorOutput, "Output should NOT be logged when EnableSensitiveData is false.");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task EnableSensitiveData_LogsMessageSendContentAsync()
     {
         // Arrange
@@ -474,7 +474,7 @@ public sealed class ObservabilityTests : IDisposable
         tags.Should().ContainKey(Tags.MessageSourceId, "Source ID should be logged.");
     }
 
-    [Fact(Skip = "Flaky test - temporarily disabled.")]
+    [Fact]
     public async Task EnableSensitiveData_Disabled_DoesNotLogMessageContentAsync()
     {
         // Arrange

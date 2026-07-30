@@ -19,7 +19,7 @@ namespace Demo.DeclarativeWorkflow;
 /// </summary>
 /// <remarks>
 /// <b>Configuration</b>
-/// Define AZURE_AI_PROJECT_ENDPOINT as a user-secret or environment variable that
+/// Define FOUNDRY_PROJECT_ENDPOINT as a user-secret or environment variable that
 /// points to your Foundry project endpoint.
 /// <b>Usage</b>
 /// Provide the path to the workflow definition file as the first argument.
@@ -143,7 +143,7 @@ internal sealed class Program
             string? repoFolder = GetRepoFolder();
             if (repoFolder is not null)
             {
-                workflowFile = Path.Combine(repoFolder, "workflow-samples", workflowFile);
+                workflowFile = Path.Combine(repoFolder, "declarative-agents", "workflow-samples", workflowFile);
                 workflowFile = Path.ChangeExtension(workflowFile, ".yaml");
             }
         }

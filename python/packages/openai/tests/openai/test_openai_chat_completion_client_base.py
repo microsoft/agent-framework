@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from datetime import datetime, timezone
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -67,7 +68,7 @@ async def test_cmc(
     openai_unit_test_env: dict[str, str],
 ):
     mock_create.return_value = mock_chat_completion_response
-    chat_history.append(Message(role="user", text="hello world"))
+    chat_history.append(Message(role="user", contents=["hello world"]))
 
     openai_chat_completion = OpenAIChatCompletionClient()
     await openai_chat_completion.get_response(messages=chat_history)
@@ -86,7 +87,7 @@ async def test_cmc_chat_options(
     openai_unit_test_env: dict[str, str],
 ):
     mock_create.return_value = mock_chat_completion_response
-    chat_history.append(Message(role="user", text="hello world"))
+    chat_history.append(Message(role="user", contents=["hello world"]))
 
     openai_chat_completion = OpenAIChatCompletionClient()
     await openai_chat_completion.get_response(
@@ -107,7 +108,7 @@ async def test_cmc_no_fcc_in_response(
     openai_unit_test_env: dict[str, str],
 ):
     mock_create.return_value = mock_chat_completion_response
-    chat_history.append(Message(role="user", text="hello world"))
+    chat_history.append(Message(role="user", contents=["hello world"]))
     orig_chat_history = deepcopy(chat_history)
 
     openai_chat_completion = OpenAIChatCompletionClient()
@@ -129,7 +130,7 @@ async def test_cmc_structured_output_no_fcc(
     openai_unit_test_env: dict[str, str],
 ):
     mock_create.return_value = mock_chat_completion_response
-    chat_history.append(Message(role="user", text="hello world"))
+    chat_history.append(Message(role="user", contents=["hello world"]))
 
     # Define a mock response format
     class Test(BaseModel):
@@ -151,7 +152,7 @@ async def test_scmc_chat_options(
     openai_unit_test_env: dict[str, str],
 ):
     mock_create.return_value = mock_streaming_chat_completion_response
-    chat_history.append(Message(role="user", text="hello world"))
+    chat_history.append(Message(role="user", contents=["hello world"]))
 
     openai_chat_completion = OpenAIChatCompletionClient()
     async for msg in openai_chat_completion.get_response(
@@ -177,7 +178,7 @@ async def test_cmc_general_exception(
     openai_unit_test_env: dict[str, str],
 ):
     mock_create.return_value = mock_chat_completion_response
-    chat_history.append(Message(role="user", text="hello world"))
+    chat_history.append(Message(role="user", contents=["hello world"]))
 
     openai_chat_completion = OpenAIChatCompletionClient()
     with pytest.raises(ChatClientException):
@@ -194,10 +195,13 @@ async def test_cmc_additional_properties(
     openai_unit_test_env: dict[str, str],
 ):
     mock_create.return_value = mock_chat_completion_response
-    chat_history.append(Message(role="user", text="hello world"))
+    chat_history.append(Message(role="user", contents=["hello world"]))
 
     openai_chat_completion = OpenAIChatCompletionClient()
-    await openai_chat_completion.get_response(messages=chat_history, options={"reasoning_effort": "low"})
+    await cast(Any, openai_chat_completion).get_response(
+        messages=chat_history,
+        options={"reasoning_effort": "low"},
+    )
     mock_create.assert_awaited_once_with(
         model=openai_unit_test_env["OPENAI_MODEL"],
         stream=False,
@@ -232,7 +236,7 @@ async def test_get_streaming(
     stream = MagicMock(spec=AsyncStream)
     stream.__aiter__.return_value = [content1, content2]
     mock_create.return_value = stream
-    chat_history.append(Message(role="user", text="hello world"))
+    chat_history.append(Message(role="user", contents=["hello world"]))
     orig_chat_history = deepcopy(chat_history)
 
     openai_chat_completion = OpenAIChatCompletionClient()
@@ -272,7 +276,7 @@ async def test_get_streaming_singular(
     stream = MagicMock(spec=AsyncStream)
     stream.__aiter__.return_value = [content1, content2]
     mock_create.return_value = stream
-    chat_history.append(Message(role="user", text="hello world"))
+    chat_history.append(Message(role="user", contents=["hello world"]))
     orig_chat_history = deepcopy(chat_history)
 
     openai_chat_completion = OpenAIChatCompletionClient()
@@ -312,7 +316,7 @@ async def test_get_streaming_structured_output_no_fcc(
     stream = MagicMock(spec=AsyncStream)
     stream.__aiter__.return_value = [content1, content2]
     mock_create.return_value = stream
-    chat_history.append(Message(role="user", text="hello world"))
+    chat_history.append(Message(role="user", contents=["hello world"]))
 
     # Define a mock response format
     class Test(BaseModel):
@@ -336,7 +340,7 @@ async def test_get_streaming_no_fcc_in_response(
     openai_unit_test_env: dict[str, str],
 ):
     mock_create.return_value = mock_streaming_chat_completion_response
-    chat_history.append(Message(role="user", text="hello world"))
+    chat_history.append(Message(role="user", contents=["hello world"]))
     orig_chat_history = deepcopy(chat_history)
 
     openai_chat_completion = OpenAIChatCompletionClient()

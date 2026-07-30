@@ -20,7 +20,7 @@
 ### This starts the workflow. The AI will analyze the content, then the workflow
 ### will pause waiting for human approval.
 
-POST http://localhost:7071/api/workflow/run
+POST http://localhost:7071/api/workflow/content_moderation/run
 Content-Type: application/json
 
 {
@@ -36,7 +36,7 @@ Content-Type: application/json
 ### ============================================================================
 ### This content should trigger higher risk assessment from the AI analyzer.
 
-POST http://localhost:7071/api/workflow/run
+POST http://localhost:7071/api/workflow/content_moderation/run
 Content-Type: application/json
 
 {
@@ -55,7 +55,7 @@ Content-Type: application/json
 
 @instanceId = 3130c486c9374e4e87125cbd9a238dfc
 
-GET http://localhost:7071/api/workflow/status/{{instanceId}}
+GET http://localhost:7071/api/workflow/content_moderation/status/{{instanceId}}
 
 
 ### ============================================================================
@@ -66,7 +66,7 @@ GET http://localhost:7071/api/workflow/status/{{instanceId}}
 
 @requestId = 1682e5f8-0917-4b68-aa04-d4688cfa2e69
 
-POST http://localhost:7071/api/workflow/respond/{{instanceId}}/{{requestId}}
+POST http://localhost:7071/api/workflow/content_moderation/respond/{{instanceId}}/{{requestId}}
 Content-Type: application/json
 
 {
@@ -80,7 +80,7 @@ Content-Type: application/json
 ### ============================================================================
 ### Reject the content with feedback.
 
-POST http://localhost:7071/api/workflow/respond/{{instanceId}}/{{requestId}}
+POST http://localhost:7071/api/workflow/content_moderation/respond/{{instanceId}}/{{requestId}}
 Content-Type: application/json
 
 {
@@ -94,15 +94,15 @@ Content-Type: application/json
 ### ============================================================================
 ###
 ### Step 1: Start workflow with content
-### POST http://localhost:7071/api/workflow/run
+### POST http://localhost:7071/api/workflow/content_moderation/run
 ### -> Returns instanceId: "abc123..."
 ###
 ### Step 2: Check status (workflow is waiting for human input)
-### GET http://localhost:7071/api/workflow/status/abc123
+### GET http://localhost:7071/api/workflow/content_moderation/status/abc123
 ### -> Returns pendingHumanInputRequests with requestId: "req-456..."
 ###
 ### Step 3: Approve content
-### POST http://localhost:7071/api/workflow/respond/abc123/req-456
+### POST http://localhost:7071/api/workflow/content_moderation/respond/abc123/req-456
 ### {
 ###   "approved": true,
 ###   "reviewer_notes": "Looks good!"
@@ -110,7 +110,7 @@ Content-Type: application/json
 ### -> Returns success
 ###
 ### Step 4: Check final status
-### GET http://localhost:7071/api/workflow/status/abc123
+### GET http://localhost:7071/api/workflow/content_moderation/status/abc123
 ### -> Returns runtimeStatus: "Completed", output: "✅ Content approved..."
 ###
 ### ============================================================================

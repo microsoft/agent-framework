@@ -13,7 +13,7 @@ This sample uses Qdrant for the vector store, but this can easily be swapped out
 - User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource.
 - An existing Qdrant instance. You can use a managed service or run a local instance using Docker, but the sample assumes the instance is running locally.
 
-**Note**: These samples use Azure OpenAI models. For more information, see [how to deploy Azure OpenAI models with Azure AI Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/deploy-models-openai).
+**Note**: These samples use Azure OpenAI models. For more information, see [how to deploy Azure OpenAI models with Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/deploy-models-openai).
 
 **Note**: These samples use Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure OpenAI resource and have the `Cognitive Services OpenAI Contributor` role. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 
@@ -23,7 +23,7 @@ Set the following environment variables:
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" # Replace with your Azure OpenAI resource endpoint
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, defaults to gpt-4o-mini
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"  # Optional, defaults to gpt-5.4-mini
 $env:AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME="text-embedding-3-large"  # Optional, defaults to text-embedding-3-large
 ```
 

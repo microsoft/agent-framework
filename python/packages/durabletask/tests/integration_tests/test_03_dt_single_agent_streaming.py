@@ -22,15 +22,28 @@ import sys
 import time
 from datetime import timedelta
 from pathlib import Path
+from typing import Any, Protocol
 
 import pytest
 import redis.asyncio as aioredis
+
+from agent_framework_durabletask import DurableAIAgentClient
+
+
+class AgentClientFactoryProtocol(Protocol):
+    """Protocol for the agent client factory fixture."""
+
+    @classmethod
+    def create(cls, max_poll_retries: int = 90) -> tuple[Any, DurableAIAgentClient]: ...
+
 
 # Add sample directory to path to import RedisStreamResponseHandler
 SAMPLE_DIR = Path(__file__).parents[4] / "samples" / "04-hosting" / "durabletask" / "03_single_agent_streaming"
 sys.path.insert(0, str(SAMPLE_DIR))
 
-from redis_stream_response_handler import RedisStreamResponseHandler  # type: ignore[reportMissingImports] # noqa: E402
+from redis_stream_response_handler import (  # type: ignore[reportMissingImports] # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import] # noqa: E402
+    RedisStreamResponseHandler,
+)
 
 # Module-level markers - applied to all tests in this file
 pytestmark = [
@@ -48,7 +61,7 @@ class TestSampleReliableStreaming:
     """Tests for 03_single_agent_streaming sample."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, agent_client_factory: type, orchestration_helper) -> None:
+    def setup(self, agent_client_factory: type[AgentClientFactoryProtocol], orchestration_helper) -> None:
         """Setup test fixtures."""
         # Create agent client using the factory fixture
         _, self.agent_client = agent_client_factory.create()

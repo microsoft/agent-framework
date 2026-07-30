@@ -17,7 +17,7 @@ Requirements:
 
 Environment Variables:
   - AZURE_REDIS_HOST: Your Azure Managed Redis host (e.g., myredis.redis.cache.windows.net)
-  - FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
+  - FOUNDRY_PROJECT_ENDPOINT: Your Microsoft Foundry project endpoint
   - FOUNDRY_MODEL: Azure OpenAI Responses deployment name
   - AZURE_USER_OBJECT_ID: Your Azure AD User Object ID for authentication
 """
@@ -30,9 +30,10 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework.redis import RedisHistoryProvider
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+from dotenv import load_dotenv
 from redis.credentials import CredentialProvider
 
-# Copyright (c) Microsoft. All rights reserved.
+load_dotenv()
 
 
 class AzureCredentialProvider(CredentialProvider):

@@ -1,0 +1,48 @@
+﻿# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: hosted-toolbox-auth-paths
+displayName: "Hosted Toolbox - Authentication Paths"
+
+description: >
+  A hosted agent demonstrating three MCP-tool authentication paths in a single
+  Foundry Toolbox: API key via project connection, Microsoft Entra agent
+  identity, and inline Authorization
+  (anti-pattern). The toolbox itself is
+  provisioned out of band; see this sample's README for the portal walkthrough.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Agent Framework
+    - Foundry Toolbox
+    - Authentication
+    - MCP
+
+template:
+  name: hosted-toolbox-auth-paths
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 2.0.0
+  resources:
+    cpu: "0.25"
+    memory: 0.5Gi
+  environment_variables:
+    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+      value: "{{AZURE_AI_MODEL_DEPLOYMENT_NAME}}"
+    - name: TOOLBOX_NAME
+      value: "{{TOOLBOX_NAME}}"
+parameters:
+  properties:
+    - name: TOOLBOX_NAME
+      type: string
+      default: "auth-paths-toolbox"
+      description: "Name of the Foundry Toolbox to load at runtime."
+resources:
+  - kind: model
+    id: gpt-4o
+    name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+  - kind: toolbox
+    name: "{{TOOLBOX_NAME}}"
+    tools: []

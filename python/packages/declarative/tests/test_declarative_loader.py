@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
+from agent_framework_declarative._loader import ProviderTypeMapping
 from agent_framework_declarative._models import (
     AgentDefinition,
     AgentManifest,
@@ -25,6 +26,7 @@ from agent_framework_declarative._models import (
     McpServerToolNeverRequireApprovalMode,
     McpServerToolSpecifyApprovalMode,
     McpTool,
+    Model,
     ModelResource,
     ObjectProperty,
     OpenApiTool,
@@ -439,10 +441,10 @@ properties:
 
 
 def _get_agent_sample_yaml_files() -> list[tuple[Path, Path]]:
-    """Helper function to collect all YAML files from agent-samples directory."""
+    """Helper function to collect all YAML files from declarative-agents/agent-samples directory."""
     current_file = Path(__file__)
     repo_root = current_file.parent.parent.parent.parent  # tests -> declarative -> packages -> python
-    agent_samples_dir = repo_root.parent / "agent-samples"
+    agent_samples_dir = repo_root.parent / "declarative-agents" / "agent-samples"
 
     if not agent_samples_dir.exists():
         return []
@@ -457,7 +459,7 @@ def _get_agent_sample_yaml_files() -> list[tuple[Path, Path]]:
     ids=lambda x: x[0].name if isinstance(x, tuple) else str(x),
 )
 def test_agent_schema_dispatch_agent_samples(yaml_file: Path, agent_samples_dir: Path):
-    """Test that agent_schema_dispatch successfully loads a YAML file from agent-samples directory."""
+    """Test that agent_schema_dispatch loads a YAML file from declarative-agents/agent-samples directory."""
     with open(yaml_file) as f:
         content = f.read()
     result = agent_schema_dispatch(yaml.safe_load(content))
@@ -489,6 +491,38 @@ class TestAgentFactoryCreateFromDict:
         agent = factory.create_agent_from_dict(agent_def)
 
         assert agent is not None
+
+    def test_create_agent_from_dict_marks_declarative_agent_used(self):
+        """Test that successful declarative agent creation marks feature usage."""
+        from agent_framework_declarative import AgentFactory
+        from agent_framework_declarative._feature_usage import FeatureIndex
+
+        factory = AgentFactory(client=MagicMock())
+
+        with patch("agent_framework_declarative._loader.mark_feature_used") as mark_feature_used:
+            factory.create_agent_from_dict({
+                "kind": "Prompt",
+                "name": "TestAgent",
+                "instructions": "You are a helpful assistant.",
+            })
+
+        mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_AGENT)
+
+    async def test_create_agent_from_dict_async_marks_declarative_agent_used(self):
+        """Test that successful async declarative agent creation marks feature usage."""
+        from agent_framework_declarative import AgentFactory
+        from agent_framework_declarative._feature_usage import FeatureIndex
+
+        factory = AgentFactory(client=MagicMock())
+
+        with patch("agent_framework_declarative._loader.mark_feature_used") as mark_feature_used:
+            await factory.create_agent_from_dict_async({
+                "kind": "Prompt",
+                "name": "TestAgent",
+                "instructions": "You are a helpful assistant.",
+            })
+
+        mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_AGENT)
 
     def test_create_agent_from_dict_matches_yaml(self):
         """Test that create_agent_from_dict produces same result as create_agent_from_yaml."""
@@ -632,7 +666,7 @@ class TestAgentFactorySafeMode:
 
         from agent_framework_declarative._loader import AgentFactory
 
-        monkeypatch.setenv("TEST_MODEL_ID", "gpt-4-from-env")
+        monkeypatch.setenv("TEST_MODEL", "gpt-4-from-env")
 
         # Create a mock chat client to avoid needing real provider
         mock_client = MagicMock()
@@ -706,6 +740,9 @@ model:
         token = _safe_mode_context.set(True)  # Ensure we're in safe mode
         try:
             result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+            assert isinstance(result, PromptAgent)
+            assert isinstance(result.model, Model)
+            assert isinstance(result.model.connection, ApiKeyConnection)
 
             # The API key should NOT be resolved (still has the PowerFx expression)
             assert result.model.connection.apiKey == "=Env.MY_API_KEY"
@@ -741,6 +778,9 @@ model:
         token = _safe_mode_context.set(False)  # Disable safe mode
         try:
             result = agent_schema_dispatch(yaml_module.safe_load(yaml_content))
+            assert isinstance(result, PromptAgent)
+            assert isinstance(result.model, Model)
+            assert isinstance(result.model.connection, ApiKeyConnection)
 
             # The API key should be resolved from environment
             assert result.model.connection.apiKey == "secret-key-123"
@@ -1127,11 +1167,13 @@ model:
         from agent_framework_declarative import AgentFactory
 
         # Define a custom provider mapping
-        custom_mappings = {
+        custom_mappings: dict[str, ProviderTypeMapping] = {
             "CustomProvider.Chat": {
                 "package": "agent_framework.openai",
                 "name": "OpenAIChatClient",
-                "model_id_field": "model_id",
+                "model_field": "model",
+                "endpoint_field": None,
+                "api_key_field": None,
             },
         }
 
@@ -1424,7 +1466,13 @@ class TestProviderResponseFormat:
         prompt_agent = self._make_mock_prompt_agent(with_output_schema=True)
         mock_provider_class, mock_provider_instance = self._make_mock_provider()
 
-        mapping = {"package": "some_module", "name": "SomeProvider"}
+        mapping: ProviderTypeMapping = {
+            "package": "some_module",
+            "name": "SomeProvider",
+            "model_field": "model",
+            "endpoint_field": None,
+            "api_key_field": None,
+        }
         factory = AgentFactory()
 
         original_import = builtins.__import__
@@ -1458,7 +1506,13 @@ class TestProviderResponseFormat:
         prompt_agent = self._make_mock_prompt_agent(with_output_schema=False)
         mock_provider_class, mock_provider_instance = self._make_mock_provider()
 
-        mapping = {"package": "some_module", "name": "SomeProvider"}
+        mapping: ProviderTypeMapping = {
+            "package": "some_module",
+            "name": "SomeProvider",
+            "model_field": "model",
+            "endpoint_field": None,
+            "api_key_field": None,
+        }
         factory = AgentFactory()
 
         original_import = builtins.__import__

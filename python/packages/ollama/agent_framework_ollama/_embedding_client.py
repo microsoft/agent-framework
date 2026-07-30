@@ -15,13 +15,16 @@ from agent_framework import (
     UsageDetails,
     load_settings,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.observability import EmbeddingTelemetryLayer
 from ollama import AsyncClient
 
+from ._feature_usage import FeatureIndex
+
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 logger = logging.getLogger("agent_framework.ollama")
@@ -38,7 +41,7 @@ class OllamaEmbeddingOptions(EmbeddingGenerationOptions, total=False):
             from agent_framework_ollama import OllamaEmbeddingOptions
 
             options: OllamaEmbeddingOptions = {
-                "model_id": "nomic-embed-text",
+                "model": "nomic-embed-text",
                 "dimensions": 768,
                 "truncate": True,
             }
@@ -67,7 +70,7 @@ class OllamaEmbeddingSettings(TypedDict, total=False):
     """Ollama embedding settings."""
 
     host: str | None
-    embedding_model_id: str | None
+    embedding_model: str | None
 
 
 class RawOllamaEmbeddingClient(
@@ -77,8 +80,8 @@ class RawOllamaEmbeddingClient(
     """Raw Ollama embedding client without telemetry.
 
     Keyword Args:
-        model_id: The Ollama embedding model ID (e.g. "nomic-embed-text").
-            Can also be set via environment variable OLLAMA_EMBEDDING_MODEL_ID.
+        model: The Ollama embedding model (e.g. "nomic-embed-text").
+            Can also be set via environment variable OLLAMA_EMBEDDING_MODEL.
         host: Ollama server URL. Defaults to http://localhost:11434.
             Can also be set via environment variable OLLAMA_HOST.
         client: Optional pre-configured Ollama AsyncClient.
@@ -89,7 +92,7 @@ class RawOllamaEmbeddingClient(
     def __init__(
         self,
         *,
-        model_id: str | None = None,
+        model: str | None = None,
         host: str | None = None,
         client: AsyncClient | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -100,14 +103,14 @@ class RawOllamaEmbeddingClient(
         ollama_settings = load_settings(
             OllamaEmbeddingSettings,
             env_prefix="OLLAMA_",
-            required_fields=["embedding_model_id"],
+            required_fields=["embedding_model"],
             host=host,
-            embedding_model_id=model_id,
+            embedding_model=model,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
 
-        self.model_id = ollama_settings["embedding_model_id"]  # type: ignore[assignment,reportTypedDictNotRequiredAccess]
+        self.model = ollama_settings["embedding_model"]  # type: ignore[assignment,reportTypedDictNotRequiredAccess]
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
         self.host = str(self.client._client.base_url)  # type: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
         super().__init__(additional_properties=additional_properties)
@@ -120,7 +123,7 @@ class RawOllamaEmbeddingClient(
         self,
         values: Sequence[str],
         *,
-        options: OllamaEmbeddingOptionsT | None = None,  # type: ignore
+        options: OllamaEmbeddingOptionsT | None = None,
     ) -> GeneratedEmbeddings[list[float], OllamaEmbeddingOptionsT]:
         """Call the Ollama embed API.
 
@@ -132,15 +135,15 @@ class RawOllamaEmbeddingClient(
             Generated embeddings with usage metadata.
 
         Raises:
-            ValueError: If model_id is not provided or values is empty.
+            ValueError: If model is not provided or values is empty.
         """
         if not values:
             return GeneratedEmbeddings([], options=options)
 
         opts: dict[str, Any] = options or {}  # type: ignore
-        model = opts.get("model_id") or self.model_id
+        model = opts.get("model") or self.model
         if not model:
-            raise ValueError("model_id is required")
+            raise ValueError("model is required")
 
         kwargs: dict[str, Any] = {"model": model, "input": list(values)}
         if (truncate := opts.get("truncate")) is not None:
@@ -150,13 +153,14 @@ class RawOllamaEmbeddingClient(
         if dimensions := opts.get("dimensions"):
             kwargs["dimensions"] = dimensions
 
+        mark_feature_used(FeatureIndex.OLLAMA)
         response = await self.client.embed(**kwargs)
 
         embeddings = [
             Embedding(
                 vector=list(emb),
                 dimensions=len(emb),
-                model_id=response.get("model") or model,  # type: ignore[assignment]
+                model=response.get("model") or model,
             )
             for emb in response.get("embeddings", [])
         ]
@@ -177,8 +181,8 @@ class OllamaEmbeddingClient(
     """Ollama embedding client with telemetry support.
 
     Keyword Args:
-        model_id: The Ollama embedding model ID (e.g. "nomic-embed-text").
-            Can also be set via environment variable OLLAMA_EMBEDDING_MODEL_ID.
+        model: The Ollama embedding model (e.g. "nomic-embed-text").
+            Can also be set via environment variable OLLAMA_EMBEDDING_MODEL.
         host: Ollama server URL. Defaults to http://localhost:11434.
             Can also be set via environment variable OLLAMA_HOST.
         client: Optional pre-configured Ollama AsyncClient.
@@ -191,12 +195,12 @@ class OllamaEmbeddingClient(
             from agent_framework_ollama import OllamaEmbeddingClient
 
             # Using environment variables
-            # Set OLLAMA_EMBEDDING_MODEL_ID=nomic-embed-text
+            # Set OLLAMA_EMBEDDING_MODEL=nomic-embed-text
             client = OllamaEmbeddingClient()
 
             # Or passing parameters directly
             client = OllamaEmbeddingClient(
-                model_id="nomic-embed-text",
+                model="nomic-embed-text",
                 host="http://localhost:11434",
             )
 
@@ -210,7 +214,7 @@ class OllamaEmbeddingClient(
     def __init__(
         self,
         *,
-        model_id: str | None = None,
+        model: str | None = None,
         host: str | None = None,
         client: AsyncClient | None = None,
         otel_provider_name: str | None = None,
@@ -220,7 +224,7 @@ class OllamaEmbeddingClient(
     ) -> None:
         """Initialize an Ollama embedding client."""
         super().__init__(
-            model_id=model_id,
+            model=model,
             host=host,
             client=client,
             additional_properties=additional_properties,

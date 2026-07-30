@@ -2,35 +2,50 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Logging;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Fluent builder for constructing an <see cref="AgentSkillsProvider"/> backed by a composite source.
+/// Intended for advanced scenarios where the simple <see cref="AgentSkillsProvider"/> constructors are insufficient.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Use this builder to combine multiple skill sources into a single provider:
+/// For simple, single-source scenarios, prefer the <see cref="AgentSkillsProvider"/> constructors directly
+/// (e.g., passing a skill directory path or a set of skills). Use this builder when you need one or more
+/// of the following advanced capabilities:
+/// </para>
+/// <list type="bullet">
+///   <item><description><strong>Mixed skill types</strong> — combine file-based, code-defined (<see cref="AgentInlineSkill"/>),
+///   and class-based (<see cref="AgentClassSkill{TSelf}"/>) skills in a single provider.</description></item>
+///   <item><description><strong>Multiple file script runners</strong> — use different script runners for different
+///   file skill directories via per-source <c>scriptRunner</c> parameters on
+///   <see cref="UseFileSkill"/> / <see cref="UseFileSkills(IEnumerable{string}, AgentFileSkillsSourceOptions?, AgentFileSkillScriptRunner?)"/>.</description></item>
+///   <item><description><strong>Skill filtering</strong> — include or exclude skills using a predicate
+///   via <see cref="UseFilter"/>.</description></item>
+/// </list>
+/// <para>
+/// Example — combining file-based and code-defined skills:
 /// </para>
 /// <code>
 /// var provider = new AgentSkillsProviderBuilder()
 ///     .UseFileSkills("/path/to/skills")
 ///     .UseSkills(myInlineSkill1, myInlineSkill2)
+///     .UseFileScriptRunner(SubprocessScriptRunner.RunAsync)
 ///     .Build();
 /// </code>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentSkillsProviderBuilder
 {
     private readonly List<Func<AgentFileSkillScriptRunner?, ILoggerFactory?, AgentSkillsSource>> _sourceFactories = [];
     private AgentSkillsProviderOptions? _options;
     private ILoggerFactory? _loggerFactory;
     private AgentFileSkillScriptRunner? _scriptRunner;
-    private Func<AgentSkill, bool>? _filter;
+    private Func<AgentSkill, AgentSkillsSourceContext, bool>? _filter;
+    private bool _disableCaching;
+    private CachingAgentSkillsSourceOptions? _cachingOptions;
 
     /// <summary>
     /// Adds a file-based skill source that discovers skills from a filesystem directory.
@@ -106,6 +121,16 @@ public sealed class AgentSkillsProviderBuilder
     /// <summary>
     /// Adds a custom skill source.
     /// </summary>
+    /// <remarks>
+    /// The provider returned by <see cref="Build"/> takes ownership of <paramref name="source"/> and
+    /// disposes it when the provider is disposed. Because the same instance is reused on every
+    /// <see cref="Build"/> call, do not build more than one provider from a builder that captures a
+    /// shared <paramref name="source"/>; otherwise disposing one provider would dispose the source out
+    /// from under the others. To build multiple providers, use the
+    /// <see cref="UseSource(Func{ILoggerFactory?, AgentSkillsSource})"/> overload, which creates a fresh
+    /// source per build, or pass the source directly to an <see cref="AgentSkillsProvider"/> constructor
+    /// with <c>ownsSource: false</c> to retain ownership.
+    /// </remarks>
     /// <param name="source">The custom skill source.</param>
     /// <returns>This builder instance for chaining.</returns>
     public AgentSkillsProviderBuilder UseSource(AgentSkillsSource source)
@@ -116,26 +141,27 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
-    /// Sets a custom system prompt template.
+    /// Adds a custom skill source created by a factory that receives the builder's logger factory
+    /// at build time. Use this overload when the source needs logging and should not require the
+    /// caller to pass an <see cref="ILoggerFactory"/> explicitly.
     /// </summary>
-    /// <param name="promptTemplate">The prompt template with <c>{skills}</c> placeholder for the skills list,
-    /// <c>{resource_instructions}</c> for optional resource instructions,
-    /// and <c>{script_instructions}</c> for optional script instructions.</param>
+    /// <param name="factory">A factory that creates the skill source given an optional logger factory.</param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UsePromptTemplate(string promptTemplate)
+    public AgentSkillsProviderBuilder UseSource(Func<ILoggerFactory?, AgentSkillsSource> factory)
     {
-        this.GetOrCreateOptions().SkillsInstructionPrompt = promptTemplate;
+        _ = Throw.IfNull(factory);
+        this._sourceFactories.Add((_, loggerFactory) => factory(loggerFactory));
         return this;
     }
 
     /// <summary>
-    /// Enables or disables the script approval gate.
+    /// Sets a custom system prompt template.
     /// </summary>
-    /// <param name="enabled">Whether script execution requires approval.</param>
+    /// <param name="promptTemplate">The prompt template with <c>{skills}</c> placeholder for the skills list.</param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseScriptApproval(bool enabled = true)
+    public AgentSkillsProviderBuilder UsePromptTemplate(string promptTemplate)
     {
-        this.GetOrCreateOptions().ScriptApproval = enabled;
+        this.GetOrCreateOptions().SkillsInstructionPrompt = promptTemplate;
         return this;
     }
 
@@ -171,7 +197,7 @@ public sealed class AgentSkillsProviderBuilder
     /// </remarks>
     /// <param name="predicate">A predicate that determines which skills to include.</param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseFilter(Func<AgentSkill, bool> predicate)
+    public AgentSkillsProviderBuilder UseFilter(Func<AgentSkill, AgentSkillsSourceContext, bool> predicate)
     {
         _ = Throw.IfNull(predicate);
         this._filter = predicate;
@@ -191,8 +217,43 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
+    /// Disables caching of the resolved skill list. By default, skills are fetched once and cached;
+    /// calling this method causes the source pipeline to be invoked on every request.
+    /// </summary>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder DisableCaching()
+    {
+        this._disableCaching = true;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures skill caching behavior.
+    /// </summary>
+    /// <param name="configure">A delegate to configure caching options.</param>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder UseCachingOptions(Action<CachingAgentSkillsSourceOptions> configure)
+    {
+        _ = Throw.IfNull(configure);
+        this._cachingOptions ??= new CachingAgentSkillsSourceOptions();
+        configure(this._cachingOptions);
+        return this;
+    }
+
+    /// <summary>
     /// Builds the <see cref="AgentSkillsProvider"/>.
     /// </summary>
+    /// <remarks>
+    /// The returned provider owns the source pipeline constructed by this builder, so disposing the
+    /// provider disposes the pipeline (including any sources added to this builder).
+    /// <para>
+    /// Build more than one provider from the same builder only when every source it produces is
+    /// independent per build (for example, sources added via
+    /// <see cref="UseSource(Func{ILoggerFactory?, AgentSkillsSource})"/>). A source captured as a shared
+    /// instance through <see cref="UseSource(AgentSkillsSource)"/> is reused across builds and would be
+    /// disposed by whichever provider is disposed first; build only one provider in that case.
+    /// </para>
+    /// </remarks>
     /// <returns>A configured <see cref="AgentSkillsProvider"/>.</returns>
     public AgentSkillsProvider Build()
     {
@@ -212,6 +273,11 @@ public sealed class AgentSkillsProviderBuilder
             source = new AggregatingAgentSkillsSource(resolvedSources);
         }
 
+        if (!this._disableCaching)
+        {
+            source = new CachingAgentSkillsSource(source, this._cachingOptions);
+        }
+
         // Apply user-specified filter, then dedup.
         if (this._filter != null)
         {
@@ -220,7 +286,7 @@ public sealed class AgentSkillsProviderBuilder
 
         source = new DeduplicatingAgentSkillsSource(source, this._loggerFactory);
 
-        return new AgentSkillsProvider(source, this._options, this._loggerFactory);
+        return new AgentSkillsProvider(source, this._options, this._loggerFactory, ownsSource: true);
     }
 
     private AgentSkillsProviderOptions GetOrCreateOptions()

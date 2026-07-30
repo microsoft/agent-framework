@@ -1,9 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -92,54 +90,153 @@ public sealed class ChatClientAgentOptions
     public bool ThrowOnChatHistoryProviderConflict { get; set; } = true;
 
     /// <summary>
-    /// Gets or sets a value indicating whether to persist chat history only at the end of the full agent run
-    /// rather than after each individual service call.
+    /// Gets or sets a value indicating whether the <see cref="ChatClientAgent"/> should persist
+    /// chat history after each individual service call within the <see cref="FunctionInvokingChatClient"/>
+    /// loop, rather than at the end of the full agent run.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// By default, <see cref="ChatClientAgent"/> persists request and response messages either via
-    /// a <see cref="ChatHistoryProvider"/>, or the underlying AI service's chat history storage.
-    /// Persistence is done immediately after each call to the AI service within the function invocation loop.
-    /// When storing in the underlying AI service, the session's <see cref="ChatClientAgentSession.ConversationId"/>
-    /// is also updated after each service call, keeping it in sync with the service-side conversation state.
+    /// When set to <see langword="true"/>, a <see cref="PerServiceCallChatHistoryPersistingChatClient"/>
+    /// decorator becomes active in the chat client pipeline. It handles two complementary scenarios:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>
+    /// <term>Framework-managed chat history</term>
+    /// <description>
+    /// The decorator loads history from the <see cref="ChatHistoryProvider"/> before each service call
+    /// and persists new request and response messages after each call. It returns a sentinel
+    /// <see cref="ChatOptions.ConversationId"/> on the response, causing the
+    /// <see cref="FunctionInvokingChatClient"/> to treat the conversation as service-managed — clearing
+    /// accumulated history between iterations and not injecting duplicate <see cref="FunctionCallContent"/>
+    /// during approval-response processing.
+    /// </description>
+    /// </item>
+    /// <item>
+    /// <term>AI Service-stored chat history</term>
+    /// <description>
+    /// When the service manages its own chat history (returning a real <see cref="ChatOptions.ConversationId"/>),
+    /// the decorator updates <see cref="ChatClientAgentSession.ConversationId"/> after each service call so
+    /// that intermediate ConversationId changes are captured immediately. For some services (e.g., the
+    /// Conversations API with the Responses API), there is only one thread with one ID, so every service
+    /// call updates it anyway and updating the <see cref="ChatClientAgentSession.ConversationId"/> has little effect
+    /// since it's the same ID. For other services (e.g., Responses API with Response IDs), a new ID is generated
+    /// with each service call, so updating the <see cref="ChatClientAgentSession.ConversationId"/> ensures that the
+    /// latest ID is always captured, even mid-run.
+    /// Enabling this option ensures consistent per-service-call behavior across all service types.
+    /// </description>
+    /// </item>
+    /// </list>
+    /// <para>
+    /// When set to <see langword="false"/> (the default), the <see cref="ChatClientAgent"/> handles
+    /// chat history persistence at the end of the full agent run via the <see cref="ChatHistoryProvider"/> if using
+    /// framework-managed chat history. For AI service-stored chat history, the <see cref="ChatClientAgentSession.ConversationId"/>
+    /// updates happen only at the end of the run.
     /// </para>
     /// <para>
-    /// Setting this property to <see langword="true"/> causes messages to be marked during the function
-    /// invocation loop but persisted only at the end of the full agent run, providing atomic run semantics.
-    /// Updating the <see cref="ChatClientAgentSession.ConversationId"/> is likewise deferred and
-    /// updated only at the end of the run, consistent with atomic run semantics.
-    /// A <see cref="ChatHistoryPersistingChatClient"/> decorator is inserted into the chat client pipeline
-    /// in mark-only mode, and the <see cref="ChatClientAgent"/> persists only the marked messages at the
-    /// end of the run.
-    /// </para>
-    /// <para>
-    /// When this option is <see langword="false"/> (the default), the <see cref="ChatHistoryPersistingChatClient"/>
-    /// decorator persists messages and updates the <see cref="ChatClientAgentSession.ConversationId"/>
-    /// immediately after each service call. This may leave chat history in a state where
-    /// <see cref="FunctionResultContent"/> is required to start a new run if the last successful service
-    /// call returned <see cref="FunctionCallContent"/>.
-    /// </para>
-    /// <para>
-    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
-    /// When using a custom chat client stack, you can add a <see cref="ChatHistoryPersistingChatClient"/>
-    /// manually via the <see cref="ChatClientBuilderExtensions.UseChatHistoryPersisting"/>
+    /// When setting the <see cref="UseProvidedChatClientAsIs"/> setting to <see langword="true"/> and
+    /// <see cref="RequirePerServiceCallChatHistoryPersistence"/> to <see langword="true"/>, ensure that your custom chat client stack includes a
+    /// <see cref="PerServiceCallChatHistoryPersistingChatClient"/> to enable per-service-call persistence.
+    /// If no <see cref="PerServiceCallChatHistoryPersistingChatClient"/> is provided, and you are not storing chat history via other means,
+    /// no chat history may be stored.
+    /// When using a custom chat client stack, you can add a <see cref="PerServiceCallChatHistoryPersistingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UsePerServiceCallChatHistoryPersistence"/>
     /// extension method.
-    /// </para>
-    /// <para>
-    /// Note that when using single threaded service stored chat history, like OpenAI Conversations,
-    /// there is only one id, so even if the conversation id is not updated after each service call,
-    /// the chat history will still contain intermediate messages. Setting this property to <see langword="true"/>
-    /// in this case will therefore have no real effect. Setting this property to <see langword="true"/> when using
-    /// OpenAI Responses with response ids on the other hand, allows atomic run semantics, since
-    /// each service request produces a new response id, and if the run fails mid-loop, the session will
-    /// still contain the pre-run respnose id, allowing the next run to start with a clean slate.
     /// </para>
     /// </remarks>
     /// <value>
     /// Default is <see langword="false"/>.
     /// </value>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-    public bool PersistChatHistoryAtEndOfRun { get; set; }
+    public bool RequirePerServiceCallChatHistoryPersistence { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to include a <see cref="MessageInjectingChatClient"/>
+    /// in the chat client pipeline.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When set to <see langword="true"/>, a <see cref="MessageInjectingChatClient"/> is added to the pipeline
+    /// between the <see cref="FunctionInvokingChatClient"/> and the inner client. This enables external code
+    /// (such as tool delegates) to inject messages into the function execution loop via the
+    /// <see cref="MessageInjectingChatClient"/> class, which can be resolved from the chat client using
+    /// <c>GetService&lt;MessageInjectingChatClient&gt;()</c>.
+    /// </para>
+    /// <para>
+    /// This setting can be used independently of <see cref="RequirePerServiceCallChatHistoryPersistence"/>,
+    /// however it is recommended to also enable per-service-call persistence when using message injection
+    /// so that injected messages are persisted to chat history between service calls.
+    /// </para>
+    /// <para>
+    /// When setting the <see cref="UseProvidedChatClientAsIs"/> setting to <see langword="true"/> and
+    /// <see cref="EnableMessageInjection"/> to <see langword="true"/>, ensure that your custom chat client stack
+    /// includes a <see cref="MessageInjectingChatClient"/>. You can add one manually via the
+    /// <see cref="ChatClientBuilderExtensions.UseMessageInjection"/> extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    public bool EnableMessageInjection { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to disable storing automatically approved function calls in the
+    /// session state for tools that do not require approval when they are returned alongside tools that do.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="FunctionInvokingChatClient"/> has an all-or-nothing behavior for approvals: when any tool
+    /// in a response is an <see cref="ApprovalRequiredAIFunction"/>, it converts all <see cref="FunctionCallContent"/>
+    /// items to <see cref="ToolApprovalRequestContent"/>, even for tools that do not require approval.
+    /// </para>
+    /// <para>
+    /// By default (when this property is <see langword="false"/>), an <see cref="ApprovalNotRequiredFunctionBypassingChatClient"/>
+    /// decorator is injected above <see cref="FunctionInvokingChatClient"/> in the pipeline. This decorator identifies approval
+    /// requests for tools that do not require approval, removes them from the response, and stores them in the session.
+    /// On the next request, the stored items are automatically re-injected as approved, so the caller only needs
+    /// to handle approval requests for tools that truly require human approval.
+    /// </para>
+    /// <para>
+    /// Set this property to <see langword="true"/> to disable this behavior, in which case all tool calls in a
+    /// response containing an approval-required tool are surfaced as approval requests.
+    /// </para>
+    /// <para>
+    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When using a custom chat client stack, you can add an <see cref="ApprovalNotRequiredFunctionBypassingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UseApprovalNotRequiredFunctionBypassing"/>
+    /// extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    public bool DisableApprovalNotRequiredFunctionBypassing { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to disable binding inbound tool-approval responses to the
+    /// model-originated approval requests that the framework surfaced.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// By default (when this property is <see langword="false"/>), an <see cref="ApprovalResponseBindingChatClient"/>
+    /// decorator is injected as the outermost decorator above <see cref="FunctionInvokingChatClient"/>. It records each
+    /// <see cref="ToolApprovalRequestContent"/> the framework surfaces and, on the next request, binds every
+    /// <see cref="ToolApprovalResponseContent"/> to its recorded request: the response's tool call is rebound to the
+    /// model-originated call, and only approvals tied to a genuine, framework-issued request take effect. This keeps an
+    /// approved call aligned with exactly what a human was asked to approve.
+    /// </para>
+    /// <para>
+    /// Set this property to <see langword="true"/> to disable this behavior. Keeping it enabled is recommended, as it
+    /// strengthens the human-in-the-loop approval control; disable it only when approval binding is enforced elsewhere.
+    /// </para>
+    /// <para>
+    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When using a custom chat client stack, you can add an <see cref="ApprovalResponseBindingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UseApprovalResponseBinding"/> extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    public bool DisableApprovalResponseBinding { get; set; }
 
     /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
@@ -157,6 +254,9 @@ public sealed class ChatClientAgentOptions
             ClearOnChatHistoryProviderConflict = this.ClearOnChatHistoryProviderConflict,
             WarnOnChatHistoryProviderConflict = this.WarnOnChatHistoryProviderConflict,
             ThrowOnChatHistoryProviderConflict = this.ThrowOnChatHistoryProviderConflict,
-            PersistChatHistoryAtEndOfRun = this.PersistChatHistoryAtEndOfRun,
+            RequirePerServiceCallChatHistoryPersistence = this.RequirePerServiceCallChatHistoryPersistence,
+            EnableMessageInjection = this.EnableMessageInjection,
+            DisableApprovalNotRequiredFunctionBypassing = this.DisableApprovalNotRequiredFunctionBypassing,
+            DisableApprovalResponseBinding = this.DisableApprovalResponseBinding,
         };
 }

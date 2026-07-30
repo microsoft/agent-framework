@@ -21,6 +21,9 @@ Usage:
 
 import pytest
 
+# Must match the workflow name in samples/04-hosting/azure_functions/10_workflow_no_shared_state/function_app.py
+WORKFLOW_NAME = "email_triage"
+
 # Module-level markers - applied to all tests in this file
 pytestmark = [
     pytest.mark.flaky,
@@ -51,7 +54,7 @@ class TestWorkflowNoSharedState:
         }
 
         # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
@@ -73,7 +76,7 @@ class TestWorkflowNoSharedState:
         }
 
         # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         assert "instanceId" in data
@@ -92,13 +95,13 @@ class TestWorkflowNoSharedState:
         }
 
         # Start orchestration
-        response = self.helper.post_json(f"{self.base_url}/api/workflow/run", payload)
+        response = self.helper.post_json(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/run", payload)
         assert response.status_code == 202
         data = response.json()
         instance_id = data["instanceId"]
 
         # Check status using the workflow status endpoint
-        status_response = self.helper.get(f"{self.base_url}/api/workflow/status/{instance_id}")
+        status_response = self.helper.get(f"{self.base_url}/api/workflow/{WORKFLOW_NAME}/status/{instance_id}")
         assert status_response.status_code == 200
         status = status_response.json()
         assert "instanceId" in status

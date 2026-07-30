@@ -16,7 +16,7 @@ Flow:
   4. The workflow resumes — the agent sees the tool result and finishes.
 
 Prerequisites:
-  - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+  - FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
   - Azure OpenAI endpoint configured via environment variables.
   - `az login` for AzureCliCredential.
 """
@@ -53,7 +53,7 @@ get_user_location = FunctionTool(
 async def main() -> None:
     _client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
     agent = Agent(

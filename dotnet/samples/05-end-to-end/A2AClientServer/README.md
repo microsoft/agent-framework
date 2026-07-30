@@ -1,4 +1,4 @@
-# A2A Client and Server samples
+﻿# A2A Client and Server samples
 
 > **Warning**
 > The [A2A protocol](https://google.github.io/A2A/) is still under development and changing fast.
@@ -51,7 +51,7 @@ dotnet run --urls "http://localhost:5002;https://localhost:5012" --agentType "lo
 
 ### Configuring for use with Azure AI Agents
 
-You must create the agents in an Azure AI Foundry project and then provide the project endpoint and agents ids. The instructions for each agent are as follows:
+You must create the agents in a Microsoft Foundry project and then provide the project endpoint and agent IDs. The instructions for each agent are as follows:
 
 - Invoice Agent
     ```
@@ -84,7 +84,7 @@ You must create the agents in an Azure AI Foundry project and then provide the p
     ```
 
 ```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://ai-foundry-your-project.services.ai.azure.com/api/projects/ai-proj-ga-your-project" # Replace with your Foundry Project endpoint
+$env:FOUNDRY_PROJECT_ENDPOINT="https://ai-foundry-your-project.services.ai.azure.com/api/projects/ai-proj-ga-your-project" # Replace with your Foundry Project endpoint
 ```
 
 Use the following commands to run each A2A server
@@ -206,7 +206,7 @@ Sample output from the A2A client:
 ```
 A2AClient> dotnet run
 info: HostClientAgent[0]
-      Initializing Agent Framework agent with model: gpt-4o-mini
+      Initializing Agent Framework agent with model: gpt-5.4-mini
 
 User (:q or quit to exit): Customer is disputing transaction TICKET-XYZ987 as they claim the received fewer t-shirts than ordered.
 

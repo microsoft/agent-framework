@@ -31,8 +31,6 @@ The persistence timing and `FunctionResultContent` trimming behaviors are interr
 
 - **Per-run persistence**: When messages are batched and persisted at the end of the full run, trailing `FunctionResultContent` trimming becomes necessary to match the service's behavior. Without trimming, the stored history contains `FunctionResultContent` that the service would never have stored.
 
-This means the trimming feature (introduced in [PR #4792](https://github.com/microsoft/agent-framework/pull/4792)) is primarily needed as a complement to per-run persistence. The `PersistChatHistoryAtEndOfRun` setting (introduced in [PR #4762](https://github.com/microsoft/agent-framework/pull/4762)) inverts the default so that per-service-call persistence is the standard behavior, and per-run persistence is opt-in.
-
 ## Decision Drivers
 
 - **A. Consistency**: The default behavior of `ChatHistoryProvider` should produce stored history that closely matches what the underlying AI service would store, minimizing surprise when switching between framework-managed and service-managed chat history.
@@ -43,33 +41,30 @@ This means the trimming feature (introduced in [PR #4792](https://github.com/mic
 
 ## Considered Options
 
-- Option 1: Default to per-run persistence with `FunctionResultContent` trimming (opt-in to per-service-call)
-- Option 2: Default to per-service-call persistence (opt-in to per-run)
+- Option 1: Per-run persistence with opt-in FRC (FunctionResultContent) trimming
+- Option 2: Opt-in per-service-call persistence (via `RequirePerServiceCallChatHistoryPersistence`)
 
 ## Pros and Cons of the Options
 
-### Option 1: Default to per-run persistence with `FunctionResultContent` trimming
+### Option 1: Per-run persistence with opt-in FRC trimming
 
-Keep the current default behavior of persisting chat history only at the end of the full agent run. Add `FunctionResultContent` trimming as the default to improve consistency with service storage. Provide an opt-in setting for users who want per-service-call persistence.
-
-Settings:
-- `PersistChatHistoryAtEndOfRun` = `true`
+Keep the current default behavior of persisting chat history only at the end of the full agent run. Add `FunctionResultContent` trimming as an opt-in behavior to improve consistency with service storage.
 
 - Good, because runs are atomic — chat history is only updated when the full run succeeds, satisfying driver B.
 - Good, because the mental model is simple: one run = one history update, satisfying driver D.
 - Good, because trimming trailing `FunctionResultContent` improves consistency with service storage, partially satisfying driver A.
-- Good, because users can opt in to per-service-call persistence for checkpointing/recovery scenarios, satisfying drivers C and E.
 - Bad, because the default persistence timing still differs from the service's behavior (per-run vs. per-service-call), only partially satisfying driver A.
-- Bad, because if the process crashes mid-loop, all intermediate progress from the current run is lost, not satisfying driver C by default.
+- Bad, because if the process crashes mid-loop, all intermediate progress from the current run is lost, not satisfying driver C.
+- Bad, because this option alone does not provide a way for users to opt into per-service-call persistence, not satisfying driver E.
 
-### Option 2: Default to per-service-call persistence
+### Option 2: Opt-in per-service-call persistence (via `RequirePerServiceCallChatHistoryPersistence`)
 
-Change the default to persist chat history after each individual service call within the FIC loop, matching the AI service's behavior. Trailing `FunctionResultContent` trimming is unnecessary with this approach (it is naturally handled). Provide an opt-in setting for users who want per-run atomicity with trimming.
+Introduce an optional RequirePerServiceCallChatHistoryPersistence setting to persist chat history after each individual service call within the FIC loop, matching the AI service's behavior. Trailing `FunctionResultContent` trimming is unnecessary with this approach (it is naturally handled).
 
 Settings:
-- `PersistChatHistoryAtEndOfRun` = `false` (default)
+- `RequirePerServiceCallChatHistoryPersistence` = `true`
 
-- Good, because the stored history matches the service's behavior by default for both timing and content, fully satisfying driver A.
+- Good, because the stored history matches the service's behavior when opting in for both timing and content, fully satisfying driver A.
 - Good, because intermediate progress is preserved if the process is interrupted, satisfying driver C.
 - Good, because no separate `FunctionResultContent` trimming logic is needed, reducing complexity.
 - Bad, because chat history may be left in an incomplete state if the run fails mid-loop (e.g., `FunctionCallContent` stored without corresponding `FunctionResultContent`), not satisfying driver B. A subsequent run cannot proceed without manually providing the missing `FunctionResultContent`.
@@ -78,39 +73,49 @@ Settings:
 
 ## Decision Outcome
 
-Chosen option: **Option 2 — Default to per-service-call persistence**, because it fully satisfies the consistency driver (A), naturally handles `FunctionResultContent` trimming without additional logic, and provides better recoverability for long-running tool-calling loops. Per-run persistence remains available via the `PersistChatHistoryAtEndOfRun` setting for users who prefer atomic run semantics.
+Chosen option: **Option 2: Opt-in per-service-call persistence (via `RequirePerServiceCallChatHistoryPersistence`)**. The existing per-run persistence behavior is retained as-is, requiring no changes from users. Per-service-call persistence is available as an opt-in feature via the `RequirePerServiceCallChatHistoryPersistence` setting. This satisfies drivers B (atomicity) and D (simplicity) for the common case, while fully satisfying driver A (consistency) for users who opt into simulated service-stored behavior. Users who need per-service-call persistence for recoverability (driver C) can enable it explicitly.
 
 ### Configuration Matrix
 
-The behavior depends on the combination of `UseProvidedChatClientAsIs` and `PersistChatHistoryAtEndOfRun`:
+The behavior depends on the combination of `UseProvidedChatClientAsIs` and `RequirePerServiceCallChatHistoryPersistence`:
 
-| `UseProvidedChatClientAsIs` | `PersistChatHistoryAtEndOfRun` | Behavior |
+| `UseProvidedChatClientAsIs` | `RequirePerServiceCallChatHistoryPersistence` | Behavior |
 |---|---|---|
-| `false` (default) | `false` (default) | **Per-service-call persistence.** A `ChatHistoryPersistingChatClient` middleware is automatically injected into the chat client pipeline between `FunctionInvokingChatClient` and the leaf `IChatClient`. Messages are persisted after each service call. |
-| `true` | `false` | **User responsibility.** No middleware is injected because the user has provided a custom chat client stack. The user is responsible for ensuring correct persistence behavior (e.g., by including their own persisting middleware). |
-| `false` | `true` | **Per-run persistence with marking.** A `ChatHistoryPersistingChatClient` middleware is injected, but configured to *mark* messages with metadata rather than store them immediately. At the end of the run, marked messages are stored. Trailing `FunctionResultContent` is trimmed. |
-| `true` | `true` | **Per-run persistence with warning.** The system checks whether the custom chat client stack includes a `ChatHistoryPersistingChatClient`. If not, a warning is emitted (particularly relevant for workflow handoff scenarios where trimming cannot be guaranteed). If no `ChatHistoryPersistingChatClient` is preset, all messages are stored at the end of the run, otherwise marked messages are stored. |
+| `false` (default) | `false` (default) | **Per-run persistence.** Messages are persisted at the end of the full agent run via the `ChatHistoryProvider`. |
+| `false` | `true` | **Per-service-call persistence (simulated).** A `PerServiceCallChatHistoryPersistingChatClient` middleware is automatically injected into the chat client pipeline between `FunctionInvokingChatClient` and the leaf `IChatClient`. Messages are persisted after each service call. A sentinel `ConversationId` causes FIC to treat the conversation as service-managed. |
+| `true` | `false` | **Per-run persistence.** No middleware is injected because the user has provided a custom chat client stack. Messages are persisted at the end of the run. |
+| `true` | `true` | **User responsibility.** The system checks whether the custom chat client stack includes a `PerServiceCallChatHistoryPersistingChatClient`. If not, a warning is emitted — the user is expected to have added their own per-service-call persistence mechanism. End-of-run persistence is skipped. |
 
 ### Consequences
 
-- Good, because the stored history matches the service's behavior by default for both timing and content, fully satisfying consistency (driver A).
-- Good, because intermediate progress is preserved if the process is interrupted, satisfying recoverability (driver C).
-- Good, because no separate `FunctionResultContent` trimming logic is needed in the default path, reducing complexity.
-- Good, because marking persisted messages with metadata enables deduplication and aids debugging.
-- Good, because warnings for custom chat client configurations without the persisting middleware help prevent silent failures in workflow handoff scenarios.
-- Bad, because chat history may be left in an incomplete state if the run fails mid-loop (e.g., `FunctionCallContent` stored without corresponding `FunctionResultContent`), requiring manual recovery in rare cases.
-- Bad, because the mental model is more complex for the default path: a single run may produce multiple history updates.
-- Neutral, because users who prefer atomic run semantics can opt in to per-run persistence via `PersistChatHistoryAtEndOfRun = true`.
+- Good, because per-run persistence is atomic by default — chat history is only updated when the full run succeeds, satisfying driver B.
+- Good, because the default mental model is simple: one run = one history update, satisfying driver D.
+- Good, because users who opt into `RequirePerServiceCallChatHistoryPersistence` get stored history that matches the service's behavior for both timing and content, fully satisfying driver A.
+- Good, because per-service-call persistence preserves intermediate progress if the process is interrupted, satisfying driver C when opted in.
+- Good, because no separate `FunctionResultContent` trimming logic is needed when per-service-call persistence is active — it is naturally handled.
+- Good, because conflict detection (configurable via `ThrowOnChatHistoryProviderConflict`, `WarnOnChatHistoryProviderConflict`, `ClearOnChatHistoryProviderConflict`) prevents misconfiguration when a service returns a `ConversationId` alongside a configured `ChatHistoryProvider`.
+- Bad, because per-service-call persistence (when opted in) may leave chat history in an incomplete state if the run fails mid-loop (e.g., `FunctionCallContent` stored without corresponding `FunctionResultContent`), requiring manual recovery in rare cases.
+- Neutral, because users who want per-service-call consistency can opt in via `RequirePerServiceCallChatHistoryPersistence = true`, satisfying driver E.
 - Neutral, because increased write frequency from per-service-call persistence may impact performance for some storage backends; this can be mitigated with a caching decorator.
 
 ### Implementation Notes
 
 #### Conversation ID Consistency
 
-The `ChatHistoryPersistingChatClient` middleware must also update the session's `ConversationId` consistently for both response-based and conversation-based service interactions, ensuring the session always reflects the latest service-provided identifier.
+When `RequirePerServiceCallChatHistoryPersistence` is enabled, the `PerServiceCallChatHistoryPersistingChatClient`
+decorator also updates `session.ConversationId` after each service call. This handles two scenarios:
 
-## More Information
+1. **Framework-managed chat history** — the decorator sets a sentinel `ConversationId` on the response
+   so that `FunctionInvokingChatClient` treats the conversation as service-managed (clearing accumulated
+   history between iterations and not injecting duplicate `FunctionCallContent` during approval processing).
 
-- [PR #4762: Persist messages during function call loop](https://github.com/microsoft/agent-framework/pull/4762) — introduces `PersistChatHistoryAfterEachServiceCall` option and `ChatHistoryPersistingChatClient` decorator
-- [PR #4792: Trim final FRC to match service storage](https://github.com/microsoft/agent-framework/pull/4792) — introduces `StoreFinalFunctionResultContent` option and `FilterFinalFunctionResultContent` logic
-- [Issue #2889](https://github.com/microsoft/agent-framework/issues/2889) — original issue tracking chat history persistence during function call loops
+2. **Service-stored chat history** — when the service returns a real `ConversationId`, the decorator
+   updates `session.ConversationId` immediately after each service call, rather than deferring the update
+   to the end of the run. This ensures intermediate ConversationId changes are captured even if the
+   process is interrupted mid-loop.
+
+For some service-stored scenarios (e.g., the Conversations API with the Responses API), there is only
+one thread with one ID, so every service call returns the same ConversationId and this per-call update
+makes no practical difference. Enabling `RequirePerServiceCallChatHistoryPersistence` ensures consistent
+per-service-call behavior across all service types regardless of how they manage ConversationIds.
+

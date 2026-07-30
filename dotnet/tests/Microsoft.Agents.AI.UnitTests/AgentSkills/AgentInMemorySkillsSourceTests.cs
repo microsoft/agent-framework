@@ -23,7 +23,7 @@ public sealed class AgentInMemorySkillsSourceTests
         var source = new AgentInMemorySkillsSource(skills);
 
         // Act
-        var result = await source.GetSkillsAsync(CancellationToken.None);
+        var result = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create(), CancellationToken.None);
 
         // Assert
         Assert.Equal(2, result.Count);

@@ -2,12 +2,14 @@
 
 ## [Unreleased]
 
+- Fix issue with resuming checkpoint after package version upgrade ([#6670](https://github.com/microsoft/agent-framework/pull/6670))
+- Bind MCP threadId to the current agent and guard cross-agent session dispatch ([#6531](https://github.com/microsoft/agent-framework/pull/6531))
 - Added support for durable workflows ([#4436](https://github.com/microsoft/agent-framework/pull/4436))
 
 ## v1.0.0-preview.260219.1
 
 - [BREAKING] Changed ChatHistory and AIContext Providers to have pipeline semantics ([#3806](https://github.com/microsoft/agent-framework/pull/3806))
-- Marked all `RunAsync<T>` overloads as `new`, added missing ones, and added support for primitives and arrays ([#3803](https://github.com/microsoft/agent-framework/pull/3803))
+- Marked all `RunAsync<T>` overloads as `new`, added missing ones, and added support for primitives and arrays #3803
 - Improve session cast error message quality and consistency ([#3973](https://github.com/microsoft/agent-framework/pull/3973))
 
 ## v1.0.0-preview.260212.1

@@ -23,7 +23,7 @@ async def test_image() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option. Requires AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
     # environment variables to be set.
-    # Alternatively, you can pass deployment_name explicitly:
+    # Alternatively, you can pass model explicitly:
     # client = FoundryChatClient(credential=AzureCliCredential(), model="your-deployment-name")
     client = FoundryChatClient(credential=AzureCliCredential())
     image_uri = create_sample_image()

@@ -16,7 +16,7 @@ This sample demonstrates implementing a Ollama agent with multimodal input capab
 
 Ensure to install Ollama and have a model running locally before running the sample
 Not all Models support multimodal input, to test multimodal input try gemma3:4b
-Set the model to use via the OLLAMA_MODEL_ID environment variable or modify the code below.
+Set the model to use via the OLLAMA_MODEL environment variable or modify the code below.
 https://ollama.com/
 
 """

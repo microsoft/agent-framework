@@ -1,0 +1,30 @@
+﻿# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: hosted-local-codeact
+displayName: "Hosted Local CodeAct Agent"
+
+description: >
+  A hosted agent that uses the CodeAct pattern via
+  Microsoft.Agents.AI.LocalCodeAct. The model only sees an `execute_code`
+  tool and orchestrates `compute` and `fetch_data` sandbox-only host tools
+  via `await call_tool(...)` from inside generated Python.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Local CodeAct
+    - Agent Framework
+
+template:
+  name: hosted-local-codeact
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 2.0.0
+  resources:
+    cpu: "0.5"
+    memory: 1Gi
+parameters:
+  properties: []
+resources: []

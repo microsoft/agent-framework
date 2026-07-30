@@ -37,26 +37,41 @@ public static class Program
 
         await foreach (WorkflowEvent evt in checkpointedRun.WatchStreamAsync())
         {
-            if (evt is ExecutorCompletedEvent executorCompletedEvt)
+            switch (evt)
             {
-                Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
-            }
+                case ExecutorCompletedEvent executorCompletedEvt:
+                    Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
+                    break;
 
-            if (evt is SuperStepCompletedEvent superStepCompletedEvt)
-            {
-                // Checkpoints are automatically created at the end of each super step when a
-                // checkpoint manager is provided. You can store the checkpoint info for later use.
-                CheckpointInfo? checkpoint = superStepCompletedEvt.CompletionInfo!.Checkpoint;
-                if (checkpoint is not null)
+                case SuperStepCompletedEvent superStepCompletedEvt:
                 {
-                    checkpoints.Add(checkpoint);
-                    Console.WriteLine($"** Checkpoint created at step {checkpoints.Count}.");
-                }
-            }
+                    // Checkpoints are automatically created at the end of each super step when a
+                    // checkpoint manager is provided. You can store the checkpoint info for later use.
+                    CheckpointInfo? checkpoint = superStepCompletedEvt.CompletionInfo!.Checkpoint;
+                    if (checkpoint is not null)
+                    {
+                        checkpoints.Add(checkpoint);
+                        Console.WriteLine($"** Checkpoint created at step {checkpoints.Count}.");
+                    }
 
-            if (evt is WorkflowOutputEvent outputEvent)
-            {
-                Console.WriteLine($"Workflow completed with result: {outputEvent.Data}");
+                    break;
+                }
+
+                case WorkflowOutputEvent outputEvent:
+                    Console.WriteLine($"Workflow completed with result: {outputEvent.Data}");
+                    break;
+
+                case WorkflowErrorEvent workflowError:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                    Console.ResetColor();
+                    break;
+
+                case ExecutorFailedEvent executorFailed:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                    Console.ResetColor();
+                    break;
             }
         }
 
@@ -77,14 +92,27 @@ public static class Program
 
         await foreach (WorkflowEvent evt in newCheckpointedRun.WatchStreamAsync())
         {
-            if (evt is ExecutorCompletedEvent executorCompletedEvt)
+            switch (evt)
             {
-                Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
-            }
+                case ExecutorCompletedEvent executorCompletedEvt:
+                    Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
+                    break;
 
-            if (evt is WorkflowOutputEvent workflowOutputEvt)
-            {
-                Console.WriteLine($"Workflow completed with result: {workflowOutputEvt.Data}");
+                case WorkflowOutputEvent workflowOutputEvt:
+                    Console.WriteLine($"Workflow completed with result: {workflowOutputEvt.Data}");
+                    break;
+
+                case WorkflowErrorEvent workflowError:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                    Console.ResetColor();
+                    break;
+
+                case ExecutorFailedEvent executorFailed:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                    Console.ResetColor();
+                    break;
             }
         }
     }

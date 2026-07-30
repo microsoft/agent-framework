@@ -5,7 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -47,15 +47,15 @@ public static class Program
         Console.WriteLine("\n=== Writer-Critic Iteration Workflow ===\n");
         Console.WriteLine($"Writer and Critic will iterate up to {MaxIterations} times until approval.\n");
 
-        // Set up the Azure OpenAI client
-        string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        IChatClient chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        // Set up the Microsoft Foundry client
+        string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+        string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
         // Create executors for content creation and review
-        WriterExecutor writer = new(chatClient);
-        CriticExecutor critic = new(chatClient);
-        SummaryExecutor summary = new(chatClient);
+        WriterExecutor writer = new(aiProjectClient, deploymentName);
+        CriticExecutor critic = new(aiProjectClient, deploymentName);
+        SummaryExecutor summary = new(aiProjectClient, deploymentName);
 
         // Build the workflow with conditional routing based on critic's decision
         WorkflowBuilder workflowBuilder = new WorkflowBuilder(writer)
@@ -114,6 +114,18 @@ public static class Program
                     Console.WriteLine(output.Data);
                     Console.WriteLine();
                     Console.WriteLine(new string('=', 80));
+                    break;
+
+                case WorkflowErrorEvent workflowError:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                    Console.ResetColor();
+                    break;
+
+                case ExecutorFailedEvent executorFailed:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                    Console.ResetColor();
                     break;
             }
         }
@@ -197,10 +209,10 @@ internal sealed partial class WriterExecutor : Executor
 {
     private readonly AIAgent _agent;
 
-    public WriterExecutor(IChatClient chatClient) : base("Writer")
+    public WriterExecutor(AIProjectClient client, string model) : base("Writer")
     {
-        this._agent = new ChatClientAgent(
-            chatClient,
+        this._agent = client.AsAIAgent(
+            model: model,
             name: "Writer",
             instructions: """
                 You are a skilled writer. Create clear, engaging content.
@@ -277,13 +289,14 @@ internal sealed class CriticExecutor : Executor<ChatMessage, CriticDecision>
 {
     private readonly AIAgent _agent;
 
-    public CriticExecutor(IChatClient chatClient) : base("Critic")
+    public CriticExecutor(AIProjectClient client, string model) : base("Critic")
     {
-        this._agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
+        this._agent = client.AsAIAgent(new ChatClientAgentOptions
         {
             Name = "Critic",
             ChatOptions = new()
             {
+                ModelId = model,
                 Instructions = """
                     You are a constructive critic. Review the content and provide specific feedback.
                     Always try to provide actionable suggestions for improvement and strive to identify improvement points.
@@ -370,10 +383,10 @@ internal sealed class SummaryExecutor : Executor<CriticDecision, ChatMessage>
 {
     private readonly AIAgent _agent;
 
-    public SummaryExecutor(IChatClient chatClient) : base("Summary")
+    public SummaryExecutor(AIProjectClient client, string model) : base("Summary")
     {
-        this._agent = new ChatClientAgent(
-            chatClient,
+        this._agent = client.AsAIAgent(
+            model: model,
             name: "Summary",
             instructions: """
                 You present the final approved content to the user.

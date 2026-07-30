@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -23,6 +24,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     private InProcessRunner? _activeRunner;
     private InMemoryCheckpointManager? _checkpointManager;
     private readonly ExecutorOptions _options;
+    private readonly ConcurrentDictionary<string, RequestPortInfo> _pendingResponsePorts = new(StringComparer.Ordinal);
 
     private ISuperStepJoinContext? _joinContext;
     private string? _joinId;
@@ -163,6 +165,11 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
 
     private ExternalResponse? CheckAndUnqualifyResponse([DisallowNull] ExternalResponse response)
     {
+        if (this._pendingResponsePorts.TryRemove(response.RequestId, out RequestPortInfo? originalPort))
+        {
+            return response with { PortInfo = originalPort };
+        }
+
         if (!Throw.IfNull(response).PortInfo.PortId.StartsWith($"{this.Id}.", StringComparison.Ordinal))
         {
             return null;
@@ -193,6 +200,7 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
                     break;
                 case RequestInfoEvent requestInfoEvt:
                     ExternalRequest request = requestInfoEvt.Request;
+                    this._pendingResponsePorts[request.RequestId] = request.PortInfo;
                     resultTask = this._joinContext?.SendMessageAsync(this.Id, this.QualifyRequestPortId(request)).AsTask() ?? Task.CompletedTask;
                     break;
                 case WorkflowErrorEvent errorEvent:
@@ -246,9 +254,13 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
     }
 
     private const string CheckpointManagerStateKey = nameof(CheckpointManager);
+    private const string PendingResponsePortsStateKey = nameof(PendingResponsePortsStateKey);
     protected internal override async ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         await context.QueueStateUpdateAsync(CheckpointManagerStateKey, this._checkpointManager, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await context.QueueStateUpdateAsync(PendingResponsePortsStateKey,
+                                            new Dictionary<string, RequestPortInfo>(this._pendingResponsePorts, StringComparer.Ordinal),
+                                            cancellationToken: cancellationToken).ConfigureAwait(false);
 
         await base.OnCheckpointingAsync(context, cancellationToken).ConfigureAwait(false);
     }
@@ -269,6 +281,15 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
             await this.ResetAsync().ConfigureAwait(false);
         }
 
+        this._pendingResponsePorts.Clear();
+        Dictionary<string, RequestPortInfo> pendingResponsePorts =
+            await context.ReadStateAsync<Dictionary<string, RequestPortInfo>>(PendingResponsePortsStateKey, cancellationToken: cancellationToken)
+                         .ConfigureAwait(false) ?? [];
+        foreach (KeyValuePair<string, RequestPortInfo> pendingResponsePort in pendingResponsePorts)
+        {
+            this._pendingResponsePorts[pendingResponsePort.Key] = pendingResponsePort.Value;
+        }
+
         await this.EnsureRunSendMessageAsync(resume: true, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
@@ -279,6 +300,8 @@ internal class WorkflowHostExecutor : Executor, IAsyncDisposable
             await this._run.DisposeAsync().ConfigureAwait(false);
             this._run = null;
         }
+
+        this._pendingResponsePorts.Clear();
 
         if (this._activeRunner != null)
         {

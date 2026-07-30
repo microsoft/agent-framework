@@ -27,14 +27,14 @@ For simple queries where speed is critical, use semantic mode instead (see azure
 
 Prerequisites:
 1. An Azure AI Search service
-2. An Azure AI Foundry project with a model deployment
+2. A Microsoft Foundry project with a model deployment
 3. Either an existing Knowledge Base OR a search index (to auto-create a KB)
 
 Environment variables:
    - AZURE_SEARCH_ENDPOINT: Your Azure AI Search endpoint
    - AZURE_SEARCH_API_KEY: (Optional) API key - if not provided, uses AzureCliCredential
-   - FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
-   - AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name (e.g., "gpt-4o")
+   - FOUNDRY_PROJECT_ENDPOINT: Your Microsoft Foundry project endpoint
+   - FOUNDRY_MODEL: Your model deployment name (e.g., "gpt-4o")
 
 For using an existing Knowledge Base (recommended):
    - AZURE_SEARCH_KNOWLEDGE_BASE_NAME: Your Knowledge Base name
@@ -59,7 +59,7 @@ async def main() -> None:
     search_endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
     search_key = os.environ.get("AZURE_SEARCH_API_KEY")
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model_deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+    model_deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o")
 
     # Agentic mode requires exactly ONE of: knowledge_base_name OR index_name
     # Option 1: Use existing Knowledge Base (recommended)
@@ -82,9 +82,11 @@ async def main() -> None:
             credential=AzureCliCredential() if not search_key else None,
             mode="agentic",
             knowledge_base_name=knowledge_base_name,
-            # Optional: Configure retrieval behavior
-            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
-            retrieval_reasoning_effort="minimal",  # or "medium", "low"
+            # Optional: Configure retrieval behavior. "answer_synthesis" output mode and
+            # "medium"/"low" reasoning effort require the preview build of azure-search-documents
+            # (`pip install --pre azure-search-documents`); the provider auto-detects the build.
+            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis" (preview build only)
+            retrieval_reasoning_effort="minimal",  # or "medium", "low" (preview build only)
         )
     else:
         # Auto-create Knowledge Base from index
@@ -100,23 +102,24 @@ async def main() -> None:
             credential=AzureCliCredential() if not search_key else None,
             mode="agentic",
             azure_openai_resource_url=azure_openai_resource_url,
-            model_model=model_deployment,
-            # Optional: Configure retrieval behavior
-            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
-            retrieval_reasoning_effort="minimal",  # or "medium", "low"
+            model=model_deployment,
+            # Optional: Configure retrieval behavior. "answer_synthesis" output mode and
+            # "medium"/"low" reasoning effort require the preview build of azure-search-documents
+            # (`pip install --pre azure-search-documents`); the provider auto-detects the build.
+            knowledge_base_output_mode="extractive_data",  # or "answer_synthesis" (preview build only)
+            retrieval_reasoning_effort="minimal",  # or "medium", "low" (preview build only)
             top_k=3,
         )
 
     # Create agent with search context provider
     async with (
         search_provider,
-        FoundryChatClient(
-            project_endpoint=project_endpoint,
-            model_model=model_deployment,
-            credential=AzureCliCredential(),
-        ) as client,
         Agent(
-            client=client,
+            client=FoundryChatClient(
+                project_endpoint=project_endpoint,
+                model=model_deployment,
+                credential=AzureCliCredential(),
+            ),
             name="SearchAgent",
             instructions=(
                 "You are a helpful assistant with advanced reasoning capabilities. "

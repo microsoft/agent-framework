@@ -26,7 +26,6 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.sample("03_reliable_streaming"),
     pytest.mark.usefixtures("function_app_for_test"),
-    pytest.mark.skip(reason="Temp disabled to fix test instability - needs investigation into root cause"),
 ]
 
 
@@ -56,12 +55,11 @@ class TestSampleReliableStreaming:
         # Wait a moment for the agent to start writing to Redis
         time.sleep(2)
 
-        # Stream response from Redis with shorter timeout
-        # Note: We use text/plain to avoid SSE parsing complexity
+        # Stream response from Redis with longer timeout to account for LLM latency
         stream_response = requests.get(
             f"{self.stream_url}/{thread_id}",
             headers={"Accept": "text/plain"},
-            timeout=30,  # Shorter timeout for test
+            timeout=60,
         )
         assert stream_response.status_code == 200
 
@@ -83,7 +81,7 @@ class TestSampleReliableStreaming:
         stream_response = requests.get(
             f"{self.stream_url}/{thread_id}",
             headers={"Accept": "text/event-stream"},
-            timeout=30,  # Shorter timeout
+            timeout=60,
         )
         assert stream_response.status_code == 200
         content_type = stream_response.headers.get("content-type", "")

@@ -120,9 +120,24 @@ public static class OpenAIResponseClientExtensions
         return Throw.IfNull(responseClient)
             .AsIChatClient(model)
             .AsBuilder()
-            .ConfigureOptions(x => x.RawRepresentationFactory = _ => includeReasoningEncryptedContent
-                ? new CreateResponseOptions() { StoredOutputEnabled = false, IncludedProperties = { IncludedResponseProperty.ReasoningEncryptedContent } }
-                : new CreateResponseOptions() { StoredOutputEnabled = false })
+            .ConfigureOptions(x =>
+            {
+                var previousFactory = x.RawRepresentationFactory;
+                x.RawRepresentationFactory = state =>
+                {
+                    var responseOptions = previousFactory?.Invoke(state) as CreateResponseOptions ?? new CreateResponseOptions();
+
+                    responseOptions.StoredOutputEnabled = false;
+
+                    if (includeReasoningEncryptedContent &&
+                        !responseOptions.IncludedProperties.Contains(IncludedResponseProperty.ReasoningEncryptedContent))
+                    {
+                        responseOptions.IncludedProperties.Add(IncludedResponseProperty.ReasoningEncryptedContent);
+                    }
+
+                    return responseOptions;
+                };
+            })
             .Build();
     }
 }

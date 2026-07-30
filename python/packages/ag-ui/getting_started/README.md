@@ -131,6 +131,32 @@ Even without Agent wrapper, client-side tools work:
 - Server can also have its own tools
 - Hybrid execution works automatically
 
+### Interrupts and Resume Entries
+
+Human-in-the-loop approvals and workflow input requests pause by emitting a terminal `RUN_FINISHED` event whose
+`outcome.type` is `"interrupt"`. Generic AG-UI clients should read prompts from `RUN_FINISHED.outcome.interrupts`
+and resume the same `threadId` with a canonical `resume` array of `ResumeEntry` values.
+
+```json
+{
+  "threadId": "thread-1",
+  "messages": [],
+  "resume": [
+    {
+      "interruptId": "approval_1",
+      "status": "resolved",
+      "payload": {
+        "approved": true
+      }
+    }
+  ]
+}
+```
+
+`Interrupt` and `ResumeEntry` are AG-UI protocol models from `ag_ui.core`; Agent Framework does not define a
+separate interrupt model. New interrupted runs use `RUN_FINISHED.outcome.interrupts`, not a stable top-level
+`RUN_FINISHED.interrupt` field.
+
 ## What is AG-UI?
 
 AG-UI is a protocol that enables:
@@ -149,7 +175,7 @@ Before you begin, ensure you have the following:
 - Azure CLI installed and authenticated (for DefaultAzureCredential)
 - User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource
 
-**Note**: These samples use Azure OpenAI models. For more information, see [how to deploy Azure OpenAI models with Azure AI Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/deploy-models-openai).
+**Note**: These samples use Azure OpenAI models. For more information, see [how to deploy Azure OpenAI models with Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/deploy-models-openai).
 
 **Note**: These samples use `DefaultAzureCredential` for authentication. Make sure you're authenticated with Azure (e.g., via `az login`, or environment variables). For more information, see the [Azure Identity documentation](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential).
 
@@ -185,19 +211,19 @@ Create a file named `server.py`:
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from fastapi import FastAPI
 
 # Read required configuration
 endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
+model = os.environ.get("AZURE_OPENAI_MODEL")
 api_key = os.environ.get("AZURE_OPENAI_API_KEY")
 
 if not endpoint:
     raise ValueError("AZURE_OPENAI_ENDPOINT environment variable is required")
-if not deployment_name:
-    raise ValueError("AZURE_OPENAI_DEPLOYMENT_NAME environment variable is required")
+if not model:
+    raise ValueError("AZURE_OPENAI_MODEL environment variable is required")
 if not api_key:
     raise ValueError("AZURE_OPENAI_API_KEY environment variable is required")
 
@@ -205,9 +231,9 @@ if not api_key:
 agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant.",
-    client=AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name=deployment_name,
+    client=OpenAIChatCompletionClient(
+        azure_endpoint=endpoint,
+        model=model,
         api_key=api_key,
     ),
 )
@@ -230,7 +256,7 @@ if __name__ == "__main__":
 - **`Agent`**: The agent that will handle incoming requests
 - **FastAPI Integration**: Uses FastAPI's native async support for streaming responses
 - **Instructions**: The agent is created with default instructions, which can be overridden by client messages
-- **Configuration**: `AzureOpenAIChatClient` can read from environment variables (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, `AZURE_OPENAI_API_KEY`) or accept parameters directly
+- **Configuration**: `OpenAIChatCompletionClient` can read from environment variables (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_MODEL`, `AZURE_OPENAI_API_KEY`) or accept parameters directly
 
 **Alternative (simpler)**: Use environment variables only:
 
@@ -239,7 +265,7 @@ if __name__ == "__main__":
 agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant.",
-    client=AzureOpenAIChatClient(),  # Reads from environment automatically
+    client=OpenAIChatCompletionClient(),  # Reads from environment automatically
 )
 ```
 
@@ -249,7 +275,7 @@ Set the required environment variables:
 
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o-mini"
+export AZURE_OPENAI_MODEL="gpt-4o-mini"
 # Optional: Set API key if not using DefaultAzureCredential
 # export AZURE_OPENAI_API_KEY="your-api-key"
 ```

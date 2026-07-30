@@ -68,7 +68,7 @@ Order strategies from **least aggressive** to **most aggressive**. The pipeline 
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"  # Required
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"                       # Optional, defaults to gpt-4o-mini
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"                      # Optional, defaults to gpt-5.4-mini
 ```
 
 ## Running the Sample
@@ -110,7 +110,7 @@ IEnumerable<ChatMessage> compacted = await CompactionProvider.CompactAsync(
 The `SummarizationCompactionStrategy` accepts any `IChatClient`. Use a smaller, cheaper model to reduce summarization cost:
 
 ```csharp
-IChatClient summarizerChatClient = openAIClient.GetChatClient("gpt-4o-mini").AsIChatClient();
+IChatClient summarizerChatClient = openAIClient.GetChatClient("gpt-5.4-mini").AsIChatClient();
 new SummarizationCompactionStrategy(summarizerChatClient, CompactionTriggers.TokensExceed(4000))
 ```
 
@@ -130,3 +130,13 @@ AIAgent agent = agentChatClient
 This places the compaction provider at the agent level instead of the chat client level, which allows you to use different compaction strategies for different agents that share the same chat client.
 
 > Note: In this mode the `CompactionProvider` is not engaged during the tool calling loop. Agent-level `AIContextProviders` run before chat history is stored, so any synthetic summary messages produced by `CompactionProvider` can become part of the persisted history when using `ChatHistoryProvider`. If you want to compact only the request context while preserving the original stored history, register `CompactionProvider` on the `ChatClientBuilder` via `UseAIContextProviders(...)` instead of on `ChatClientAgentOptions`.
+
+## Security Considerations
+
+Most compaction strategies in this pipeline (tool-result summarization, sliding window, truncation) only
+remove or reorder existing messages and carry no additional risk. `SummarizationCompactionStrategy` is
+the exception: it calls out to an LLM to produce replacement summary content that permanently becomes
+part of chat history. A compromised or malicious summarization service could return a summary containing
+unsafe instructions, creating a persistent indirect-prompt-injection vector. Using
+`SummarizationCompactionStrategy` is optional and requires explicit configuration — only point its
+`IChatClient` at a summarization service you trust as much as the primary model.

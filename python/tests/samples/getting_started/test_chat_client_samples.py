@@ -7,28 +7,28 @@ from typing import Any
 
 import pytest
 from pytest import MonkeyPatch, mark, param
-from samples.getting_started.client.azure_ai_chat_client import (
+from samples.getting_started.client.azure_ai_chat_client import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_ai_chat_client,
 )
-from samples.getting_started.client.azure_assistants_client import (
+from samples.getting_started.client.azure_assistants_client import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_assistants_client,
 )
-from samples.getting_started.client.azure_chat_client import (
+from samples.getting_started.client.azure_chat_client import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_chat_client,
 )
-from samples.getting_started.client.azure_responses_client import (
+from samples.getting_started.client.azure_responses_client import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as azure_responses_client,
 )
-from samples.getting_started.client.chat_response_cancellation import (
+from samples.getting_started.client.chat_response_cancellation import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as chat_response_cancellation,
 )
-from samples.getting_started.client.openai_assistants_client import (
+from samples.getting_started.client.openai_assistants_client import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_assistants_client,
 )
-from samples.getting_started.client.openai_chat_client import (
+from samples.getting_started.client.openai_chat_client import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_chat_client,
 )
-from samples.getting_started.client.openai_responses_client import (
+from samples.getting_started.client.openai_responses_client import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
     main as openai_responses_client,
 )
 
@@ -130,4 +130,4 @@ async def test_chat_client_samples(
         return responses.pop(0) if responses else "exit"
 
     monkeypatch.setattr("builtins.input", mock_input)
-    await sample
+    await sample()

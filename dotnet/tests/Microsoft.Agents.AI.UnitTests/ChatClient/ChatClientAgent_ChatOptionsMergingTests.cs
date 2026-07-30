@@ -176,12 +176,11 @@ public class ChatClientAgent_ChatOptionsMergingTests
     }
 
     /// <summary>
-    /// Verify that ChatOptions merging returns a non-null ChatOptions instance with null ConversationId
-    /// when both agent and request have no ChatOptions. The sentinel conversation ID is set for
-    /// per-service-call persistence and stripped before reaching the inner client.
+    /// Verify that when both agent and request have no ChatOptions, the inner client
+    /// receives null options.
     /// </summary>
     [Fact]
-    public async Task ChatOptionsMergingReturnsChatOptionsWithNullConversationIdWhenBothAgentAndRequestHaveNoneAsync()
+    public async Task ChatOptionsMergingReturnsNullChatOptionsWhenBothAgentAndRequestHaveNoneAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -201,9 +200,8 @@ public class ChatClientAgent_ChatOptionsMergingTests
         // Act
         await agent.RunAsync(messages);
 
-        // Assert — ChatOptions is non-null because the sentinel was set, but ConversationId is null (stripped)
-        Assert.NotNull(capturedChatOptions);
-        Assert.Null(capturedChatOptions!.ConversationId);
+        // Assert
+        Assert.Null(capturedChatOptions);
     }
 
     /// <summary>
@@ -347,6 +345,115 @@ public class ChatClientAgent_ChatOptionsMergingTests
         Assert.NotNull(capturedChatOptions);
         Assert.NotNull(capturedChatOptions.RawRepresentationFactory);
         Assert.Equal(expectedSetting, capturedChatOptions.RawRepresentationFactory(null!));
+    }
+
+    /// <summary>
+    /// Verify that <see cref="ChatOptions.Reasoning"/> from the request takes priority over the agent's.
+    /// </summary>
+    [Fact]
+    public async Task ChatOptionsMergingUsesRequestReasoningOverAgentReasoningAsync()
+    {
+        // Arrange
+        var agentReasoning = new ReasoningOptions { Effort = ReasoningEffort.Low, Output = ReasoningOutput.Full };
+        var requestReasoning = new ReasoningOptions { Effort = ReasoningEffort.High, Output = ReasoningOutput.Full };
+
+        Mock<IChatClient> mockService = new();
+        ChatOptions? capturedChatOptions = null;
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new ChatOptions { Reasoning = agentReasoning }
+        });
+        var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
+
+        // Act
+        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(new ChatOptions { Reasoning = requestReasoning }));
+
+        // Assert
+        Assert.NotNull(capturedChatOptions);
+        Assert.NotNull(capturedChatOptions.Reasoning);
+        Assert.Equal(requestReasoning.Effort, capturedChatOptions.Reasoning.Effort);
+        Assert.Equal(requestReasoning.Output, capturedChatOptions.Reasoning.Output);
+    }
+
+    /// <summary>
+    /// Verify that <see cref="ChatOptions.Reasoning"/> falls back to the agent's when the request has none.
+    /// </summary>
+    [Fact]
+    public async Task ChatOptionsMergingFallsBackToAgentReasoningWhenRequestHasNoneAsync()
+    {
+        // Arrange
+        var agentReasoning = new ReasoningOptions { Effort = ReasoningEffort.Low, Output = ReasoningOutput.Full };
+
+        Mock<IChatClient> mockService = new();
+        ChatOptions? capturedChatOptions = null;
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new ChatOptions { Reasoning = agentReasoning }
+        });
+        var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
+
+        // Act
+        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(new ChatOptions()));
+
+        // Assert
+        Assert.NotNull(capturedChatOptions);
+        Assert.NotNull(capturedChatOptions.Reasoning);
+        Assert.Equal(agentReasoning.Effort, capturedChatOptions.Reasoning.Effort);
+        Assert.Equal(agentReasoning.Output, capturedChatOptions.Reasoning.Output);
+    }
+
+    /// <summary>
+    /// Verify that <see cref="ChatOptions.Reasoning"/> from the request is used when the agent has none.
+    /// </summary>
+    [Fact]
+    public async Task ChatOptionsMergingUsesRequestReasoningWhenAgentHasNoneAsync()
+    {
+        // Arrange
+        var requestReasoning = new ReasoningOptions { Effort = ReasoningEffort.High, Output = ReasoningOutput.Full };
+
+        Mock<IChatClient> mockService = new();
+        ChatOptions? capturedChatOptions = null;
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+                capturedChatOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new ChatOptions()
+        });
+        var messages = new List<ChatMessage> { new(ChatRole.User, "test") };
+
+        // Act
+        await agent.RunAsync(messages, options: new ChatClientAgentRunOptions(new ChatOptions { Reasoning = requestReasoning }));
+
+        // Assert
+        Assert.NotNull(capturedChatOptions);
+        Assert.NotNull(capturedChatOptions.Reasoning);
+        Assert.Equal(requestReasoning.Effort, capturedChatOptions.Reasoning.Effort);
+        Assert.Equal(requestReasoning.Output, capturedChatOptions.Reasoning.Output);
     }
 
     /// <summary>

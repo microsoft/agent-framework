@@ -2,7 +2,6 @@
 
 This sample demonstrates control flow with conditions:
 - If/else branching
-- Switch statements
 - Nested conditions
 
 ## Files

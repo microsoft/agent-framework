@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Generator
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter
@@ -43,22 +43,17 @@ def openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
             "OPENAI_ORG_ID",
             "OPENAI_MODEL",
             "OPENAI_EMBEDDING_MODEL",
+            "OPENAI_CHAT_COMPLETION_MODEL",
             "OPENAI_CHAT_MODEL",
-            "OPENAI_RESPONSES_MODEL",
-            "OPENAI_TEXT_MODEL_ID",
-            "OPENAI_TEXT_TO_IMAGE_MODEL_ID",
-            "OPENAI_AUDIO_TO_TEXT_MODEL_ID",
-            "OPENAI_TEXT_TO_AUDIO_MODEL_ID",
-            "OPENAI_REALTIME_MODEL_ID",
             "OPENAI_API_VERSION",
             "OPENAI_BASE_URL",
             "AZURE_OPENAI_ENDPOINT",
             "AZURE_OPENAI_BASE_URL",
             "AZURE_OPENAI_API_KEY",
-            "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME",
-            "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME",
-            "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME",
-            "AZURE_OPENAI_DEPLOYMENT_NAME",
+            "AZURE_OPENAI_CHAT_COMPLETION_MODEL",
+            "AZURE_OPENAI_CHAT_MODEL",
+            "AZURE_OPENAI_EMBEDDING_MODEL",
+            "AZURE_OPENAI_MODEL",
             "AZURE_OPENAI_API_VERSION",
         ],
     )
@@ -66,13 +61,8 @@ def openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
     env_vars = {
         "OPENAI_API_KEY": "test-dummy-key",
         "OPENAI_ORG_ID": "test_org_id",
-        "OPENAI_MODEL": "test_model_id",
-        "OPENAI_EMBEDDING_MODEL": "test_embedding_model_id",
-        "OPENAI_TEXT_MODEL_ID": "test_text_model_id",
-        "OPENAI_TEXT_TO_IMAGE_MODEL_ID": "test_text_to_image_model_id",
-        "OPENAI_AUDIO_TO_TEXT_MODEL_ID": "test_audio_to_text_model_id",
-        "OPENAI_TEXT_TO_AUDIO_MODEL_ID": "test_text_to_audio_model_id",
-        "OPENAI_REALTIME_MODEL_ID": "test_realtime_model_id",
+        "OPENAI_MODEL": "test_model",
+        "OPENAI_EMBEDDING_MODEL": "test_embedding_model",
     }
 
     env_vars.update(override_env_param_dict)  # type: ignore
@@ -102,32 +92,27 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
             "OPENAI_ORG_ID",
             "OPENAI_MODEL",
             "OPENAI_EMBEDDING_MODEL",
+            "OPENAI_CHAT_COMPLETION_MODEL",
             "OPENAI_CHAT_MODEL",
-            "OPENAI_RESPONSES_MODEL",
-            "OPENAI_TEXT_MODEL_ID",
-            "OPENAI_TEXT_TO_IMAGE_MODEL_ID",
-            "OPENAI_AUDIO_TO_TEXT_MODEL_ID",
-            "OPENAI_TEXT_TO_AUDIO_MODEL_ID",
-            "OPENAI_REALTIME_MODEL_ID",
             "OPENAI_API_VERSION",
             "OPENAI_BASE_URL",
             "AZURE_OPENAI_ENDPOINT",
             "AZURE_OPENAI_BASE_URL",
             "AZURE_OPENAI_API_KEY",
-            "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME",
-            "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME",
-            "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME",
-            "AZURE_OPENAI_DEPLOYMENT_NAME",
+            "AZURE_OPENAI_CHAT_COMPLETION_MODEL",
+            "AZURE_OPENAI_CHAT_MODEL",
+            "AZURE_OPENAI_EMBEDDING_MODEL",
+            "AZURE_OPENAI_MODEL",
             "AZURE_OPENAI_API_VERSION",
         ],
     )
 
     env_vars = {
         "AZURE_OPENAI_ENDPOINT": "https://test-endpoint.openai.azure.com",
-        "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "test_chat_deployment",
-        "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME": "test_responses_deployment",
-        "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME": "test_embedding_deployment",
-        "AZURE_OPENAI_DEPLOYMENT_NAME": "test_deployment",
+        "AZURE_OPENAI_CHAT_COMPLETION_MODEL": "test_chat_deployment",
+        "AZURE_OPENAI_CHAT_MODEL": "test_responses_deployment",
+        "AZURE_OPENAI_EMBEDDING_MODEL": "test_embedding_deployment",
+        "AZURE_OPENAI_MODEL": "test_deployment",
         "AZURE_OPENAI_API_KEY": "test_api_key",
         "AZURE_OPENAI_API_VERSION": "2024-12-01-preview",
     }
@@ -195,7 +180,7 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
     if enable_instrumentation or enable_sensitive_data:
         from opentelemetry.sdk.trace import TracerProvider
 
-        tracer_provider = TracerProvider(resource=observability_settings._resource)
+        tracer_provider = TracerProvider(resource=cast(Any, observability_settings)._resource)
         trace.set_tracer_provider(tracer_provider)
 
     monkeypatch.setattr(observability, "OBSERVABILITY_SETTINGS", observability_settings, raising=False)  # type: ignore
@@ -206,11 +191,11 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
     ):
         exporter = InMemorySpanExporter()
         if enable_instrumentation or enable_sensitive_data:
-            tracer_provider = trace.get_tracer_provider()
-            if not hasattr(tracer_provider, "add_span_processor"):
+            current_tracer_provider = trace.get_tracer_provider()
+            if not hasattr(current_tracer_provider, "add_span_processor"):
                 raise RuntimeError("Tracer provider does not support adding span processors.")
 
-            tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))  # type: ignore
+            current_tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))  # type: ignore
 
         yield exporter
         exporter.clear()

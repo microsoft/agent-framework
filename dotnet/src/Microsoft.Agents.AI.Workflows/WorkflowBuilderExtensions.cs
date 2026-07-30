@@ -25,7 +25,11 @@ public static class WorkflowBuilderExtensions
     /// <param name="target">The target executor to which messages will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
     public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, ExecutorBinding target)
-        => builder.ForwardMessage<TMessage>(source, [target], condition: null);
+    {
+        Throw.IfNull(target, nameof(target));
+
+        return builder.ForwardMessage<TMessage>(source, [target], condition: null);
+    }
 
     /// <summary>
     /// Adds edges to the workflow that forward messages of the specified type from the source executor to
@@ -52,6 +56,8 @@ public static class WorkflowBuilderExtensions
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance.</returns>
     public static WorkflowBuilder ForwardMessage<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, IEnumerable<ExecutorBinding> targets, Func<TMessage, bool>? condition = null)
     {
+        Throw.IfNull(builder);
+        Throw.IfNull(source);
         Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>(IsAllowedTypeAndMatchingCondition)!;
@@ -62,14 +68,16 @@ public static class WorkflowBuilderExtensions
         if (targets is ICollection<ExecutorBinding> { Count: 1 })
 #endif
         {
-            return builder.AddEdge(source, targets.First(), predicate);
+            return builder.AddEdge(source, Throw.IfNull(targets.First(), nameof(targets)), predicate);
         }
 
-        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targets));
+        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targets.Select(ValidateTarget)));
 
         // The reason we can check for "not null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
         bool IsAllowedTypeAndMatchingCondition(TMessage? message) => message != null && (condition == null || condition(message));
+
+        ExecutorBinding ValidateTarget(ExecutorBinding target) => Throw.IfNull(target, nameof(targets));
     }
 
     /// <summary>
@@ -81,7 +89,11 @@ public static class WorkflowBuilderExtensions
     /// <param name="target">The target executor to which messages, except those of type <typeparamref name="TMessage"/>, will be forwarded.</param>
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance with the added edges.</returns>
     public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, ExecutorBinding target)
-        => builder.ForwardExcept<TMessage>(source, [target]);
+    {
+        Throw.IfNull(target, nameof(target));
+
+        return builder.ForwardExcept<TMessage>(source, [target]);
+    }
 
     /// <summary>
     /// Adds edges from the specified source to the provided executors, excluding messages of a specified type.
@@ -93,6 +105,8 @@ public static class WorkflowBuilderExtensions
     /// <returns>The updated <see cref="WorkflowBuilder"/> instance with the added edges.</returns>
     public static WorkflowBuilder ForwardExcept<TMessage>(this WorkflowBuilder builder, ExecutorBinding source, IEnumerable<ExecutorBinding> targets)
     {
+        Throw.IfNull(builder);
+        Throw.IfNull(source);
         Throw.IfNull(targets);
 
         Func<object?, bool> predicate = WorkflowBuilder.CreateConditionFunc<TMessage>((Func<object?, bool>)IsAllowedType)!;
@@ -103,14 +117,16 @@ public static class WorkflowBuilderExtensions
         if (targets is ICollection<ExecutorBinding> { Count: 1 })
 #endif
         {
-            return builder.AddEdge(source, targets.First(), predicate);
+            return builder.AddEdge(source, Throw.IfNull(targets.First(), nameof(targets)), predicate);
         }
 
-        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targets));
+        return builder.AddSwitch(source, (switch_) => switch_.AddCase(predicate, targets.Select(ValidateTarget)));
 
         // The reason we can check for "null" here is that CreateConditionFunc<T> will do the correct unwrapping
         // logic for PortableValues.
         static bool IsAllowedType(object? message) => message is null;
+
+        ExecutorBinding ValidateTarget(ExecutorBinding target) => Throw.IfNull(target, nameof(targets));
     }
 
     /// <summary>
@@ -129,6 +145,7 @@ public static class WorkflowBuilderExtensions
     {
         Throw.IfNull(builder);
         Throw.IfNull(source);
+        Throw.IfNull(executors);
 
         HashSet<string> seenExecutors = [source.Id];
 
@@ -193,5 +210,29 @@ public static class WorkflowBuilderExtensions
         configureSwitch(switchBuilder);
 
         return switchBuilder.ReduceToFanOut(builder, source);
+    }
+
+    /// <summary>
+    /// Register executors as a source of <b>intermediate</b> workflow outputs. The resulting
+    /// <see cref="WorkflowOutputEvent"/>s carry <see cref="OutputTag.Intermediate"/> in their
+    /// <see cref="WorkflowOutputEvent.Tags"/> set, and
+    /// <see cref="WorkflowOutputEventExtensions.IsIntermediate(WorkflowOutputEvent)"/> returns
+    /// <see langword="true"/>. Use this for progress updates, partial results, and other
+    /// non-terminal emissions that downstream consumers (DevUI, logging, Workflow-as-Agent
+    /// surfaces) should see distinctly from the workflow's final output.
+    /// </summary>
+    /// <remarks>
+    /// AIAgent payloads (<see cref="AgentResponse"/> / <see cref="AgentResponseUpdate"/>) only
+    /// participate in this designation when
+    /// <see cref="Futures.EnableAgentResponseOutputTaggingAndFiltering"/> is
+    /// <see langword="true"/>; otherwise they bypass the filter and are emitted untagged.
+    /// </remarks>
+    /// <param name="builder">The workflow builder to register executors on.</param>
+    /// <param name="executors">The executors to register as intermediate output sources.</param>
+    /// <returns>The <paramref name="builder"/>, enabling fluent configuration.</returns>
+    public static WorkflowBuilder WithIntermediateOutputFrom(this WorkflowBuilder builder, IEnumerable<ExecutorBinding> executors)
+    {
+        Throw.IfNull(builder);
+        return builder.WithOutputFrom(executors, OutputTag.Intermediate);
     }
 }

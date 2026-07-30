@@ -25,6 +25,7 @@ from typing import Any
 from agent_framework import Agent
 from agent_framework.declarative import WorkflowFactory
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
 
@@ -204,7 +205,7 @@ async def main():
     # Create Azure OpenAI Responses client
     chat_client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -213,7 +214,7 @@ async def main():
         client=chat_client,
         name="OrderAnalysisAgent",
         instructions=ORDER_ANALYSIS_INSTRUCTIONS,
-        default_options={"response_format": OrderAnalysis},
+        default_options=OpenAIChatOptions[Any](response_format=OrderAnalysis),
     )
 
     # Agent registry

@@ -11,9 +11,20 @@ Tests concurrent execution patterns:
 
 import json
 import logging
+from typing import Any, Protocol
 
 import pytest
 from durabletask.client import OrchestrationStatus
+
+from agent_framework_durabletask import DurableAIAgentClient
+
+
+class AgentClientFactoryProtocol(Protocol):
+    """Protocol for the agent client factory fixture."""
+
+    @classmethod
+    def create(cls, max_poll_retries: int = 90) -> tuple[Any, DurableAIAgentClient]: ...
+
 
 # Agent names from the 05_multi_agent_orchestration_concurrency sample
 PHYSICIST_AGENT_NAME: str = "PhysicistAgent"
@@ -36,7 +47,7 @@ class TestMultiAgentOrchestrationConcurrency:
     """Test suite for multi-agent orchestration with concurrency."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, agent_client_factory: type, orchestration_helper) -> None:
+    def setup(self, agent_client_factory: type[AgentClientFactoryProtocol], orchestration_helper) -> None:
         """Setup test fixtures."""
         # Create agent client using the factory fixture
         self.dts_client, self.agent_client = agent_client_factory.create()

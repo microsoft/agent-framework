@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
 /// Contains unit tests that verify the end-to-end approval flow behavior of the
-/// <see cref="ChatClientAgent"/> class with <see cref="ChatHistoryPersistingChatClient"/>,
+/// <see cref="ChatClientAgent"/> class with <see cref="PerServiceCallChatHistoryPersistingChatClient"/>,
 /// ensuring that chat history is correctly persisted across multi-turn approval interactions.
 /// </summary>
 public class ChatClientAgent_ApprovalsTests
@@ -48,7 +48,7 @@ public class ChatClientAgent_ApprovalsTests
             agentOptions: new()
             {
                 ChatOptions = new() { Tools = [approvalTool] },
-                PersistChatHistoryAtEndOfRun = false,
+                RequirePerServiceCallChatHistoryPersistence = true,
             },
             callIndex: callIndex,
             capturedInputs: capturedInputs);
@@ -123,7 +123,6 @@ public class ChatClientAgent_ApprovalsTests
             agentOptions: new()
             {
                 ChatOptions = new() { Tools = [approvalTool] },
-                PersistChatHistoryAtEndOfRun = true,
             },
             callIndex: callIndex,
             capturedInputs: capturedInputs);
@@ -150,8 +149,10 @@ public class ChatClientAgent_ApprovalsTests
             expectedHistory:
             [
                 // End-of-run persistence retains the approval request from Turn 1
+                // and the approval response from Turn 2
                 new(ChatRole.User, TextContains: "What's the weather?"),
                 new(ChatRole.Assistant, ContentTypes: [typeof(ToolApprovalRequestContent)]),
+                new(ChatRole.User, ContentTypes: [typeof(ToolApprovalResponseContent)]),
                 new(ChatRole.Assistant, ContentTypes: [typeof(FunctionCallContent)]),
                 new(ChatRole.Tool, ContentTypes: [typeof(FunctionResultContent)]),
                 new(ChatRole.Assistant, TextContains: "sunny and 22°C"),
@@ -196,7 +197,6 @@ public class ChatClientAgent_ApprovalsTests
             agentOptions: new()
             {
                 ChatOptions = new() { Tools = [approvalTool] },
-                PersistChatHistoryAtEndOfRun = false,
             },
             callIndex: callIndex,
             capturedInputs: capturedInputs);
@@ -260,7 +260,7 @@ public class ChatClientAgent_ApprovalsTests
             agentOptions: new()
             {
                 ChatOptions = new() { Tools = [approvalTool] },
-                PersistChatHistoryAtEndOfRun = false,
+                RequirePerServiceCallChatHistoryPersistence = true,
             },
             callIndex: callIndex,
             capturedInputs: capturedInputs);

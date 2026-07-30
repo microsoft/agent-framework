@@ -83,7 +83,9 @@ def _role_value(chat_message: DurableAgentStateMessage) -> str:
 
 def _agent_response(text: str | None) -> AgentResponse:
     """Create an AgentResponse with a single assistant message."""
-    message = Message(role="assistant", text=text) if text is not None else Message(role="assistant", text="")
+    message = (
+        Message(role="assistant", contents=[text]) if text is not None else Message(role="assistant", contents=[""])
+    )
     return AgentResponse(messages=[message], created_at="2024-01-01T00:00:00Z")
 
 
@@ -179,7 +181,7 @@ class TestDurableTaskEntityStateProvider:
         entity = DurableTaskEntityStateProvider()
         ctx = MockEntityContext(initial_state)
         # DurableEntity provides this hook; required for get_state/set_state to work in unit tests.
-        entity._initialize_entity_context(ctx)  # type: ignore[attr-defined]
+        entity._initialize_entity_context(ctx)  # type: ignore[attr-defined, arg-type] # ty: ignore[invalid-argument-type]
         return entity, ctx
 
     def test_reset_persists_cleared_state(self) -> None:

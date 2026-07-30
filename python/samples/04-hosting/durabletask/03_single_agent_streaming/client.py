@@ -24,7 +24,7 @@ from agent_framework.azure import DurableAIAgentClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
-from redis_stream_response_handler import RedisStreamResponseHandler
+from redis_stream_response_handler import RedisStreamResponseHandler  # pyrefly: ignore[missing-import]
 
 # Load environment variables from .env file
 load_dotenv()

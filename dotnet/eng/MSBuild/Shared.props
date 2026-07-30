@@ -11,9 +11,6 @@
   <ItemGroup Condition="'$(InjectSharedIntegrationTestAzureCredentialsCode)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\IntegrationTestsAzureCredentials\*.cs" LinkBase="Shared\IntegrationTestsAzureCredentials" />
   </ItemGroup>
-  <ItemGroup Condition="'$(InjectSharedBuildTestCode)' == 'true'">
-    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\CodeTests\*.cs" LinkBase="Shared\CodeTests" />
-  </ItemGroup>
   <ItemGroup Condition="'$(InjectSharedWorkflowsExecution)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Workflows\Execution\*.cs" LinkBase="Shared\Workflows" />
   </ItemGroup>

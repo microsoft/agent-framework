@@ -34,8 +34,8 @@ When to use Agent(client=workflow,):
 - To maintain a consistent agent interface for callers
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 
@@ -89,7 +89,7 @@ async def main() -> None:
     # Create chat client
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -109,7 +109,7 @@ async def main() -> None:
     workflow = SequentialBuilder(participants=[agent]).build()
 
     # Expose the workflow as an agent Agent(client=using,)
-    workflow_agent = Agent(client=workflow, name="WorkflowAgent")
+    workflow_agent = workflow.as_agent()
 
     # Define custom context that will flow to tools via kwargs
     custom_data = {
@@ -140,7 +140,7 @@ async def main() -> None:
     print("\n===== Streaming Response =====")
     async for update in workflow_agent.run(
         "Please get my user data and then call the users API endpoint.",
-        additional_function_arguments={"custom_data": custom_data, "user_token": user_token},
+        function_invocation_kwargs={"custom_data": custom_data, "user_token": user_token},
         stream=True,
     ):
         if update.text:

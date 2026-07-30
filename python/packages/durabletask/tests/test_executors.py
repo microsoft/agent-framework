@@ -50,6 +50,7 @@ def mock_orchestration_context(mock_entity_task: Mock) -> Mock:
     """Provide a mock orchestration context with call_entity configured."""
     context = Mock()
     context.call_entity = Mock(return_value=mock_entity_task)
+    context.new_uuid = Mock(return_value="test-uuid-1234")
     return context
 
 

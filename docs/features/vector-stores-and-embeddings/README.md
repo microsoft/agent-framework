@@ -177,7 +177,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
 **Goal:** Add embedding generators to all existing AF provider packages that have chat clients.
 **Mergeable:** Yes — each is independent, added to existing provider packages.
 
-#### 2.1 — Azure AI Inference embedding (in `packages/azure-ai/`)
+#### 2.1 — Foundry inference embedding (in `packages/foundry/`)
 #### 2.2 — Ollama embedding (in `packages/ollama/`)
 #### 2.3 — Anthropic embedding (in `packages/anthropic/`)
 #### 2.4 — Bedrock embedding (in `packages/bedrock/`)

@@ -97,7 +97,7 @@ class BriefPreparer(Executor):
         # Hand the prompt to the writer agent. We always route through the
         # workflow context so the runtime can capture messages for checkpointing.
         await ctx.send_message(
-            AgentExecutorRequest(messages=[Message("user", text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[Message("user", contents=[prompt])], should_respond=True),
             target_id=self._agent_id,
         )
 
@@ -159,7 +159,7 @@ class ReviewGateway(Executor):
             f"Human guidance: {reply}"
         )
         await ctx.send_message(
-            AgentExecutorRequest(messages=[Message("user", text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[Message("user", contents=[prompt])], should_respond=True),
             target_id=self._writer_id,
         )
 
@@ -182,7 +182,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     writer_agent = Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         instructions="Write concise, warm release notes that sound human and helpful.",

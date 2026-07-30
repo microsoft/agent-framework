@@ -95,7 +95,7 @@ class InputObserverMiddleware(ChatMiddleware):
                 modified_messages.append(message)
 
         # Replace messages in context
-        context.messages[:] = modified_messages
+        context.messages = modified_messages
 
         # Continue to next middleware or AI execution
         await call_next()
@@ -127,9 +127,13 @@ async def security_and_override_middleware(
                         messages=[
                             Message(
                                 role="assistant",
-                                text="I cannot process requests containing sensitive information. "
-                                "Please rephrase your question without including passwords, secrets, or other "
-                                "sensitive data.",
+                                contents=[
+                                    (
+                                        "I cannot process requests containing sensitive information. "
+                                        "Please rephrase your question without including passwords, secrets, or other "
+                                        "sensitive data."
+                                    )
+                                ],
                             )
                         ]
                     )
