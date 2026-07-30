@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import time
 
 from agent_framework import Content, Message
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
@@ -15,8 +16,10 @@ Demonstrates explicit prompt cache breakpoints on GPT-5.6 and later models. Cach
 writes are billed on these models, so marking exactly where a reusable prefix ends
 lets you control what gets cached.
 
-Two knobs work together:
+Three knobs work together:
 
+- ``prompt_cache_key`` on ``OpenAIChatOptions`` is required to use the improved
+  prompt caching.
 - ``prompt_cache_options`` on ``OpenAIChatOptions`` sets the request-wide policy.
   ``{"mode": "explicit"}`` disables the automatic breakpoint on the latest message,
   so only the breakpoints you place are used for cache reads and writes.
@@ -24,6 +27,8 @@ Two knobs work together:
   reusable prefix on a specific content part.
 
 The content before a breakpoint must be at least 1024 tokens long to be cached.
+The number of tokens written to the cache is shown in
+``usage_details["cache_creation_input_token_count"]`` on the first response.
 Running the same prefix twice shows the cache hit through
 ``usage_details["cache_read_input_token_count"]`` on later responses.
 
@@ -64,16 +69,21 @@ async def main() -> None:
     print("\033[92m=== OpenAI Chat Client Prompt Caching Example ===\033[0m\n")
 
     client = OpenAIChatClient[OpenAIChatOptions](model="gpt-5.6-luna")
-    options: OpenAIChatOptions = {"prompt_cache_options": {"mode": "explicit"}}
+    options: OpenAIChatOptions = {
+        "prompt_cache_options": {"mode": "explicit"},
+        "prompt_cache_key": f"contoso_appliance_store-{time.time()}",
+    }
 
     questions = ["Do you sell refrigerators?", "What is the return policy contact?"]
     for turn, question in enumerate(questions, start=1):
         response = await client.get_response(build_messages(question), options=options)
         usage = response.usage_details or {}
         cached = usage.get("cache_read_input_token_count", 0)
+        cached_write = usage.get("cache_creation_input_token_count", 0)
         print(f"Turn {turn}: {question}")
         print(f"  Answer: {response.text}")
-        print(f"  Cached input tokens: {cached}\n")
+        print(f"  Cached input tokens (read): {cached}\n")
+        print(f"  Cached input tokens (created): {cached_write}\n")
         if turn < len(questions):
             # A freshly written cache entry becomes readable shortly after the request
             # completes; the brief pause keeps the next turn from racing this one.
