@@ -19,8 +19,11 @@ from agent_framework import (
     SkillsSource,
     SkillsSourceContext,
 )
+from agent_framework._telemetry import mark_feature_used
 from azure.ai.agentserver.core import get_request_context
 from typing_extensions import override
+
+from ._feature_usage import FeatureIndex
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
@@ -217,6 +220,12 @@ class FoundryToolbox(MCPStreamableHTTPTool):
             load_prompts=load_prompts,
             load_tools=load_tools,
         )
+
+    @override
+    async def connect(self, *, reset: bool = False) -> None:
+        """Connect to the toolbox and mark its first meaningful activation."""
+        await super().connect(reset=reset)
+        mark_feature_used(FeatureIndex.FOUNDRY_TOOLBOX)
 
     @override
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:

@@ -22,6 +22,7 @@ from .._compaction import CompactionProvider, ContextWindowCompactionStrategy
 from .._feature_stage import ExperimentalFeature, warn_experimental_feature
 from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider, MessageInjectionMiddleware
 from .._skills import SkillsProvider
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._types import ChatOptions
 from ._background_agents import BackgroundAgentsProvider
 from ._file_access import AgentFileStore, FileAccessProvider, FileSystemAgentFileStore
@@ -674,5 +675,6 @@ def create_harness_agent(
 
     # Set the telemetry provider name after construction.
     agent.otel_provider_name = otel_provider_name or HARNESS_AGENT_PROVIDER_NAME
+    mark_feature_used(FeatureIndex.CORE_HARNESS_AGENT)
 
     return agent

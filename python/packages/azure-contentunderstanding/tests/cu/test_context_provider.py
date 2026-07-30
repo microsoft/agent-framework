@@ -7,7 +7,7 @@ import base64
 import json
 import re
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent_framework import Content, Message, SessionContext
 from agent_framework._sessions import AgentSession
@@ -18,6 +18,7 @@ from agent_framework_azure_contentunderstanding import (
     DocumentStatus,
 )
 from agent_framework_azure_contentunderstanding._detection import SUPPORTED_MEDIA_TYPES, derive_doc_key
+from agent_framework_azure_contentunderstanding._feature_usage import FeatureIndex
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -983,7 +984,12 @@ class TestErrorHandling:
         state: dict[str, Any] = {}
         session = AgentSession()
 
-        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+        with patch(
+            "agent_framework_azure_contentunderstanding._context_provider.mark_feature_used"
+        ) as mark_feature_used:
+            await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        mark_feature_used.assert_called_once_with(FeatureIndex.AZURE_CONTENTUNDERSTANDING)
         # Client should still be set
         assert provider._client is not None
 

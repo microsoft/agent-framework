@@ -38,6 +38,7 @@ from pydantic import BaseModel, Field
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import ApprovalMode, tool
 from .._types import Content
 
@@ -1454,6 +1455,7 @@ class FileAccessProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject file-access tools and instructions before the model runs."""
+        mark_feature_used(FeatureIndex.CORE_FILE_ACCESS_PROVIDER)
         readonly_approval: ApprovalMode = "never_require" if self.disable_readonly_tool_approval else "always_require"
         write_approval: ApprovalMode = "never_require" if self.disable_write_tool_approval else "always_require"
 
