@@ -142,6 +142,21 @@ async def test_mistral_embedding_close_only_closes_owned_client() -> None:
     await http_client.aclose()
 
 
+async def test_mistral_embedding_marks_feature_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock
+
+    import agent_framework_mistral._embedding_client as embedding_client_module
+    from agent_framework_mistral._feature_usage import FeatureIndex
+
+    mark = MagicMock()
+    monkeypatch.setattr(embedding_client_module, "mark_feature_used", mark)
+    client, _ = make_client(httpx.Response(200, json=make_embeddings_payload([[0.1, 0.2]])))
+
+    await client.get_embeddings(["hello"])
+
+    mark.assert_called_once_with(FeatureIndex.MISTRAL)
+
+
 async def test_mistral_embedding_get_embeddings() -> None:
     """Test generating embeddings via the Mistral API."""
     client, server = make_client(httpx.Response(200, json=make_embeddings_payload([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])))

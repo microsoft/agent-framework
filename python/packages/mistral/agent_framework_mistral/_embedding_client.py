@@ -17,7 +17,7 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.exceptions import (
     IntegrationException,
     IntegrationInvalidAuthException,
@@ -25,6 +25,8 @@ from agent_framework.exceptions import (
     IntegrationInvalidResponseException,
 )
 from agent_framework.observability import EmbeddingTelemetryLayer
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -191,6 +193,7 @@ class RawMistralEmbeddingClient(
         if "dimensions" in opts:
             request["output_dimension"] = opts["dimensions"]
 
+        mark_feature_used(FeatureIndex.MISTRAL)
         try:
             response = await self.client.post(_EMBEDDINGS_PATH, json=request)
             if response.status_code >= 400:

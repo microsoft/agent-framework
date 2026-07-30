@@ -30,7 +30,7 @@ from agent_framework import (
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework._types import prepend_instructions_to_messages
 from agent_framework.exceptions import (
     ChatClientException,
@@ -40,6 +40,8 @@ from agent_framework.exceptions import (
 )
 from agent_framework.observability import ChatTelemetryLayer
 from pydantic import BaseModel
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -306,6 +308,7 @@ class RawMistralChatClient(
                 validated = await self._validate_options(options)
                 request = self._prepare_request(messages, validated, **kwargs)
                 request["stream"] = True
+                mark_feature_used(FeatureIndex.MISTRAL)
                 try:
                     async with self.client.stream("POST", _CHAT_COMPLETIONS_PATH, json=request) as response:
                         await self._raise_for_status(response)
@@ -326,6 +329,7 @@ class RawMistralChatClient(
         async def _get_response() -> ChatResponse:
             validated = await self._validate_options(options)
             request = self._prepare_request(messages, validated, **kwargs)
+            mark_feature_used(FeatureIndex.MISTRAL)
             try:
                 response = await self.client.post(_CHAT_COMPLETIONS_PATH, json=request)
                 await self._raise_for_status(response)

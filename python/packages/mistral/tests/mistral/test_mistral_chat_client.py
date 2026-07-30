@@ -189,6 +189,20 @@ async def test_mistral_chat_missing_model_raises_at_request(monkeypatch: pytest.
 # region: Request preparation
 
 
+async def test_get_response_marks_feature_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock
+
+    from agent_framework_mistral._feature_usage import FeatureIndex
+
+    mark = MagicMock()
+    monkeypatch.setattr(chat_client_module, "mark_feature_used", mark)
+    client, _ = make_client(json_response(make_response_payload(content="ok")))
+
+    await client.get_response([Message("user", ["hi"])])
+
+    mark.assert_called_once_with(FeatureIndex.MISTRAL)
+
+
 async def test_get_response_basic() -> None:
     client, server = make_client(json_response(make_response_payload(content="hello")))
 
