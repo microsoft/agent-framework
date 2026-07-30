@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.11.0,<2",
-    "agent-hooks-sdk>=0.1.0a3,<0.2",
+    "agent-hooks-sdk>=0.1.0a4,<0.2",
 ]
 
 [tool.uv]

@@ -10,6 +10,8 @@ from agent_framework import (
     FunctionInvocationContext,
     MiddlewareTermination,
 )
+from agent_hooks import Decision, Transform, Verdict
+
 from agent_framework_agent_hooks import (
     AgentHooksChatMiddleware,
     AgentHooksFunctionMiddleware,
@@ -18,28 +20,25 @@ from agent_framework_agent_hooks import (
 
 
 class _AllowAll:
-    def intercept(self, context: dict[str, Any]) -> dict[str, Any]:
-        return {"decision": "allow"}
+    def intercept(self, context: dict[str, Any]) -> Verdict:
+        return Verdict(decision=Decision.ALLOW)
 
 
 class _DenyTool:
     def __init__(self, name: str) -> None:
         self._name = name
 
-    def intercept(self, context: dict[str, Any]) -> dict[str, Any]:
+    def intercept(self, context: dict[str, Any]) -> Verdict:
         if context["interception_point"] == "pre_tool_call" and context["tool_call"]["name"] == self._name:
-            return {"decision": "deny", "reason": "blocked_tool"}
-        return {"decision": "allow"}
+            return Verdict.deny(reason="blocked_tool")
+        return Verdict(decision=Decision.ALLOW)
 
 
 class _RedactArg:
-    def intercept(self, context: dict[str, Any]) -> dict[str, Any]:
+    def intercept(self, context: dict[str, Any]) -> Verdict:
         if context["interception_point"] == "pre_tool_call":
-            return {
-                "decision": "transform",
-                "transform": {"path": "$target.query", "value": "[redacted]"},
-            }
-        return {"decision": "allow"}
+            return Verdict(decision=Decision.TRANSFORM, transform=Transform(path="$target.query", value="[redacted]"))
+        return Verdict(decision=Decision.ALLOW)
 
 
 class _FakeFunction:
