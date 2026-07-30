@@ -263,7 +263,6 @@ async def test_get_response_option_mapping() -> None:
         "allow_multiple_tool_calls": False,
         "safe_prompt": True,
         "stop": ["END"],
-        "n": 2,
         "guardrails": [{"name": "test-guardrail"}],
         "prompt_cache_key": "shared-prefix",
         "reasoning_effort": "high",
@@ -277,7 +276,7 @@ async def test_get_response_option_mapping() -> None:
     assert request["parallel_tool_calls"] is False
     assert request["safe_prompt"] is True
     assert request["stop"] == ["END"]
-    assert request["n"] == 2
+    assert "n" not in request
     assert request["guardrails"] == [{"name": "test-guardrail"}]
     assert request["prompt_cache_key"] == "shared-prefix"
     assert request["reasoning_effort"] == "high"
