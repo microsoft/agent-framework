@@ -22,6 +22,7 @@ import uuid
 import weakref
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
+from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -29,11 +30,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import ChatContext, ChatMiddleware
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
     AgentResponse,
     AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Message,
     ResponseStream,
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
@@ -477,6 +480,76 @@ class ContextProvider:
         """
 
 
+def _is_approval_placeholder_result(content: Content) -> bool:
+    result = getattr(content, "result", None)
+    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
+
+
+def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
+    unresolved_requests_by_id: dict[str, Content] = {}
+    unresolved_local_responses_by_id: dict[str, Content] = {}
+    local_response_ids_by_call_id: dict[str, deque[str]] = {}
+
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_approval_request":
+                function_call = content.function_call
+                if content.id is not None and function_call is not None and function_call.call_id is not None:
+                    unresolved_requests_by_id.setdefault(content.id, content)
+                continue
+            if content.type == "function_approval_response":
+                function_call = content.function_call
+                if content.id is not None:
+                    unresolved_requests_by_id.pop(content.id, None)
+                if (
+                    content.id is not None
+                    and function_call is not None
+                    and function_call.call_id is not None
+                    and not function_call.additional_properties.get("server_label")
+                    and content.id not in unresolved_local_responses_by_id
+                ):
+                    unresolved_local_responses_by_id[content.id] = content
+                    local_response_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
+                continue
+            if content.call_id is None:
+                continue
+            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_follow_up_request = content.user_input_request and content.type not in {
+                "function_approval_request",
+                "function_approval_response",
+            }
+            if not (is_terminal_result or is_follow_up_request):
+                continue
+            if response_ids := local_response_ids_by_call_id.get(content.call_id):
+                unresolved_local_responses_by_id.pop(response_ids.popleft(), None)
+
+    return {
+        id(content) for content in (*unresolved_requests_by_id.values(), *unresolved_local_responses_by_id.values())
+    }
+
+
+def _filter_approval_control_messages(messages: Sequence[Message]) -> list[Message]:
+    """Remove resolved approval controls while preserving pending occurrences."""
+    controls_to_keep = _approval_controls_to_keep(messages)
+    filtered_messages: list[Message] = []
+    for message in messages:
+        filtered_contents = [
+            content
+            for content in message.contents
+            if content.type not in {"function_approval_request", "function_approval_response"}
+            or id(content) in controls_to_keep
+        ]
+        if not filtered_contents:
+            continue
+        if len(filtered_contents) == len(message.contents):
+            filtered_messages.append(message)
+            continue
+        filtered_message = copy.copy(message)
+        filtered_message.contents = filtered_contents
+        filtered_messages.append(filtered_message)
+    return filtered_messages
+
+
 class HistoryProvider(ContextProvider):
     """Base class for conversation history storage providers.
 
@@ -579,7 +652,7 @@ class HistoryProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Load history into context. Skipped by the agent when load_messages=False."""
-        history = await self.get_messages(context.session_id, state=state)
+        history = _filter_approval_control_messages(await self.get_messages(context.session_id, state=state))
         context.extend_messages(self, history)
 
     async def after_run(
@@ -1096,6 +1169,7 @@ class InMemoryHistoryProvider(HistoryProvider):
         self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
     ) -> list[Message]:
         """Retrieve messages from session state."""
+        mark_feature_used(FeatureIndex.CORE_IN_MEMORY_HISTORY_PROVIDER)
         if state is None:
             return []
         messages = list(state.get("messages", []))
@@ -1112,6 +1186,7 @@ class InMemoryHistoryProvider(HistoryProvider):
         **kwargs: Any,
     ) -> None:
         """Persist messages to session state."""
+        mark_feature_used(FeatureIndex.CORE_IN_MEMORY_HISTORY_PROVIDER)
         if state is None:
             return
         existing = state.get("messages", [])
@@ -1231,6 +1306,7 @@ class FileHistoryProvider(HistoryProvider):
         **kwargs: Any,
     ) -> list[Message]:
         """Retrieve messages from the session's JSON Lines file."""
+        mark_feature_used(FeatureIndex.CORE_FILE_HISTORY_PROVIDER)
         del state, kwargs
         file_path = self._session_file_path(session_id)
         async_lock = self._session_async_write_lock(file_path)
@@ -1282,6 +1358,7 @@ class FileHistoryProvider(HistoryProvider):
         **kwargs: Any,
     ) -> None:
         """Append messages to the session's JSON Lines file."""
+        mark_feature_used(FeatureIndex.CORE_FILE_HISTORY_PROVIDER)
         del state, kwargs
         if not messages:
             return

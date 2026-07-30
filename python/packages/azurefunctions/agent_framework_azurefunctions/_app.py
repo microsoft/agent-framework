@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 import azure.durable_functions as df
 import azure.functions as func
 from agent_framework import SupportsAgentRun, Workflow
+from agent_framework._telemetry import mark_feature_used
 from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -56,6 +57,7 @@ from agent_framework_durabletask._workflows.serialization import strip_pickle_ma
 
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
+from ._feature_usage import FeatureIndex
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
 from ._routes import build_workflow_respond_url, build_workflow_status_url, split_request_url
 from ._workflow import run_workflow_orchestrator
@@ -292,6 +294,7 @@ class AgentFunctionApp(DFAppBase):
         if self.enable_health_check:
             self._setup_health_route()
 
+        mark_feature_used(FeatureIndex.AZUREFUNCTIONS)
         logger.debug("[AgentFunctionApp] Initialization complete")
 
     def _collect_workflows(

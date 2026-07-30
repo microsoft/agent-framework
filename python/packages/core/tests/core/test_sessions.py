@@ -14,6 +14,7 @@ from agent_framework import (
     AgentContext,
     AgentSession,
     ChatContext,
+    Content,
     ContextProvider,
     ExperimentalFeature,
     FileHistoryProvider,
@@ -24,7 +25,11 @@ from agent_framework import (
     agent_middleware,
     chat_middleware,
 )
-from agent_framework._sessions import LOCAL_HISTORY_CONVERSATION_ID, is_local_history_conversation_id
+from agent_framework._sessions import (
+    LOCAL_HISTORY_CONVERSATION_ID,
+    _filter_approval_control_messages,
+    is_local_history_conversation_id,
+)
 from agent_framework.exceptions import MiddlewareException
 
 # ---------------------------------------------------------------------------
@@ -346,6 +351,83 @@ class ConcreteHistoryProvider(HistoryProvider):
 
     async def save_messages(self, session_id: str | None, messages: Sequence[Message], *, state=None, **kwargs) -> None:
         self.stored.extend(messages)
+
+
+def test_filter_approval_controls_preserves_only_unresolved_occurrences() -> None:
+    local_call = Content.from_function_call(call_id="local", name="guarded", arguments="{}")
+    local_request = Content.from_function_approval_request(id="local_approval", function_call=local_call)
+    hosted_call = Content.from_function_call(
+        call_id="hosted",
+        name="hosted_tool",
+        arguments="{}",
+        additional_properties={"server_label": "server"},
+    )
+    hosted_request = Content.from_function_approval_request(id="hosted_approval", function_call=hosted_call)
+    resolved_call = Content.from_function_call(call_id="resolved", name="guarded", arguments="{}")
+    resolved_request = Content.from_function_approval_request(id="resolved_approval", function_call=resolved_call)
+    resolved_response = resolved_request.to_function_approval_response(approved=True)
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[local_call, local_request]),
+        Message(role="assistant", contents=[hosted_request]),
+        Message(role="assistant", contents=[resolved_call, resolved_request]),
+        Message(role="user", contents=[resolved_response]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="resolved", result="done")]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert controls == [local_request, hosted_request]
+    assert any(
+        content.type == "function_result" and content.call_id == "resolved"
+        for message in filtered
+        for content in message.contents
+    )
+
+
+def test_filter_approval_controls_deduplicates_pending_request_replay() -> None:
+    function_call = Content.from_function_call(call_id="call_1", name="guarded", arguments="{}")
+    request = Content.from_function_approval_request(id="approval_1", function_call=function_call)
+    replayed_request = Content.from_dict(request.to_dict())
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[function_call, request]),
+        Message(role="assistant", contents=[replayed_request]),
+    ])
+
+    requests = [
+        content for message in filtered for content in message.contents if content.type == "function_approval_request"
+    ]
+    assert requests == [request]
+
+
+def test_filter_approval_controls_keeps_response_for_pending_placeholder() -> None:
+    function_call = Content.from_function_call(call_id="call_pending", name="guarded", arguments="{}")
+    request = Content.from_function_approval_request(id="approval_pending", function_call=function_call)
+    response = request.to_function_approval_response(approved=True)
+    placeholder = Content.from_function_result(
+        call_id="call_pending",
+        result="[APPROVAL_PENDING] waiting for execution",
+    )
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[function_call, request]),
+        Message(role="user", contents=[response]),
+        Message(role="tool", contents=[placeholder]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert controls == [response]
+    assert any(placeholder in message.contents for message in filtered)
 
 
 class TestHistoryProviderBase:

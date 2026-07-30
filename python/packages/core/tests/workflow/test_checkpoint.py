@@ -427,6 +427,229 @@ async def test_workflow_checkpoint_ancestry_preserved_after_resume():
     assert checkpoints_by_id[chain[-1]].previous_checkpoint_id is None
 
 
+async def test_workflow_entry_checkpoint_records_input_and_replays():
+    """The entry checkpoint records the run's raw input, enabling a full replay from the start executor.
+
+    The first checkpoint is created before any executor runs and captures the input
+    message seeded onto the start executor's internal self-edge. Restoring it on a fresh instance
+    re-delivers that input to the start executor, so the entire run - including the start executor -
+    replays and produces the same output.
+    """
+    from typing_extensions import Never
+
+    from agent_framework import WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._const import INTERNAL_SOURCE_ID
+    from agent_framework._workflows._executor import Executor
+
+    class StartExecutor(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message + "-start", target_id="finish")
+
+    class FinishExecutor(Executor):
+        @handler
+        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(message + "-done")
+
+    storage = InMemoryCheckpointStorage()
+
+    def _build_workflow() -> Any:
+        start = StartExecutor(id="start")
+        finish = FinishExecutor(id="finish")
+        return (
+            WorkflowBuilder(
+                name="entry-replay-test",
+                max_iterations=10,
+                start_executor=start,
+                checkpoint_storage=storage,
+            )
+            .add_edge(start, finish)
+            .build()
+        )
+
+    # First run.
+    workflow = _build_workflow()
+    workflow_name = workflow.name
+    first_outputs = (await workflow.run("hello")).get_outputs()
+    assert first_outputs == ["hello-start-done"]
+
+    # The entry checkpoint is created before any executor runs.
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow_name)
+    entry = [cp for cp in checkpoints if cp.iteration_count == 0]
+    assert len(entry) == 1, "A fresh checkpointed run must create exactly one entry checkpoint at iteration 0"
+    entry_cp = entry[0]
+    assert entry_cp.previous_checkpoint_id is None
+
+    # The raw input is recorded as an in-flight message on the start executor's internal self-edge.
+    seeded = entry_cp.messages.get(INTERNAL_SOURCE_ID("start"))
+    assert seeded is not None and len(seeded) == 1, "Entry checkpoint must record the seeded input message"
+    assert seeded[0].data == "hello"
+
+    # Restore the entry checkpoint on a fresh instance: the start executor replays from the raw input
+    # and the whole run reproduces the original output.
+    replay_workflow = _build_workflow()
+    replay_outputs = (await replay_workflow.run(checkpoint_id=entry_cp.checkpoint_id)).get_outputs()
+    assert replay_outputs == first_outputs
+
+
+async def test_workflow_one_checkpoint_per_superstep_lineage_and_replay():
+    """A checkpointed run yields exactly one checkpoint per superstep plus the entry checkpoint,
+    forms a single unbroken lineage, and can be replayed from any pre-terminal checkpoint.
+
+    - Count: checkpoints == (# supersteps) + 1 (the iteration-0 entry checkpoint), with contiguous
+      iteration counts ``0..N`` (no gaps or duplicates).
+    - Lineage: the entry checkpoint has no parent and every later checkpoint chains to its predecessor.
+    - Replay: restoring any non-terminal checkpoint on a fresh instance reproduces the final output.
+    """
+    from typing_extensions import Never
+
+    from agent_framework import WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._executor import Executor
+
+    class StartExecutor(Executor):
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message + "-start", target_id="middle")
+
+    class MiddleExecutor(Executor):
+        @handler
+        async def process(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message + "-middle", target_id="finish")
+
+    class FinishExecutor(Executor):
+        @handler
+        async def finish(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            await ctx.yield_output(message + "-done")
+
+    storage = InMemoryCheckpointStorage()
+
+    def _build_workflow() -> Any:
+        start = StartExecutor(id="start")
+        middle = MiddleExecutor(id="middle")
+        finish = FinishExecutor(id="finish")
+        return (
+            WorkflowBuilder(
+                name="per-superstep-test",
+                max_iterations=10,
+                start_executor=start,
+                checkpoint_storage=storage,
+            )
+            .add_edge(start, middle)
+            .add_edge(middle, finish)
+            .build()
+        )
+
+    # First run: count supersteps via the emitted control-plane events.
+    workflow = _build_workflow()
+    workflow_name = workflow.name
+    events = [event async for event in workflow.run("hello", stream=True)]
+    first_outputs = [event.data for event in events if event.type == "output"]
+    superstep_count = sum(1 for event in events if event.type == "superstep_completed")
+    assert first_outputs == ["hello-start-middle-done"]
+    assert superstep_count == 3, "start -> middle -> finish converges in three supersteps"
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow_name),
+        key=lambda c: c.iteration_count,
+    )
+
+    # Count: one checkpoint per superstep plus the entry checkpoint, with contiguous iteration counts.
+    assert len(checkpoints) == superstep_count + 1
+    assert [cp.iteration_count for cp in checkpoints] == list(range(superstep_count + 1))
+
+    # Lineage: the entry checkpoint has no parent; every later checkpoint chains to its predecessor.
+    assert checkpoints[0].previous_checkpoint_id is None
+    for prev, cur in zip(checkpoints, checkpoints[1:]):
+        assert cur.previous_checkpoint_id == prev.checkpoint_id, (
+            f"Checkpoint at iteration {cur.iteration_count} must chain to iteration {prev.iteration_count}"
+        )
+
+    # Replay: restoring any non-terminal checkpoint reproduces the final output. The terminal
+    # checkpoint (highest iteration) is the converged state with no work left, so it is excluded.
+    for cp in checkpoints[:-1]:
+        replay_workflow = _build_workflow()
+        replay_outputs = (await replay_workflow.run(checkpoint_id=cp.checkpoint_id)).get_outputs()
+        assert replay_outputs == first_outputs, (
+            f"Replay from the checkpoint at iteration {cp.iteration_count} must reproduce the final output"
+        )
+
+
+async def test_workflow_response_entry_checkpoint_records_response_and_replays():
+    """Delivering responses records a response-entry checkpoint that captures the responses in-flight,
+    making a human-in-the-loop continuation fully replayable.
+
+    The response-entry checkpoint is created before the runner processes the responses. It sits at
+    the same iteration as the pending-request (IDLE) checkpoint but is a distinct checkpoint that
+    chains from it and carries the delivered response as an in-flight message (with no pending
+    requests). Resuming from it on a fresh instance re-delivers the response and reproduces the output.
+    """
+    from typing_extensions import Never
+
+    from agent_framework import WorkflowBuilder, WorkflowContext, WorkflowRunState, handler, response_handler
+    from agent_framework._workflows._executor import Executor
+    from agent_framework._workflows._request_info_mixin import RequestInfoMixin
+
+    class HilExecutor(Executor, RequestInfoMixin):
+        @handler
+        async def start(self, message: str, ctx: WorkflowContext) -> None:
+            await ctx.request_info(message, response_type=str, request_id="req1")
+
+        @response_handler
+        async def on_response(
+            self,
+            original_request: str,
+            response: str,
+            ctx: WorkflowContext[Never, str],  # type: ignore[valid-type]
+        ) -> None:
+            await ctx.yield_output(f"{original_request}->{response}")
+
+    storage = InMemoryCheckpointStorage()
+
+    def _build_workflow() -> Any:
+        hil = HilExecutor(id="hil")
+        return WorkflowBuilder(
+            name="response-entry-test",
+            max_iterations=10,
+            start_executor=hil,
+            checkpoint_storage=storage,
+        ).build()
+
+    # First run: pauses at IDLE_WITH_PENDING_REQUESTS awaiting the response.
+    workflow = _build_workflow()
+    workflow_name = workflow.name
+    result = await workflow.run("approve")
+    request_events = result.get_request_info_events()
+    assert len(request_events) == 1
+    request_id = request_events[0].request_id
+    assert result.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+
+    checkpoints_before = await storage.list_checkpoints(workflow_name=workflow_name)
+    before_ids = {cp.checkpoint_id for cp in checkpoints_before}
+    # The last checkpoint before responding sits at the pending-request boundary and records the request.
+    pending_cp = max(checkpoints_before, key=lambda c: c.iteration_count)
+    assert pending_cp.pending_request_info_events
+
+    # Deliver the response; the workflow completes.
+    final = await workflow.run(responses={request_id: "yes"})
+    assert final.get_outputs() == ["approve->yes"]
+
+    checkpoints_after = await storage.list_checkpoints(workflow_name=workflow_name)
+    new_checkpoints = [cp for cp in checkpoints_after if cp.checkpoint_id not in before_ids]
+
+    # The response-entry checkpoint sits at the SAME iteration as the pending-request checkpoint,
+    # chains from it, has no pending requests (they were answered), and records the response in-flight.
+    response_entry = next(cp for cp in new_checkpoints if cp.iteration_count == pending_cp.iteration_count)
+    assert response_entry.checkpoint_id != pending_cp.checkpoint_id
+    assert response_entry.previous_checkpoint_id == pending_cp.checkpoint_id
+    assert not response_entry.pending_request_info_events
+    assert response_entry.messages, "Response-entry checkpoint must record the delivered response in-flight"
+
+    # Resuming from the response-entry checkpoint replays the continuation and reproduces the output.
+    replay_workflow = _build_workflow()
+    replay_outputs = (await replay_workflow.run(checkpoint_id=response_entry.checkpoint_id)).get_outputs()
+    assert replay_outputs == ["approve->yes"]
+
+
 async def test_memory_checkpoint_storage_roundtrip_json_native_types():
     """Test that JSON-native types (str, int, float, bool, None) roundtrip correctly."""
     storage = InMemoryCheckpointStorage()

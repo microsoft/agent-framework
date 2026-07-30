@@ -26,6 +26,7 @@ from agent_framework import (
     SupportsAgentRun,
     WorkflowAgent,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
 from azure.ai.agentserver.responses import (
     ResponseContext,
@@ -114,6 +115,8 @@ from azure.ai.agentserver.responses.streaming._builders import (
 )
 from mcp import McpError
 from typing_extensions import Any
+
+from ._feature_usage import FeatureIndex
 
 logger = logging.getLogger(__name__)
 
@@ -391,6 +394,27 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     CHECKPOINT_STORAGE_PATH = "/.checkpoints"
     FUNCTION_APPROVAL_STORAGE_PATH = "/.function_approvals/approval_requests.json"
 
+    @staticmethod
+    def _resolve_checkpoint_root(is_hosted: bool) -> str:
+        """Resolve checkpoint storage path.
+
+        Hosted: $HOME/.checkpoints (or /home/session/.checkpoints).
+        Local: {cwd}/.checkpoints.
+        """
+        if not is_hosted:
+            return os.path.join(os.getcwd(), ".checkpoints")
+
+        home = os.environ.get("HOME", "").strip()
+        if home and home != "/":
+            try:
+                resolved = Path(home).resolve()
+                if str(resolved) != str(resolved.root):
+                    return str(resolved / ".checkpoints")
+            except (OSError, ValueError):
+                pass
+
+        return "/home/session/.checkpoints"
+
     def __init__(
         self,
         agent: SupportsAgentRun,
@@ -439,11 +463,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "There should not be a checkpoint storage already present in the workflow agent. "
                     "The hosting infrastructure will manage checkpoints instead."
                 )
-            self._checkpoint_storage_path = (
-                self.CHECKPOINT_STORAGE_PATH
-                if self.config.is_hosted
-                else os.path.join(os.getcwd(), self.CHECKPOINT_STORAGE_PATH.lstrip("/"))
-            )
+            self._checkpoint_storage_path = self._resolve_checkpoint_root(self.config.is_hosted)
             self._is_workflow_agent = True
 
         self._agent = agent
@@ -468,6 +488,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self._agent_init_lock = asyncio.Lock()
         self.shutdown_handler(self._cleanup_agent)
         self.response_handler(self._handle_response)
+        mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
 
     async def _ensure_agent_ready(self) -> None:
         """Lazily enter the agent's async context exactly once.

@@ -7,12 +7,14 @@ import re
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
+import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import (
     Agent,
     ChatResponse,
     Content,
     Message,
+    ResponseStream,
     SupportsChatGetResponse,
     SupportsCodeInterpreterTool,
     SupportsFileSearchTool,
@@ -21,6 +23,8 @@ from agent_framework import (
     SupportsWebSearchTool,
     tool,
 )
+from agent_framework._telemetry import FeatureIndex as CoreFeatureIndex
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import ChatClientException, SettingNotFoundError
 from openai import BadRequestError
 from openai.types.chat.chat_completion import ChatCompletion, Choice
@@ -33,6 +37,7 @@ from agent_framework_openai._chat_completion_client import (
     _AZURE_WEB_SEARCH_UNSUPPORTED_MSG,
 )
 from agent_framework_openai._exceptions import OpenAIContentFilterException
+from agent_framework_openai._feature_usage import FeatureIndex
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -932,6 +937,76 @@ def test_prepare_message_with_unprotected_text_reasoning_content(
     assert prepared == [{"role": "assistant", "content": "Foundry summary"}]
 
 
+def test_prepare_message_sanitizes_author_name(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that author_name is sanitized before being sent as the message ``name``.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/7126
+    OpenAI validates the Chat Completions message ``name`` against ``^[^\\s<|\\\\/>]+$``, so an
+    agent display name containing a space (e.g. "My Agent") previously failed every request
+    with a 400. Sanitization mirrors SanitizeAuthorName in the .NET client: characters outside
+    ``[a-zA-Z0-9_]`` are removed and the result is truncated to 64 characters.
+    """
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="My Agent",
+    )
+
+    prepared = client._prepare_message_for_openai(message)
+
+    assert prepared == [{"role": "assistant", "name": "MyAgent", "content": "hello"}]
+
+    # System/developer path sanitizes too.
+    system_message = Message(
+        role="system",
+        contents=[Content.from_text(text="be helpful")],
+        author_name="orchestrator/planner",
+    )
+
+    assert client._prepare_message_for_openai(system_message) == [
+        {"role": "system", "content": "be helpful", "name": "orchestratorplanner"}
+    ]
+
+    # A name with no valid characters is omitted rather than sent empty.
+    invalid_only = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="<|/\\>",
+    )
+
+    assert client._prepare_message_for_openai(invalid_only) == [{"role": "assistant", "content": "hello"}]
+
+    # Long names are truncated to 64 characters.
+    long_name = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="a" * 100,
+    )
+
+    assert client._prepare_message_for_openai(long_name)[0]["name"] == "a" * 64
+
+
+def test_prepare_message_keeps_valid_author_name(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """A name that is already valid for the Chat Completions API is passed through unchanged."""
+    client = OpenAIChatCompletionClient()
+
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text(text="hello")],
+        author_name="Agent_42",
+    )
+
+    assert client._prepare_message_for_openai(message) == [
+        {"role": "assistant", "name": "Agent_42", "content": "hello"}
+    ]
+
+
 def test_prepare_message_with_only_text_reasoning_content(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -1090,6 +1165,31 @@ def test_function_approval_content_is_skipped_in_preparation(
     assert prepared_mixed[0]["content"] == "I need approval for this action."
 
 
+def test_mixed_approval_resume_roles_serialize_function_result_as_tool(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    follow_up_request = Content.from_oauth_consent_request(consent_link="https://example.com/consent")
+    follow_up_request.call_id = "call_paused"
+    messages = [
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_completed", result="completed")],
+        ),
+        Message(role="assistant", contents=[follow_up_request]),
+    ]
+
+    prepared = client._prepare_messages_for_openai(messages)
+
+    assert prepared[0] == {
+        "role": "tool",
+        "tool_call_id": "call_completed",
+        "content": "completed",
+    }
+    assert prepared[1]["role"] == "assistant"
+    assert "tool_call_id" not in prepared[1]
+
+
 def test_usage_content_in_streaming_response(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -1152,6 +1252,48 @@ def test_parse_usage_includes_standard_and_legacy_mapped_token_details() -> None
     assert details["reasoning_output_token_count"] == 0
     assert details_dict["prompt/cached_tokens"] == 0
     assert details["cache_read_input_token_count"] == 0
+
+
+def test_parse_usage_with_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai maps cache write tokens to standard and legacy keys."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 2000
+    mock_usage.completion_tokens = 60
+    mock_usage.total_tokens = 2060
+    mock_usage.completion_tokens_details = None
+    mock_usage.prompt_tokens_details = MagicMock()
+    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.cached_tokens = 0
+    mock_usage.prompt_tokens_details.cache_write_tokens = 1024
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
+
+    details_dict = cast("dict[str, Any]", details)
+    assert details_dict["prompt/cache_write_tokens"] == 1024
+    assert details["cache_creation_input_token_count"] == 1024
+    assert details["cache_read_input_token_count"] == 0
+
+
+def test_parse_usage_omits_missing_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai omits cache write tokens when the provider does not report them."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 100
+    mock_usage.completion_tokens = 20
+    mock_usage.total_tokens = 120
+    mock_usage.completion_tokens_details = None
+    mock_usage.prompt_tokens_details = MagicMock(spec=["audio_tokens", "cached_tokens"])
+    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.cached_tokens = 10
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
+
+    assert "prompt/cache_write_tokens" not in details
+    assert "cache_creation_input_token_count" not in details
+    assert details["cache_read_input_token_count"] == 10
 
 
 def test_streaming_chunk_with_usage_and_text(
@@ -1586,6 +1728,59 @@ def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) 
     assert prepared_options["response_format"] == custom_format
 
 
+def test_response_format_raw_schema_dict_is_wrapped(openai_unit_test_env: dict[str, str]) -> None:
+    """A raw JSON-Schema dict is wrapped in the json_schema envelope (parity with the Responses client)."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    raw_schema = {
+        "type": "object",
+        "properties": {"word": {"type": "string"}},
+        "required": ["word"],
+    }
+
+    prepared_options = client._prepare_options(messages, {"response_format": raw_schema})
+
+    assert prepared_options["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "response",
+            "schema": {
+                "type": "object",
+                "properties": {"word": {"type": "string"}},
+                "required": ["word"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    }
+
+
+def test_response_format_raw_schema_title_becomes_name(openai_unit_test_env: dict[str, str]) -> None:
+    """A raw schema's title is popped into the envelope name (strict mode rejects unknown keys)."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    raw_schema = {"type": "object", "title": "Word", "properties": {"word": {"type": "string"}}}
+
+    prepared_options = client._prepare_options(messages, {"response_format": raw_schema})
+
+    wrapped = prepared_options["response_format"]
+    assert wrapped["json_schema"]["name"] == "Word"
+    assert "title" not in wrapped["json_schema"]["schema"]
+
+
+def test_response_format_json_object_dict_passthrough(openai_unit_test_env: dict[str, str]) -> None:
+    """Valid non-json_schema response_format types still pass through unchanged."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+
+    prepared_options = client._prepare_options(messages, {"response_format": {"type": "json_object"}})
+
+    assert prepared_options["response_format"] == {"type": "json_object"}
+
+
 def test_parse_response_with_dict_response_format(openai_unit_test_env: dict[str, str]) -> None:
     """Chat completions should parse dict response_format values into response.value."""
     client = OpenAIChatCompletionClient()
@@ -1705,6 +1900,41 @@ async def test_streaming_exception_handling(
             pass
 
 
+async def test_streaming_feature_is_marked_when_request_is_sent(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+
+    async def create(**kwargs: Any) -> Any:
+        async def chunks() -> Any:
+            if False:
+                yield None
+
+        return chunks()
+
+    with patch.object(client.client.chat.completions, "create", side_effect=create):
+        stream = client._inner_get_response(
+            messages=[Message(role="user", contents=["test"])],
+            stream=True,
+            options={},
+        )
+        assert isinstance(stream, ResponseStream)
+        token = telemetry.get_feature_token()
+        assert token is None or not int(token.split(".", 1)[1], 16) & (1 << FeatureIndex.OPENAI)
+
+        mark_feature_used(CoreFeatureIndex.CORE_AGENT)
+        async for _ in stream:
+            pass
+
+    token = telemetry.get_feature_token()
+    assert token is not None
+    mask = int(token.split(".", 1)[1], 16)
+    assert mask & (1 << FeatureIndex.OPENAI)
+    assert mask & (1 << CoreFeatureIndex.CORE_AGENT)
+
+
 # region Integration Tests
 
 
@@ -1785,6 +2015,27 @@ class OutputStruct(BaseModel):
             },
             True,
             id="response_format_runtime_json_schema",
+        ),
+        param(
+            "response_format",
+            {
+                "title": "WeatherDigest",
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"},
+                    "conditions": {"type": "string"},
+                    "temperature_c": {"type": "number"},
+                    "advisory": {"type": "string"},
+                },
+                "required": [
+                    "location",
+                    "conditions",
+                    "temperature_c",
+                    "advisory",
+                ],
+            },
+            True,
+            id="response_format_raw_json_schema",
         ),
     ],
 )

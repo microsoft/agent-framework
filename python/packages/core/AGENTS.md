@@ -17,6 +17,7 @@ agent_framework/
 ├── _sessions.py         # AgentSession and context provider abstractions
 ├── _skills.py           # Agent Skills system (models, executors, provider)
 ├── _mcp.py              # Model Context Protocol support
+├── _telemetry.py        # User-Agent identity and internal feature-usage mask
 ├── _workflows/          # Workflow orchestration (sequential, concurrent, handoff, etc.)
 ├── openai/              # Built-in OpenAI client
 ├── azure/               # Lazy-loading entry point for Azure integrations
@@ -145,6 +146,36 @@ agent_framework/
   available, approval requests for known non-approval-required tools are treated as already approved, hidden, stored
   in session state keyed to the visible approval request ids from that batch, and reinjected only when that visible
   approval flow resumes.
+- Approval resume is an immutable response boundary: the function invocation layer normalizes a private copy of
+  caller messages, returns approved and rejected terminal results in the resumed response (and stream) before any
+  final assistant message, and does not mutate the caller's approval `Message` or the earlier approval-request
+  response.
+- Approval/result correlation is occurrence-aware. A `call_id` may be reused after a completed round, so approval
+  normalization matches ordered call occurrences and consumes approved results per occurrence rather than using one
+  global result per `call_id`. All contents produced by one execution remain one result group and are consumed
+  together, including multiple user-input requests.
+- Approval resume keeps terminal `function_result` contents in tool-role messages and follow-up user-input requests
+  in assistant-role messages, including mixed sibling batches.
+- Function-call budget accounting counts one unit per executed result group, not per emitted `function_result`, so
+  executions that pause for user input still consume `max_function_calls`.
+- Once an invocation limit disables local tools, locally actionable calls and local approval requests are removed
+  from streaming and final output. Provider-executed informational call/result pairs, hosted approval requests, and
+  metadata-only stream updates remain visible.
+- Declaration-only streamed calls emit their arguments only from the provider stream. The function layer sends a
+  metadata-only follow-up (`arguments=None`) so `id` and `user_input_request` survive final aggregation without
+  duplicating arguments.
+- `function_approval_request` and `function_approval_response` are control-plane contents. History providers may
+  retain them in their backing store for audit. The base `HistoryProvider.before_run` filters resolved wrappers from
+  later model replay, but preserves unresolved requests/responses until a terminal result or follow-up request closes
+  the occurrence. On unrelated turns the function layer omits the complete pending call batch from model input while
+  retaining it for a later approval response. Providers configured with `load_messages=False` do not replay history,
+  so this filter is intentionally not invoked.
+- Reasoning content or opaque reasoning metadata bound to a function call is part of the same logical group as the
+  call and terminal result. Function-loop replay and compaction must preserve that group atomically; adapters should
+  fail before a stateless request when required reasoning cannot be reconstructed.
+- Compaction scans assistant function calls and assistant- or tool-role terminal results in transcript/content order,
+  pairing reused `call_id` values by ordered unambiguous occurrence. A result links only when exactly one preceding
+  declaration remains unmatched; genuinely ambiguous duplicate declarations stay separate.
 ### Agent Loop (`_harness/_loop.py`)
 
 - **`AgentLoopMiddleware`** - `AgentMiddleware` that re-runs an agent in a loop by calling `call_next()` repeatedly (the pipeline re-reads `context.messages` each time). One configurable class covers two patterns: a required user `should_continue` predicate (sync or async, the first positional/keyword arg), and a chat-client judge built via the `.with_judge(...)` factory (a second chat client decides whether the original request was answered; loops while it is *not*, using a `JudgeVerdict` structured-output response — internally just an async `should_continue` predicate). The constructor covers the predicate pattern directly; only the judge has a convenience classmethod factory (`.with_judge(judge_client, ...)`) that forwards to `__init__`. Supports both streaming and non-streaming runs. By default a non-streaming run returns an aggregated `AgentResponse` containing every iteration's messages plus the injected `next_message` "nudge" messages (as `user` messages); set `return_final_only=True` to return only the last iteration's response. Streaming runs always yield each iteration's updates and emit the injected nudge messages as `user` updates between iterations (the `return_final_only` flag has no effect on streaming, and the final response reflects the last iteration; `MiddlewareTermination` is handled cleanly). `should_continue` is required; other constructor args are optional: `max_iterations` (safety cap; defaults to `DEFAULT_MAX_ITERATIONS`=10, explicit `None`→unbounded, positive int caps; `.with_judge` uses `DEFAULT_JUDGE_MAX_ITERATIONS`=5 as its default), `next_message` (defaults to a short "continue" nudge), `return_final_only`, and `additional_instructions` (an extra `system` message injected ahead of the input before the agent runs — becomes part of the original messages so it survives `fresh_context` resets and persists via a session). The judge is configured only through `.with_judge` (`judge_client`/`instructions`/`criteria`), not the constructor, and its `reasoning` is fed back to the agent as the next iteration's input; the judge forwards the original request messages and the agent's latest response messages verbatim so multi-modal content is preserved. `criteria` (a `list[str]`) is both injected as the agent's `additional_instructions` and rendered into the judge instructions wherever the `{{criteria}}` placeholder (`CRITERIA_PLACEHOLDER`) appears (`DEFAULT_JUDGE_INSTRUCTIONS` ends with it; custom `instructions` may include it, and it is stripped when no criteria are given). The `should_continue`/`next_message` callables are invoked with keyword args (`iteration`, `last_result`, `messages`, `original_messages`, `session`, `agent`, `progress`, `feedback`) and may be sync or async; declare only what you need plus `**kwargs`. `should_continue` may return a plain `bool` or a `(bool, str | None)` tuple whose second item is feedback surfaced to `next_message`/`record_feedback` via the `feedback` kwarg (the judge uses this to relay its `reasoning`). Stop precedence per iteration is `max_iterations` → `should_continue`, evaluated before `record_feedback` so the feedback is available to it.

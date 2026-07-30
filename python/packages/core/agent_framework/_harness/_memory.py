@@ -20,6 +20,7 @@ from .._clients import SupportsChatGetResponse
 from .._compaction import group_messages
 from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import AgentSession, FileHistoryProvider, HistoryProvider, JsonDumps, JsonLoads, SessionContext
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import tool
 from .._types import ChatResponse, Message
 from ..exceptions import ChatClientException
@@ -1170,6 +1171,7 @@ class MemoryContextProvider(HistoryProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject ``MEMORY.md`` and selected topic files before the model runs."""
+        mark_feature_used(FeatureIndex.CORE_MEMORY_PROVIDER)
         state.clear()
         state.update(self.store.export_provider_state(session))
 
