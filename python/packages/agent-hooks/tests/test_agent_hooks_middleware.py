@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 """Tests for the AGENT-HOOKS-0.1 middleware."""
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -58,7 +59,11 @@ def _function_context(arguments: dict[str, Any]) -> FunctionInvocationContext:
     return FunctionInvocationContext(function=_FakeFunction(), arguments=arguments)
 
 
-async def _run(middlewares: list[Any], fn_ctx: FunctionInvocationContext) -> list[Any]:
+async def _run(
+    middlewares: list[Any],
+    fn_ctx: FunctionInvocationContext,
+    tool: Callable[[], Awaitable[None]] | None = None,
+) -> list[Any]:
     """Drive the agent middleware bracket around one function invocation."""
     agent_mw, _, fn_mw = middlewares
     records: list[Any] = []
@@ -67,7 +72,7 @@ async def _run(middlewares: list[Any], fn_ctx: FunctionInvocationContext) -> lis
         async def call_fn() -> None:
             fn_ctx.result = "ok"
 
-        await fn_mw.process(fn_ctx, call_fn)
+        await fn_mw.process(fn_ctx, tool or call_fn)
 
     agent_ctx = _agent_context()
     await agent_mw.process(agent_ctx, inner)
@@ -140,3 +145,19 @@ async def test_function_middleware_noop_outside_run() -> None:
 
     await AgentHooksFunctionMiddleware().process(fn_ctx, call_next)
     assert fn_ctx.result == "ran"
+
+
+async def test_tool_error_still_emits_post_tool_call() -> None:
+    records: list[Any] = []
+    middlewares = agent_hooks_middleware([_AllowAll()], record_sink=records.append)
+    fn_ctx = _function_context({"query": "cats"})
+
+    async def exploding_tool() -> None:
+        raise RuntimeError("tool exploded")
+
+    with pytest.raises(RuntimeError, match="tool exploded"):
+        await _run(middlewares, fn_ctx, tool=exploding_tool)
+
+    posts = [r for r in records if r.interception_point.value == "post_tool_call"]
+    assert len(posts) == 1
+    assert records[-1].interception_point.value == "agent_shutdown"

@@ -115,6 +115,21 @@ def _arguments_to_dict(arguments: Any) -> dict[str, Any]:
     return {"value": str(arguments)}
 
 
+def _result_to_wire(value: Any) -> Any:
+    """Best-effort JSON projection of a tool result for post_tool_call."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Mapping):
+        return {str(k): _result_to_wire(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_result_to_wire(v) for v in value]
+    dump = getattr(value, "model_dump", None)
+    if callable(dump):
+        with contextlib.suppress(Exception):
+            return dump()
+    return str(value)
+
+
 class AgentHooksAgentMiddleware(AgentMiddleware):
     """Run bracket: ``agent_startup``, ``input``, ``output``, ``agent_shutdown``."""
 
@@ -247,11 +262,26 @@ class AgentHooksFunctionMiddleware(FunctionMiddleware):
             args = dict(effective)
             context.arguments = args
 
-        await call_next()
+        try:
+            await call_next()
+        except MiddlewareTermination:
+            raise
+        except BaseException as exc:
+            # The invocation completed with an error: the contract still
+            # brackets it with post_tool_call (tool_result.is_error = true).
+            with contextlib.suppress(InterceptionBlocked):
+                await state.emitter.emit(
+                    state.builder.post_tool_call(
+                        call_id=call_id, name=name, args=args, value=type(exc).__name__, is_error=True
+                    )
+                )
+            raise
 
         try:
             await state.emitter.emit(
-                state.builder.post_tool_call(call_id=call_id, name=name, args=args, value=context.result)
+                state.builder.post_tool_call(
+                    call_id=call_id, name=name, args=args, value=_result_to_wire(context.result)
+                )
             )
         except InterceptionBlocked as exc:
             context.result = None
