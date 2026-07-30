@@ -30,10 +30,12 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentSession,
     BaseChatClient,
+    ChatMiddlewareLayer,
     ChatResponse,
     Content,
     ExperimentalFeature,
     FileCheckpointStorage,
+    FunctionInvocationLayer,
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
@@ -49,6 +51,7 @@ from agent_framework import (
     WorkflowContext,
     WorkflowMessage,
     executor,
+    tool,
 )
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
@@ -171,6 +174,83 @@ class _RecordingHistoryClient(BaseChatClient):
         return get_response()
 
 
+class _PerServiceCallHistoryProvider(HistoryProvider):
+    def __init__(self) -> None:
+        super().__init__("per_service_call_history", load_messages=False)
+        self.save_calls = 0
+
+    async def get_messages(
+        self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[Message]:
+        del session_id, state, kwargs
+        return []
+
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[Message],
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        del session_id, messages, state, kwargs
+        self.save_calls += 1
+
+
+class _FunctionLoopRecordingClient(
+    FunctionInvocationLayer[Any],
+    ChatMiddlewareLayer[Any],
+    BaseChatClient[Any],
+):
+    def __init__(self, provider: _PerServiceCallHistoryProvider) -> None:
+        super().__init__(middleware=[])
+        self._provider = provider
+        self.calls: list[list[Message]] = []
+        self.saves_before_call: list[int] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse]:
+        del options, kwargs
+        if stream:
+            raise NotImplementedError("This test client only supports non-streaming responses.")
+        self.calls.append(list(messages))
+        self.saves_before_call.append(self._provider.save_calls)
+        call_number = len(self.calls)
+
+        async def get_response() -> ChatResponse:
+            if call_number == 1:
+                return ChatResponse(
+                    messages=[
+                        Message(
+                            role="assistant",
+                            contents=[
+                                Content.from_function_call(
+                                    call_id="call_1",
+                                    name="lookup_weather",
+                                    arguments='{"location": "Seattle"}',
+                                )
+                            ],
+                        )
+                    ]
+                )
+            return ChatResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("It is sunny in Seattle.")])]
+            )
+
+        return get_response()
+
+
+@tool(name="lookup_weather", approval_mode="never_require")
+def _lookup_weather(location: str) -> str:
+    return f"Weather in {location}: sunny"
+
+
 class _FailingSessionStore(SessionStore):
     def __init__(self) -> None:
         super().__init__()
@@ -278,8 +358,8 @@ class TestResponsesHostServerInit:
         history_sentinel = agent.context_providers[0]
         assert isinstance(history_sentinel, InMemoryHistoryProvider)
         assert history_sentinel.load_messages is True
-        assert history_sentinel.store_inputs is False
-        assert history_sentinel.store_outputs is False
+        assert history_sentinel.store_inputs is True
+        assert history_sentinel.store_outputs is True
 
     def test_init_uses_in_memory_session_store_by_default_locally(self) -> None:
         agent = _make_agent(
@@ -667,6 +747,39 @@ class TestAgentSessionPersistence:
         stored = await store.get(session_id)
         assert stored is not None
         assert InMemoryHistoryProvider.DEFAULT_SOURCE_ID not in stored.state
+        assert "_foundry_responses_history" not in stored.state
+
+    async def test_per_service_call_persistence_preserves_function_loop_history(self) -> None:
+        provider = _PerServiceCallHistoryProvider()
+        client = _FunctionLoopRecordingClient(provider)
+        agent = Agent(
+            client=client,
+            tools=[_lookup_weather],
+            context_providers=[provider],
+            require_per_service_call_history_persistence=True,
+        )
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+
+        response = await _post(server, input_text="What's the weather in Seattle?")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "completed"
+        assert len(client.calls) == 2
+        assert client.saves_before_call == [0, 1]
+        assert provider.save_calls == 2
+        assert [content.type for message in client.calls[1] for content in message.contents] == [
+            "text",
+            "function_call",
+            "function_result",
+        ]
+        assert client.calls[1][0].text == "What's the weather in Seattle?"
+        assert client.calls[1][1].contents[0].call_id == "call_1"
+        assert client.calls[1][2].contents[0].call_id == "call_1"
+
+        stored = await store.get(response.json()["id"])
+        assert stored is not None
+        assert "_foundry_responses_history" not in stored.state
 
     async def test_file_store_restores_session_across_server_instances(self, tmp_path: Path) -> None:
         seen_counts: list[int] = []

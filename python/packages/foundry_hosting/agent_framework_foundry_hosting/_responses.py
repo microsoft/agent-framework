@@ -228,13 +228,14 @@ class FileBasedFunctionApprovalStorage:
 
 
 def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
-    """Return whether ``provider`` is the host's no-op history-loading sentinel."""
+    """Return whether ``provider`` is the host's transient history buffer."""
     return (
         isinstance(provider, InMemoryHistoryProvider)
         and provider.source_id == _HOSTED_RESPONSES_HISTORY_SOURCE_ID
-        and not provider.store_inputs
+        and provider.load_messages
+        and provider.store_inputs
         and not provider.store_context_messages
-        and not provider.store_outputs
+        and provider.store_outputs
     )
 
 
@@ -459,25 +460,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._checkpoint_storage_path = self._resolve_checkpoint_root(self.config.is_hosted)
             self._is_workflow_agent = True
 
-        if (
-            not self._is_workflow_agent
-            and isinstance(agent, RawAgent)
-            and not any(
+        self._uses_hosted_responses_history = False
+        if not self._is_workflow_agent and isinstance(agent, RawAgent):
+            self._uses_hosted_responses_history = True
+            if not any(
                 _is_hosted_responses_history_sentinel(provider)
                 for provider in cast(Sequence[ContextProvider], agent.context_providers)
-            )
-        ):
-            # The Responses provider already supplies the complete transcript on every
-            # call. Agent.run would otherwise mutate the same user-owned agent by
-            # auto-injecting its default InMemoryHistoryProvider. Install a loading
-            # no-op provider up front so that transcript is not replayed twice.
-            agent.context_providers.append(
-                InMemoryHistoryProvider(
-                    source_id=_HOSTED_RESPONSES_HISTORY_SOURCE_ID,
-                    store_inputs=False,
-                    store_outputs=False,
+            ):
+                # The Responses provider already supplies the complete transcript on every
+                # call. Agent.run would otherwise mutate the same user-owned agent by
+                # auto-injecting its default InMemoryHistoryProvider. Install a transient
+                # buffer that carries history within a function-call loop, then discard its
+                # state before persisting the session so the transcript is not replayed twice.
+                agent.context_providers.append(
+                    InMemoryHistoryProvider(
+                        source_id=_HOSTED_RESPONSES_HISTORY_SOURCE_ID,
+                    )
                 )
-            )
 
         self._agent: SupportsAgentRun = agent
         self._session_store: SessionStore | None = (
@@ -617,6 +616,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     raise RuntimeError(message)
                 session = previous_session if previous_session is not None else self._agent.create_session()
 
+            if session is not None and self._uses_hosted_responses_history:
+                session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
@@ -682,6 +684,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         except Exception as ex:
             request_failure = ex
         finally:
+            if session is not None and self._uses_hosted_responses_history:
+                session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
             if session is not None and self._session_store is not None:
                 try:
                     await self._session_store.set(context.conversation_id or context.response_id, session)
