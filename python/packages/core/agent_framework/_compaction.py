@@ -17,6 +17,7 @@ from typing import (
 )
 
 from ._sessions import ContextProvider
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import ChatResponse, Content, Message
 
 if TYPE_CHECKING:
@@ -1093,14 +1094,56 @@ def _tool_result_text(value: Any) -> str:
     return str(cast(object, value))
 
 
-def _format_messages_for_summary(messages: list[Message]) -> str:
+def _format_summary_message(index: int, message: Message) -> str:
+    content_text = message.text
+    if not content_text:
+        content_text = ", ".join(content.type for content in message.contents)
+    return f"{index}. [{message.role}] {content_text}"
+
+
+def _format_messages_for_summary(messages: list[Message], *, start_index: int = 1) -> str:
     lines: list[str] = []
-    for index, message in enumerate(messages, start=1):
-        content_text = message.text
-        if not content_text:
-            content_text = ", ".join(content.type for content in message.contents)
-        lines.append(f"{index}. [{message.role}] {content_text}")
+    for index, message in enumerate(messages, start=start_index):
+        lines.append(_format_summary_message(index, message))
     return "\n".join(lines)
+
+
+def _select_summary_input_groups(
+    groups: Sequence[tuple[str, list[Message]]],
+    *,
+    prompt: str,
+    max_summary_input_tokens: int | None,
+    tokenizer: TokenizerProtocol,
+) -> tuple[list[str], list[Message]]:
+    if max_summary_input_tokens is None:
+        return (
+            [group_id for group_id, _ in groups],
+            [message for _, group_messages in groups for message in group_messages],
+        )
+
+    selected_group_ids: list[str] = []
+    selected_messages: list[Message] = []
+    prompt_token_count = tokenizer.count_tokens(prompt)
+    selected_message_count = 0
+    selected_text_token_count = 0
+    separator_token_count = tokenizer.count_tokens("\n")
+
+    for group_id, group_messages in groups:
+        group_text = _format_messages_for_summary(group_messages, start_index=selected_message_count + 1)
+        candidate_text_token_count = selected_text_token_count + tokenizer.count_tokens(group_text)
+        if selected_messages:
+            candidate_text_token_count += separator_token_count
+        candidate_token_count = prompt_token_count + candidate_text_token_count
+        if candidate_token_count > max_summary_input_tokens:
+            if not selected_messages:
+                continue
+            break
+        selected_group_ids.append(group_id)
+        selected_messages.extend(group_messages)
+        selected_message_count += len(group_messages)
+        selected_text_token_count = candidate_text_token_count
+
+    return selected_group_ids, selected_messages
 
 
 DEFAULT_SUMMARIZATION_PROMPT: Final[
@@ -1119,6 +1162,9 @@ The summary must never:
 - Comment on events or ideas not present in the conversation
 - Omit any details included in an earlier summary
 """
+
+DEFAULT_SUMMARY_INPUT_TOKEN_BUDGET: Final[int] = 8_000
+SUMMARY_FAILURE_ERROR_THRESHOLD: Final[int] = 3
 
 
 class SummarizationStrategy:
@@ -1150,6 +1196,8 @@ class SummarizationStrategy:
         target_count: int = 4,
         threshold: int | None = 2,
         prompt: str | None = None,
+        max_summary_input_tokens: int | None = DEFAULT_SUMMARY_INPUT_TOKEN_BUDGET,
+        tokenizer: TokenizerProtocol | None = None,
     ) -> None:
         """Create a summarization strategy.
 
@@ -1167,19 +1215,50 @@ class SummarizationStrategy:
             prompt: Optional summarization instruction. If omitted, a default
                 prompt that preserves goals, decisions, and unresolved items is
                 used.
+            max_summary_input_tokens: Maximum estimated token count for the
+                summarizer request prompt and user transcript. Whole message
+                groups are selected until the next group would exceed this
+                budget. Pass ``None`` to disable the input budget.
+            tokenizer: Token counter used to estimate summarizer request size.
+                If omitted, :class:`CharacterEstimatorTokenizer` is used.
 
         Raises:
             ValueError: If ``target_count`` is less than 1.
             ValueError: If ``threshold`` is provided and is negative.
+            ValueError: If ``max_summary_input_tokens`` is provided and is less
+                than 1.
         """
         if target_count <= 0:
             raise ValueError("target_count must be greater than 0.")
         if threshold is not None and threshold < 0:
             raise ValueError("threshold must be greater than or equal to 0.")
+        if max_summary_input_tokens is not None and max_summary_input_tokens <= 0:
+            raise ValueError("max_summary_input_tokens must be greater than 0.")
         self.client = client
         self.target_count = target_count
         self.threshold = threshold if threshold is not None else 0
         self.prompt = prompt or DEFAULT_SUMMARIZATION_PROMPT
+        self.max_summary_input_tokens = max_summary_input_tokens
+        self.tokenizer = tokenizer or CharacterEstimatorTokenizer()
+        self._consecutive_summary_failures = 0
+        self._summary_failure_error_emitted = False
+
+    def _record_summary_failure(self) -> None:
+        self._consecutive_summary_failures += 1
+        if (
+            self._consecutive_summary_failures >= SUMMARY_FAILURE_ERROR_THRESHOLD
+            and not self._summary_failure_error_emitted
+        ):
+            logger.error(
+                "Summarization compaction has failed %s consecutive times; "
+                "graceful summary compaction may no longer be contributing.",
+                self._consecutive_summary_failures,
+            )
+            self._summary_failure_error_emitted = True
+
+    def _record_summary_success(self) -> None:
+        self._consecutive_summary_failures = 0
+        self._summary_failure_error_emitted = False
 
     async def __call__(self, messages: list[Message]) -> bool:
         ordered_group_ids = _ordered_group_ids_from_annotations(messages)
@@ -1220,12 +1299,23 @@ class SummarizationStrategy:
         if not group_ids_to_summarize:
             return False
 
-        messages_to_summarize: list[Message] = []
-        for group_id, group_messages in included_non_system_groups:
-            if group_id in keep_group_id_set:
-                continue
-            messages_to_summarize.extend(group_messages)
+        candidate_groups = [
+            (group_id, group_messages)
+            for group_id, group_messages in included_non_system_groups
+            if group_id not in keep_group_id_set
+        ]
+        group_ids_to_summarize, messages_to_summarize = _select_summary_input_groups(
+            candidate_groups,
+            prompt=self.prompt,
+            max_summary_input_tokens=self.max_summary_input_tokens,
+            tokenizer=self.tokenizer,
+        )
         if not messages_to_summarize:
+            if self.max_summary_input_tokens is not None:
+                logger.warning(
+                    "Skipping summarization compaction: no complete message group fits within max_summary_input_tokens."
+                )
+                self._record_summary_failure()
             return False
 
         try:
@@ -1244,12 +1334,15 @@ class SummarizationStrategy:
                 "Skipping summarization compaction: summary generation failed (%s).",
                 exc,
             )
+            self._record_summary_failure()
             return False
 
         summary_text = summary_response.text.strip() if summary_response.text else ""
         if not summary_text:
             logger.warning("Skipping summarization compaction: summarizer returned no text.")
+            self._record_summary_failure()
             return False
+        self._record_summary_success()
         summary_id = f"summary_{len(messages)}"
         original_message_ids = [message.message_id for message in messages_to_summarize if message.message_id]
         summary_of_group_ids = list(group_ids_to_summarize)
@@ -1447,6 +1540,7 @@ class CompactionProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Compact messages already present in the context from earlier providers."""
+        mark_feature_used(FeatureIndex.CORE_COMPACTION_PROVIDER)
         if self.before_strategy is None:
             return
 

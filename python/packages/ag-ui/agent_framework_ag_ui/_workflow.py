@@ -25,7 +25,9 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import Workflow
+from agent_framework._telemetry import mark_feature_used
 
+from ._feature_usage import FeatureIndex
 from ._message_adapters import agui_messages_to_snapshot_format
 from ._run_common import (
     _build_run_finished_event,
@@ -298,6 +300,7 @@ class AgentFrameworkWorkflow:
 
         Subclasses may override this to provide custom AG-UI streams.
         """
+        mark_feature_used(FeatureIndex.AG_UI)
         thread_id = self._thread_id_from_input(input_data)
         run_id = str(input_data.get("run_id") or input_data.get("runId") or uuid.uuid4())
         snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))

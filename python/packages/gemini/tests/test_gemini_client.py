@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
 
 from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
+from agent_framework_gemini._feature_usage import FeatureIndex
 
 
 def _has_gemini_integration_credentials() -> bool:
@@ -369,8 +370,10 @@ async def test_get_response_returns_text() -> None:
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hello!")]))
 
-    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+    with patch("agent_framework_gemini._chat_client.mark_feature_used") as mark_feature_used:
+        response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
 
+    mark_feature_used.assert_called_once_with(FeatureIndex.GEMINI)
     assert response.messages[0].text == "Hello!"
 
 

@@ -5,6 +5,7 @@
 import logging
 from typing import Any
 
+import pytest
 from typing_extensions import Self
 
 from agent_framework._serialization import SerializationMixin
@@ -368,6 +369,26 @@ class TestSerializationMixin:
         # Verify to_dict includes the type
         out = obj.to_dict()
         assert out["type"] == "my_custom_type"
+
+    def test_from_dict_rejects_mismatched_type(self):
+        """from_dict raises ValueError when the payload type doesn't match the class."""
+
+        class TestClass(SerializationMixin):
+            def __init__(self, value: str):
+                self.value = value
+
+        with pytest.raises(ValueError, match="Type mismatch: expected 'test_class', got 'function_tool'"):
+            TestClass.from_dict({"type": "function_tool", "value": "x"})
+
+    def test_from_json_rejects_mismatched_type(self):
+        """from_json surfaces the same mismatch error instead of silently coercing."""
+
+        class TestClass(SerializationMixin):
+            def __init__(self, value: str):
+                self.value = value
+
+        with pytest.raises(ValueError, match="Type mismatch"):
+            TestClass.from_json('{"type": "some_other_type", "value": "x"}')
 
     def test_from_json(self):
         """Test from_json deserializes JSON string."""

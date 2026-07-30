@@ -38,7 +38,7 @@ from agent_framework._compaction import (
 )
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import USER_AGENT_KEY
+from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._tools import (
     SHELL_TOOL_KIND_VALUE,
     FunctionInvocationConfiguration,
@@ -91,6 +91,7 @@ from openai.types.responses.web_search_tool_param import WebSearchToolParam
 from pydantic import BaseModel
 
 from ._exceptions import OpenAIContentFilterException
+from ._feature_usage import FeatureIndex
 from ._shared import (
     AzureTokenProvider,
     _attach_prompt_cache_breakpoint,  # pyright: ignore[reportPrivateUsage]
@@ -394,6 +395,7 @@ class RawOpenAIChatClient(
     INJECTABLE: ClassVar[set[str]] = {"client"}
     STORES_BY_DEFAULT: ClassVar[bool] = True
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
 
     # Azure OpenAI Responses API may include this header in responses naming the actual model that
     # served the request (e.g. ``gpt-5-nano-2025-08-07``), which can differ from the deployment alias
@@ -624,6 +626,8 @@ class RawOpenAIChatClient(
             Tuple of (client, run_options, validated_options).
         """
         client = self.client
+        if self._FEATURE_USAGE_INDEX is not None:
+            mark_feature_used(self._FEATURE_USAGE_INDEX)
         validated_options = await self._validate_options(options)
         run_options = await self._prepare_options(messages, validated_options)
         return client, run_options, validated_options
@@ -653,6 +657,7 @@ class RawOpenAIChatClient(
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         continuation_token: OpenAIContinuationToken | None = options.get("continuation_token")
+        extra_headers = cast("Mapping[str, Any] | None", kwargs.get("extra_headers"))
 
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
@@ -673,12 +678,15 @@ class RawOpenAIChatClient(
                 if continuation_token is not None:
                     # Resume a background streaming response by retrieving with stream=True
                     client = self.client
+                    if self._FEATURE_USAGE_INDEX is not None:
+                        mark_feature_used(self._FEATURE_USAGE_INDEX)
                     validated_options = await self._validate_options(options)
                     response_format = validated_options.get("response_format")
                     try:
                         raw_stream_response = await client.responses.with_raw_response.retrieve(
                             continuation_token["response_id"],
                             stream=True,
+                            extra_headers=extra_headers,
                         )
                         # Read headers defensively: telemetry instrumentors (e.g. azure-ai-projects
                         # experimental tracing) wrap the streaming response in objects that do not
@@ -704,6 +712,8 @@ class RawOpenAIChatClient(
                         run_options,
                         validated_options,
                     ) = await self._prepare_request(messages, options)
+                    if extra_headers is not None:
+                        run_options["extra_headers"] = dict(extra_headers)
                     response_format = validated_options.get("response_format")
                     try:
                         if "text_format" in run_options:
@@ -748,9 +758,14 @@ class RawOpenAIChatClient(
             if continuation_token is not None:
                 # Poll a background response by retrieving without stream
                 client = self.client
+                if self._FEATURE_USAGE_INDEX is not None:
+                    mark_feature_used(self._FEATURE_USAGE_INDEX)
                 validated_options = await self._validate_options(options)
                 try:
-                    raw_response = await client.responses.with_raw_response.retrieve(continuation_token["response_id"])
+                    raw_response = await client.responses.with_raw_response.retrieve(
+                        continuation_token["response_id"],
+                        extra_headers=extra_headers,
+                    )
                     response = raw_response.parse()
                 except Exception as ex:
                     self._handle_request_error(ex)
@@ -769,6 +784,8 @@ class RawOpenAIChatClient(
                     options.pop("continuation_token", None)
                 return chat_response
             client, run_options, validated_options = await self._prepare_request(messages, options)
+            if extra_headers is not None:
+                run_options["extra_headers"] = dict(extra_headers)
             try:
                 if "text_format" in run_options:
                     raw_response = await client.responses.with_raw_response.parse(stream=False, **run_options)

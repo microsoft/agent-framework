@@ -19,7 +19,10 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, cast
 
 from agent_framework import ChatOptions, Content, Message
+from agent_framework._telemetry import mark_feature_used
 from agent_framework_hosting import AgentRunArgs
+
+from ._feature_usage import FeatureIndex
 
 # Telegram media fields whose objects carry a `file_id` (and, except photos,
 # a `mime_type`) directly, mapped to the MIME type Telegram uses when the
@@ -321,6 +324,7 @@ async def telegram_to_run(
         ValueError: If the update has no actionable message/callback data, or
             a message has no text, caption, or resolvable media.
     """
+    mark_feature_used(FeatureIndex.HOSTING_TELEGRAM)
     message = _inner_message(update)
     if message is not None:
         contents = await _contents_from_message(message, resolve_file_url)

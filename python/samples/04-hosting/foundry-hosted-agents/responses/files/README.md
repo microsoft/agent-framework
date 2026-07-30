@@ -24,7 +24,7 @@ This agent uses four tools:
 4. **Code Interpreter Tool (`code_interpreter`)** – Allows the agent to execute Python code in a safe sandboxed environment.
 5. **Web Search Tool (`web_search`)** – Allows the agent to perform web searches using the Bing Search API.
 
-> In this sample, the filesystem tools are function tools defined in Python using the `@tool` decorator from the Agent Framework. The code interpreter tool and web search tool are managed tools provided by [Foundry Toolbox](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox). Learn more about foundry toolbox integration with hosted agents with this [sample](../04_foundry_toolbox/).
+> In this sample, the filesystem tools are function tools defined in Python using the `@tool` decorator from the Agent Framework. The code interpreter tool and web search tool are managed tools provided by [Foundry Toolbox](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox). Learn more about foundry toolbox integration with hosted agents with this [sample](../foundry_toolbox/).
 
 ## Running the Agent Host
 

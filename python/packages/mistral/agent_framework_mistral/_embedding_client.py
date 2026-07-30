@@ -17,7 +17,10 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._settings import SecretString
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.observability import EmbeddingTelemetryLayer
+
+from ._feature_usage import FeatureIndex
 
 
 def _load_mistral_client_class() -> Any:
@@ -177,6 +180,7 @@ class RawMistralEmbeddingClient(
         if "dimensions" in opts:
             kwargs["output_dimension"] = opts["dimensions"]
 
+        mark_feature_used(FeatureIndex.MISTRAL)
         response = await self.client.embeddings.create_async(**kwargs)
 
         embeddings: list[Embedding[list[float]]] = []

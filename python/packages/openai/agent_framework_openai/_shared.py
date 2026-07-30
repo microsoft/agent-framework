@@ -18,6 +18,8 @@ from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 
+from ._feature_usage import create_feature_usage_http_client
+
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
 else:
@@ -285,6 +287,7 @@ def load_openai_service_settings(
     if client:
         return azure_settings, client, True  # type: ignore[return-value]
     client_args["default_headers"] = merged_headers
+    client_args["http_client"] = create_feature_usage_http_client()
     if endpoint := azure_settings.get("endpoint"):
         if responses_mode:
             client_args["base_url"] = f"{endpoint.rstrip('/')}/openai/v1/"
@@ -317,6 +320,7 @@ def load_openai_service_settings(
         openai_args: dict[str, Any] = {
             "base_url": resolved_base_url,
             "default_headers": client_args.get("default_headers"),
+            "http_client": client_args["http_client"],
         }
         if "azure_ad_token_provider" in client_args:
             openai_args["api_key"] = _ensure_async_token_provider(client_args["azure_ad_token_provider"])

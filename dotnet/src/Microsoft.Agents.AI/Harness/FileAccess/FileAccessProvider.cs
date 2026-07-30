@@ -22,7 +22,8 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// The <see cref="FileAccessProvider"/> gives agents the ability to work with files
 /// in a folder that the user has granted access to. Unlike <see cref="FileMemoryProvider"/>,
-/// which provides session-scoped memory that may be isolated per session, <see cref="FileAccessProvider"/>
+/// which provides agent-managed memory files whose scope is determined by the working folder it is
+/// configured with, <see cref="FileAccessProvider"/>
 /// operates on a shared, persistent folder whose contents are visible across sessions and agents.
 /// This makes it suitable for reading input data, writing output artifacts, and working with
 /// files that have a lifetime beyond any single agent session.

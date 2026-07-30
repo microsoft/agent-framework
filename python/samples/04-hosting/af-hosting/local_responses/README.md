@@ -1,8 +1,8 @@
 # local_responses — Responses helpers with native FastAPI routes
 
 The smallest end-to-end Responses hosting shape: one Foundry agent with a
-`@tool`, one native FastAPI route, a small `SessionStore`, and the Responses
-helper functions:
+`@tool`, one native FastAPI route, core's experimental `SessionStore`, and the
+Responses helper functions:
 
 - `responses_to_run(...)`
 - `responses_session_id(...)`
@@ -42,6 +42,8 @@ What the route demonstrates:
 - Treats each `previous_response_id` as an immutable snapshot. Multiple callers
   can branch from the same response concurrently because each receives a
   session copy and stores its result under a newly minted response id.
+- Uses core's msgspec-backed `FileSessionStore` under
+  `storage/sessions/snapshots`.
 
 `app:app` is a module-level FastAPI ASGI app; recommended local launch is
 Hypercorn.

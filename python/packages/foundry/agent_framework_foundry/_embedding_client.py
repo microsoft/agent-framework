@@ -17,10 +17,13 @@ from agent_framework import (
     UsageDetails,
     load_settings,
 )
+from agent_framework._telemetry import IS_TELEMETRY_ENABLED, get_user_agent, mark_feature_used
 from agent_framework.observability import EmbeddingTelemetryLayer
 from azure.ai.inference.aio import EmbeddingsClient, ImageEmbeddingsClient
 from azure.ai.inference.models import ImageEmbeddingInput
 from azure.core.credentials import AzureKeyCredential
+
+from ._feature_usage import FeatureIndex, create_feature_usage_policy
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -151,13 +154,19 @@ class RawFoundryEmbeddingClient(
         if credential is None and text_client is None and image_client is None:
             raise ValueError("Either 'api_key', 'credential', or pre-configured client(s) must be provided.")
 
+        client_kwargs: dict[str, Any] = {
+            "endpoint": resolved_endpoint,
+            "credential": credential,
+        }
+        if IS_TELEMETRY_ENABLED:
+            client_kwargs["user_agent"] = get_user_agent()
         self._text_client = text_client or EmbeddingsClient(
-            endpoint=resolved_endpoint,  # type: ignore[arg-type]
-            credential=credential,  # type: ignore[arg-type]
+            **client_kwargs,
+            per_retry_policies=[create_feature_usage_policy()],
         )
         self._image_client = image_client or ImageEmbeddingsClient(
-            endpoint=resolved_endpoint,  # type: ignore[arg-type]
-            credential=credential,  # type: ignore[arg-type]
+            **client_kwargs,
+            per_retry_policies=[create_feature_usage_policy()],
         )
         self._endpoint = resolved_endpoint
         super().__init__(additional_properties=additional_properties)
@@ -206,6 +215,7 @@ class RawFoundryEmbeddingClient(
         """
         if not values:
             return GeneratedEmbeddings([], options=options)
+        mark_feature_used(FeatureIndex.FOUNDRY_EMBEDDING)
 
         opts: dict[str, Any] = dict(options) if options else {}
 

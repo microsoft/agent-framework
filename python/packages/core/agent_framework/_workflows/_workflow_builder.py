@@ -4,9 +4,10 @@ import logging
 import sys
 import uuid
 from collections.abc import Callable, Sequence
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from .._agents import SupportsAgentRun
+from .._telemetry import FeatureIndex, mark_feature_used
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent_executor import AgentExecutor
 from ._agent_utils import resolve_agent_id
@@ -84,6 +85,8 @@ class WorkflowBuilder:
             events = await workflow.run("hello")
             print(events.get_outputs())  # ['OLLEH']
     """
+
+    _FEATURE_USAGE_INDEX: ClassVar[FeatureIndex | None] = FeatureIndex.CORE_WORKFLOW
 
     def __init__(
         self,
@@ -800,6 +803,8 @@ class WorkflowBuilder:
                 events = await workflow.run("hello")
                 print(events.get_outputs())  # outputs from planner and answerer
         """
+        if self._FEATURE_USAGE_INDEX is not None:
+            mark_feature_used(self._FEATURE_USAGE_INDEX)
         # Create workflow build span that includes validation and workflow creation
         with create_workflow_span(OtelAttr.WORKFLOW_BUILD_SPAN) as span:
             try:
