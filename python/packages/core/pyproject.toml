@@ -128,6 +128,10 @@ exclude_dirs = ["tests"]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 
+[tool.poe.tasks.dependency-pyright]
+help = "Run Pyright over core implementation files for isolated dependency validation."
+cmd = "pyright --project pyrightconfig.dependency.json"
+
 [tool.poe.tasks.mypy]
 help = "Run MyPy for this package."
 cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"

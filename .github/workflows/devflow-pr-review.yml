@@ -6,6 +6,9 @@ on:
       - opened
       - reopened
       - ready_for_review
+  issue_comment:
+    types:
+      - created
   workflow_dispatch:
     inputs:
       pr_number:
@@ -20,7 +23,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: devflow-pr-review-${{ github.repository }}-${{ github.event.pull_request.number || inputs.pr_number || github.run_id }}
+  group: devflow-pr-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -28,9 +31,20 @@ env:
   DEVFLOW_REF: main
   TARGET_REPO_PATH: ${{ github.workspace }}/target-repo
   DEVFLOW_PATH: ${{ github.workspace }}/devflow
+  MODEL_CONFIG_PATH: ${{ github.workspace }}/devflow/config.ci.yaml
 
 jobs:
   team_check:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (
+        github.event.issue.pull_request &&
+        github.event.comment.body == '@devflow /review' &&
+        (
+          github.event.comment.author_association == 'MEMBER' ||
+          github.event.comment.author_association == 'OWNER'
+        )
+      )
     runs-on: ubuntu-latest
     environment: github-app-auth
     outputs:
@@ -44,6 +58,7 @@ jobs:
         shell: bash
         env:
           PR_HTML_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER_COMMENT: ${{ github.event.issue.number }}
           PR_NUMBER_EVENT: ${{ github.event.pull_request.number }}
           PR_NUMBER_INPUT: ${{ inputs.pr_number }}
         run: |
@@ -52,6 +67,9 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request_target" ]]; then
             pr_number="${PR_NUMBER_EVENT}"
             pr_url="${PR_HTML_URL}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "issue_comment" ]]; then
+            pr_number="${PR_NUMBER_COMMENT}"
+            pr_url="https://github.com/${GITHUB_REPOSITORY}/pull/${pr_number}"
           else
             pr_number="${PR_NUMBER_INPUT}"
             pr_url="https://github.com/${GITHUB_REPOSITORY}/pull/${pr_number}"
@@ -91,10 +109,11 @@ jobs:
           repository: ${{ github.repository }}
           fallback-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
 
-      - name: Check PR author team membership
+      - name: Check review requester team membership
         id: check
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
+          MEMBERSHIP_USER: ${{ github.event_name == 'issue_comment' && github.event.comment.user.login || '' }}
           TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
         with:
@@ -107,19 +126,33 @@ jobs:
               core,
               teamSlug: process.env.TEAM_NAME,
               issueNumber: process.env.PR_NUMBER,
+              username: process.env.MEMBERSHIP_USER,
             });
             core.setOutput('is_team_member', isTeamMember ? 'true' : 'false');
             if (isTeamMember) {
-              core.info(`Author ${author} is a team member; proceeding with review.`);
+              core.info(`User ${author} is a team member; proceeding with review.`);
             } else {
-              core.info(`Author ${author} is not a member of ${process.env.TEAM_NAME}; skipping review.`);
+              core.info(`User ${author} is not a member of ${process.env.TEAM_NAME}; skipping review.`);
             }
+
+      - name: React to authorized review command
+        if: ${{ github.event_name == 'issue_comment' && steps.check.outputs.is_team_member == 'true' }}
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          github-token: ${{ steps.github-auth.outputs.token }}
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              ...context.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
 
   review:
     runs-on: ubuntu-latest
     needs: team_check
     if: ${{ needs.team_check.outputs.is_team_member == 'true' }}
     permissions:
+      copilot-requests: write
       contents: read
       issues: write
       pull-requests: write
@@ -169,8 +202,8 @@ jobs:
         id: review
         working-directory: ${{ env.DEVFLOW_PATH }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_COPILOT_TOKEN: ${{ secrets.GH_COPILOT_TOKEN }}
+          DEVFLOW_TOKEN: ${{ secrets.DEVFLOW_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           SK_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           PR_URL: ${{ needs.team_check.outputs.pr_url }}
@@ -178,4 +211,5 @@ jobs:
           uv run python scripts/trigger_pr_review.py \
             --pr-url "$PR_URL" \
             --github-username "$GITHUB_ACTOR" \
+            --review-compare \
             --no-require-comment-selection

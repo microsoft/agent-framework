@@ -31,6 +31,7 @@
     <Project Path="samples/02-agents/AgentProviders/custom/Agent_With_CustomImplementation/Agent_With_CustomImplementation.csproj" />
     <Project Path="samples/02-agents/AgentProviders/dapr/Agent_With_Dapr/Agent_With_Dapr.csproj" />
     <Project Path="samples/02-agents/AgentProviders/github-copilot/Agent_With_GitHubCopilot/Agent_With_GitHubCopilot.csproj" />
+    <Project Path="samples/02-agents/AgentProviders/github-copilot/Agent_With_GitHubCopilot_BYOK/Agent_With_GitHubCopilot_BYOK.csproj" />
     <Project Path="samples/02-agents/AgentProviders/google-gemini/Agent_With_GoogleGemini/Agent_With_GoogleGemini.csproj" />
     <Project Path="samples/02-agents/AgentProviders/ollama/Agent_With_Ollama/Agent_With_Ollama.csproj" />
     <Project Path="samples/02-agents/AgentProviders/onnx/Agent_With_ONNX/Agent_With_ONNX.csproj" />
@@ -342,6 +343,9 @@
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/" />
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-ChatClientAgent/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-ChatClientAgent/HostedChatClientAgent.csproj" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-ChatClientAgent-Dockerfile/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-ChatClientAgent-Dockerfile/HostedChatClientAgentDocker.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-FoundryAgent/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-FoundryAgent/HostedFoundryAgent.csproj" />

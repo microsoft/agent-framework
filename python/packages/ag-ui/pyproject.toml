@@ -24,7 +24,7 @@ classifiers = [
 dependencies = [
     "agent-framework-core>=1.11.0,<2",
     "ag-ui-protocol>=0.1.19,<0.2",
-    "fastapi>=0.121.0,<0.138.1",
+    "fastapi>=0.121.0,<0.140.0",
     "sse-starlette>=3.4.5,<4",
     "uvicorn[standard]>=0.30.0,<1"
 ]
@@ -33,6 +33,11 @@ dependencies = [
 dev = [
     "pytest==9.1.1",
     "httpx==0.28.1",
+]
+
+[dependency-groups]
+test = [
+    "agent-framework-orchestrations",
 ]
 
 [build-system]

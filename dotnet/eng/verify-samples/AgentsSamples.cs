@@ -838,6 +838,19 @@ internal static class AgentsSamples
 
         new SampleDefinition
         {
+            Name = "Agent_With_GitHubCopilot_BYOK",
+            ProjectPath = "samples/02-agents/AgentProviders/github-copilot/Agent_With_GitHubCopilot_BYOK",
+            RequiredEnvironmentVariables = ["BYOK_BASE_URL", "BYOK_API_KEY"],
+            OptionalEnvironmentVariables = ["BYOK_PROVIDER_TYPE", "BYOK_MODEL_ID"],
+            ExpectedOutputDescription =
+            [
+                "The output should contain a user prompt and a response about the benefits of BYOK.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
             Name = "Agent_With_GoogleGemini",
             ProjectPath = "samples/02-agents/AgentProviders/google-gemini/Agent_With_GoogleGemini",
             RequiredEnvironmentVariables = ["GOOGLE_GENAI_API_KEY"],

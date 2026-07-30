@@ -1090,6 +1090,31 @@ def test_function_approval_content_is_skipped_in_preparation(
     assert prepared_mixed[0]["content"] == "I need approval for this action."
 
 
+def test_mixed_approval_resume_roles_serialize_function_result_as_tool(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatCompletionClient()
+    follow_up_request = Content.from_oauth_consent_request(consent_link="https://example.com/consent")
+    follow_up_request.call_id = "call_paused"
+    messages = [
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_completed", result="completed")],
+        ),
+        Message(role="assistant", contents=[follow_up_request]),
+    ]
+
+    prepared = client._prepare_messages_for_openai(messages)
+
+    assert prepared[0] == {
+        "role": "tool",
+        "tool_call_id": "call_completed",
+        "content": "completed",
+    }
+    assert prepared[1]["role"] == "assistant"
+    assert "tool_call_id" not in prepared[1]
+
+
 def test_usage_content_in_streaming_response(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -1152,6 +1177,48 @@ def test_parse_usage_includes_standard_and_legacy_mapped_token_details() -> None
     assert details["reasoning_output_token_count"] == 0
     assert details_dict["prompt/cached_tokens"] == 0
     assert details["cache_read_input_token_count"] == 0
+
+
+def test_parse_usage_with_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai maps cache write tokens to standard and legacy keys."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 2000
+    mock_usage.completion_tokens = 60
+    mock_usage.total_tokens = 2060
+    mock_usage.completion_tokens_details = None
+    mock_usage.prompt_tokens_details = MagicMock()
+    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.cached_tokens = 0
+    mock_usage.prompt_tokens_details.cache_write_tokens = 1024
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
+
+    details_dict = cast("dict[str, Any]", details)
+    assert details_dict["prompt/cache_write_tokens"] == 1024
+    assert details["cache_creation_input_token_count"] == 1024
+    assert details["cache_read_input_token_count"] == 0
+
+
+def test_parse_usage_omits_missing_cache_write_tokens() -> None:
+    """Test _parse_usage_from_openai omits cache write tokens when the provider does not report them."""
+    client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
+
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 100
+    mock_usage.completion_tokens = 20
+    mock_usage.total_tokens = 120
+    mock_usage.completion_tokens_details = None
+    mock_usage.prompt_tokens_details = MagicMock(spec=["audio_tokens", "cached_tokens"])
+    mock_usage.prompt_tokens_details.audio_tokens = None
+    mock_usage.prompt_tokens_details.cached_tokens = 10
+
+    details = client._parse_usage_from_openai(mock_usage)  # type: ignore[arg-type]
+
+    assert "prompt/cache_write_tokens" not in details
+    assert "cache_creation_input_token_count" not in details
+    assert details["cache_read_input_token_count"] == 10
 
 
 def test_streaming_chunk_with_usage_and_text(
@@ -1586,6 +1653,59 @@ def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) 
     assert prepared_options["response_format"] == custom_format
 
 
+def test_response_format_raw_schema_dict_is_wrapped(openai_unit_test_env: dict[str, str]) -> None:
+    """A raw JSON-Schema dict is wrapped in the json_schema envelope (parity with the Responses client)."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    raw_schema = {
+        "type": "object",
+        "properties": {"word": {"type": "string"}},
+        "required": ["word"],
+    }
+
+    prepared_options = client._prepare_options(messages, {"response_format": raw_schema})
+
+    assert prepared_options["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "response",
+            "schema": {
+                "type": "object",
+                "properties": {"word": {"type": "string"}},
+                "required": ["word"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    }
+
+
+def test_response_format_raw_schema_title_becomes_name(openai_unit_test_env: dict[str, str]) -> None:
+    """A raw schema's title is popped into the envelope name (strict mode rejects unknown keys)."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+    raw_schema = {"type": "object", "title": "Word", "properties": {"word": {"type": "string"}}}
+
+    prepared_options = client._prepare_options(messages, {"response_format": raw_schema})
+
+    wrapped = prepared_options["response_format"]
+    assert wrapped["json_schema"]["name"] == "Word"
+    assert "title" not in wrapped["json_schema"]["schema"]
+
+
+def test_response_format_json_object_dict_passthrough(openai_unit_test_env: dict[str, str]) -> None:
+    """Valid non-json_schema response_format types still pass through unchanged."""
+    client = OpenAIChatCompletionClient()
+
+    messages = [Message(role="user", contents=["test"])]
+
+    prepared_options = client._prepare_options(messages, {"response_format": {"type": "json_object"}})
+
+    assert prepared_options["response_format"] == {"type": "json_object"}
+
+
 def test_parse_response_with_dict_response_format(openai_unit_test_env: dict[str, str]) -> None:
     """Chat completions should parse dict response_format values into response.value."""
     client = OpenAIChatCompletionClient()
@@ -1785,6 +1905,27 @@ class OutputStruct(BaseModel):
             },
             True,
             id="response_format_runtime_json_schema",
+        ),
+        param(
+            "response_format",
+            {
+                "title": "WeatherDigest",
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"},
+                    "conditions": {"type": "string"},
+                    "temperature_c": {"type": "number"},
+                    "advisory": {"type": "string"},
+                },
+                "required": [
+                    "location",
+                    "conditions",
+                    "temperature_c",
+                    "advisory",
+                ],
+            },
+            True,
+            id="response_format_raw_json_schema",
         ),
     ],
 )

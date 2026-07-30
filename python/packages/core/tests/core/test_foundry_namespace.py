@@ -1,12 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import pytest
-from agent_framework_foundry import FoundryChatClient, FoundryMemoryProvider
-from agent_framework_foundry_hosting import ResponsesHostServer
-from agent_framework_foundry_local import FoundryLocalClient
 
 import agent_framework.azure as azure
 import agent_framework.foundry as foundry
+
+_foundry = pytest.importorskip("agent_framework_foundry")
+_foundry_hosting = pytest.importorskip("agent_framework_foundry_hosting")
+_foundry_local = pytest.importorskip("agent_framework_foundry_local")
+
+FoundryChatClient = _foundry.FoundryChatClient
+FoundryMemoryProvider = _foundry.FoundryMemoryProvider
+ResponsesHostServer = _foundry_hosting.ResponsesHostServer
+FoundryLocalClient = _foundry_local.FoundryLocalClient
 
 
 def test_foundry_namespace_exposes_cloud_and_local_symbols() -> None:

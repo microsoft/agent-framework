@@ -2983,6 +2983,8 @@ async def test_persist_only_history_provider_still_injects_inmemory(
 
 async def test_shared_local_storage_cross_provider_responses_history_does_not_leak_fc_id() -> None:
     """Responses-specific replay metadata should stay local to Responses when session storage is shared."""
+    pytest.importorskip("agent_framework_openai")
+
     from openai.types.chat.chat_completion import ChatCompletion, Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 

@@ -102,6 +102,7 @@ jobs:
     needs: resolve-ref
     if: needs.resolve-ref.outputs.dotnet-changes == 'true'
     permissions:
+      copilot-requests: write
       contents: read
       id-token: write
     uses: ./.github/workflows/dotnet-integration-tests.yml
@@ -112,7 +113,6 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZUREAI__ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
       OPENAI__APIKEY: ${{ secrets.OPENAI__APIKEY }}
 
   python-integration-tests:
@@ -120,6 +120,7 @@ jobs:
     needs: resolve-ref
     if: needs.resolve-ref.outputs.python-changes == 'true'
     permissions:
+      copilot-requests: write
       contents: read
       id-token: write
     uses: ./.github/workflows/python-integration-tests.yml
@@ -130,6 +131,5 @@ jobs:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
       FOUNDRY_MODELS_API_KEY: ${{ secrets.FOUNDRY_MODELS_API_KEY }}
       OPENAI__APIKEY: ${{ secrets.OPENAI__APIKEY }}
