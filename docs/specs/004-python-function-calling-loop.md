@@ -487,6 +487,7 @@ These scenarios are required but are not fully covered by merged tests on `main`
 |---|---|
 | Service-side storage sends the current approval response while omitting the stored request. | #7125 |
 | Service-owned `previous_response_id` continuation cannot execute a terminal approval again on a later turn. | #6851 |
+| A provider that ignores `tool_choice="none"` after an invocation limit cannot expose an unanswered call. | #7045 |
 | Declaration-only streaming preserves request metadata without duplicating arguments. | #6973 |
 
 Do not mark these rows covered by nearby tests; each needs a dedicated regression at the owning layer.
