@@ -6,8 +6,8 @@ This sample demonstrates the helper-first hosting shape:
 
 1. ``agent-framework-hosting-responses`` converts Responses request/response
    payloads to and from Agent Framework run values.
-2. ``agent-framework-hosting`` owns shared execution state via
-   ``AgentState`` and ``SessionStore``.
+2. ``agent-framework-hosting`` owns ``AgentState``; core provides its
+   ``SessionStore``.
 3. FastAPI owns the route, request parsing, policy decisions, and response
    object.
 
@@ -55,7 +55,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated, Any, cast
 
-from agent_framework import Agent, FileHistoryProvider, ResponseStream, tool
+from agent_framework import Agent, FileHistoryProvider, FileSessionStore, ResponseStream, tool
 from agent_framework_foundry import FoundryChatClient
 from agent_framework_hosting import AgentState
 from agent_framework_hosting_responses import (
@@ -105,7 +105,10 @@ def create_agent() -> Agent:
 
 
 app = FastAPI()
-state = AgentState(create_agent)
+state = AgentState(
+    create_agent,
+    session_store=FileSessionStore(SESSIONS_DIR / "snapshots"),
+)
 
 ALLOWED_REQUEST_OPTIONS = frozenset({"max_tokens", "reasoning"})
 

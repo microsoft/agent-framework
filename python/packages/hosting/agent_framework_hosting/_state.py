@@ -29,89 +29,13 @@ from agent_framework import (
     AgentRunInputs,
     AgentSession,
     ChatOptions,
+    SessionStore,
     SupportsAgentRun,
     Workflow,
 )
 from agent_framework._telemetry import mark_feature_used
 
 from ._feature_usage import FeatureIndex
-
-
-class SessionStore:
-    """Plain in-memory ``session_id -> AgentSession`` lookup.
-
-    This store only stores and retrieves; it does not create sessions. Use
-    :meth:`AgentState.get_or_create_session` for that -- it resolves the
-    agent target and calls ``target.create_session(...)`` the first time a
-    given ``session_id`` is seen, then stores the result here.
-
-    No eviction: every id ever stored stays resolvable for the life of the
-    process. That is intentional -- protocols such as OpenAI Responses'
-    ``previous_response_id`` are designed to let a caller continue from *any*
-    earlier point in a conversation, not just the latest turn, so every id
-    that has been handed out needs to stay independently resolvable. If you
-    back a ``SessionStore``-shaped store with real storage (Redis, a
-    database, ...), you are responsible for that store's own TTL/eviction
-    policy; this in-memory reference implementation does not model that
-    concern.
-
-    The ``get`` method creates a copy of the session in order to ensure multiple
-    callers using the same response id can continue the session.
-    The behavior for that is controlled by the developer.
-
-    So if there should be branching, then make sure to store the session with the new
-    session id, if the conversation should continue, then store them with the same ID.
-    Ensuring that multiple callers cannot simultaneously overwrite the same session is
-    the responsibility of the developer.
-    """
-
-    def __init__(self) -> None:
-        """Create an empty session store."""
-        self._sessions: dict[str, AgentSession] = {}
-
-    async def get(self, session_id: str) -> AgentSession | None:
-        """Return a copy of the stored session for ``session_id``, or ``None`` if absent.
-
-        When overriding this method ensure the semantics stay the same and a copy is returned.
-
-        Args:
-            session_id: Opaque app-selected session id.
-
-        Raises:
-            ValueError: If ``session_id`` is empty.
-        """
-        if not session_id:
-            raise ValueError("session_id must be a non-empty string")
-        session = self._sessions.get(session_id)
-        return copy.deepcopy(session) if session is not None else None
-
-    async def set(self, session_id: str, session: AgentSession) -> None:
-        """Store ``session`` under ``session_id``, replacing any existing entry.
-
-        Args:
-            session_id: Opaque app-selected session id.
-            session: The session to store.
-
-        Raises:
-            ValueError: If ``session_id`` is empty.
-        """
-        if not session_id:
-            raise ValueError("session_id must be a non-empty string")
-        self._sessions[session_id] = session
-
-    async def delete(self, session_id: str) -> None:
-        """Forget the stored session for ``session_id``, if any.
-
-        Args:
-            session_id: Opaque app-selected session id.
-
-        Raises:
-            ValueError: If ``session_id`` is empty.
-        """
-        if not session_id:
-            raise ValueError("session_id must be a non-empty string")
-        self._sessions.pop(session_id, None)
-
 
 AgentT = TypeVar("AgentT", bound=SupportsAgentRun)
 WorkflowT = TypeVar("WorkflowT", bound=Workflow)
@@ -240,14 +164,12 @@ class AgentState(Generic[AgentT]):
         """Return the session for ``session_id``, creating and storing one if missing.
 
         Args:
-            session_id: Opaque app-selected session id.
+            session_id: Opaque app-selected session ID.
 
         Returns:
             An independent working copy of the stored or newly created
             ``AgentSession``.
         """
-        if not session_id:
-            raise ValueError("session_id must be a non-empty string")
         session_lock = self._session_locks.setdefault(session_id, asyncio.Lock())
         async with session_lock:
             session = await self._session_store.get(session_id)
@@ -262,7 +184,7 @@ class AgentState(Generic[AgentT]):
         """Store ``session`` under ``session_id`` in this state's session store.
 
         Args:
-            session_id: Opaque app-selected session id.
+            session_id: Opaque app-selected session ID.
             session: Session to store.
         """
         await self._session_store.set(session_id, session)

@@ -75,13 +75,16 @@ agent_framework/
 ### Sessions (`_sessions.py`)
 
 - **`AgentSession`** - Manages conversation state and session metadata
+- **`SessionStore`** - Experimental in-memory opaque `session_id -> AgentSession` snapshot store; reads return independent copies
+- **`FileSessionStore`** - Experimental msgspec file-backed session snapshot store with atomic last-writer-wins updates; JSON is the default, `serialization_format="msgpack"` enables binary MessagePack, opaque keys are encoded to portable filenames, and only syntactically malformed snapshots are quarantined (schema, version, and state-decoder failures preserve the original file)
+- **`register_state_type`** - Registers custom `AgentSession.state` classes with stable, process-wide type IDs and optional mapping codecs. Provider modules own registration for their custom state types and should use package-qualified IDs. Implicit Pydantic registration remains temporarily with `DeprecationWarning`, but module-level registration is needed to guarantee cold-start restoration.
 - **`ServiceSessionId`** - Mapping alias for structured service-owned continuation handles used in `AgentSession.service_session_id`
 - **`SessionContext`** - Context object for session-scoped data during agent runs. `extend_messages(...)` can attach
   ordered, deduplicated `origin_session_ids` attribution when a provider injects content from other sessions.
 - **`ContextProvider`** - Base class for context providers (RAG, memory systems)
 - **`HistoryProvider`** - Base class for conversation history storage
 - **`InMemoryHistoryProvider`** - Built-in session-state history provider for local runs
-- **`FileHistoryProvider`** - JSON Lines file-backed history provider storing one file per session with one message record per line
+- **`FileHistoryProvider`** - Experimental append-only file-backed history provider; msgspec JSON Lines is the default and `serialization_format="msgpack"` uses length-prefixed binary MessagePack records. Custom `dumps`/`loads` remain as deprecated JSON-only compatibility hooks and emit `DeprecationWarning` when supplied.
 
 ### Skills (`_skills.py`)
 
@@ -208,6 +211,8 @@ agent_framework/
 ### Foundry (`foundry/`)
 
 - **`FoundryChatClient`** - Chat client for Microsoft Foundry project endpoints
+- **`FoundrySessionStore`** - Experimental Foundry-hosting session store, lazily re-exported from
+  `agent-framework-foundry-hosting`; currently file-backed and scoped by Agent Server request context
 
 ## Key Patterns
 

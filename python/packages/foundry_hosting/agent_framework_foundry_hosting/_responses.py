@@ -16,18 +16,22 @@ from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from agent_framework import (
+    AgentSession,
     ChatOptions,
     Content,
     ContextProvider,
     FileCheckpointStorage,
     HistoryProvider,
+    InMemoryHistoryProvider,
     Message,
     RawAgent,
+    SessionStore,
     SupportsAgentRun,
     WorkflowAgent,
 )
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
+from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
     ResponseContext,
     ResponseEventStream,
@@ -117,10 +121,16 @@ from mcp import McpError
 from typing_extensions import Any
 
 from ._feature_usage import FeatureIndex
+from ._request_context import (
+    validate_foundry_request_context,
+    validate_path_segment,
+)
+from ._session_store import FoundrySessionStore
 
 logger = logging.getLogger(__name__)
 
 _AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
+_HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
 
 
 # region Approval Storage
@@ -217,43 +227,24 @@ class FileBasedFunctionApprovalStorage:
         return await asyncio.to_thread(self._load_sync, approval_request_id)
 
 
-def _validate_path_segment(segment: str, *, kind: Literal["context id", "user id"]) -> None:
-    """Validate that ``segment`` is a single safe path component (CWE-22).
-
-    ``segment`` originates from caller-controlled fields (such as
-    ``previous_response_id``), server-generated fields (``conversation_id`` /
-    ``response_id``), or the platform-injected per-user partition key
-    (``x-agent-user-id``). In every case it must be treated as an untrusted
-    single path segment: path separators, drive letters, parent references and
-    similar would otherwise let the resulting directory escape the configured
-    storage root.
-
-    We deliberately do not URL-decode the value here: the hosting layer never
-    decodes these ids before joining them, so forms such as ``%2e%2e`` are
-    accepted as literal directory names. Do NOT add decoding here without
-    re-validating after the decode -- decode-then-join is exactly the pattern
-    that reintroduces traversal. We also do not attempt to "sanitize" by
-    stripping characters because that can introduce collisions between distinct
-    ids.
-    """
-    if not isinstance(segment, str) or not segment:
-        raise RuntimeError(f"Invalid {kind}: must be a non-empty string.")
-    # Reject any value that is not a single safe path component. This covers
-    # POSIX/Windows separators, NUL bytes, drive letters, and all-dot segments
-    # (``.``, ``..``, ``...``, ...).
-    if (
-        "/" in segment
-        or "\\" in segment
-        or "\x00" in segment
-        # All-dot segments (``.``, ``..``, ``...``, ...) reduce to "" after stripping dots.
-        or segment.strip(".") == ""
-        or os.path.isabs(segment)
-        or os.path.splitdrive(segment)[0]
-    ):
-        raise RuntimeError(f"Invalid {kind}: {segment!r}")
+def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
+    """Return whether ``provider`` is the host's transient history buffer."""
+    return (
+        isinstance(provider, InMemoryHistoryProvider)
+        and provider.source_id == _HOSTED_RESPONSES_HISTORY_SOURCE_ID
+        and provider.load_messages
+        and provider.store_inputs
+        and not provider.store_context_messages
+        and provider.store_outputs
+    )
 
 
-def _checkpoint_storage_for_context(root: str, context_id: str, *, user_id: str | None = None) -> FileCheckpointStorage:
+def _checkpoint_storage_for_context(
+    root: str,
+    context_id: str,
+    *,
+    user_id: str | None = None,
+) -> FileCheckpointStorage:
     """Build a ``FileCheckpointStorage`` for ``context_id`` rooted under ``root``.
 
     When the platform supplies a per-user partition key (``user_id``, from the
@@ -269,11 +260,11 @@ def _checkpoint_storage_for_context(root: str, context_id: str, *, user_id: str 
     segments, and each resolved directory is verified to stay under its parent
     before any directory is created on disk (CWE-22).
     """
-    _validate_path_segment(context_id, kind="context id")
+    validate_path_segment(context_id, kind="context id")
 
     base_path = Path(root).resolve()
     if user_id:
-        _validate_path_segment(user_id, kind="user id")
+        validate_path_segment(user_id, kind="user id")
         user_path = (base_path / user_id).resolve()
         if not user_path.is_relative_to(base_path):
             raise RuntimeError(f"Invalid user id: {user_id!r}")
@@ -300,7 +291,7 @@ def _approval_storage_path_for_user(base_path: str, user_id: str) -> str:
     path segment and the resulting directory is verified to stay under the base
     directory before use (CWE-22).
     """
-    _validate_path_segment(user_id, kind="user id")
+    validate_path_segment(user_id, kind="user id")
     directory, filename = os.path.split(base_path)
     base_dir = Path(directory or ".").resolve()
     user_dir = (base_dir / user_id).resolve()
@@ -393,6 +384,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     # TODO(@taochen): Allow a different checkpoint storage that stores checkpoints externally
     CHECKPOINT_STORAGE_PATH = "/.checkpoints"
     FUNCTION_APPROVAL_STORAGE_PATH = "/.function_approvals/approval_requests.json"
+    SESSION_STORAGE_PATH = "/.sessions"
 
     @staticmethod
     def _resolve_checkpoint_root(is_hosted: bool) -> str:
@@ -444,6 +436,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         for provider in getattr(agent, "context_providers", []):
             if isinstance(provider, HistoryProvider) and provider.load_messages:
+                if _is_hosted_responses_history_sentinel(provider):
+                    continue
                 raise RuntimeError(
                     "There shouldn't be a history provider with `load_messages=True` already present. "
                     "History is managed by the hosting infrastructure."
@@ -466,19 +460,39 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._checkpoint_storage_path = self._resolve_checkpoint_root(self.config.is_hosted)
             self._is_workflow_agent = True
 
-        self._agent = agent
-        self._approval_storage = (
+        self._uses_hosted_responses_history = False
+        if not self._is_workflow_agent and isinstance(agent, RawAgent):
+            self._uses_hosted_responses_history = True
+            if not any(
+                _is_hosted_responses_history_sentinel(provider)
+                for provider in cast(Sequence[ContextProvider], agent.context_providers)
+            ):
+                # The Responses provider already supplies the complete transcript on every
+                # call. Agent.run would otherwise mutate the same user-owned agent by
+                # auto-injecting its default InMemoryHistoryProvider. Install a transient
+                # buffer that carries history within a function-call loop, then discard its
+                # state before persisting the session so the transcript is not replayed twice.
+                agent.context_providers.append(
+                    InMemoryHistoryProvider(
+                        source_id=_HOSTED_RESPONSES_HISTORY_SOURCE_ID,
+                    )
+                )
+
+        self._agent: SupportsAgentRun = agent
+        self._session_store: SessionStore | None = (
+            (
+                FoundrySessionStore(Path.home() / self.SESSION_STORAGE_PATH.lstrip("/"))
+                if self.config.is_hosted
+                else SessionStore()
+            )
+            if not self._is_workflow_agent
+            else None
+        )
+        self._approval_storage: ApprovalStorage = (
             FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH)
             if self.config.is_hosted
             else InMemoryFunctionApprovalStorage()
         )
-        # Per-user (multi-tenant) approval stores. Hosted file-based approval
-        # storage is partitioned by the platform per-user partition key so one
-        # tenant can never read another tenant's saved approval requests.
-        # Instances are cached so concurrent requests for the same user share one
-        # lock, preserving serialized read-modify-write on the JSON file. Local
-        # (in-memory) dev and protocol v1 (no user id) keep the single shared
-        # ``self._approval_storage``.
         self._approval_storages_by_user: dict[str, ApprovalStorage] = {}
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -505,7 +519,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             stack = AsyncExitStack()
             try:
                 if isinstance(self._agent, AbstractAsyncContextManager):
-                    await stack.enter_async_context(self._agent)
+                    await stack.enter_async_context(cast(AbstractAsyncContextManager[Any], self._agent))
             except BaseException:
                 await stack.aclose()
                 raise
@@ -518,19 +532,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._agent_stack = None
             await stack.aclose()
 
-    def _approval_storage_for_user(self, user_id: str | None) -> ApprovalStorage:
-        """Return the approval storage scoped to ``user_id`` when applicable.
-
-        For hosted multi-tenant deployments the file-based store is partitioned
-        by the platform per-user partition key, so one tenant can never read
-        another tenant's saved approval requests. Falls back to the single shared
-        store for local (in-memory) hosting or when no per-user partition key is
-        available (protocol v1 / local development). Instances are cached so
-        concurrent requests for the same user share one lock.
-
-        Raises:
-            RuntimeError: If ``user_id`` is not a safe single path segment.
-        """
+    def _approval_storage_for_request(self) -> ApprovalStorage:
+        """Return the hosted approval store for the active request user."""
+        user_id = get_request_context().user_id
         if not self.config.is_hosted or not user_id:
             return self._approval_storage
         storage = self._approval_storages_by_user.get(user_id)
@@ -548,13 +552,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response."""
-        # Fail fast if the service is on protocol v1.0.0
-        if self.config.is_hosted and context.platform_context.call_id is None:
-            raise RuntimeError(
-                "The hosted environment is running on protocol 1.0.0, but the agent requires protocol 2.0.0. "
-                "Please upgrade your agent protocol to 2.0.0 in `agent.manifest.yaml` or `agent.yaml`, or "
-                "downgrade the `agent-framework-foundry-hosting` package to `1.0.0a260625` or before to use 1.0.0."
-            )
+        request_context = get_request_context()
+        validate_foundry_request_context(request_context, is_hosted=self.config.is_hosted)
 
         if self._is_workflow_agent:
             # Workflow agents are handled differently because they require checkpoint restoration
@@ -566,7 +565,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request: CreateResponse,
         context: ResponseContext,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
-        """Handle the creation of a response for a regular (non-workflow) agent."""
+        """Handle a regular agent with Responses-managed MAF session continuity.
+
+        Foundry sessions govern hosted compute and filesystem lifetime and may
+        serve multiple users and Responses conversations. Conversation mode
+        reads and writes one MAF session snapshot under ``conversation_id``.
+        Response chaining reads the snapshot under ``previous_response_id`` and
+        writes the updated session under the current ``response_id``, allowing
+        branches without changing the MAF session's own identifier. The request
+        user provides the storage isolation boundary.
+        """
         response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
@@ -574,10 +582,43 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # Track the current active output item builder for streaming;
         # lazily created on matching content, closed when a different type arrives.
         tracker: _OutputItemTracker | None = None
+        session: AgentSession | None = None
+        request_failure: Exception | None = None
+        request_interrupted = False
+        response_messages: Sequence[Message] | None = None
+        consent_errors_to_emit: list[ConsentError] | None = None
+        approval_storage: ApprovalStorage | None = None
 
         try:
-            user_id = context.platform_context.user_id_key
-            approval_storage = self._approval_storage_for_user(user_id)
+            approval_storage = self._approval_storage_for_request()
+            read_session_id = context.conversation_id or request.previous_response_id
+            if self._session_store is None:
+                if read_session_id is not None:
+                    raise RuntimeError(
+                        "Session storage is required when using conversation_id or previous_response_id."
+                    )
+            else:
+                previous_session = (
+                    await self._session_store.get(read_session_id) if read_session_id is not None else None
+                )
+                # check if a previous response was tried to be used, that should raise if not found
+                # likely because the wrong user tried to use it.
+                if request.previous_response_id is not None and previous_session is None:
+                    message = (
+                        "No Agent Framework session snapshot was found for previous_response_id "
+                        f"{request.previous_response_id!r}."
+                    )
+                    if isinstance(self._session_store, FoundrySessionStore):
+                        message += (
+                            " Reuse the response's agent_session_id so the request is routed to the same "
+                            "persistent Foundry sandbox."
+                        )
+                    raise RuntimeError(message)
+                session = previous_session if previous_session is not None else self._agent.create_session()
+
+            if session is not None and self._uses_hosted_responses_history:
+                session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
@@ -586,8 +627,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "messages": [
                     *(await _output_items_to_messages(history, approval_storage=approval_storage)),
                     *input_messages,
-                ]
+                ],
             }
+            if session is not None:
+                run_kwargs["session"] = session
             is_streaming_request = request.stream is not None and request.stream is True
 
             chat_options, are_options_set = _to_chat_options(request)
@@ -605,59 +648,93 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             try:
                 await self._ensure_agent_ready()
             except AgentFrameworkException as ex:
-                consent_errors = consent_url_from_error(ex)
-                if consent_errors is None:
+                consent_errors_to_emit = consent_url_from_error(ex)
+                if consent_errors_to_emit is None:
                     raise
-                for consent_error in consent_errors:
-                    logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
-                    oauth_item = OAuthConsentRequestOutputItem(
-                        id=IdGenerator.new_id("oacr"),
-                        consent_link=consent_error.consent_url,
-                        server_label=consent_error.name,
-                    )
-                    builder = response_event_stream.add_output_item(oauth_item.id)
-                    yield builder.emit_added(oauth_item)
-                    yield builder.emit_done(oauth_item)
-                yield response_event_stream.emit_completed()
-                return
 
-            tracker = _OutputItemTracker(response_event_stream) if is_streaming_request else None
+            if consent_errors_to_emit is None:
+                tracker = _OutputItemTracker(response_event_stream) if is_streaming_request else None
 
-            if not is_streaming_request:
-                # Run the agent in non-streaming mode
-                response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
-
-                async for item in _to_outputs_for_messages(
-                    response_event_stream,
-                    response.messages,
-                    approval_storage=approval_storage,
-                ):
-                    yield item
-            else:
-                if tracker is None:  # pragma: no cover - defensive, set above
-                    raise RuntimeError("Streaming tracker was not initialized.")
-                # Run the agent in streaming mode
-                async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
-                    for content in update.contents:
-                        for event in tracker.handle(content):
-                            yield event
-                        if tracker.needs_async:
-                            async for item in _to_outputs(
-                                response_event_stream,
-                                content,
-                                approval_storage=approval_storage,
-                            ):
-                                yield item
-                            tracker.needs_async = False
-
-                # Close any remaining active builder
-                for event in tracker.close():
-                    yield event
-            yield response_event_stream.emit_completed()
+                if not is_streaming_request:
+                    # Run the agent in non-streaming mode
+                    response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
+                    response_messages = response.messages
+                else:
+                    if tracker is None:  # pragma: no cover - defensive, set above
+                        raise RuntimeError("Streaming tracker was not initialized.")
+                    # Run the agent in streaming mode
+                    async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
+                        for content in update.contents:
+                            for event in tracker.handle(content):
+                                yield event
+                            if tracker.needs_async:
+                                async for item in _to_outputs(
+                                    response_event_stream,
+                                    content,
+                                    approval_storage=approval_storage,
+                                ):
+                                    yield item
+                                tracker.needs_async = False
+        except asyncio.CancelledError:
+            request_interrupted = True
+            raise
+        except GeneratorExit:
+            request_interrupted = True
+            raise
         except Exception as ex:
-            logger.exception("Failed to produce response for agent")
-            for event in self._emit_failure(response_event_stream, tracker, ex):
+            request_failure = ex
+        finally:
+            if session is not None and self._uses_hosted_responses_history:
+                session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+            if session is not None and self._session_store is not None:
+                try:
+                    await self._session_store.set(context.conversation_id or context.response_id, session)
+                except Exception as save_error:
+                    if request_interrupted:
+                        logger.error(
+                            "Failed to persist the Agent Framework session while unwinding an interrupted request",
+                            exc_info=(type(save_error), save_error, save_error.__traceback__),
+                        )
+                    elif request_failure is None:
+                        request_failure = save_error
+                    else:
+                        logger.error(
+                            "Failed to persist the Agent Framework session after an agent failure",
+                            exc_info=(type(save_error), save_error, save_error.__traceback__),
+                        )
+
+        if request_failure is not None:
+            logger.error(
+                "Failed to produce response for agent",
+                exc_info=(type(request_failure), request_failure, request_failure.__traceback__),
+            )
+            for event in self._emit_failure(response_event_stream, tracker, request_failure):
                 yield event
+            return
+
+        if consent_errors_to_emit is not None:
+            for consent_error in consent_errors_to_emit:
+                logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
+                oauth_item = OAuthConsentRequestOutputItem(
+                    id=IdGenerator.new_id("oacr"),
+                    consent_link=consent_error.consent_url,
+                    server_label=consent_error.name,
+                )
+                builder = response_event_stream.add_output_item(oauth_item.id)
+                yield builder.emit_added(oauth_item)
+                yield builder.emit_done(oauth_item)
+        elif response_messages is not None:
+            async for item in _to_outputs_for_messages(
+                response_event_stream,
+                response_messages,
+                approval_storage=approval_storage,
+            ):
+                yield item
+        elif tracker is not None:
+            for event in tracker.close():
+                yield event
+
+        yield response_event_stream.emit_completed()
 
     async def _handle_inner_workflow(
         self,
@@ -674,8 +751,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker: _OutputItemTracker | None = None
 
         try:
-            user_id = context.platform_context.user_id_key
-            approval_storage = self._approval_storage_for_user(user_id)
+            approval_storage = self._approval_storage_for_request()
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
             is_streaming_request = request.stream is not None and request.stream is True
@@ -701,8 +777,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             await self._ensure_agent_ready()
 
             # Per-user checkpoint isolation for multi-tenant hosting (container
-            # protocol v2): the per-user partition key computed above
-            # (``x-agent-user-id``) scopes every checkpoint directory for this turn,
+            # protocol v2): the request-scoped ``x-agent-user-id`` value scopes
+            # every checkpoint directory for this turn,
             # so one tenant can never restore or observe another tenant's workflow
             # state -- even with a guessed or forged context id. The key is stable
             # per user across turns, so multi-turn continuity is preserved. Absent
@@ -719,11 +795,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # on every turn we restore the latest checkpoint and feed the new
             # input back into the start executor as a continuation rather than
             # a fresh run.
+            user_id = get_request_context().user_id
             latest_checkpoint_id: str | None = None
             restore_storage: FileCheckpointStorage | None = None
             if context_id is not None:
                 restore_storage = _checkpoint_storage_for_context(
-                    self._checkpoint_storage_path, context_id, user_id=user_id
+                    self._checkpoint_storage_path,
+                    context_id,
+                    user_id=user_id,
                 )
                 latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
                 if latest_checkpoint is not None:
@@ -739,7 +818,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # directory and write_storage points at the *current* response's.
             write_context_id = context.conversation_id or context.response_id
             write_storage = _checkpoint_storage_for_context(
-                self._checkpoint_storage_path, write_context_id, user_id=user_id
+                self._checkpoint_storage_path,
+                write_context_id,
+                user_id=user_id,
             )
 
             # Multi-turn pattern: when we have a prior checkpoint, restore it

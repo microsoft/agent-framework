@@ -61,6 +61,7 @@ class ExperimentalFeature(str, Enum):
     MCP_LONG_RUNNING_TASKS = "MCP_LONG_RUNNING_TASKS"
     MCP_SKILLS = "MCP_SKILLS"
     PROGRESSIVE_TOOLS = "PROGRESSIVE_TOOLS"
+    SESSION_STORE = "SESSION_STORE"
     TO_PROMPT_AGENT = "TO_PROMPT_AGENT"
 
 
@@ -138,6 +139,15 @@ def _get_object_name(obj: Any) -> str:
 
 def _get_descriptor_callable(obj: Any) -> Callable[..., Any]:
     return cast(Callable[..., Any], obj.__func__)
+
+
+def _is_internal_framework_subclass(args: tuple[Any, ...]) -> bool:
+    """Return whether an experimental subclass is defined inside an Agent Framework package."""
+    subclass = next((arg for arg in args if isinstance(arg, type)), None)
+    if subclass is None:
+        return False
+    module = subclass.__module__
+    return module == "agent_framework" or module.startswith(("agent_framework.", "agent_framework_"))
 
 
 def _is_protocol_class(obj: Any) -> bool:
@@ -326,28 +336,30 @@ def _add_runtime_warning(
 
             @functools.wraps(original_init_subclass_func)
             def bound_init_subclass_wrapper(*args: Any, **kwargs: Any) -> Any:
-                _warn_on_feature_use(
-                    stage=stage,
-                    feature_id=feature_id,
-                    object_name=object_name,
-                    category=category,
-                )
+                if not _is_internal_framework_subclass(args):
+                    _warn_on_feature_use(
+                        stage=stage,
+                        feature_id=feature_id,
+                        object_name=object_name,
+                        category=category,
+                    )
                 return original_init_subclass_func(*args, **kwargs)
 
             experimental_class.__init_subclass__ = classmethod(bound_init_subclass_wrapper)  # type: ignore[assignment]
         else:
 
             @functools.wraps(original_init_subclass)
-            def init_subclass_wrapper(*args: Any, **kwargs: Any) -> Any:
-                _warn_on_feature_use(
-                    stage=stage,
-                    feature_id=feature_id,
-                    object_name=object_name,
-                    category=category,
-                )
+            def init_subclass_wrapper(subclass: type[Any], /, *args: Any, **kwargs: Any) -> Any:
+                if not _is_internal_framework_subclass((subclass, *args)):
+                    _warn_on_feature_use(
+                        stage=stage,
+                        feature_id=feature_id,
+                        object_name=object_name,
+                        category=category,
+                    )
                 return original_init_subclass(*args, **kwargs)
 
-            experimental_class.__init_subclass__ = init_subclass_wrapper
+            experimental_class.__init_subclass__ = classmethod(init_subclass_wrapper)  # type: ignore[assignment]
 
         return cast(FeatureStageT, experimental_class)
 

@@ -32,6 +32,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "FoundryEmbeddingSettings": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryEvals": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryMemoryProvider": ("agent_framework_foundry", "agent-framework-foundry"),
+    "FoundrySessionStore": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FoundryToolbox": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FoundryLocalChatOptions": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalClient": ("agent_framework_foundry_local", "agent-framework-foundry-local"),

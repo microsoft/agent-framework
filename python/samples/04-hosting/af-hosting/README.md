@@ -9,7 +9,7 @@ clients, authentication, response construction, and deployment shape.
 
 | Sample | What it shows | Packaging |
 |---|---|---|
-| [`local_responses/`](./local_responses) | One agent + one `@tool` + native FastAPI route + Responses helper functions + `AgentState` / `SessionStore`. | **Local only.** Start here to learn the helper seam. |
+| [`local_responses/`](./local_responses) | One agent + one `@tool` + native FastAPI route + Responses helper functions + hosting `AgentState` + core `SessionStore`. | **Local only.** Start here to learn the helper seam. |
 | [`local_responses_workflow/`](./local_responses_workflow) | A workflow target behind a native FastAPI route using Responses helper functions, `WorkflowState`, explicit `CheckpointStorage`, and an app-owned checkpoint cursor. | **Local only.** |
 | [`local_telegram/`](./local_telegram) | One agent + `aiogram` polling + Telegram conversion helpers + app-owned commands, media policy, and streaming edits. | **Local only.** Requires a Telegram bot token. |
 
