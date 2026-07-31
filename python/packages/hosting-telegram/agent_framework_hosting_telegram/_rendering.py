@@ -15,6 +15,9 @@ from collections.abc import AsyncIterator
 from typing import Any, TypedDict
 
 from agent_framework import AgentResponse, AgentResponseUpdate, ResponseStream
+from agent_framework._telemetry import mark_feature_used
+
+from ._feature_usage import FeatureIndex
 
 # Telegram's documented maximum length, in UTF-16 code units, for message
 # text (`sendMessage` / `editMessageText`) and photo captions (`sendPhoto`).
@@ -81,6 +84,7 @@ def telegram_from_run(
     Returns:
         A ``TelegramOperation`` describing the Bot API call to make.
     """
+    mark_feature_used(FeatureIndex.HOSTING_TELEGRAM)
     text, image_uris = _text_and_image_uris(result)
     if image_uris:
         payload: dict[str, Any] = {"chat_id": chat_id, "photo": image_uris[0]}
@@ -129,6 +133,7 @@ async def telegram_from_streaming_run(
     Yields:
         ``TelegramOperation`` values describing the Bot API calls to make, in order.
     """
+    mark_feature_used(FeatureIndex.HOSTING_TELEGRAM)
     text = ""
     last_rendered_text = _truncate(initial_text, TELEGRAM_MAX_TEXT_LENGTH) if initial_text is not None else ""
     async for update in stream:

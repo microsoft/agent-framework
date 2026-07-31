@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 from .._middleware import AgentContext, AgentMiddleware
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -379,6 +380,7 @@ class ToolApprovalMiddleware(AgentMiddleware):
 
     async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
         """Process one agent invocation."""
+        mark_feature_used(FeatureIndex.CORE_TOOL_APPROVAL)
         if context.session is None:
             raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
 

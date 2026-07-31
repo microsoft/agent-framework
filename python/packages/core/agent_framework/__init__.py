@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from typing import Any, Final
 
 try:
-    _version = importlib.metadata.version(__name__)
+    _version = importlib.metadata.version("agent-framework-core")
 except importlib.metadata.PackageNotFoundError:
     _version = "0.0.0"  # Fallback for development mode
 __version__: Final[str] = _version
@@ -194,11 +194,13 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "AgentSession",
         "ContextProvider",
         "FileHistoryProvider",
+        "FileSessionStore",
         "HistoryProvider",
         "InMemoryHistoryProvider",
         "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
         "MessageInjectionMiddleware",
         "ServiceSessionId",
+        "SessionStore",
         "SessionContext",
         "enqueue_messages",
         "register_state_type",
@@ -289,7 +291,10 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "InMemoryCheckpointStorage",
         "WorkflowCheckpoint",
     ),
-    "._workflows._const": ("DEFAULT_MAX_ITERATIONS",),
+    "._workflows._const": (
+        "DEFAULT_MAX_ITERATIONS",
+        "INTERNAL_SOURCE_ID",
+    ),
     "._workflows._edge": (
         "Case",
         "Default",
@@ -369,6 +374,7 @@ __all__ = [
     "GROUP_INDEX_KEY",
     "GROUP_KIND_KEY",
     "GROUP_TOKEN_COUNT_KEY",
+    "INTERNAL_SOURCE_ID",
     "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
     "SKIP_PARSING",
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
@@ -451,6 +457,7 @@ __all__ = [
     "FileMemoryProvider",
     "FileSearchMatch",
     "FileSearchResult",
+    "FileSessionStore",
     "FileSkill",
     "FileSkillScript",
     "FileSkillsSource",
@@ -516,6 +523,7 @@ __all__ = [
     "SelectiveToolCallCompactionStrategy",
     "ServiceSessionId",
     "SessionContext",
+    "SessionStore",
     "SingleEdgeGroup",
     "Skill",
     "SkillFrontmatter",

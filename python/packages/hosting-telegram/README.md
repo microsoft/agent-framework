@@ -19,7 +19,8 @@ long-running service. Your app remains fully responsible for:
   a leading `/command`; your app decides what each command does.
 - **Sessions/storage** -- pair these helpers with
   [`agent-framework-hosting`](https://pypi.org/project/agent-framework-hosting/)'s
-  `AgentState` / `SessionStore` (or your own) to persist `AgentSession`s across turns.
+  `AgentState` and core's `SessionStore` or `FileSessionStore` to persist
+  `AgentSession`s across turns.
 
 ## Helpers
 

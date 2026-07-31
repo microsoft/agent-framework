@@ -25,7 +25,7 @@ from agent_framework import (
     SupportsGetEmbeddings,
     load_settings,
 )
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential, TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -46,6 +46,8 @@ from azure.search.documents.models import (
     VectorizableTextQuery,
     VectorizedQuery,
 )
+
+from ._feature_usage import FeatureIndex
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
@@ -626,6 +628,7 @@ class AzureAISearchContextProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Retrieve relevant context from Azure AI Search and add to session context."""
+        mark_feature_used(FeatureIndex.AZURE_AI_SEARCH)
         messages_list = list(context.input_messages)
 
         filtered_messages = [

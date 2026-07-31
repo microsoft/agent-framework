@@ -37,6 +37,7 @@ from ._sessions import (
     SessionContext,
     is_local_history_conversation_id,
 )
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -1773,6 +1774,7 @@ class Agent(
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent."""
+        mark_feature_used(FeatureIndex.CORE_AGENT)
         super_run = cast(
             "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
             super().run,

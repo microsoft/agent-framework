@@ -18,11 +18,13 @@ from agent_framework import (
     normalize_messages,
 )
 from agent_framework._settings import load_settings
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._types import AgentRunInputs
 from agent_framework.exceptions import AgentException
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 
 from ._acquire_token import acquire_token
+from ._feature_usage import FeatureIndex
 
 
 class CopilotStudioSettings(TypedDict, total=False):
@@ -255,6 +257,7 @@ class CopilotStudioAgent(BaseAgent):
 
         question = "\n".join([message.text for message in input_messages])
 
+        mark_feature_used(FeatureIndex.COPILOTSTUDIO)
         activities = self.client.ask_question(question, service_session_id)
         response_messages: list[Message] = []
         response_id: str | None = None
@@ -287,6 +290,7 @@ class CopilotStudioAgent(BaseAgent):
 
             question = "\n".join([message.text for message in input_messages])
 
+            mark_feature_used(FeatureIndex.COPILOTSTUDIO)
             activities = self.client.ask_question(question, service_session_id)
 
             async for message in self._process_activities(activities, streaming=True):

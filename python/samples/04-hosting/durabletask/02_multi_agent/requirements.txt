@@ -9,6 +9,3 @@
 -e ../../../../packages/core  # Core framework - base dependency for all packages
 -e ../../../../packages/foundry  # Foundry support - dependency for hosted chat/agent samples
 -e ../../../../packages/durabletask  # Durable Task support - the main package for this sample
-
-# Azure authentication
-azure-identity

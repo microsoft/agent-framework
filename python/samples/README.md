@@ -28,8 +28,11 @@ Start with `01-get-started/` and work through the numbered files:
 ## Prerequisites
 
 ```bash
-pip install agent-framework
+pip install agent-framework-foundry
 ```
+
+Install only the specific Agent Framework distributions required by the sample you want to run.
+Individual sample READMEs and PEP 723 metadata list any additional packages.
 
 ### Environment Variables
 
@@ -120,6 +123,8 @@ variable.
 | `agent-framework-core` | `observability` | `ENABLE_INSTRUMENTATION` | `true` |
 | `agent-framework-core` | `observability` | `ENABLE_SENSITIVE_DATA` | `false` |
 | `agent-framework-core` | `observability` | `ENABLE_CONSOLE_EXPORTERS` | `true` |
+| `agent-framework-core` | `agent_framework._telemetry` | `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED` | `true` |
+| `agent-framework-core` | `agent_framework._telemetry` | `AGENT_FRAMEWORK_USER_AGENT_DISABLED` | `true` |
 | `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` |
 | `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `http://localhost:4318/v1/traces` |
 | `agent-framework-core` | `observability` | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `http://localhost:4318/v1/metrics` |

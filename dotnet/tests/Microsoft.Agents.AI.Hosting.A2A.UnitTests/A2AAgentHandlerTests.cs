@@ -19,6 +19,11 @@ namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests;
 public sealed class A2AAgentHandlerTests
 {
     /// <summary>
+    /// The <see cref="AgentRunOptions.AdditionalProperties"/> key the handler forwards the A2A configuration under.
+    /// </summary>
+    private const string ConfigurationPropertyKey = "a2a.configuration";
+
+    /// <summary>
     /// Verifies that when metadata is null, the options passed to RunAsync have
     /// AllowBackgroundResponses disabled and no AdditionalProperties.
     /// </summary>
@@ -70,6 +75,93 @@ public sealed class A2AAgentHandlerTests
         Assert.NotNull(capturedOptions.AdditionalProperties);
         Assert.Equal(2, capturedOptions.AdditionalProperties.Count);
         Assert.Equal("value1", capturedOptions.AdditionalProperties["key1"]?.ToString());
+    }
+
+    /// <summary>
+    /// Verifies that when the caller supplies a <c>MessageSendParams.configuration</c>, it is forwarded to the
+    /// agent through <see cref="AgentRunOptions.AdditionalProperties"/>.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenConfigurationIsProvided_ForwardsConfigurationToRunAsync()
+    {
+        // Arrange
+        AgentRunOptions? capturedOptions = null;
+        A2AAgentHandler handler = CreateHandler(CreateAgentMock(options => capturedOptions = options));
+        SendMessageConfiguration configuration = new()
+        {
+            AcceptedOutputModes = ["text/plain", "image/png"],
+            HistoryLength = 10
+        };
+
+        // Act
+        await InvokeExecuteAsync(handler, new RequestContext
+        {
+            TaskId = "", ContextId = "ctx", StreamingResponse = false,
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] },
+            Configuration = configuration
+        });
+
+        // Assert
+        Assert.NotNull(capturedOptions);
+        Assert.NotNull(capturedOptions.AdditionalProperties);
+        Assert.Same(configuration, Assert.Single(capturedOptions.AdditionalProperties).Value);
+        Assert.Equal(ConfigurationPropertyKey, Assert.Single(capturedOptions.AdditionalProperties).Key);
+    }
+
+    /// <summary>
+    /// Verifies that the caller supplied configuration and metadata are both forwarded to the agent.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenConfigurationAndMetadataAreProvided_ForwardsBothToRunAsync()
+    {
+        // Arrange
+        AgentRunOptions? capturedOptions = null;
+        A2AAgentHandler handler = CreateHandler(CreateAgentMock(options => capturedOptions = options));
+        SendMessageConfiguration configuration = new() { HistoryLength = 5 };
+
+        // Act
+        await InvokeExecuteAsync(handler, new RequestContext
+        {
+            TaskId = "", ContextId = "ctx", StreamingResponse = false,
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] },
+            Metadata = new Dictionary<string, JsonElement>
+            {
+                ["key1"] = JsonSerializer.SerializeToElement("value1")
+            },
+            Configuration = configuration
+        });
+
+        // Assert
+        Assert.NotNull(capturedOptions);
+        Assert.NotNull(capturedOptions.AdditionalProperties);
+        Assert.Equal(2, capturedOptions.AdditionalProperties.Count);
+        Assert.Equal("value1", capturedOptions.AdditionalProperties["key1"]?.ToString());
+        Assert.Same(configuration, capturedOptions.AdditionalProperties[ConfigurationPropertyKey]);
+    }
+
+    /// <summary>
+    /// Verifies that the caller supplied configuration does not override the run mode configured on the server.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenConfigurationRequestsImmediateReturn_DoesNotOverrideRunModeAsync()
+    {
+        // Arrange
+        AgentRunOptions? capturedOptions = null;
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMock(options => capturedOptions = options),
+            runMode: AgentRunMode.DisallowBackground);
+
+        // Act
+        await InvokeExecuteAsync(handler, new RequestContext
+        {
+            TaskId = "", ContextId = "ctx", StreamingResponse = false,
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] },
+            Configuration = new SendMessageConfiguration { ReturnImmediately = true }
+        });
+
+        // Assert
+        Assert.NotNull(capturedOptions);
+        Assert.False(capturedOptions.AllowBackgroundResponses);
     }
 
     /// <summary>
@@ -670,6 +762,36 @@ public sealed class A2AAgentHandlerTests
         // Assert
         Assert.True(optionsCaptured);
         Assert.Null(capturedOptions);
+    }
+
+    /// <summary>
+    /// Verifies that in streaming mode, when only a configuration is present, options carrying the
+    /// configuration are passed to RunStreamingAsync.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_Streaming_WithConfiguration_PassesOptionsWithConfigurationAsync()
+    {
+        // Arrange
+        AgentRunOptions? capturedOptions = null;
+        A2AAgentHandler handler = CreateHandler(CreateStreamingAgentMockWithOptionsCapture(
+            options => capturedOptions = options));
+        SendMessageConfiguration configuration = new() { AcceptedOutputModes = ["text/plain"] };
+
+        // Act
+        await InvokeExecuteAsync(handler, new RequestContext
+        {
+            StreamingResponse = true,
+            TaskId = "",
+            ContextId = "ctx",
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] },
+            Configuration = configuration
+        });
+
+        // Assert
+        Assert.NotNull(capturedOptions);
+        Assert.Null(capturedOptions.AllowBackgroundResponses);
+        Assert.NotNull(capturedOptions.AdditionalProperties);
+        Assert.Same(configuration, capturedOptions.AdditionalProperties[ConfigurationPropertyKey]);
     }
 
     /// <summary>

@@ -1,6 +1,6 @@
 # agent-framework-tools
 
-Alpha built-in tools for the Microsoft Agent Framework. A home for first-party
+Beta built-in tools for the Microsoft Agent Framework. A home for first-party
 Python tools that plug into any chat client's shell / function surface. The
 first tool is `LocalShellTool`.
 
@@ -16,7 +16,7 @@ pip install agent-framework-tools --pre
 import asyncio
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
-from agent_framework_tools.shell import LocalShellTool
+from agent_framework.tools import LocalShellTool
 
 
 async def main() -> None:
@@ -68,7 +68,7 @@ Defenses (in priority order):
 Override with `ShellPolicy`:
 
 ```python
-from agent_framework_tools.shell import LocalShellTool, ShellPolicy
+from agent_framework.tools import LocalShellTool, ShellPolicy
 
 shell = LocalShellTool(
     policy=ShellPolicy(allowlist=[r"^ls\b", r"^cat\b", r"^git status$"]),
@@ -95,7 +95,7 @@ default) — and injects a system-prompt block describing the shell idiom
 to use and the available CLIs.
 
 ```python
-from agent_framework_tools.shell import (
+from agent_framework.tools import (
     LocalShellTool,
     ShellEnvironmentProvider,
     ShellEnvironmentProviderOptions,
@@ -127,7 +127,7 @@ is the intended security boundary and approval gating becomes optional.
 
 ```python
 import asyncio
-from agent_framework_tools.shell import DockerShellTool
+from agent_framework.tools import DockerShellTool
 
 
 async def main() -> None:

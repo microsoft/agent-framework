@@ -9,22 +9,27 @@ import warnings
 from functools import wraps
 from pathlib import Path
 from typing import Annotated, Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+import agent_framework._telemetry as telemetry
 import pytest
 from agent_framework import Agent, ChatResponse, Content, Message, SupportsChatGetResponse, tool
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework_openai import OpenAIContentFilterException
 from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.exceptions import ResourceNotFoundError
+from azure.core.pipeline import Pipeline
+from azure.core.pipeline.policies import RedirectPolicy, UserAgentPolicy
+from azure.core.pipeline.transport import HttpRequest, HttpResponse, HttpTransport
 from azure.identity import AzureCliCredential
 from openai import BadRequestError
 from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_foundry import FoundryChatClient, RawFoundryChatClient
+from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
 
 
 class OutputStruct(BaseModel):
@@ -32,6 +37,74 @@ class OutputStruct(BaseModel):
 
     location: str
     weather: str | None = None
+
+
+def test_foundry_feature_usage_policy_refreshes_user_agent() -> None:
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+    mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
+    request = MagicMock()
+    request.http_request.url = "https://project.services.ai.azure.com/api/projects/test"
+    request.http_request.headers = {"User-Agent": "azsdk-python-ai-projects/1.0 agent-framework-python/1.0"}
+    FeatureUsagePolicy().on_request(request)
+
+    assert request.http_request.headers["User-Agent"] == (
+        "azsdk-python-ai-projects/1.0 agent-framework-python/1.0 (feat=v1.1000000000000)"
+    )
+
+
+def test_foundry_feature_usage_policy_removes_token_on_cross_origin_redirect() -> None:
+    class _Response(HttpResponse):
+        def body(self) -> bytes:
+            return b""
+
+    class _RedirectTransport(HttpTransport[HttpRequest, HttpResponse]):
+        def __init__(self) -> None:
+            self.sent_headers: list[dict[str, str]] = []
+
+        def __enter__(self) -> _RedirectTransport:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self.close()
+
+        def open(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+        def send(self, request: HttpRequest, **kwargs: Any) -> HttpResponse:
+            self.sent_headers.append(dict(request.headers))
+            response = _Response(request, None)
+            if len(self.sent_headers) == 1:
+                response.status_code = 302
+                response.headers = {"location": "https://example.com/redirected"}
+            else:
+                response.status_code = 200
+                response.headers = {}
+            return response
+
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+    mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
+    transport = _RedirectTransport()
+    pipeline = cast(Any, Pipeline)(
+        transport, [UserAgentPolicy(user_agent=get_user_agent()), RedirectPolicy(), FeatureUsagePolicy()]
+    )
+
+    pipeline.run(HttpRequest("GET", "https://project.services.ai.azure.com/api/projects/test"))
+
+    assert "(feat=v1." in transport.sent_headers[0]["User-Agent"]
+    assert "(feat=v1." not in transport.sent_headers[1]["User-Agent"]
+
+
+def test_foundry_feature_index_does_not_own_toolbox() -> None:
+    assert not hasattr(FeatureIndex, "FOUNDRY_TOOLBOX")
+
+
+def test_raw_foundry_chat_client_owns_foundry_feature_bit() -> None:
+    assert RawFoundryChatClient._FEATURE_USAGE_INDEX is FeatureIndex.FOUNDRY_CHAT_CLIENT
 
 
 @tool(approval_mode="never_require")
@@ -157,6 +230,7 @@ def test_init() -> None:
     assert client.model == _TEST_FOUNDRY_MODEL
     assert client.project_client is mock_project_client
     assert isinstance(client, SupportsChatGetResponse)
+    mock_project_client.get_openai_client.assert_called_once_with()
 
 
 def test_raw_foundry_chat_client_init_uses_explicit_parameters() -> None:
@@ -196,6 +270,7 @@ def test_init_with_default_header() -> None:
         assert client.default_headers is not None
         assert key in client.default_headers
         assert client.default_headers[key] == value
+    project_client.get_openai_client.assert_called_once_with(default_headers=default_headers)
 
 
 def test_init_with_project_endpoint_creates_project_client() -> None:
@@ -218,6 +293,11 @@ def test_init_with_project_endpoint_creates_project_client() -> None:
     assert factory.call_args.kwargs["credential"] is credential
     assert factory.call_args.kwargs["allow_preview"] is True
     assert factory.call_args.kwargs["user_agent"] == get_user_agent()
+    policies = factory.call_args.kwargs["per_retry_policies"]
+    assert len(policies) == 1
+    assert isinstance(policies[0], FeatureUsagePolicy)
+    assert "custom_hook_policy" not in factory.call_args.kwargs
+    project_client.get_openai_client.assert_called_once_with(http_client=ANY)
 
 
 def test_init_with_empty_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
