@@ -33,6 +33,16 @@ from agent_framework._workflows._checkpoint_encoding import (
 )
 
 
+@pytest.fixture(autouse=True)
+def cleanup_custom_checkpoint_types():
+    from agent_framework._workflows._checkpoint_encoding import _CUSTOM_ALLOWED_TYPES
+
+    backup = set(_CUSTOM_ALLOWED_TYPES)
+    yield
+    _CUSTOM_ALLOWED_TYPES.clear()
+    _CUSTOM_ALLOWED_TYPES.update(backup)
+
+
 class MaliciousPayload:
     """A class whose __reduce__ executes code during unpickling."""
 
@@ -574,3 +584,12 @@ def test_register_checkpoint_type_validation():
 
     with pytest.raises(ValueError, match="Type key must be in the format"):
         register_checkpoint_type("invalid_key")
+
+    with pytest.raises(ValueError, match="Type key must be in the format"):
+        register_checkpoint_type("module:")
+
+    with pytest.raises(ValueError, match="Type key must be in the format"):
+        register_checkpoint_type(":qualname")
+
+    with pytest.raises(ValueError, match="Type key must be in the format"):
+        register_checkpoint_type(":")
