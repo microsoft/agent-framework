@@ -509,3 +509,68 @@ def test_restricted_decode_allows_openai_response_types():
     assert isinstance(decoded, ResponseUsage)
     assert decoded.input_tokens == 10
     assert decoded.output_tokens == 20
+
+
+@dataclass
+class _GloballyAllowedTestState:
+    """Test state to verify global registration works."""
+
+    value: int
+
+
+@dataclass
+class _GloballyAllowedStringState:
+    """Test state to verify global registration by string key works."""
+
+    value: str
+
+
+def test_register_checkpoint_type_allows_type():
+    """Custom types registered globally are allowed during restricted deserialization."""
+    from agent_framework import register_checkpoint_type
+
+    # Verify that before registration, the type is blocked
+    original = _GloballyAllowedTestState(value=100)
+    encoded = encode_checkpoint_value(original)
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        decode_checkpoint_value(encoded, allowed_types=frozenset())
+
+    # Register the type
+    register_checkpoint_type(_GloballyAllowedTestState)
+
+    # Now it should be allowed
+    decoded = decode_checkpoint_value(encoded, allowed_types=frozenset())
+    assert isinstance(decoded, _GloballyAllowedTestState)
+    assert decoded.value == 100
+
+
+def test_register_checkpoint_type_allows_string_key():
+    """Custom types registered globally by string key are allowed during restricted deserialization."""
+    from agent_framework import register_checkpoint_type
+
+    original = _GloballyAllowedStringState(value="globally_allowed")
+    encoded = encode_checkpoint_value(original)
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        decode_checkpoint_value(encoded, allowed_types=frozenset())
+
+    # Register by string key
+    type_key = f"{_GloballyAllowedStringState.__module__}:{_GloballyAllowedStringState.__qualname__}"
+    register_checkpoint_type(type_key)
+
+    # Now it should be allowed
+    decoded = decode_checkpoint_value(encoded, allowed_types=frozenset())
+    assert isinstance(decoded, _GloballyAllowedStringState)
+    assert decoded.value == "globally_allowed"
+
+
+def test_register_checkpoint_type_validation():
+    """register_checkpoint_type validates inputs properly."""
+    from agent_framework import register_checkpoint_type
+
+    with pytest.raises(TypeError, match="Expected a type class or a 'module:qualname' string"):
+        register_checkpoint_type(123)  # type: ignore
+
+    with pytest.raises(ValueError, match="Type key must be in the format"):
+        register_checkpoint_type("invalid_key")

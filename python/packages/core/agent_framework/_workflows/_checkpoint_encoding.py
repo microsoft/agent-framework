@@ -131,6 +131,8 @@ _GETATTR_GLOBAL_KEYS: frozenset[str] = frozenset({
     "__builtin__:getattr",
 })
 
+_CUSTOM_ALLOWED_TYPES: set[str] = set()
+
 
 class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-usage]
     """Unpickler that restricts which classes may be instantiated.
@@ -150,6 +152,7 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
         return (
             type_key in _BUILTIN_ALLOWED_TYPE_KEYS
             or type_key in self._allowed_types
+            or type_key in _CUSTOM_ALLOWED_TYPES
             or resolved.__module__.startswith(_FRAMEWORK_MODULE_PREFIX)
             or resolved.__module__.startswith(_OPENAI_MODULE_PREFIX)
         )
@@ -191,7 +194,7 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
         if type_key in _BUILTIN_ALLOWED_TYPE_KEYS:
             return super().find_class(module, name)  # nosec
 
-        if type_key in self._allowed_types:
+        if type_key in self._allowed_types or type_key in _CUSTOM_ALLOWED_TYPES:
             resolved = super().find_class(module, name)  # nosec
             if isinstance(resolved, type):
                 return resolved
@@ -395,3 +398,22 @@ def _type_to_key(t: type[Any]) -> str:
 def _value_type_to_key(value: object) -> str:
     """Convert a value's type to a module:qualname string."""
     return _type_to_key(type(value))
+
+
+def register_checkpoint_type(cls_or_key: type[Any] | str) -> None:
+    """Register a custom type to be allowed during checkpoint deserialization.
+
+    Each registered type should be either a type class (e.g., custom models or
+    dataclasses) or a ``"module:qualname"`` string.
+
+    Args:
+        cls_or_key: The type class or module-qualified string to register.
+    """
+    if isinstance(cls_or_key, str):
+        if not cls_or_key or ":" not in cls_or_key:
+            raise ValueError("Type key must be in the format 'module:qualname'.")
+        _CUSTOM_ALLOWED_TYPES.add(cls_or_key)
+    elif isinstance(cls_or_key, type):
+        _CUSTOM_ALLOWED_TYPES.add(_type_to_key(cls_or_key))
+    else:
+        raise TypeError("Expected a type class or a 'module:qualname' string.")
