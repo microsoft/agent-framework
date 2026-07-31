@@ -1,5 +1,7 @@
 ![Microsoft Agent Framework](docs/assets/readme-banner.png)
 
+> 🚀 **New to the framework?** Try the end-to-end [Hands-On tutorial](hands-on/README.md) — build, test (DevUI), publicly host (Foundry), and observe (OpenTelemetry) an agent, step by step.
+
 # Welcome to Microsoft Agent Framework!
 
 [![Microsoft Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM?style=flat)](https://discord.gg/b5zjErwbQM)
