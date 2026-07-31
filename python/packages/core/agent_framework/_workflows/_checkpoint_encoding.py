@@ -410,9 +410,12 @@ def register_checkpoint_type(cls_or_key: type[Any] | str) -> None:
         cls_or_key: The type class or module-qualified string to register.
     """
     if isinstance(cls_or_key, str):
-        if not cls_or_key or ":" not in cls_or_key:
+        module, sep, qualname = cls_or_key.partition(":")
+        module = module.strip()
+        qualname = qualname.strip()
+        if not sep or not module or not qualname:
             raise ValueError("Type key must be in the format 'module:qualname'.")
-        _CUSTOM_ALLOWED_TYPES.add(cls_or_key)
+        _CUSTOM_ALLOWED_TYPES.add(f"{module}:{qualname}")
     elif isinstance(cls_or_key, type):
         _CUSTOM_ALLOWED_TYPES.add(_type_to_key(cls_or_key))
     else:
