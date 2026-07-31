@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
- Professional Script to Reinstall and Repair All Core Windows Emulators & Virtualization Capabilities.
+Professional Script to Reinstall and Repair common Windows virtualization features.
 .DESCRIPTION
- This script runs with Administrator privileges to safely remove and clean-reinstall 
- Hyper-V, Virtual Machine Platform, Windows Sandbox, and WSL Components.
+This script runs with Administrator privileges to safely disable and re-enable common virtualization
+optional features (Hyper-V, VirtualMachinePlatform, HypervisorPlatform, Microsoft-Windows-Subsystem-Linux, Containers).
 #>
 
 # 1. التحقق من صلاحيات المسؤول
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
- Write-Error "خطأ: يجب تشغيل هذا السكربت كمسؤول (Run as Administrator)!"
- Exit
+ Write-Error "خطأ: يجب تشغيل هذا السكربت كمسؤول (Run as Administrator)! (Arabic)\nError: this script must be run as Administrator." 
+ Exit 1
 }
 
 # 2. قائمة المحاكيات والميزات الافتراضية المستهدفة
@@ -40,6 +40,8 @@ Start-Sleep -Seconds 2
 
 # 4. خطوة إعادة التثبيت والتفعيل من جديد
 $RestartRequired = $false
+# Track features that failed to reinstall
+$failedFeatures = @()
 
 foreach ($Feature in $EmulatorFeatures) {
  Write-Progress -Activity "جاري إعادة التثبيت والتفعيل" -Status "يتم تثبيت: $Feature"
@@ -53,22 +55,33 @@ foreach ($Feature in $EmulatorFeatures) {
  Write-Host "[✓] تم تثبيت $Feature بنجاح." -ForegroundColor Green
  }
  catch {
- Write-Warning "[X] فشل تثبيت $Feature. السبب: $_"
+ Write-Warning "[X] فشل تثبيت $Feature. السبب: $_"  # Arabic
+ Write-Warning "[X] Failed to enable $Feature. Reason: $_"      # English
+ $failedFeatures += $Feature
  }
 }
 
-# 5. إنهاء العملية وإشعار المستخدم بإعادة التشغيل
-Write-Host "`n=== اكتملت العملية بنجاح! ===" -ForegroundColor Green
+# 5. Finish and notify about restart / إنهاء العملية وإشعار المستخدم بإعادة التشغيل
+if ($failedFeatures.Count -gt 0) {
+ Write-Host "`n=== تمت العملية مع أخطاء ===" -ForegroundColor Yellow
+ Write-Host "The following features failed to enable: $($failedFeatures -join ', ')" -ForegroundColor Yellow
+ Write-Host "يرجى مراجعة رسائل التحذير أعلاه أو تشغيل السكربت كمسؤول مع اتصال إنترنت. (Arabic)" -ForegroundColor Yellow
+ Exit 1
+}
+
+# All features succeeded; proceed with restart logic
+Write-Host "`n=== العملية اكتملت بنجاح / Completed successfully ===`n" -ForegroundColor Green
 
 if ($RestartRequired) {
- Write-Host "`n[تنبيه هام] يتطلب النظام إعادة التشغيل لتطبيق التغييرات وتفعيل المحاكيات بالكامل." -ForegroundColor Magenta
- $Choose = Read-Host "هل تريد إعادة تشغيل الكمبيوتر الآن؟ (Y / N)"
+ Write-Host "`n[تنبيه هام] يتطلب النظام إعادة التشغيل لتطبيق التغييرات وتفعيل المحاكيات بالكامل. (Arabic)\nImportant: a restart is required to apply changes and fully enable emulators." -ForegroundColor Magenta
+ $Choose = Read-Host "هل تريد إعادة تشغيل الكمبيوتر الآن؟ (Y / N) - Restart now? (Y/N)"
  if ($Choose -eq "Y" -or $Choose -eq "y") {
- Write-Host "جاري إعادة التشغيل الآن..." -ForegroundColor Yellow
+ Write-Host "جاري إعادة التشغيل الآن... / Restarting now..." -ForegroundColor Yellow
  Restart-Computer
  } else {
- Write-Host "يرجى تذكر إعادة تشغيل الجهاز يدوياً لاحقاً لتعمل المحاكيات بشكل صحيح." -ForegroundColor Yellow
+ Write-Host "يرجى تذكر إعادة تشغيل الجهاز يدوياً لاحقاً لتعمل المحاكيات بشكل صحيح. / Please remember to restart later to complete changes." -ForegroundColor Yellow
  }
 } else {
- Write-Host "المحاكيات مفعّلة وجاهزة للعمل دون الحاجة لإعادة التشغيل." -ForegroundColor Green
+ Write-Host "المحاكيات مفعّلة وجاهزة للعمل دون الحاجة لإعادة التشغيل. / Emulators enabled and ready without restart." -ForegroundColor Green
 }
+

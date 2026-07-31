@@ -10,7 +10,6 @@ These target edge cases not covered by the main test suite:
 
 from __future__ import annotations
 
-import math
 import pytest
 
 from agent_framework import _sessions as sessions
