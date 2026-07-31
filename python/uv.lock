@@ -118,7 +118,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework"
-version = "1.12.1"
+version = "1.13.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-core", extra = ["all"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -183,7 +183,7 @@ test = [
 
 [[package]]
 name = "agent-framework-a2a"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/a2a" }
 dependencies = [
     { name = "a2a-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -198,7 +198,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/ag-ui" }
 dependencies = [
     { name = "ag-ui-protocol", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -236,7 +236,7 @@ test = [{ name = "agent-framework-orchestrations", editable = "packages/orchestr
 
 [[package]]
 name = "agent-framework-anthropic"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/anthropic" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -251,7 +251,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-ai-search"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/azure-ai-search" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -266,7 +266,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-contentunderstanding"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/azure-contentunderstanding" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -287,7 +287,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-cosmos"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/azure-cosmos" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -302,7 +302,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-cosmos-memory"
-version = "1.0.0a260721"
+version = "1.0.0a260730"
 source = { editable = "packages/azure-cosmos-memory" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -333,7 +333,7 @@ dev = [
 
 [[package]]
 name = "agent-framework-azurefunctions"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/azurefunctions" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -352,7 +352,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-bedrock"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/bedrock" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -369,7 +369,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-chatkit"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/chatkit" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -384,7 +384,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-claude"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/claude" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -399,7 +399,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-copilotstudio"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/copilotstudio" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -414,7 +414,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.12.1"
+version = "1.13.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "msgspec", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -510,7 +510,7 @@ dev = [{ name = "azure-ai-agentserver-core", specifier = ">=2.0.0b7,<3" }]
 
 [[package]]
 name = "agent-framework-declarative"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/declarative" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -537,7 +537,7 @@ dev = [{ name = "types-pyyaml", specifier = "==6.0.12.20260518" }]
 
 [[package]]
 name = "agent-framework-devui"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/devui" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -575,7 +575,7 @@ provides-extras = ["dev", "all"]
 
 [[package]]
 name = "agent-framework-durabletask"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/durabletask" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -602,7 +602,7 @@ dev = [{ name = "types-python-dateutil", specifier = "==2.9.0.20260716" }]
 
 [[package]]
 name = "agent-framework-foundry"
-version = "1.10.3"
+version = "1.10.4"
 source = { editable = "packages/foundry" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -623,7 +623,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-foundry-hosting"
-version = "1.0.0b260722"
+version = "1.0.0b260730"
 source = { editable = "packages/foundry_hosting" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -646,7 +646,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-foundry-local"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/foundry_local" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -663,7 +663,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-gemini"
-version = "1.0.0b260722"
+version = "1.0.0b260730"
 source = { editable = "packages/gemini" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -678,7 +678,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-github-copilot"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "packages/github_copilot" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -693,7 +693,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hosting"
-version = "1.0.0a260721"
+version = "1.0.0a260730"
 source = { editable = "packages/hosting" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -704,7 +704,7 @@ requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
 
 [[package]]
 name = "agent-framework-hosting-a2a"
-version = "1.0.0a260723"
+version = "1.0.0a260730"
 source = { editable = "packages/hosting-a2a" }
 dependencies = [
     { name = "a2a-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -721,7 +721,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hosting-mcp"
-version = "1.0.0a260721"
+version = "1.0.0a260730"
 source = { editable = "packages/hosting-mcp" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -740,7 +740,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hosting-responses"
-version = "1.0.0a260721"
+version = "1.0.0a260730"
 source = { editable = "packages/hosting-responses" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -769,7 +769,7 @@ test = [
 
 [[package]]
 name = "agent-framework-hosting-telegram"
-version = "1.0.0a260721"
+version = "1.0.0a260730"
 source = { editable = "packages/hosting-telegram" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -784,7 +784,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-hyperlight"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/hyperlight" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -803,7 +803,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-lab"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/lab" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -886,7 +886,7 @@ tau2 = [{ name = "tau2", git = "https://github.com/sierra-research/tau2-bench?re
 
 [[package]]
 name = "agent-framework-mem0"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/mem0" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -901,7 +901,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-mistral"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/mistral" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -916,7 +916,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-monty"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/monty" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -931,7 +931,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ollama"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/ollama" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -946,7 +946,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-openai"
-version = "1.11.0"
+version = "1.12.0"
 source = { editable = "packages/openai" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -961,7 +961,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-orchestrations"
-version = "1.0.1"
+version = "1.0.2"
 source = { editable = "packages/orchestrations" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -972,7 +972,7 @@ requires-dist = [{ name = "agent-framework-core", editable = "packages/core" }]
 
 [[package]]
 name = "agent-framework-purview"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/purview" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -989,7 +989,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-redis"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/redis" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -1009,7 +1009,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-tools"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 source = { editable = "packages/tools" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
