@@ -234,10 +234,13 @@ def test_declared_feature_indexes_match_registry() -> None:
                 index = member.value.value
                 if not isinstance(index, int):
                     continue
-                if package_root := external_package_roots.get(declaration_file):
-                    declaration_path = declaration_file.relative_to(package_root.parent)
+                external_package_root = external_package_roots.get(declaration_file)
+                if external_package_root is not None:
+                    package_root = external_package_root
+                    declaration_path = declaration_file.relative_to(external_package_root.parent)
                 else:
                     declaration_path = declaration_file.relative_to(repository_root)
+                    package_root = repository_root.joinpath(*declaration_path.parts[:3])
                 declaration = f"{declaration_path}:{target.id}"
                 assert 0 <= index < 128, f"Feature index {index} is out of range in {declaration}."
                 assert index not in declarations_by_index, (
@@ -246,8 +249,6 @@ def test_declared_feature_indexes_match_registry() -> None:
                 declarations_by_index[index] = declaration
                 pair = (index, target.id)
                 declaration_pairs.add(pair)
-                if declaration_file not in external_package_roots:
-                    package_root = repository_root.joinpath(*declaration_path.parts[:3])
                 declaration_owners[pair] = (package_root, declaration_file)
 
     assert declaration_pairs == registry_pairs
