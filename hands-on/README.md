@@ -724,16 +724,6 @@ await client.configure_azure_monitor(
 
 ---
 
-## Recap
-
-| Your words | What you did | Key command |
-|---|---|---|
-| "Testing basic features" | Built an agent + tool via a ChatClient | `python agent.py` |
-| "easy chat ID / chat UI" | Ran it in a local browser chat UI | `serve(entities=[agent])` |
-| "Managed harness" | DevUI (local) + Foundry hosting (cloud) | `devui` / `azd ai agent run` |
-| "Public / internet release" | Deployed to managed Foundry hosting | `azd deploy` |
-| "Observation" | Traced model/tool calls & tokens (local → cloud APM) | `configure_otel_providers()` / `devui --instrumentation` |
-
 ## Where to go next
 - Add more **tools** and **middleware** to the agent.
 - Explore **Workflows** for multi-agent orchestration: `python/samples/03-workflows/`.
