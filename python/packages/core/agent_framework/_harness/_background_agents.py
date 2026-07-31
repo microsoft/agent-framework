@@ -409,6 +409,8 @@ class BackgroundAgentsProvider(ContextProvider):
             # Wait for the first one to complete, bounded so a child that never completes
             # cannot suspend the calling agent's run indefinitely.
             effective_timeout = self._wait_timeout_seconds if timeout_seconds is None else timeout_seconds
+            if effective_timeout is not None and effective_timeout < 0:
+                return "Error: timeout_seconds must be non-negative."
             done, _ = await asyncio.wait(
                 [t for _, t in waitable],
                 return_when=asyncio.FIRST_COMPLETED,
