@@ -319,23 +319,28 @@ class BackgroundAgentsProvider(ContextProvider):
             session_id: The session ID to release.
             cancel_running: If True, cancel pending asyncio.Tasks safely.
         """
-        
+
+
         runtime = self._runtime.get(session_id)
         if runtime is None:
             return
 
-        pending = [t for t in runtime.in_flight_tasks.values() if not t.done()]
+        tasks = list(runtime.in_flight_tasks.values())
+        pending = [t for t in tasks if not t.done()]
 
         if pending and not cancel_running:
             raise RuntimeError(
                 f"Cannot release session {session_id}: {len(pending)} tasks still running."
             )
 
-        if pending:
+        if cancel_running and pending:
             for task in pending:
                 task.cancel()
 
             await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         self._runtime.pop(session_id, None)
 

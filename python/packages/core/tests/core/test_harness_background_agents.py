@@ -560,8 +560,16 @@ async def test_release_session_cancels_and_clears() -> None:
     runtime = provider._runtime.get(session.session_id)
     assert runtime is not None
     assert len(runtime.in_flight_tasks) == 1
+    
+    task = next(iter(runtime.in_flight_tasks.values()))
 
     await provider.release_session(session.session_id, cancel_running=True)
+
+    assert task.done()
+    assert task.cancelled()
+    assert runtime.in_flight_tasks == {}
+    assert runtime.background_sessions == {}
+
     assert session.session_id not in provider._runtime
 
 
