@@ -36,5 +36,5 @@ public sealed class DirectEdgeData : EdgeData
     public PredicateT? Condition { get; }
 
     /// <inheritdoc />
-    internal override EdgeConnection Connection { get; }
+    public override EdgeConnection Connection { get; }
 }

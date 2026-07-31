@@ -28,5 +28,5 @@ internal sealed class FanInEdgeData : EdgeData
     public string SinkId { get; }
 
     /// <inheritdoc />
-    internal override EdgeConnection Connection { get; }
+    public override EdgeConnection Connection { get; }
 }

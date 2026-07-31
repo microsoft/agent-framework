@@ -113,9 +113,11 @@ internal static class WorkflowAnalyzer
     /// </summary>
     /// <param name="graphInfo">The graph info to populate.</param>
     /// <param name="edges">The dictionary of edges grouped by source executor ID.</param>
-    private static void PopulateGraphFromEdges(WorkflowGraphInfo graphInfo, Dictionary<string, HashSet<Edge>> edges)
+    private static void PopulateGraphFromEdges(
+        WorkflowGraphInfo graphInfo,
+        IReadOnlyDictionary<string, IReadOnlyCollection<Edge>> edges)
     {
-        foreach ((string sourceId, HashSet<Edge> edgeSet) in edges)
+        foreach ((string sourceId, IReadOnlyCollection<Edge> edgeSet) in edges)
         {
             List<string> successors = graphInfo.Successors[sourceId];
 

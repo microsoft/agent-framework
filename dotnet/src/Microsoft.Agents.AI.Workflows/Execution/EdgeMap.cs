@@ -23,7 +23,10 @@ internal sealed class EdgeMap
                    Workflow workflow,
                    IStepTracer? stepTracer)
         : this(runContext,
-               workflow.Edges,
+               // Adapt the public read-only edge view while preserving the existing internal constructor contract.
+               workflow.Edges.ToDictionary(
+                   keySelector: kvp => kvp.Key,
+                   elementSelector: kvp => new HashSet<Edge>(kvp.Value)),
                workflow.Ports.Values,
                workflow.StartExecutorId,
                stepTracer)

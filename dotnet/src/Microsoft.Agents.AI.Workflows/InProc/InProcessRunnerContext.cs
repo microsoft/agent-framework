@@ -237,7 +237,7 @@ internal sealed class InProcessRunnerContext : IRunnerContext
 
         MessageEnvelope envelope = new(message, sourceId, declaredType, targetId: targetId, traceContext: traceContext);
 
-        if (this._workflow.Edges.TryGetValue(sourceId, out HashSet<Edge>? edges))
+        if (this._workflow.Edges.TryGetValue(sourceId, out IReadOnlyCollection<Edge>? edges))
         {
             foreach (Edge edge in edges)
             {
