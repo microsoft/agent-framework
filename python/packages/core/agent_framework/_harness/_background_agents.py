@@ -312,6 +312,36 @@ class BackgroundAgentsProvider(ContextProvider):
             self._runtime[session_id] = _RuntimeState()
         return self._runtime[session_id]
 
+    async def release_session(self, session_id: str, *, cancel_running: bool = True) -> None:
+        """Release all runtime state for a session to prevent runtime leaks.
+
+        Args:
+            session_id: The session ID to release.
+            cancel_running: If True, cancel pending asyncio.Tasks safely.
+        """
+        
+        runtime = self._runtime.get(session_id)
+        if runtime is None:
+            return
+
+        pending = [t for t in runtime.in_flight_tasks.values() if not t.done()]
+
+        if pending and not cancel_running:
+            raise RuntimeError(
+                f"Cannot release session {session_id}: {len(pending)} tasks still running."
+            )
+
+        if pending:
+            for task in pending:
+                task.cancel()
+
+            await asyncio.wait(pending, return_when=asyncio.ALL_COMPLETED)
+
+        self._runtime.pop(session_id, None)
+
+        runtime.in_flight_tasks.clear()
+        runtime.background_sessions.clear()
+
     async def before_run(
         self,
         *,

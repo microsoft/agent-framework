@@ -542,3 +542,81 @@ def test_task_status_enum_values() -> None:
     assert BackgroundTaskStatus.COMPLETED == "completed"
     assert BackgroundTaskStatus.FAILED == "failed"
     assert BackgroundTaskStatus.LOST == "lost"
+
+
+async def test_release_session_cancels_and_clears() -> None:
+    """Should cancel pending tasks and clear runtime state."""
+    provider = _make_provider(_FakeAgent("Slow", delay=10.0))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Slow",
+        input="task",
+        description="long running",
+    )
+
+    runtime = provider._runtime.get(session.session_id)
+    assert runtime is not None
+    assert len(runtime.in_flight_tasks) == 1
+
+    await provider.release_session(session.session_id, cancel_running=True)
+    assert session.session_id not in provider._runtime
+
+
+async def test_release_session_raises_if_cancel_running_false() -> None:
+    """Should raise RuntimeError if cancel_running=False and tasks are pending."""
+    provider = _make_provider(_FakeAgent("Slow", delay=10.0))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Slow",
+        input="task",
+        description="long running",
+    )
+
+    with pytest.raises(RuntimeError, match="tasks still running"):
+        await provider.release_session(session.session_id, cancel_running=False)
+
+    assert session.session_id in provider._runtime
+    await provider.release_session(session.session_id, cancel_running=True)
+
+
+async def test_release_session_idempotent() -> None:
+    """Should not raise when releasing an unknown or already released session."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+
+    await provider.release_session("non_existent_session")
+
+    await provider.release_session(session.session_id)
+    await provider.release_session(session.session_id)
+
+
+async def test_release_session_isolation() -> None:
+    """Releasing one session should not affect another."""
+    provider = _make_provider(_FakeAgent("Worker", delay=10.0))
+    session_a = AgentSession(session_id="session_a")
+    session_b = AgentSession(session_id="session_b")
+
+    tools_a = await _get_tools(provider, session_a)
+    tools_b = await _get_tools(provider, session_b)
+
+    await _invoke_tool(
+        tools_a["background_agents_start_task"],
+        agent_name="Worker", input="A", description="A",
+    )
+    await _invoke_tool(
+        tools_b["background_agents_start_task"],
+        agent_name="Worker", input="B", description="B",
+    )
+
+    await provider.release_session("session_a", cancel_running=True)
+
+    assert "session_a" not in provider._runtime
+    assert "session_b" in provider._runtime
+
+    await provider.release_session("session_b", cancel_running=True)
