@@ -36,7 +36,6 @@ jobs:
       openaiChanged: ${{ steps.filter.outputs.openai }}
       azureChanged: ${{ steps.filter.outputs.azure }}
       miscChanged: ${{ steps.filter.outputs.misc }}
-      functionsChanged: ${{ steps.filter.outputs.functions }}
       foundryChanged: ${{ steps.filter.outputs.foundry }}
       foundryHostingChanged: ${{ steps.filter.outputs.foundry_hosting }}
       cosmosChanged: ${{ steps.filter.outputs.cosmos }}
@@ -76,9 +75,6 @@ jobs:
               - '.github/actions/setup-local-mcp-server/**'
               - '.github/workflows/python-merge-tests.yml'
               - '.github/workflows/python-integration-tests.yml'
-            functions:
-              - 'python/packages/azurefunctions/**'
-              - 'python/packages/durabletask/**'
             foundry:
               - 'python/packages/foundry/**'
               - 'python/samples/**/providers/foundry/**'
@@ -390,84 +386,6 @@ jobs:
           path: ./python/pytest.xml
           if-no-files-found: ignore
 
-  # Azure Functions + Durable Task integration tests
-  python-tests-functions:
-    name: Python Tests - Functions Integration
-    needs: paths-filter
-    if: >
-      github.event_name != 'pull_request' &&
-      needs.paths-filter.outputs.pythonChanges == 'true' &&
-      (github.event_name != 'merge_group' ||
-       needs.paths-filter.outputs.functionsChanged == 'true' ||
-       needs.paths-filter.outputs.coreChanged == 'true')
-    runs-on: ubuntu-latest
-    environment: integration
-    env:
-      UV_PYTHON: "3.11"
-      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
-      FUNCTIONS_WORKER_RUNTIME: "python"
-      DURABLE_TASK_SCHEDULER_CONNECTION_STRING: "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None"
-      AzureWebJobsStorage: "UseDevelopmentStorage=true"
-    defaults:
-      run:
-        working-directory: python
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - name: Set up python and install the project
-        id: python-setup
-        uses: ./.github/actions/python-setup
-        with:
-          python-version: ${{ env.UV_PYTHON }}
-          os: ${{ runner.os }}
-      - name: Azure CLI Login
-        if: github.event_name != 'pull_request'
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Set up Azure Functions Integration Test Emulators
-        uses: ./.github/actions/azure-functions-integration-setup
-        id: azure-functions-setup
-      - name: Test with pytest (Functions + Durable Task integration)
-        run: >
-          uv run pytest --import-mode=importlib
-          packages/azurefunctions/tests/integration_tests
-          packages/durabletask/tests/integration_tests
-          -m integration
-          -n logical --dist worksteal
-          -x
-          --timeout=480 --session-timeout=900 --timeout_method thread
-          --retries 2 --retry-delay 5
-          --junitxml=pytest.xml
-        working-directory: ./python
-      - name: Surface failing tests
-        if: always()
-        uses: pmeier/pytest-results-action@20b595761ba9bf89e115e875f8bc863f913bc8ad # v0.7.2
-        with:
-          path: ./python/pytest.xml
-          summary: true
-          display-options: fEX
-          fail-on-empty: false
-          title: Functions integration test results
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: test-results-functions
-          path: ./python/pytest.xml
-          if-no-files-found: ignore
-
   python-tests-foundry:
     name: Python Integration Tests - Foundry
     needs: paths-filter
@@ -730,7 +648,6 @@ jobs:
         python-tests-openai,
         python-tests-azure-openai,
         python-tests-misc-integration,
-        python-tests-functions,
         python-tests-foundry,
         python-tests-foundry-hosting,
         python-tests-cosmos,
@@ -792,7 +709,6 @@ jobs:
         python-tests-openai,
         python-tests-azure-openai,
         python-tests-misc-integration,
-        python-tests-functions,
         python-tests-foundry,
         python-tests-foundry-hosting,
         python-tests-cosmos,

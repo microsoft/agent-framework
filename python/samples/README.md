@@ -6,10 +6,10 @@ This directory contains samples demonstrating the capabilities of Microsoft Agen
 
 | Folder | Description |
 |--------|-------------|
-| [`01-get-started/`](./01-get-started/) | Progressive tutorial: hello agent → hosting |
+| [`01-get-started/`](./01-get-started/) | Progressive tutorial: hello agent → graph workflows |
 | [`02-agents/`](./02-agents/) | Deep-dive by concept: tools, middleware, providers, orchestrations |
 | [`03-workflows/`](./03-workflows/) | Workflow patterns: sequential, concurrent, state, declarative, explicit output designation |
-| [`04-hosting/`](./04-hosting/) | Deployment: Azure Functions, Durable Tasks, A2A |
+| [`04-hosting/`](./04-hosting/) | Deployment: A2A, self-hosted protocol helpers, and Foundry hosted agents |
 | [`05-end-to-end/`](./05-end-to-end/) | Full applications, evaluation, demos |
 
 ## Getting Started
@@ -23,7 +23,8 @@ Start with `01-get-started/` and work through the numbered files:
 5. **[05_functional_workflow_with_agents.py](./01-get-started/05_functional_workflow_with_agents.py)** — Call agents inside a functional workflow
 6. **[06_functional_workflow_basics.py](./01-get-started/06_functional_workflow_basics.py)** — Write a workflow as a plain async function
 7. **[07_first_graph_workflow.py](./01-get-started/07_first_graph_workflow.py)** — Build a workflow with executors and edges
-8. **[08_host_your_agent.py](./01-get-started/08_host_your_agent.py)** — Host your agent via Azure Functions
+
+Durable Task and Azure Functions samples have moved to the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
 
 ## Prerequisites
 

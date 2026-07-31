@@ -109,7 +109,8 @@ python/
 - [azure-contentunderstanding](packages/azure-contentunderstanding/AGENTS.md) - Azure Content Understanding context provider
 - [azure-ai-search](packages/azure-ai-search/AGENTS.md) - Azure AI Search RAG
 - [azure-cosmos](packages/azure-cosmos/AGENTS.md) - Azure Cosmos DB-backed history provider
-- [azurefunctions](packages/azurefunctions/AGENTS.md) - Azure Functions hosting
+
+Durable Task and Azure Functions integrations are maintained in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension).
 
 ### Protocols & UI
 - [a2a](packages/a2a/AGENTS.md) - Agent-to-Agent protocol
@@ -126,7 +127,6 @@ python/
 ### Infrastructure
 - [copilotstudio](packages/copilotstudio/AGENTS.md) - Microsoft Copilot Studio
 - [declarative](packages/declarative/AGENTS.md) - YAML/JSON agent definitions
-- [durabletask](packages/durabletask/AGENTS.md) - Durable execution
 - [github_copilot](packages/github_copilot/AGENTS.md) - GitHub Copilot extensions
 - [purview](packages/purview/AGENTS.md) - Data governance
 
