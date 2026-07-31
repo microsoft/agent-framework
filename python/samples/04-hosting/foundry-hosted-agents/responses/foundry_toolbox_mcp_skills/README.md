@@ -11,13 +11,9 @@ The `FoundryToolbox` is attached to the agent and its skills are exposed through
 1. **Advertise** — each skill's name and description are injected into the system prompt so the model knows what is available (~100 tokens per skill).
 2. **Load** — when the model decides a skill is relevant, it retrieves the full `SKILL.md` body on demand via `resources/read`.
 
-> The Agent Skills spec defines a third stage — **read resources** — where a skill fetches supplementary files (reference documents, assets) on demand. That stage requires skills to be served as `type: skill-md` with sibling resources, but Foundry serves ZIP-uploaded (multi-file) skills as `type: archive`, which toolbox skill discovery does not currently surface. So this sample keeps both skills as single-file `SKILL.md` (advertise + load only). See the [`foundry_skills`](../foundry_skills/README.md) sample for the same instruction-only pattern via direct download.
+> The Agent Skills spec defines a third stage — **read resources** — where a skill fetches supplementary files (reference documents, assets) on demand. That stage requires skills to be served as `type: skill-md` with sibling resources, but Foundry serves ZIP-uploaded (multi-file) skills as `type: archive`, which toolbox skill discovery does not currently surface. So this sample keeps both skills as single-file `SKILL.md` (advertise + load only).
 
-## Toolbox MCP skills vs. Foundry Skills
-
-Foundry exposes skills in two ways, and this sample uses the second one.
-
-**Foundry Skills** are downloaded directly into an agent: the agent pulls each `SKILL.md` from the Skills API at startup and serves the bodies from local files. See the [`foundry_skills`](../foundry_skills/README.md) sample.
+## Toolbox MCP skills
 
 **Toolbox MCP skills** are accessed through a toolbox over the MCP protocol. A toolbox bundles a curated set of skills (and optionally tools) behind one MCP endpoint, and any MCP client discovers them automatically. Skill bodies are fetched on demand. The same `SKILL.md` files power both modes — the difference is only in delivery.
 
@@ -36,8 +32,6 @@ Foundry exposes skills in two ways, and this sample uses the second one.
 The agent is hosted with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol on `http://localhost:8088`.
 
 ## The bundled skills
-
-This sample ships two source skills under [`skills/`](skills/), reused from the [`foundry_skills`](../foundry_skills/README.md) sample so you can compare the two delivery modes side by side:
 
 | Skill | Purpose |
 |---|---|
