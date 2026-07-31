@@ -28,6 +28,8 @@ public class Workflow
     /// </summary>
     /// <remarks>
     /// This property exposes the live routing data through read-only interfaces; it is not a deep-copy snapshot.
+    /// The read-only interfaces do not provide deep immutability: callers that downcast the returned collections or
+    /// mutate the lists on an edge connection can affect the live routing data. Treat the returned data as read-only.
     /// Use <see cref="ReflectEdges"/> when a serializable representation of the workflow graph is required.
     /// </remarks>
     public IReadOnlyDictionary<string, IReadOnlyCollection<Edge>> Edges { get; internal init; } =
