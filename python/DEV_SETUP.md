@@ -157,6 +157,12 @@ uv run poe --directory packages/core test
 
 Large packages (core, ag-ui, orchestrations, anthropic) use `pytest-xdist` for parallel test execution within the package. The aggregate `test -A` sweep also uses `pytest-xdist` across the selected packages.
 
+### Testing deprecations
+
+When an API is marked as deprecated, update the test suite to use its replacement at the same time. Keep only
+focused tests that validate the deprecated API and its warning; ordinary behavior, integration, and sample tests
+should exercise the supported API so deprecation warnings do not accumulate in test runs.
+
 ## Code quality checks
 
 To run the same checks that run during a commit and the GitHub Action `Python Code Quality`, you can use this command, from the [python](../python) folder:
@@ -177,6 +183,10 @@ uv run poe test -A -C
 ```
 
 This will show you which files are not covered by the tests, including the specific lines not covered. Make sure to consider the untested lines from the code you are working on, but feel free to add other tests as well, that is always welcome!
+
+CI automatically enforces at least 85% line coverage for every package classified Beta or
+Production/Stable. Alpha packages are reported without blocking, and the DevUI and experimental Lab
+packages are excluded from aggregate coverage enforcement.
 
 ## Catching up with the latest changes
 
@@ -374,7 +384,8 @@ uv run poe check -S
 ```
 
 #### `validate-dependency-bounds-test`
-Run workspace-wide dependency compatibility gates at lower and upper resolutions. This runs test + pyright across all packages and stops on first failure:
+Run workspace-wide dependency compatibility gates at lower and upper resolutions. This runs tests plus Pyright (or a
+package-specific `dependency-pyright` task) across all packages and stops on first failure:
 ```bash
 uv run poe validate-dependency-bounds-test
 # Defaults to --package "*"; pass a package to scope test mode

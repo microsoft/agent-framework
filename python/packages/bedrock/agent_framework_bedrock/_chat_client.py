@@ -31,7 +31,7 @@ from agent_framework import (
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.exceptions import ChatClientInvalidResponseException
 from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
@@ -39,6 +39,8 @@ from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 from pydantic import BaseModel
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -331,6 +333,7 @@ class BedrockChatClient(
         return Boto3Session(**session_kwargs)
 
     def _invoke_converse(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        mark_feature_used(FeatureIndex.BEDROCK)
         try:
             response = self._bedrock_client.converse(**request)
             if not isinstance(response, Mapping):

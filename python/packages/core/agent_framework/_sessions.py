@@ -7,6 +7,8 @@ This module provides the core types for the context provider pipeline:
 - ContextProvider: Base class for context providers
 - HistoryProvider: Base class for history storage providers
 - AgentSession: Lightweight session state container
+- SessionStore: In-memory session snapshot storage
+- FileSessionStore: msgspec JSON file-backed session snapshot storage
 - InMemoryHistoryProvider: Built-in in-memory history provider
 - FileHistoryProvider: Built-in JSON Lines file history provider
 """
@@ -15,25 +17,34 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import logging
+import math
+import os
 import threading
 import uuid
+import warnings
 import weakref
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
+from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
-from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeGuard, TypeVar, cast
+
+import msgspec
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import ChatContext, ChatMiddleware
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
     AgentResponse,
     AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Message,
     ResponseStream,
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
@@ -48,22 +59,118 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework")
 
-# Registry of known types for state deserialization
-_STATE_TYPE_REGISTRY: dict[str, type] = {}
 MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY: str = "message_injection.pending_messages"
 _MESSAGE_INJECTION_LOCK = threading.Lock()
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
 ServiceSessionId: TypeAlias = Mapping[str, Any]
+StateT = TypeVar("StateT")
+StateEncoder: TypeAlias = Callable[[Any], Mapping[str, Any]]
+StateDecoder: TypeAlias = Callable[[Mapping[str, Any]], Any]
+_STATE_SCALAR_TYPES = (str, int, float, bool, type(None))
+_WINDOWS_RESERVED_FILE_STEMS: frozenset[str] = frozenset({
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+    "COM¹",
+    "COM²",
+    "COM³",
+    "LPT¹",
+    "LPT²",
+    "LPT³",
+})
 
 
-def _default_json_dumps(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False)
+_DEFAULT_JSON_ENCODER = msgspec.json.Encoder()
+_DEFAULT_JSON_DECODER = msgspec.json.Decoder()
+_DEFAULT_MSGPACK_ENCODER = msgspec.msgpack.Encoder()
+_DEFAULT_MSGPACK_DECODER = msgspec.msgpack.Decoder()
+_JSON_FILE_EXTENSION = ".json"
+_JSON_LINES_FILE_EXTENSION = ".jsonl"
+_MSGPACK_FILE_EXTENSION = ".msgpack"
+_SESSION_SNAPSHOT_VERSION = "1.0"
+_MAX_ENCODED_SESSION_FILE_STEM_LENGTH = 180
+
+
+def _default_json_dumps(value: Any) -> bytes:
+    if _contains_non_finite_float(value):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return _DEFAULT_JSON_ENCODER.encode(value)
 
 
 def _default_json_loads(value: str | bytes) -> Any:
-    return json.loads(value)
+    try:
+        return _DEFAULT_JSON_DECODER.decode(value)
+    except msgspec.DecodeError:
+        return json.loads(value)
+
+
+def _contains_non_finite_float(value: Any) -> bool:
+    """Return whether legacy JSON encoding is needed for NaN or infinity.
+
+    msgspec normalizes non-finite floats to ``null``, while the previous
+    FileHistoryProvider JSON encoder emitted Python's ``NaN`` and ``Infinity``
+    tokens. Detecting them keeps existing history files byte-compatible.
+    """
+    if isinstance(value, float):
+        return not math.isfinite(value)
+    if isinstance(value, Mapping):
+        return any(_contains_non_finite_float(item) for item in cast(Mapping[Any, Any], value).values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_non_finite_float(item) for item in cast(Sequence[Any], value))
+    return False
+
+
+def _is_literal_session_file_stem_safe(session_id: str) -> bool:
+    """Return whether an opaque session ID is a portable filename stem.
+
+    FileSessionStore and FileHistoryProvider accept opaque IDs, including IDs
+    with separators and platform-reserved names such as ``CON``. Unsafe values
+    are encoded by :func:`_session_file_stem` rather than rejected.
+    """
+    windows_stem = session_id.split(".", maxsplit=1)[0].upper()
+    if (
+        not session_id
+        or session_id.startswith(".")
+        or session_id.endswith((" ", "."))
+        or windows_stem in _WINDOWS_RESERVED_FILE_STEMS
+    ):
+        return False
+    if any(ord(character) < 32 for character in session_id):
+        return False
+    return all(character.isascii() and (character.isalnum() or character in "._-") for character in session_id)
+
+
+def _session_file_stem(session_id: str, *, encoded_prefix: str) -> str:
+    """Return a safe filename stem for an opaque session ID."""
+    if _is_literal_session_file_stem_safe(session_id):
+        return session_id
+    encoded_session_id = urlsafe_b64encode(session_id.encode("utf-8")).decode("ascii").rstrip("=")
+    encoded_stem = f"{encoded_prefix}{encoded_session_id}"
+    if len(encoded_stem) <= _MAX_ENCODED_SESSION_FILE_STEM_LENGTH:
+        return encoded_stem
+    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    return f"{encoded_prefix}sha256-{digest}"
 
 
 def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[str]:
@@ -89,89 +196,314 @@ def _is_single_middleware(
     return not _is_middleware_sequence(middleware)
 
 
-def register_state_type(cls: type) -> None:
+@dataclass(frozen=True, slots=True)
+class _StateTypeRegistration:
+    cls: type[Any]
+    type_id: str
+    encoder: StateEncoder
+    decoder: StateDecoder
+
+
+_STATE_TYPE_REGISTRY: dict[str, _StateTypeRegistration] = {}
+_STATE_CLASS_REGISTRY: dict[type[Any], _StateTypeRegistration] = {}
+
+
+def _resolve_state_type_id(cls: type[Any], type_id: str | None) -> str:
+    """Resolve the stable, process-wide ID for a registered state type."""
+    if type_id is not None:
+        resolved = type_id
+    elif callable(identifier := getattr(cls, "_get_type_identifier", None)):
+        resolved = identifier()
+    elif isinstance(identifier := getattr(cls, "TYPE", None), str):
+        resolved = identifier
+    else:
+        resolved = cls.__name__.lower()
+    if not isinstance(resolved, str) or not resolved:
+        raise ValueError("State type identifier must be a non-empty string.")
+    return resolved
+
+
+def _default_state_encoder(cls: type[Any]) -> StateEncoder:
+    """Create the default encoder for one explicitly registered state type."""
+    if callable(getattr(cls, "to_dict", None)):
+
+        def encode_to_dict(value: Any) -> Mapping[str, Any]:
+            payload = value.to_dict()
+            if not isinstance(payload, Mapping):
+                raise TypeError(f"{cls.__name__}.to_dict() must return a mapping.")
+            return cast(Mapping[str, Any], payload)
+
+        return encode_to_dict
+
+    from pydantic import BaseModel
+
+    if issubclass(cls, BaseModel):
+
+        def encode_pydantic(value: Any) -> Mapping[str, Any]:
+            return cast(Mapping[str, Any], value.model_dump())
+
+        return encode_pydantic
+
+    raise ValueError(
+        f"State type {cls.__name__!r} must define to_dict()/from_dict(), be a Pydantic model, "
+        "or provide encoder and decoder callbacks."
+    )
+
+
+def _default_state_decoder(cls: type[Any]) -> StateDecoder:
+    """Create the default decoder for one explicitly registered state type."""
+    if callable(getattr(cls, "from_dict", None)):
+
+        def decode_from_dict(payload: Mapping[str, Any]) -> Any:
+            return cls.from_dict(dict(payload))
+
+        return decode_from_dict
+
+    from pydantic import BaseModel
+
+    if issubclass(cls, BaseModel):
+
+        def decode_pydantic(payload: Mapping[str, Any]) -> Any:
+            return cls.model_validate({key: value for key, value in payload.items() if key != "type"})
+
+        return decode_pydantic
+
+    raise ValueError(
+        f"State type {cls.__name__!r} must define to_dict()/from_dict(), be a Pydantic model, "
+        "or provide encoder and decoder callbacks."
+    )
+
+
+def register_state_type(
+    cls: type[StateT],
+    *,
+    type_id: str | None = None,
+    encoder: Callable[[StateT], Mapping[str, Any]] | None = None,
+    decoder: Callable[[Mapping[str, Any]], StateT] | None = None,
+) -> None:
     """Register a type for automatic deserialization in session state.
 
-    Call this for any custom type (including Pydantic models) that you store
-    in ``session.state`` and want to survive ``to_dict()`` / ``from_dict()``
-    round-trips. Types with ``to_dict``/``from_dict`` methods or Pydantic
-    ``BaseModel`` subclasses are handled automatically.
+    Registration is explicit so persisted sessions can be restored after a
+    process restart. Type identifiers share one process-wide registry and must
+    therefore be globally unique; provider packages should pass a stable,
+    package-qualified ``type_id``. For compatibility with existing framework
+    types, the identifier otherwise falls back to ``_get_type_identifier()``,
+    then ``TYPE``, and finally the lowercased class name. Conflicting
+    registrations fail immediately rather than silently selecting one type.
+    Classes implementing ``to_dict`` / ``from_dict`` and Pydantic models receive
+    default codecs; other classes must provide both callbacks.
 
-    The type identifier defaults to ``cls.__name__.lower()`` but can be
-    overridden by defining a ``_get_type_identifier`` classmethod.
-
-    Note:
-        Pydantic models are auto-registered on first serialization, but
-        pre-registering ensures deserialization works even if the model
-        hasn't been serialized in this process yet (e.g. cold-start restore).
+    Call this at module level immediately after defining the custom state class.
+    Importing that module then registers the type before any persisted session
+    is loaded, without requiring the related context provider to be instantiated
+    first.
 
     Args:
         cls: The type to register.
+
+    Keyword Args:
+        type_id: Stable identifier stored in the serialized ``type`` field.
+        encoder: Optional callback that converts an instance to a mapping.
+        decoder: Optional callback that reconstructs an instance from a mapping.
+
+    Raises:
+        ValueError: If the registration is incomplete or conflicts with an existing type.
     """
-    type_id: str = getattr(cls, "_get_type_identifier", lambda: cls.__name__.lower())()
-    _STATE_TYPE_REGISTRY[type_id] = cls
+    resolved_type_id = _resolve_state_type_id(cls, type_id)
+    existing_for_class = _STATE_CLASS_REGISTRY.get(cls)
+    if existing_for_class is not None:
+        if existing_for_class.type_id != resolved_type_id:
+            raise ValueError(
+                f"State type {cls.__name__!r} is already registered as {existing_for_class.type_id!r}, "
+                f"not {resolved_type_id!r}."
+            )
+        if encoder is not None and existing_for_class.encoder is not encoder:
+            raise ValueError(f"State type {cls.__name__!r} is already registered with a different encoder.")
+        if decoder is not None and existing_for_class.decoder is not decoder:
+            raise ValueError(f"State type {cls.__name__!r} is already registered with a different decoder.")
+        return
+
+    existing_for_id = _STATE_TYPE_REGISTRY.get(resolved_type_id)
+    if existing_for_id is not None:
+        raise ValueError(
+            f"State type identifier {resolved_type_id!r} is already registered for {existing_for_id.cls.__name__!r}."
+        )
+
+    if (encoder is None) != (decoder is None):
+        raise ValueError("State type encoder and decoder must be provided together.")
+    resolved_encoder = cast(StateEncoder, encoder) if encoder is not None else _default_state_encoder(cls)
+    resolved_decoder = cast(StateDecoder, decoder) if decoder is not None else _default_state_decoder(cls)
+    registration = _StateTypeRegistration(
+        cls=cls,
+        type_id=resolved_type_id,
+        encoder=resolved_encoder,
+        decoder=resolved_decoder,
+    )
+    _STATE_TYPE_REGISTRY[resolved_type_id] = registration
+    _STATE_CLASS_REGISTRY[cls] = registration
 
 
-# Keep internal alias for framework use
-_register_state_type = register_state_type
+def _warn_implicit_pydantic_registration(value_type: type[Any]) -> None:
+    """Warn that an unregistered Pydantic state type uses legacy registration."""
+    warnings.warn(
+        f"Implicit registration of Pydantic AgentSession state type {value_type.__name__!r} is deprecated and will "
+        "be removed in a future version. Call register_state_type() at module import time. Cold-start deserialization "
+        "is not guaranteed without explicit registration.",
+        DeprecationWarning,
+        stacklevel=4,
+    )
 
 
-def _serialize_value(value: Any) -> Any:
-    """Serialize a single value, handling objects with to_dict() and Pydantic models."""
-    if hasattr(value, "to_dict") and callable(value.to_dict):
-        return value.to_dict()
-    # Pydantic BaseModel support — import lazily to avoid hard dep at module level
-    with suppress(ImportError):
-        from pydantic import BaseModel
-
-        if isinstance(value, BaseModel):
-            data = value.model_dump()
-            type_id: str = getattr(value.__class__, "_get_type_identifier", lambda: value.__class__.__name__.lower())()
-            data["type"] = type_id
-            # Auto-register for round-trip deserialization
-            _STATE_TYPE_REGISTRY.setdefault(type_id, value.__class__)
-            return data
+def _serialize_value(value: Any, *, path: str) -> Any:
+    """Serialize one session-state value through the shared compatibility path."""
+    value_type = cast(type[Any], type(value))
+    registration = _STATE_CLASS_REGISTRY.get(value_type)
+    if registration is not None:
+        payload = registration.encoder(value)
+        payload_type = payload.get("type")
+        if payload_type is not None and payload_type != registration.type_id:
+            raise ValueError(
+                f"State encoder for {registration.cls.__name__!r} returned type {payload_type!r}; "
+                f"expected {registration.type_id!r}."
+            )
+        serialized = {
+            str(key): _serialize_value(item, path=f"{path}.{key}") for key, item in payload.items() if key != "type"
+        }
+        serialized["type"] = registration.type_id
+        return serialized
+    if callable(getattr(value, "to_dict", None)):
+        payload = value.to_dict()
+        if not isinstance(payload, Mapping):
+            raise TypeError(f"{value_type.__name__}.to_dict() must return a mapping.")
+        return {
+            str(key): _serialize_value(item, path=f"{path}.{key}")
+            for key, item in cast(Mapping[Any, Any], payload).items()
+        }
+    if value_type in _STATE_SCALAR_TYPES:
+        return value
     if isinstance(value, list):
-        return [_serialize_value(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
-    if isinstance(value, dict):
-        return {str(k): _serialize_value(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+        return [_serialize_value(item, path=f"{path}[{index}]") for index, item in enumerate(cast(list[Any], value))]
+    if isinstance(value, tuple):
+        return [
+            _serialize_value(item, path=f"{path}[{index}]") for index, item in enumerate(cast(tuple[Any, ...], value))
+        ]
+    if isinstance(value, Mapping):
+        return {
+            str(key): _serialize_value(item, path=f"{path}.{key}")
+            for key, item in cast(Mapping[Any, Any], value).items()
+        }
+
+    from pydantic import BaseModel
+
+    if isinstance(value, BaseModel):
+        # Temporary compatibility fallback for unregistered Pydantic models;
+        # remove this branch together with implicit auto-registration.
+        _warn_implicit_pydantic_registration(value_type)
+        type_id = _resolve_state_type_id(value_type, None)
+        register_state_type(value_type, type_id=type_id)
+        return _serialize_value(value, path=path)
+    warnings.warn(
+        f"AgentSession state value at {path} has unsupported type {value_type.__name__!r}; "
+        "AgentSession.to_dict() is leaving it unchanged for compatibility, but durable session stores will reject it. "
+        "Call register_state_type() with a restorable codec.",
+        RuntimeWarning,
+        stacklevel=4,
+    )
     return value
 
 
-def _deserialize_value(value: Any) -> Any:
+def _deserialize_value(value: Any, *, path: str) -> Any:
     """Deserialize a single value, restoring registered types."""
-    if isinstance(value, dict) and "type" in value:
-        type_id = str(value["type"])  # pyright: ignore[reportUnknownArgumentType]
-        cls = _STATE_TYPE_REGISTRY.get(type_id)
-        if cls is not None:
-            if hasattr(cls, "from_dict"):
-                return cls.from_dict(value)  # type: ignore[union-attr]
-            # Pydantic BaseModel support
-            with suppress(ImportError):
-                from pydantic import BaseModel
-
-                if issubclass(cls, BaseModel):
-                    data: dict[str, Any] = {str(k): v for k, v in value.items() if k != "type"}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-                    return cls.model_validate(data)
     if isinstance(value, list):
-        return [_deserialize_value(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
-    if isinstance(value, dict):
-        return {str(k): _deserialize_value(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+        return [_deserialize_value(item, path=f"{path}[{index}]") for index, item in enumerate(cast(list[Any], value))]
+    if isinstance(value, Mapping):
+        raw_mapping = {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
+        if "type" in raw_mapping:
+            registration = _STATE_TYPE_REGISTRY.get(str(raw_mapping["type"]))
+            if registration is not None:
+                try:
+                    return registration.decoder(raw_mapping)
+                except Exception as exc:
+                    # Registered decoders are application extension points. Any
+                    # ordinary failure means this payload cannot be restored by
+                    # the active registration and should enter store recovery.
+                    raise ValueError(
+                        f"Failed to deserialize registered state type {registration.type_id!r} at {path}."
+                    ) from exc
+        return {key: _deserialize_value(item, path=f"{path}.{key}") for key, item in raw_mapping.items()}
     return value
 
 
 def _serialize_state(state: dict[str, Any]) -> dict[str, Any]:
-    """Deep-serialize a state dict, converting SerializationProtocol objects to dicts."""
-    return {k: _serialize_value(v) for k, v in state.items()}
+    """Deep-serialize a state dict using the established AgentSession contract."""
+    return {key: _serialize_value(value, path=f"state.{key}") for key, value in state.items()}
+
+
+def _validate_durable_state_value(value: Any, *, path: str) -> None:
+    """Validate that serialized state can round-trip through the durable codecs."""
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"Session state value at {path} must be a finite float.")
+    if type(value) in _STATE_SCALAR_TYPES:
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(cast(list[Any], value)):
+            _validate_durable_state_value(item, path=f"{path}[{index}]")
+        return
+    if isinstance(value, Mapping):
+        for key, item in cast(Mapping[Any, Any], value).items():
+            _validate_durable_state_value(item, path=f"{path}.{key}")
+        return
+    raise TypeError(
+        f"Session state value at {path} has unsupported serialized type {type(value).__name__!r}; "
+        "call register_state_type() with a codec that returns JSON-compatible values."
+    )
 
 
 def _deserialize_state(state: dict[str, Any]) -> dict[str, Any]:
     """Deep-deserialize a state dict, restoring SerializationProtocol objects."""
-    return {k: _deserialize_value(v) for k, v in state.items()}
+    return {key: _deserialize_value(value, path=f"state.{key}") for key, value in state.items()}
+
+
+class _SessionStatePayload:
+    """Wrapper that routes the complete dynamic state mapping through msgspec hooks."""
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: dict[str, Any]) -> None:
+        self.value = value
+
+    def serialize(self) -> dict[str, Any]:
+        """Serialize and validate the wrapped state for durable storage."""
+        serialized = _serialize_state(self.value)
+        _validate_durable_state_value(serialized, path="state")
+        return serialized
+
+
+class _SessionSnapshot(msgspec.Struct):
+    """Typed on-disk representation of one AgentSession."""
+
+    type: Literal["session"]
+    session_id: str
+    service_session_id: str | dict[str, Any] | None
+    state: object
+    version: str = _SESSION_SNAPSHOT_VERSION
+
+
+def _session_snapshot_enc_hook(value: Any) -> Any:
+    """Encode the complete dynamic state payload for msgspec."""
+    if isinstance(value, _SessionStatePayload):
+        return value.serialize()
+    raise NotImplementedError(f"Objects of type {type(value).__name__!r} are not supported.")
+
+
+_SESSION_SNAPSHOT_ENCODER = msgspec.json.Encoder(enc_hook=_session_snapshot_enc_hook)
+_SESSION_SNAPSHOT_DECODER = msgspec.json.Decoder(_SessionSnapshot)
+_SESSION_SNAPSHOT_MSGPACK_ENCODER = msgspec.msgpack.Encoder(enc_hook=_session_snapshot_enc_hook)
+_SESSION_SNAPSHOT_MSGPACK_DECODER = msgspec.msgpack.Decoder(_SessionSnapshot)
 
 
 # Register known types
-_register_state_type(Message)
+register_state_type(Message)
 
 
 class SessionContext:
@@ -421,6 +753,17 @@ class ContextProvider:
     Context providers participate in the context engineering pipeline,
     adding context before model invocation and processing responses after.
 
+    Provider-scoped ``state`` is stored inside :attr:`AgentSession.state` and
+    may be persisted by a session store. Standard JSON-native Python values
+    (``None``, booleans, integers, finite floats, strings, lists, tuples, and
+    mappings) require no registration. If a provider stores an instance of a
+    custom class or Pydantic model, the provider module must call
+    :func:`register_state_type` for that class at module level, immediately
+    after its definition. Importing the provider then registers the type before
+    a persisted session is loaded, without requiring the application to know
+    which internal state types the provider uses. Framework-owned state types
+    such as :class:`Message` are registered by Agent Framework.
+
     Attributes:
         source_id: Unique identifier for this provider instance (required).
             Used for message/tool attribution so other providers can filter.
@@ -477,6 +820,76 @@ class ContextProvider:
         """
 
 
+def _is_approval_placeholder_result(content: Content) -> bool:
+    result = getattr(content, "result", None)
+    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
+
+
+def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
+    unresolved_requests_by_id: dict[str, Content] = {}
+    unresolved_local_responses_by_id: dict[str, Content] = {}
+    local_response_ids_by_call_id: dict[str, deque[str]] = {}
+
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_approval_request":
+                function_call = content.function_call
+                if content.id is not None and function_call is not None and function_call.call_id is not None:
+                    unresolved_requests_by_id.setdefault(content.id, content)
+                continue
+            if content.type == "function_approval_response":
+                function_call = content.function_call
+                if content.id is not None:
+                    unresolved_requests_by_id.pop(content.id, None)
+                if (
+                    content.id is not None
+                    and function_call is not None
+                    and function_call.call_id is not None
+                    and not function_call.additional_properties.get("server_label")
+                    and content.id not in unresolved_local_responses_by_id
+                ):
+                    unresolved_local_responses_by_id[content.id] = content
+                    local_response_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
+                continue
+            if content.call_id is None:
+                continue
+            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_follow_up_request = content.user_input_request and content.type not in {
+                "function_approval_request",
+                "function_approval_response",
+            }
+            if not (is_terminal_result or is_follow_up_request):
+                continue
+            if response_ids := local_response_ids_by_call_id.get(content.call_id):
+                unresolved_local_responses_by_id.pop(response_ids.popleft(), None)
+
+    return {
+        id(content) for content in (*unresolved_requests_by_id.values(), *unresolved_local_responses_by_id.values())
+    }
+
+
+def _filter_approval_control_messages(messages: Sequence[Message]) -> list[Message]:
+    """Remove resolved approval controls while preserving pending occurrences."""
+    controls_to_keep = _approval_controls_to_keep(messages)
+    filtered_messages: list[Message] = []
+    for message in messages:
+        filtered_contents = [
+            content
+            for content in message.contents
+            if content.type not in {"function_approval_request", "function_approval_response"}
+            or id(content) in controls_to_keep
+        ]
+        if not filtered_contents:
+            continue
+        if len(filtered_contents) == len(message.contents):
+            filtered_messages.append(message)
+            continue
+        filtered_message = copy.copy(message)
+        filtered_message.contents = filtered_contents
+        filtered_messages.append(filtered_message)
+    return filtered_messages
+
+
 class HistoryProvider(ContextProvider):
     """Base class for conversation history storage providers.
 
@@ -488,6 +901,17 @@ class HistoryProvider(ContextProvider):
     Subclasses only need to implement ``get_messages()`` and ``save_messages()``.
     The default ``before_run``/``after_run`` handle loading and storing based on
     configuration flags. Override them for custom behavior.
+
+    Normal :class:`Message` history requires no custom registration because
+    Agent Framework registers ``Message`` for session persistence. If a history
+    provider stores any other custom class or Pydantic model in its
+    provider-scoped ``state`` or elsewhere in :attr:`AgentSession.state`, the
+    provider module must call :func:`register_state_type` at module level
+    immediately after defining that class. This ensures importing the provider
+    module registers its state types before session restoration and before the
+    provider itself is instantiated, without requiring consumer registration.
+    Prefer JSON-native Python values when a custom runtime type is not needed
+    after restoration.
 
     Attributes:
         load_messages: Whether to load messages before invocation (default True).
@@ -579,7 +1003,7 @@ class HistoryProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Load history into context. Skipped by the agent when load_messages=False."""
-        history = await self.get_messages(context.session_id, state=state)
+        history = _filter_approval_control_messages(await self.get_messages(context.session_id, state=state))
         context.extend_messages(self, history)
 
     async def after_run(
@@ -1007,9 +1431,11 @@ class AgentSession:
     def to_dict(self) -> dict[str, Any]:
         """Serialize session to a plain dict for storage/transfer.
 
-        Values in ``state`` that implement ``SerializationProtocol`` (i.e. have
-        ``to_dict``/``from_dict``) are serialized automatically. Built-in types
-        (str, int, float, bool, None, list, dict) are kept as-is.
+        Registered custom values use their configured codecs. Unregistered
+        values defining ``to_dict`` retain the established dictionary behavior.
+        Unregistered Pydantic models are still auto-registered temporarily but
+        emit ``DeprecationWarning`` because cold-start restoration requires
+        explicit module-level registration.
         """
         return {
             "type": "session",
@@ -1037,6 +1463,299 @@ class AgentSession:
         )
         session.state = _deserialize_state(data.get("state", {}))
         return session
+
+
+@experimental(feature_id=ExperimentalFeature.SESSION_STORE)
+class SessionStore:
+    """In-memory storage for Agent Framework session snapshots.
+
+    The store maps an opaque caller-selected ID to an :class:`AgentSession`.
+    Reads return independent working copies so one continuation does not mutate
+    another stored snapshot. The store has no eviction; callers that need TTLs,
+    durable storage, or distributed coordination should provide another
+    implementation with the same async methods.
+
+    Session IDs are opaque non-empty strings. Custom implementations are
+    responsible for applying any backend-specific key restrictions and must use
+    parameterized queries and their backend's normal key-handling protections.
+    """
+
+    def __init__(self) -> None:
+        """Create an empty session store."""
+        self._sessions: dict[str, AgentSession] = {}
+
+    @staticmethod
+    def validate_session_id(session_id: str) -> None:
+        """Validate an ID for use with a session store.
+
+        Args:
+            session_id: Session-store ID to validate.
+
+        Raises:
+            ValueError: If the ID is not a non-empty string.
+        """
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("session_id must be a non-empty string")
+
+    async def get(self, session_id: str) -> AgentSession | None:
+        """Return a copy of the stored session, or ``None`` when absent.
+
+        Args:
+            session_id: Opaque caller-selected session ID.
+
+        Returns:
+            An independent copy of the stored session, or ``None``.
+
+        Raises:
+            ValueError: If ``session_id`` is empty.
+        """
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
+        SessionStore.validate_session_id(session_id)
+        session = self._sessions.get(session_id)
+        return copy.deepcopy(session) if session is not None else None
+
+    async def set(self, session_id: str, session: AgentSession) -> None:
+        """Store ``session`` under ``session_id``, replacing any existing entry.
+
+        Args:
+            session_id: Opaque caller-selected session ID.
+            session: The session to store.
+
+        Raises:
+            ValueError: If ``session_id`` is empty.
+        """
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
+        SessionStore.validate_session_id(session_id)
+        self._sessions[session_id] = copy.deepcopy(session)
+
+    async def delete(self, session_id: str) -> None:
+        """Delete the stored session, if present.
+
+        Args:
+            session_id: Opaque caller-selected session ID.
+
+        Raises:
+            ValueError: If ``session_id`` is empty.
+        """
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
+        SessionStore.validate_session_id(session_id)
+        self._sessions.pop(session_id, None)
+
+
+@experimental(feature_id=ExperimentalFeature.SESSION_STORE)
+class FileSessionStore(SessionStore):
+    """File-backed storage for Agent Framework session snapshots.
+
+    Each session is stored as one JSON or MessagePack file beneath
+    ``storage_path``. JSON is the default; pass ``serialization_format="msgpack"``
+    for a compact binary representation.
+    Writes use a unique sibling temporary file followed by :func:`os.replace`
+    so readers never observe a partially written snapshot. Concurrent writers
+    use last-writer-wins semantics.
+
+    The complete snapshot is encoded and decoded in one call through a typed
+    :mod:`msgspec` codec. The dynamic state mapping is routed through the
+    explicit :func:`register_state_type` registry during encoding and restored
+    after the typed envelope and snapshot version are validated.
+
+    Security posture:
+        Persisted session snapshots are stored as plaintext JSON or binary
+        MessagePack on the local filesystem.
+        Treat ``storage_path`` as trusted application storage, not as a secret
+        store. Opaque store keys are encoded as portable filename stems, and
+        resolved-path validation prevents path traversal via ``session_id``.
+        These protections do not encrypt file contents or coordinate concurrent
+        updates across processes or hosts. Process-local operations are
+        serialized per file, and atomic replacement prevents partial writes;
+        cross-process writers still use last-writer-wins semantics. Use OS-level
+        file permissions, trusted directories, and carefully review what session
+        state is allowed to be persisted.
+    """
+
+    MAX_SESSION_ID_LENGTH: ClassVar[int] = 128
+    _FILE_LOCK_STRIPE_COUNT: ClassVar[int] = 64
+    _FILE_OPERATION_LOCKS: ClassVar[tuple[threading.Lock, ...]] = tuple(
+        threading.Lock() for _ in range(_FILE_LOCK_STRIPE_COUNT)
+    )
+    _ENCODED_SESSION_PREFIX: ClassVar[str] = "~session-"
+
+    def __init__(
+        self,
+        storage_path: str | Path,
+        *,
+        serialization_format: Literal["json", "msgpack"] = "json",
+    ) -> None:
+        """Initialize file-backed session storage.
+
+        Args:
+            storage_path: Directory where session snapshot files are stored.
+
+        Keyword Args:
+            serialization_format: ``"json"`` (default) for readable JSON files
+                or ``"msgpack"`` for binary MessagePack files.
+
+        Raises:
+            ValueError: If ``serialization_format`` is unsupported.
+        """
+        if serialization_format not in ("json", "msgpack"):
+            raise ValueError("serialization_format must be 'json' or 'msgpack'")
+        self.storage_path = Path(storage_path)
+        self.storage_path.mkdir(parents=True, exist_ok=True)
+        self._storage_root = self.storage_path.resolve()
+        self.serialization_format = serialization_format
+        if serialization_format == "json":
+            self._encoder = _SESSION_SNAPSHOT_ENCODER
+            self._decoder = _SESSION_SNAPSHOT_DECODER
+            self._file_extension = _JSON_FILE_EXTENSION
+        else:
+            self._encoder = _SESSION_SNAPSHOT_MSGPACK_ENCODER
+            self._decoder = _SESSION_SNAPSHOT_MSGPACK_DECODER
+            self._file_extension = _MSGPACK_FILE_EXTENSION
+
+    async def get(self, session_id: str) -> AgentSession | None:
+        """Load a session snapshot, or return ``None`` when it does not exist."""
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
+        file_path = self._session_file_path(session_id)
+        file_lock = self._session_file_lock(file_path)
+
+        def _read() -> AgentSession | None:
+            with file_lock:
+                try:
+                    serialized = file_path.read_bytes()
+                except FileNotFoundError:
+                    return None
+                try:
+                    snapshot = self._decoder.decode(serialized)
+                except msgspec.ValidationError as exc:
+                    raise ValueError(f"Session snapshot '{file_path}' has an invalid schema.") from exc
+                except msgspec.DecodeError as exc:
+                    try:
+                        quarantine_path = self._quarantine_corrupt_snapshot(file_path, serialized)
+                    except OSError as quarantine_error:
+                        raise ValueError(
+                            f"Failed to deserialize session from '{file_path}', and the corrupt snapshot "
+                            "could not be quarantined."
+                        ) from quarantine_error
+                    if quarantine_path is None:
+                        raise ValueError(
+                            f"Failed to deserialize session from '{file_path}'. "
+                            "The snapshot changed while being read; retry."
+                        ) from exc
+                    raise ValueError(
+                        f"Failed to deserialize session from '{file_path}'. The corrupt snapshot was quarantined to "
+                        f"'{quarantine_path}'; retry to create a new session."
+                    ) from exc
+                if snapshot.version != _SESSION_SNAPSHOT_VERSION:
+                    raise ValueError(
+                        f"Unsupported session snapshot version {snapshot.version!r} in '{file_path}'; "
+                        f"expected {_SESSION_SNAPSHOT_VERSION!r}."
+                    )
+                raw_state: object = snapshot.state
+                if not isinstance(raw_state, dict):
+                    raise ValueError(f"Session snapshot state in '{file_path}' must be a mapping.")
+                try:
+                    state = _deserialize_state(cast(dict[str, Any], raw_state))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"Failed to restore session state from '{file_path}'.") from exc
+                session = AgentSession(
+                    session_id=snapshot.session_id,
+                    service_session_id=snapshot.service_session_id,
+                )
+                session.state = state
+                return session
+
+        return await asyncio.to_thread(_read)
+
+    async def set(self, session_id: str, session: AgentSession) -> None:
+        """Persist a session snapshot atomically."""
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
+        file_path = self._session_file_path(session_id)
+        file_lock = self._session_file_lock(file_path)
+        if type(session) is not AgentSession:
+            raise TypeError(
+                "FileSessionStore supports AgentSession instances only; "
+                "custom AgentSession subclasses require a custom SessionStore."
+            )
+        service_session_id = session.service_session_id
+        serialized_service_session_id = (
+            dict(service_session_id) if isinstance(service_session_id, Mapping) else service_session_id
+        )
+        snapshot = _SessionSnapshot(
+            type="session",
+            session_id=session.session_id,
+            service_session_id=serialized_service_session_id,
+            state=_SessionStatePayload(session.state),
+        )
+        serialized = self._encoder.encode(snapshot)
+
+        def _write() -> None:
+            with file_lock:
+                temp_path = file_path.with_name(f".{file_path.name}.{uuid.uuid4().hex}.tmp")
+                try:
+                    temp_path.write_bytes(serialized)
+                    os.replace(temp_path, file_path)
+                finally:
+                    temp_path.unlink(missing_ok=True)
+
+        await asyncio.to_thread(_write)
+
+    async def delete(self, session_id: str) -> None:
+        """Delete a persisted session snapshot, if present."""
+        mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
+        file_path = self._session_file_path(session_id)
+        file_lock = self._session_file_lock(file_path)
+
+        def _delete() -> None:
+            with file_lock:
+                file_path.unlink(missing_ok=True)
+
+        await asyncio.to_thread(_delete)
+
+    @staticmethod
+    def validate_session_id(session_id: str) -> None:
+        """Validate an ID for use as a built-in file-store key.
+
+        Args:
+            session_id: Session-store ID to validate.
+
+        Raises:
+            ValueError: If the ID is empty or too long.
+        """
+        SessionStore.validate_session_id(session_id)
+        if len(session_id) > FileSessionStore.MAX_SESSION_ID_LENGTH:
+            raise ValueError(f"session_id must be at most {FileSessionStore.MAX_SESSION_ID_LENGTH} characters")
+
+    @staticmethod
+    def _quarantine_corrupt_snapshot(file_path: Path, serialized: bytes) -> Path | None:
+        """Move an unchanged corrupt snapshot aside so a retry can recover."""
+        try:
+            current_serialized = file_path.read_bytes()
+        except FileNotFoundError:
+            return None
+        if current_serialized != serialized:
+            return None
+        quarantine_path = file_path.with_name(f".{file_path.name}.{uuid.uuid4().hex}.corrupt")
+        os.replace(file_path, quarantine_path)
+        return quarantine_path
+
+    @classmethod
+    def _session_file_lock(cls, file_path: Path) -> threading.Lock:
+        """Return the process-local operation lock for a session file."""
+        return cls._FILE_OPERATION_LOCKS[hash(file_path) % cls._FILE_LOCK_STRIPE_COUNT]
+
+    def _session_file_path(self, session_id: str) -> Path:
+        """Resolve the contained snapshot path for ``session_id``."""
+        candidate_path = self._storage_root / self._session_file_name(session_id)
+        file_path = candidate_path.resolve()
+        if file_path != candidate_path or not file_path.is_relative_to(self._storage_root):
+            raise ValueError(f"Session path escaped storage directory: {session_id!r}")
+        return file_path
+
+    def _session_file_name(self, session_id: str) -> str:
+        """Return the portable snapshot filename for ``session_id``."""
+        self.validate_session_id(session_id)
+        file_stem = _session_file_stem(session_id, encoded_prefix=self._ENCODED_SESSION_PREFIX)
+        return f"{file_stem}{self._file_extension}"
 
 
 class InMemoryHistoryProvider(HistoryProvider):
@@ -1096,6 +1815,7 @@ class InMemoryHistoryProvider(HistoryProvider):
         self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
     ) -> list[Message]:
         """Retrieve messages from session state."""
+        mark_feature_used(FeatureIndex.CORE_IN_MEMORY_HISTORY_PROVIDER)
         if state is None:
             return []
         messages = list(state.get("messages", []))
@@ -1112,6 +1832,7 @@ class InMemoryHistoryProvider(HistoryProvider):
         **kwargs: Any,
     ) -> None:
         """Persist messages to session state."""
+        mark_feature_used(FeatureIndex.CORE_IN_MEMORY_HISTORY_PROVIDER)
         if state is None:
             return
         existing = state.get("messages", [])
@@ -1120,16 +1841,17 @@ class InMemoryHistoryProvider(HistoryProvider):
 
 @experimental(feature_id=ExperimentalFeature.FILE_HISTORY)
 class FileHistoryProvider(HistoryProvider):
-    """File-backed history provider that stores one JSON Lines file per session.
+    """File-backed history provider that stores one append-only file per session.
 
-    Each persisted message is written as a single JSON object per line. The
-    provider does not serialize full session snapshots into the file. By default
-    it uses the standard library ``json`` module, but callers can inject
-    alternative ``dumps`` and ``loads`` callables compatible with the JSON
-    Lines format.
+    JSON Lines is the default: each message is one JSON object per line.
+    Pass ``serialization_format="msgpack"`` to store length-prefixed binary
+    MessagePack records instead. Both formats use :mod:`msgspec` by default.
+    The custom ``dumps`` and ``loads`` constructor arguments remain available
+    for JSON Lines compatibility but are deprecated.
 
     Security posture:
-        Persisted history is stored as plaintext JSONL on the local filesystem.
+        Persisted history is stored as plaintext JSONL or binary MessagePack on
+        the local filesystem.
         Treat ``storage_path`` as trusted application storage, not as a secret
         store. Encoded fallback filenames and resolved-path validation help
         prevent path traversal via ``session_id``, but they do not encrypt file
@@ -1140,36 +1862,13 @@ class FileHistoryProvider(HistoryProvider):
 
     DEFAULT_SOURCE_ID: ClassVar[str] = "file_history"
     DEFAULT_SESSION_FILE_STEM: ClassVar[str] = "default"
-    FILE_EXTENSION: ClassVar[str] = ".jsonl"
     _FILE_LOCK_STRIPE_COUNT: ClassVar[int] = 64
     _ENCODED_SESSION_PREFIX: ClassVar[str] = "~session-"
+    _MSGPACK_RECORD_HEADER_BYTES: ClassVar[int] = 4
+    _MAX_MSGPACK_RECORD_BYTES: ClassVar[int] = 64 * 1024 * 1024
     _FILE_WRITE_LOCKS: ClassVar[tuple[threading.Lock, ...]] = tuple(
         threading.Lock() for _ in range(_FILE_LOCK_STRIPE_COUNT)
     )
-    _WINDOWS_RESERVED_FILE_STEMS: ClassVar[frozenset[str]] = frozenset({
-        "CON",
-        "PRN",
-        "AUX",
-        "NUL",
-        "COM1",
-        "COM2",
-        "COM3",
-        "COM4",
-        "COM5",
-        "COM6",
-        "COM7",
-        "COM8",
-        "COM9",
-        "LPT1",
-        "LPT2",
-        "LPT3",
-        "LPT4",
-        "LPT5",
-        "LPT6",
-        "LPT7",
-        "LPT8",
-        "LPT9",
-    })
 
     def __init__(
         self,
@@ -1182,6 +1881,7 @@ class FileHistoryProvider(HistoryProvider):
         store_context_from: set[str] | None = None,
         store_outputs: bool = True,
         skip_excluded: bool = False,
+        serialization_format: Literal["json", "msgpack"] = "json",
         dumps: JsonDumps | None = None,
         loads: JsonLoads | None = None,
     ) -> None:
@@ -1199,11 +1899,31 @@ class FileHistoryProvider(HistoryProvider):
             store_outputs: Whether to store response messages.
             skip_excluded: When True, ``get_messages`` omits messages whose
                 ``additional_properties["_excluded"]`` is truthy.
-            dumps: Callable that serializes a message payload dict to JSON text
-                or UTF-8 bytes. The returned JSON must fit on a single line.
-            loads: Callable that deserializes JSON text or bytes back to a
-                message payload dict.
+            serialization_format: ``"json"`` (default) for JSON Lines or
+                ``"msgpack"`` for length-prefixed binary MessagePack records.
+            dumps: Deprecated. Callable that serializes a message payload dict
+                to single-line JSON text or UTF-8 bytes. Omit this argument to
+                use the built-in msgspec codec.
+            loads: Deprecated. Callable that deserializes JSON text or bytes
+                back to a message payload dict. Omit this argument to use the
+                built-in msgspec codec.
+
+        Raises:
+            ValueError: If the format is unsupported or custom JSON codecs are
+                supplied with MessagePack.
         """
+        if serialization_format not in ("json", "msgpack"):
+            raise ValueError("serialization_format must be 'json' or 'msgpack'")
+        if serialization_format == "msgpack" and (dumps is not None or loads is not None):
+            raise ValueError("Custom dumps and loads are supported only with serialization_format='json'")
+        if dumps is not None or loads is not None:
+            warnings.warn(
+                "The FileHistoryProvider constructor arguments `dumps` and `loads` are deprecated and will be "
+                "removed in a future version. Omit them to use the built-in msgspec codec selected by "
+                "`serialization_format`.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         super().__init__(
             source_id=source_id,
             load_messages=load_messages,
@@ -1216,6 +1936,8 @@ class FileHistoryProvider(HistoryProvider):
         self.storage_path.mkdir(parents=True, exist_ok=True)
         self._storage_root = self.storage_path.resolve()
         self.skip_excluded = skip_excluded
+        self.serialization_format = serialization_format
+        self._file_extension = _JSON_LINES_FILE_EXTENSION if serialization_format == "json" else _MSGPACK_FILE_EXTENSION
         self.dumps = dumps or _default_json_dumps
         self.loads = loads or _default_json_loads
         self._async_write_locks_by_loop: weakref.WeakKeyDictionary[
@@ -1230,7 +1952,8 @@ class FileHistoryProvider(HistoryProvider):
         state: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[Message]:
-        """Retrieve messages from the session's JSON Lines file."""
+        """Retrieve messages from the session's history file."""
+        mark_feature_used(FeatureIndex.CORE_FILE_HISTORY_PROVIDER)
         del state, kwargs
         file_path = self._session_file_path(session_id)
         async_lock = self._session_async_write_lock(file_path)
@@ -1241,31 +1964,9 @@ class FileHistoryProvider(HistoryProvider):
                 if not file_path.exists():
                     return []
 
-                messages: list[Message] = []
-                with file_path.open(encoding="utf-8") as file_handle:
-                    for line_number, line in enumerate(file_handle, start=1):
-                        serialized = line.strip()
-                        if not serialized:
-                            continue
-                        try:
-                            payload = self.loads(serialized)
-                        except (TypeError, ValueError) as exc:
-                            raise ValueError(
-                                f"Failed to deserialize history line {line_number} from '{file_path}'."
-                            ) from exc
-                        if not isinstance(payload, Mapping):
-                            raise ValueError(
-                                f"History line {line_number} in '{file_path}' did not deserialize to a mapping."
-                            )
-
-                        try:
-                            message = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
-                        except ValueError as exc:
-                            raise ValueError(
-                                f"History line {line_number} in '{file_path}' is not a valid Message payload."
-                            ) from exc
-                        messages.append(message)
-                return messages
+                if self.serialization_format == "json":
+                    return self._read_json_messages(file_path)
+                return self._read_msgpack_messages(file_path)
 
         async with async_lock:
             messages = await asyncio.to_thread(_read_messages)
@@ -1281,7 +1982,8 @@ class FileHistoryProvider(HistoryProvider):
         state: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """Append messages to the session's JSON Lines file."""
+        """Append messages to the session's history file."""
+        mark_feature_used(FeatureIndex.CORE_FILE_HISTORY_PROVIDER)
         del state, kwargs
         if not messages:
             return
@@ -1291,14 +1993,77 @@ class FileHistoryProvider(HistoryProvider):
         file_lock = self._session_write_lock(file_path)
 
         def _append_messages() -> None:
-            with file_lock, file_path.open("a", encoding="utf-8") as file_handle:
-                for message in messages:
-                    file_handle.write(f"{self._serialize_message(message)}\n")
+            with file_lock:
+                if self.serialization_format == "json":
+                    with file_path.open("a", encoding="utf-8") as file_handle:
+                        for message in messages:
+                            file_handle.write(f"{self._serialize_json_message(message)}\n")
+                    return
+                with file_path.open("ab") as file_handle:
+                    for message in messages:
+                        serialized = _DEFAULT_MSGPACK_ENCODER.encode(message.to_dict())
+                        file_handle.write(len(serialized).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
+                        file_handle.write(serialized)
 
         async with async_lock:
             await asyncio.to_thread(_append_messages)
 
-    def _serialize_message(self, message: Message) -> str:
+    def _read_json_messages(self, file_path: Path) -> list[Message]:
+        """Read JSON Lines messages from ``file_path``."""
+        messages: list[Message] = []
+        with file_path.open(encoding="utf-8") as file_handle:
+            for line_number, line in enumerate(file_handle, start=1):
+                serialized = line.strip()
+                if not serialized:
+                    continue
+                try:
+                    payload = self.loads(serialized)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"Failed to deserialize history line {line_number} from '{file_path}'.") from exc
+                messages.append(self._parse_message_payload(payload, file_path=file_path, record_number=line_number))
+        return messages
+
+    def _read_msgpack_messages(self, file_path: Path) -> list[Message]:
+        """Read length-prefixed MessagePack records from ``file_path``."""
+        messages: list[Message] = []
+        with file_path.open("rb") as file_handle:
+            record_number = 0
+            while True:
+                header = file_handle.read(self._MSGPACK_RECORD_HEADER_BYTES)
+                if not header:
+                    return messages
+                record_number += 1
+                if len(header) != self._MSGPACK_RECORD_HEADER_BYTES:
+                    raise ValueError(f"History record {record_number} in '{file_path}' has a truncated length header.")
+                record_length = int.from_bytes(header, "big")
+                if record_length <= 0 or record_length > self._MAX_MSGPACK_RECORD_BYTES:
+                    raise ValueError(
+                        f"History record {record_number} in '{file_path}' has invalid length {record_length}."
+                    )
+                serialized = file_handle.read(record_length)
+                if len(serialized) != record_length:
+                    raise ValueError(f"History record {record_number} in '{file_path}' is truncated.")
+                try:
+                    payload = _DEFAULT_MSGPACK_DECODER.decode(serialized)
+                except msgspec.DecodeError as exc:
+                    raise ValueError(
+                        f"Failed to deserialize history record {record_number} from '{file_path}'."
+                    ) from exc
+                messages.append(self._parse_message_payload(payload, file_path=file_path, record_number=record_number))
+
+    @staticmethod
+    def _parse_message_payload(payload: Any, *, file_path: Path, record_number: int) -> Message:
+        """Validate and reconstruct one stored Message payload."""
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"History record {record_number} in '{file_path}' did not deserialize to a mapping.")
+        try:
+            return Message.from_dict(dict(cast(Mapping[str, Any], payload)))
+        except ValueError as exc:
+            raise ValueError(
+                f"History record {record_number} in '{file_path}' is not a valid Message payload."
+            ) from exc
+
+    def _serialize_json_message(self, message: Message) -> str:
         """Serialize a message payload to a single JSON Lines record."""
         serialized = self.dumps(message.to_dict())
         if isinstance(serialized, bytes):
@@ -1314,7 +2079,7 @@ class FileHistoryProvider(HistoryProvider):
 
     def _session_file_path(self, session_id: str | None) -> Path:
         """Resolve the on-disk history file path for a session."""
-        file_path = (self._storage_root / f"{self._session_file_stem(session_id)}{self.FILE_EXTENSION}").resolve()
+        file_path = (self._storage_root / f"{self._session_file_stem(session_id)}{self._file_extension}").resolve()
         if not file_path.is_relative_to(self._storage_root):
             raise ValueError(f"Session history path escaped storage directory: {session_id!r}")
         return file_path
@@ -1322,11 +2087,7 @@ class FileHistoryProvider(HistoryProvider):
     def _session_file_stem(self, session_id: str | None) -> str:
         """Return the filename stem for a session."""
         raw_session_id = session_id or self.DEFAULT_SESSION_FILE_STEM
-        if self._is_literal_session_file_stem_safe(raw_session_id):
-            return raw_session_id
-
-        encoded_session_id = urlsafe_b64encode(raw_session_id.encode("utf-8")).decode("ascii").rstrip("=")
-        return f"{self._ENCODED_SESSION_PREFIX}{encoded_session_id or self.DEFAULT_SESSION_FILE_STEM}"
+        return _session_file_stem(raw_session_id, encoded_prefix=self._ENCODED_SESSION_PREFIX)
 
     def _session_async_write_lock(self, file_path: Path) -> asyncio.Lock:
         """Return the event-loop-local async lock for a session history file."""
@@ -1350,13 +2111,4 @@ class FileHistoryProvider(HistoryProvider):
     @classmethod
     def _is_literal_session_file_stem_safe(cls, session_id: str) -> bool:
         """Return whether the session ID can be used directly as a filename stem."""
-        if (
-            not session_id
-            or session_id.startswith(".")
-            or session_id.endswith((" ", "."))
-            or session_id.upper() in cls._WINDOWS_RESERVED_FILE_STEMS
-        ):
-            return False
-        if any(ord(character) < 32 for character in session_id):
-            return False
-        return all(character.isalnum() or character in "._-" for character in session_id)
+        return _is_literal_session_file_stem_safe(session_id)

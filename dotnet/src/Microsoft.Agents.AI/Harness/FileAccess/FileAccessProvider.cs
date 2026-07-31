@@ -22,7 +22,8 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// The <see cref="FileAccessProvider"/> gives agents the ability to work with files
 /// in a folder that the user has granted access to. Unlike <see cref="FileMemoryProvider"/>,
-/// which provides session-scoped memory that may be isolated per session, <see cref="FileAccessProvider"/>
+/// which provides agent-managed memory files whose scope is determined by the working folder it is
+/// configured with, <see cref="FileAccessProvider"/>
 /// operates on a shared, persistent folder whose contents are visible across sessions and agents.
 /// This makes it suitable for reading input data, writing output artifacts, and working with
 /// files that have a lifetime beyond any single agent session.
@@ -184,8 +185,8 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// </para>
     /// <para>
     /// <b>Security note:</b> because matching is by tool name only, any other registered tool that
-    /// shares one of these names — for example a configurable-name tool such as the Harness shell
-    /// tool (<c>HarnessAgentOptions.ShellToolName</c>) that was assigned the same name — will also be auto-approved, bypassing the
+    /// shares one of these names — for example a configurable-name tool that was assigned the same
+    /// name — will also be auto-approved, bypassing the
     /// human approval boundary. Ensure no other tool collides with these reserved names.
     /// </para>
     /// </remarks>
@@ -221,8 +222,8 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// </para>
     /// <para>
     /// <b>Security note:</b> because matching is by tool name only, any other registered tool that
-    /// shares one of these names — for example a configurable-name tool such as the Harness shell
-    /// tool (<c>HarnessAgentOptions.ShellToolName</c>) that was assigned the same name — will also be auto-approved, bypassing the
+    /// shares one of these names — for example a configurable-name tool that was assigned the same
+    /// name — will also be auto-approved, bypassing the
     /// human approval boundary. Ensure no other tool collides with these reserved names.
     /// </para>
     /// </remarks>

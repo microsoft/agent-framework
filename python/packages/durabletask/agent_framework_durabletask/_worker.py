@@ -13,12 +13,14 @@ import logging
 from typing import Any
 
 from agent_framework import SupportsAgentRun, Workflow
+from agent_framework._telemetry import mark_feature_used
 from durabletask.task import ActivityContext, OrchestrationContext
 from durabletask.worker import TaskHubGrpcWorker
 
 from ._async_bridge import run_agent_coroutine
 from ._callbacks import AgentResponseCallbackProtocol
 from ._entities import AgentEntity, DurableTaskEntityStateProvider
+from ._feature_usage import FeatureIndex
 from ._workflows.activity import execute_workflow_activity
 from ._workflows.dt_context import DurableTaskWorkflowContext
 from ._workflows.naming import (
@@ -157,6 +159,7 @@ class DurableAIAgentWorker:
             The worker will block until stopped.
         """
         logger.info("[DurableAIAgentWorker] Starting worker with %d registered agents", len(self._registered_agents))
+        mark_feature_used(FeatureIndex.DURABLETASK)
         self._worker.start()
 
     def stop(self) -> None:

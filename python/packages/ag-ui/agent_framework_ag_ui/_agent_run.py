@@ -40,9 +40,10 @@ from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework._tools import (
     _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY,  # type: ignore
     _collect_approval_responses,  # type: ignore
+    _get_tool_map,  # type: ignore
     _replace_approval_contents_with_results,  # type: ignore
     _TOOL_APPROVAL_STATE_KEY,  # type: ignore
-    _try_execute_function_calls,  # type: ignore
+    _try_execute_function_call_groups,  # type: ignore
     normalize_function_invocation_configuration,
 )
 from agent_framework._types import ResponseStream
@@ -67,6 +68,7 @@ from ._run_common import (
     _resume_contract_error,  # type: ignore
     _resolve_ui_payload,  # type: ignore
     _stringify_tool_result,  # type: ignore
+    _track_tool_call_segment,  # type: ignore
 )
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
@@ -1306,10 +1308,19 @@ async def _resolve_approval_responses(
         approved_responses = validated
         rejected_responses = validated_rejected
 
-    approved_function_results: list[Any] = []
+    approved_function_result_groups: list[list[Content]] = []
 
-    # Execute approved tool calls
-    if approved_responses and tools:
+    # Partition approved responses into static (execute now) and deferred (execute during run)
+    tool_map = _get_tool_map(tools) if tools else {}
+    static_approved: list[Content] = []
+
+    for approval in approved_responses:
+        tool_name = approval.function_call.name if approval.function_call else None
+        if tool_name in tool_map:
+            static_approved.append(approval)
+
+    # Execute only statically-available approved tool calls
+    if static_approved and tools:
         client = getattr(agent, "client", None)
         config = normalize_function_invocation_configuration(getattr(client, "function_invocation_configuration", None))
         middleware_pipeline = FunctionMiddlewarePipeline(
@@ -1319,36 +1330,31 @@ async def _resolve_approval_responses(
         # Filter out AG-UI-specific kwargs that should not be passed to tool execution
         tool_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
         try:
-            results, _ = await _try_execute_function_calls(
+            approved_function_result_groups, _ = await _try_execute_function_call_groups(
                 custom_args=tool_kwargs,
-                attempt_idx=0,
-                function_calls=approved_responses,
+                function_calls=static_approved,
                 tools=tools,
                 middleware_pipeline=middleware_pipeline,
                 config=config,
             )
-            approved_function_results = list(results)
         except Exception as e:
             logger.exception("Failed to execute approved tool calls; injecting error results: %s", e)
-            approved_function_results = []
+            approved_function_result_groups = []
 
-    # Build results for approved responses (used for TOOL_CALL_RESULT event emission)
+    # Normalize one group per static approval and collect only terminal results for TOOL_CALL_RESULT events.
+    # Deferred provider-injected approvals are left in messages for ToolApprovalMiddleware to process.
+    replacement_groups: list[list[Content]] = []
     approved_results: list[Content] = []
-    for idx, approval in enumerate(approved_responses):
-        if (
-            idx < len(approved_function_results)
-            and getattr(approved_function_results[idx], "type", None) == "function_result"
-        ):
-            approved_results.append(approved_function_results[idx])
-            continue
-        # Get call_id from function_call if present, otherwise use approval.id
-        func_call = approval.function_call
-        call_id = (func_call.call_id if func_call else None) or approval.id or ""
-        approved_results.append(
-            Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")
-        )
+    for idx, approval in enumerate(static_approved):
+        result_group = approved_function_result_groups[idx] if idx < len(approved_function_result_groups) else []
+        if not result_group:
+            func_call = approval.function_call
+            call_id = (func_call.call_id if func_call else None) or approval.id or ""
+            result_group = [Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")]
+        replacement_groups.append(result_group)
+        approved_results.extend(content for content in result_group if content.type == "function_result")
 
-    _replace_approval_contents_with_results(messages, fcc_todo, approved_results)
+    _replace_approval_contents_with_results(messages, fcc_todo, replacement_groups)
 
     # Post-process: Convert user messages with function_result content to proper tool messages.
     # After _replace_approval_contents_with_results, approved tool calls have their results
@@ -1401,6 +1407,39 @@ def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
     messages[:] = result
 
 
+def _confirm_changes_target_call_id(
+    snapshot_messages: list[dict[str, Any]],
+    confirm_call_id: str,
+    approval_payload: Mapping[str, Any],
+) -> str | None:
+    explicit_call_id = approval_payload.get("function_call_id")
+    if explicit_call_id:
+        return str(explicit_call_id)
+
+    for snapshot_message in snapshot_messages:
+        if normalize_agui_role(snapshot_message.get("role", "")) != "assistant":
+            continue
+        tool_calls = snapshot_message.get("tool_calls") or snapshot_message.get("toolCalls")
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, Mapping) or str(tool_call.get("id") or "") != confirm_call_id:
+                continue
+            function = tool_call.get("function")
+            if not isinstance(function, Mapping) or function.get("name") != "confirm_changes":
+                return None
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    return None
+            if isinstance(arguments, Mapping) and arguments.get("function_call_id"):
+                return str(arguments["function_call_id"])
+            return None
+    return None
+
+
 def _clean_resolved_approvals_from_snapshot(
     snapshot_messages: list[dict[str, Any]],
     resolved_messages: list[Message],
@@ -1434,9 +1473,6 @@ def _clean_resolved_approvals_from_snapshot(
                 )
                 result_by_call_id[str(content.call_id)] = result_text
 
-    if not result_by_call_id:
-        return
-
     for snap_msg in snapshot_messages:
         if normalize_agui_role(snap_msg.get("role", "")) != "tool":
             continue
@@ -1455,12 +1491,25 @@ def _clean_resolved_approvals_from_snapshot(
         # Find matching tool result by toolCallId
         tool_call_id = snap_msg.get("toolCallId") or snap_msg.get("tool_call_id") or ""
         replacement = result_by_call_id.get(str(tool_call_id))
-        if replacement is not None:
-            snap_msg["content"] = replacement
-            logger.info(
-                "Replaced approval payload in snapshot for tool_call_id=%s with actual result",
-                tool_call_id,
+        if replacement is None:
+            target_call_id = _confirm_changes_target_call_id(
+                snapshot_messages,
+                str(tool_call_id),
+                parsed,
             )
+            if target_call_id is None:
+                continue
+            if parsed.get("accepted"):
+                replacement = result_by_call_id.get(target_call_id)
+                if replacement is None:
+                    continue
+            else:
+                replacement = "Changes declined."
+        snap_msg["content"] = replacement
+        logger.info(
+            "Replaced approval payload in snapshot for tool_call_id=%s with resolved content",
+            tool_call_id,
+        )
 
 
 def _snapshot_tool_call_ids(message: Mapping[str, Any]) -> list[str]:
@@ -1529,12 +1578,71 @@ def _merge_resolved_approval_results_into_snapshot(
     snapshot_messages[:] = merged_messages
 
 
+def _append_segmented_snapshot_messages(flow: FlowState, all_messages: list[dict[str, Any]]) -> None:
+    """Append this turn's messages in the order the model emitted them.
+
+    Segments tracked during streaming record whether text came before or after
+    tool calls (issue #7223); tool results still follow the tool-call message
+    they answer. Anything not covered by segment tracking falls back to the
+    legacy grouping so no content is dropped.
+    """
+    text_message_ids = {segment["id"] for segment in flow.snapshot_segments if segment["kind"] == "text"}
+    # A tool-only opening message (TextMessageStart with no text segment) lets
+    # the first tool-call message reuse the streamed message id, matching the
+    # legacy layout; every other tool message gets a fresh id.
+    tool_open_id = flow.message_id if flow.message_id and flow.message_id not in text_message_ids else None
+    emitted_call_ids: set[str] = set()
+
+    for segment in flow.snapshot_segments:
+        kind = segment["kind"]
+        if kind == "text":
+            if segment["text"]:
+                all_messages.append({"id": segment["id"], "role": "assistant", "content": segment["text"]})
+        elif kind == "tool_calls":
+            calls = [
+                flow.tool_calls_by_id[call_id] for call_id in segment["call_ids"] if call_id in flow.tool_calls_by_id
+            ]
+            if not calls:
+                continue
+            message_id = tool_open_id or generate_event_id()
+            tool_open_id = None
+            all_messages.append({"id": message_id, "role": "assistant", "tool_calls": [call.copy() for call in calls]})
+            # Only mark the calls we actually emitted; a stale segment id that
+            # never made it into tool_calls_by_id must stay eligible for the
+            # leftover path below rather than vanishing silently.
+            emitted_ids = {call["id"] for call in calls}
+            emitted_call_ids.update(emitted_ids)
+            all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") in emitted_ids)
+        elif kind == "reasoning":
+            all_messages.extend(entry for entry in flow.reasoning_messages if entry.get("id") == segment["id"])
+
+    leftover_calls = [tc for tc in flow.pending_tool_calls if tc.get("id") not in emitted_call_ids]
+    if leftover_calls:
+        leftover_ids = {cid for call in leftover_calls if (cid := call.get("id")) is not None}
+        all_messages.append(
+            {
+                "id": tool_open_id or generate_event_id(),
+                "role": "assistant",
+                "tool_calls": [call.copy() for call in leftover_calls],
+            }
+        )
+        # Their results ride along too; without this they would be marked
+        # emitted above and then excluded from the final append below.
+        all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") in leftover_ids)
+        emitted_call_ids.update(leftover_ids)
+    all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") not in emitted_call_ids)
+
+
 def _build_messages_snapshot(
     flow: FlowState,
     snapshot_messages: list[dict[str, Any]],
 ) -> MessagesSnapshotEvent:
     """Build MessagesSnapshotEvent from current flow state."""
     all_messages = list(snapshot_messages)
+
+    if flow.snapshot_segments:
+        _append_segmented_snapshot_messages(flow, all_messages)
+        return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
 
     # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
@@ -2239,6 +2347,7 @@ async def run_agent_stream(
                         flow.pending_tool_calls.append(confirm_entry)
                         flow.tool_calls_by_id[confirm_id] = confirm_entry
                         flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
+                        _track_tool_call_segment(flow, confirm_id)
                         flow.waiting_for_approval = True
                         flow.interrupts.append(
                             _approval_interrupt_for_function_call(

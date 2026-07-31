@@ -26,12 +26,29 @@ jobs:
   ping_stale:
     name: "Ping stale issues and PRs"
     runs-on: ubuntu-latest
+    environment: github-app-auth
     permissions:
       contents: read
+      id-token: write
       issues: write
       pull-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Get GitHub automation token
+        id: github-auth
+        uses: ./.github/actions/github-app-token
+        with:
+          mode: ${{ vars.GH_APP_AUTH_MODE }}
+          azure-client-id: ${{ secrets.GH_APP_AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.GH_APP_AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.GH_APP_AZURE_SUBSCRIPTION_ID }}
+          key-vault-name: ${{ secrets.GH_APP_KEY_VAULT_NAME }}
+          key-name: ${{ secrets.GH_APP_KEY_NAME }}
+          github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          repository: ${{ github.repository }}
+          fallback-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
@@ -43,7 +60,7 @@ jobs:
       - name: Run stale issue/PR ping
         run: python .github/scripts/stale_issue_pr_ping.py
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          GITHUB_TOKEN: ${{ steps.github-auth.outputs.token }}
           TEAM_SLUG: ${{ secrets.DEVELOPER_TEAM }}
           DAYS_THRESHOLD: ${{ github.event.inputs.days_threshold || '4' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}

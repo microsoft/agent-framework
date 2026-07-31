@@ -23,6 +23,7 @@
       "src\\Microsoft.Agents.AI.Hosting.AzureFunctions\\Microsoft.Agents.AI.Hosting.AzureFunctions.csproj",      
       "src\\Microsoft.Agents.AI.Hosting.OpenAI\\Microsoft.Agents.AI.Hosting.OpenAI.csproj",
       "src\\Microsoft.Agents.AI.Hosting\\Microsoft.Agents.AI.Hosting.csproj",
+      "src\\Microsoft.Agents.AI.LocalCodeAct\\Microsoft.Agents.AI.LocalCodeAct.csproj",
       "src\\Microsoft.Agents.AI.Mcp\\Microsoft.Agents.AI.Mcp.csproj",
       "src\\Microsoft.Agents.AI.Mem0\\Microsoft.Agents.AI.Mem0.csproj",
       "src\\Microsoft.Agents.AI.OpenAI\\Microsoft.Agents.AI.OpenAI.csproj",

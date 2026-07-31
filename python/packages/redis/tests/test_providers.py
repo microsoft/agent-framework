@@ -13,11 +13,21 @@ from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 
 from agent_framework_redis._context_provider import RedisContextProvider
+from agent_framework_redis._feature_usage import FeatureIndex
 from agent_framework_redis._history_provider import RedisHistoryProvider
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
+
+
+async def test_empty_history_save_marks_redis_used() -> None:
+    provider = object.__new__(RedisHistoryProvider)
+
+    with patch("agent_framework_redis._history_provider.mark_feature_used") as mark_feature_used:
+        await provider.save_messages(None, [])
+
+    mark_feature_used.assert_called_once_with(FeatureIndex.REDIS)
 
 
 @pytest.fixture

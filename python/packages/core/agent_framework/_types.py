@@ -1511,6 +1511,12 @@ class Content:
         # Concatenate text, handling None values
         self_text = self.text or ""
         other_text = other.text or ""
+        if (
+            self_text
+            and other_text
+            and ("reasoning_text" in self.additional_properties) != ("reasoning_text" in other.additional_properties)
+        ):
+            raise AdditionItemMismatch("Cannot merge reasoning text with a reasoning summary")
         combined_text = self_text + other_text if (self_text or other_text) else None
 
         # Handle protected_data replacement
@@ -1552,6 +1558,8 @@ class Content:
             call_id=self_call_id,
             name=getattr(self, "name", None) or getattr(other, "name", None),
             arguments=arguments,
+            id=self.id or other.id,
+            user_input_request=self.user_input_request or other.user_input_request,
             exception=getattr(self, "exception", None) or getattr(other, "exception", None),
             informational_only=getattr(self, "informational_only", False)
             or getattr(other, "informational_only", False),

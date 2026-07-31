@@ -11,7 +11,7 @@ Integration with Mistral AI for embedding generation.
 ## Usage
 
 ```python
-from agent_framework_mistral import MistralEmbeddingClient
+from agent_framework.mistral import MistralEmbeddingClient
 
 # Requires MISTRAL_API_KEY environment variable (or pass api_key= directly)
 client = MistralEmbeddingClient(model="mistral-embed")
@@ -22,5 +22,5 @@ print(result[0].vector)
 ## Import Path
 
 ```python
-from agent_framework_mistral import MistralEmbeddingClient
+from agent_framework.mistral import MistralEmbeddingClient
 ```

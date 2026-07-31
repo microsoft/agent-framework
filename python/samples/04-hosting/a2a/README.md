@@ -14,7 +14,7 @@ in application code. The helper package does not choose a web framework.
 | Run this file | To... |
 |---------------|-------|
 | **[`a2a_server.py`](a2a_server.py)** | Host an Agent Framework agent as an A2A-compliant server (multi-agent). |
-| **[`agent_framework_to_a2a.py`](agent_framework_to_a2a.py)** | Minimal example: expose a single agent as an A2A server. |
+| **[`agent_framework_to_a2a.py`](agent_framework_to_a2a.py)** | Expose a single agent with conversion helpers and a native `AgentCard` inferred from agent and skill metadata; the A2A server remains application-owned. |
 
 ## Supporting Modules
 
