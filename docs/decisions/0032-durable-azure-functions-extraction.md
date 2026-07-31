@@ -1,9 +1,9 @@
 ---
-status: proposed
+status: Accepted
 contact: cgillum
 date: 2026-07-21
 deciders: cgillum, vrdmr, chetantoshniwal
-consulted:
+consulted: westey-m, eavanvalkenburg, kshyju, larohra, ahmedmuhsin
 informed:
 ---
 
@@ -62,16 +62,30 @@ existing imports and the `[all]` extra.
 - Neutral — users may still open GitHub issues against the core repo for problems in the extension,
   but the extension's own repo would be the primary place for issues and PRs. These issues would
   need to be triaged and transferred to the extension repo.
-- Bad — **cross-repo coupling.** Core's shim correctness would track the extension's publish cadence
-  (a shim symbol newer than the last published beta would not resolve until republished), and the
-  .NET extension would still consume internal `Microsoft.Agents.AI.Workflows` surface, so the
-  `InternalsVisibleTo("Microsoft.Agents.AI.DurableTask")` grant would need to remain in core.
+- Neutral — **.NET public API boundary.** The extension should prefer the smallest stable public core
+  API over friend-assembly access where the capability is useful to external hosts or tooling. For
+  workflow routing metadata, the agreed first step is to expose a read-only `Workflow.Edges` view plus
+  public `EdgeData.Connection` and `FanOutEdgeData`, while keeping graph construction internal
+  ([#7448](https://github.com/microsoft/agent-framework/issues/7448),
+  [#7459](https://github.com/microsoft/agent-framework/pull/7459)). This reduces internal coupling but
+  adds a public API compatibility commitment. Any remaining internal dependencies would still need to
+  be evaluated individually before retaining `InternalsVisibleTo`.
+- Bad — **Python version coordination.** Core's shim correctness would track the extension's publish
+  cadence. In the other direction, when an extension package adopts a new core API, maintainers would
+  need to choose per feature between raising its minimum core version (simpler, but forces every
+  extension user to upgrade) and conditional imports with fallback behavior (preserves support for
+  older core versions, but adds implementation and testing complexity).
 
 ## Validation
 
-Compliance would be validated by: `uv lock --check` passing with both packages resolving from PyPI;
-the shim entry-point symbols importing at runtime after `uv sync --all-extras`; and `pyright` staying
-clean on `agent_framework/azure/__init__.pyi`.
+Compliance would be validated by:
+
+- Python: `uv lock --check` passing with both packages resolving from PyPI; the shim entry-point
+  symbols importing at runtime after `uv sync --all-extras`; `pyright` staying clean on
+  `agent_framework/azure/__init__.pyi`; and extension tests running against both the minimum supported
+  and current core versions when conditional compatibility behavior is used.
+- .NET: tests from an external assembly confirming that workflow routing metadata is inspectable
+  through the agreed public surface while graph construction remains internal.
 
 A known risk is **publish-lag**: if a symbol is added to core's shim before the extension has
 published a release that exports it, that symbol would not resolve at runtime. The mitigation would
@@ -81,7 +95,9 @@ re-lock.
 ## More Information
 
 - Related: [ADR-0008](0008-python-subpackages.md) (vendor namespaces + stable import paths),
-  [ADR-0021](0021-provider-leading-clients.md) (lazy-loading gateways).
+  [ADR-0021](0021-provider-leading-clients.md) (lazy-loading gateways),
+  [issue #7448](https://github.com/microsoft/agent-framework/issues/7448) and
+  [PR #7459](https://github.com/microsoft/agent-framework/pull/7459) (.NET workflow routing API).
 - Follow-ups: during extraction, keep the shim's re-exported symbols in sync with each newly
   published extension release (adding any symbol only once the extension publishes it); document the
   direct-import convention in the extension's samples READMEs so samples are not switched back to the
