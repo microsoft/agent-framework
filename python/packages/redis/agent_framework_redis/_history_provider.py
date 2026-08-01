@@ -62,7 +62,7 @@ class RedisHistoryProvider(HistoryProvider):
             key_prefix: Prefix for Redis keys. Defaults to 'chat_messages'.
             max_messages: Maximum number of messages to retain per session.
                 When exceeded, oldest messages are automatically trimmed.
-                None means unlimited storage.
+                None means unlimited storage; 0 retains nothing.
             load_messages: Whether to load messages before invocation.
             store_outputs: Whether to store response messages.
             store_inputs: Whether to store input messages.
@@ -89,6 +89,8 @@ class RedisHistoryProvider(HistoryProvider):
             raise ValueError("redis_url and credential_provider are mutually exclusive")
         if credential_provider is not None and host is None:
             raise ValueError("host is required when using credential_provider")
+        if max_messages is not None and max_messages < 0:
+            raise ValueError("max_messages must be None (unlimited) or a non-negative integer")
 
         self.key_prefix = key_prefix
         self.max_messages = max_messages
@@ -165,9 +167,14 @@ class RedisHistoryProvider(HistoryProvider):
             await pipe.execute()
 
         if self.max_messages is not None:
-            current_count = await self._redis_client.llen(key)  # type: ignore[misc]
-            if current_count > self.max_messages:
-                await self._redis_client.ltrim(key, -self.max_messages, -1)  # type: ignore[misc]
+            if self.max_messages == 0:
+                # LTRIM key 0 -1 keeps the whole list, so a limit of zero cannot be
+                # expressed as a trim to -max_messages.
+                await self._redis_client.delete(key)  # type: ignore[misc]
+            else:
+                current_count = await self._redis_client.llen(key)  # type: ignore[misc]
+                if current_count > self.max_messages:
+                    await self._redis_client.ltrim(key, -self.max_messages, -1)  # type: ignore[misc]
 
     @staticmethod
     def _serialize_json(message: Message) -> str:
