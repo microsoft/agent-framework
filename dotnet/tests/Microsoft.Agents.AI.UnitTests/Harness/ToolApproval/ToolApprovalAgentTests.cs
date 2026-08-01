@@ -2529,8 +2529,10 @@ public class ToolApprovalAgentTests
     [InlineData(-1)]
     public void Constructor_MaxAutoApprovalIterationsBelowOne_Throws(int value)
     {
+        // Arrange
         var innerAgent = new Mock<AIAgent>().Object;
 
+        // Act & Assert
         Assert.Throws<ArgumentOutOfRangeException>(() => new ToolApprovalAgent(innerAgent, new ToolApprovalAgentOptions
         {
             MaxAutoApprovalIterations = value,
