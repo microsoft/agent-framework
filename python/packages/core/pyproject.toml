@@ -32,7 +32,7 @@ dependencies = [
 
 [project.optional-dependencies]
 all = [
-    "mcp>=1.24.0,<2",
+    "mcp>=2.0.0",
     "agent-framework-a2a",
     "agent-framework-ag-ui",
     "agent-framework-anthropic",
