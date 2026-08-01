@@ -62,7 +62,8 @@ class RedisHistoryProvider(HistoryProvider):
             key_prefix: Prefix for Redis keys. Defaults to 'chat_messages'.
             max_messages: Maximum number of messages to retain per session.
                 When exceeded, oldest messages are automatically trimmed.
-                None means unlimited storage; 0 retains nothing.
+                None means unlimited storage; 0 retains nothing, and no message
+                payload is written to Redis at all.
             load_messages: Whether to load messages before invocation.
             store_outputs: Whether to store response messages.
             store_inputs: Whether to store input messages.
@@ -73,6 +74,7 @@ class RedisHistoryProvider(HistoryProvider):
             ValueError: If neither redis_url nor credential_provider is provided.
             ValueError: If both redis_url and credential_provider are provided.
             ValueError: If credential_provider is used without host parameter.
+            ValueError: If max_messages is negative.
         """
         super().__init__(
             source_id,
@@ -159,6 +161,15 @@ class RedisHistoryProvider(HistoryProvider):
             return
 
         key = self._redis_key(session_id)
+
+        if self.max_messages == 0:
+            # Retention is disabled. Trimming cannot express this - LTRIM key 0 -1 keeps
+            # the whole list - and writing first would put the payload in Redis, and in any
+            # AOF or replica stream, before deleting it. Drop any existing history and
+            # never write the messages at all.
+            await self._redis_client.delete(key)  # type: ignore[misc]
+            return
+
         serialized_messages = [self._serialize_json(msg) for msg in messages]
 
         async with self._redis_client.pipeline(transaction=True) as pipe:
@@ -167,14 +178,9 @@ class RedisHistoryProvider(HistoryProvider):
             await pipe.execute()
 
         if self.max_messages is not None:
-            if self.max_messages == 0:
-                # LTRIM key 0 -1 keeps the whole list, so a limit of zero cannot be
-                # expressed as a trim to -max_messages.
-                await self._redis_client.delete(key)  # type: ignore[misc]
-            else:
-                current_count = await self._redis_client.llen(key)  # type: ignore[misc]
-                if current_count > self.max_messages:
-                    await self._redis_client.ltrim(key, -self.max_messages, -1)  # type: ignore[misc]
+            current_count = await self._redis_client.llen(key)  # type: ignore[misc]
+            if current_count > self.max_messages:
+                await self._redis_client.ltrim(key, -self.max_messages, -1)  # type: ignore[misc]
 
     @staticmethod
     def _serialize_json(message: Message) -> str:

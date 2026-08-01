@@ -515,6 +515,8 @@ class TestRedisHistoryProviderSaveMessages:
 
         mock_redis_client.delete.assert_called_once_with("chat_messages:s1")
         mock_redis_client.ltrim.assert_not_called()
+        # No payload reaches Redis at all, so nothing is exposed to readers, AOF or replicas.
+        mock_redis_client.pipeline.assert_not_called()
 
 
 class TestRedisHistoryProviderClear:
