@@ -45,6 +45,7 @@ from agent_framework._tools import (
     FunctionInvocationLayer,
     FunctionTool,
     ToolTypes,
+    _is_hosted_tool_approval,
     normalize_tools,
     tool,
 )
@@ -1712,6 +1713,8 @@ class RawOpenAIChatClient(
                     if prepared:
                         all_messages.append(prepared)
                 case "function_approval_response":
+                    if request_uses_service_side_storage:
+                        continue
                     prepared = self._prepare_content_for_openai(
                         message.role,
                         content,
@@ -1953,16 +1956,18 @@ class RawOpenAIChatClient(
                     "output": output,
                 }
             case "function_approval_request":
+                if not _is_hosted_tool_approval(content):
+                    return {}
                 return {
                     "type": "mcp_approval_request",
                     "id": content.id,
                     "arguments": content.function_call.arguments,  # type: ignore[union-attr]
                     "name": content.function_call.name,  # type: ignore[union-attr]
-                    "server_label": content.function_call.additional_properties.get("server_label")  # type: ignore[union-attr]
-                    if content.function_call.additional_properties  # type: ignore[union-attr]
-                    else None,
+                    "server_label": content.function_call.additional_properties.get("server_label"),  # type: ignore[union-attr]
                 }
             case "function_approval_response":
+                if not _is_hosted_tool_approval(content):
+                    return {}
                 return {
                     "type": "mcp_approval_response",
                     "approval_request_id": content.id,
