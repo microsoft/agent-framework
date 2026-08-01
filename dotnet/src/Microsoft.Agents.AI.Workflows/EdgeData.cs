@@ -12,7 +12,7 @@ public abstract class EdgeData
     /// <summary>
     /// Gets the connection representation of the edge.
     /// </summary>
-    internal abstract EdgeConnection Connection { get; }
+    public abstract EdgeConnection Connection { get; }
 
     internal EdgeData(EdgeId id, string? label = null)
     {

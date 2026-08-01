@@ -636,7 +636,9 @@ public class WorkflowBuilder
         var workflow = new Workflow(this._startExecutorId, this._name, this._description, this._telemetryContext)
         {
             ExecutorBindings = this._executorBindings,
-            Edges = this._edges,
+            Edges = this._edges.ToDictionary(
+                keySelector: kvp => kvp.Key,
+                elementSelector: kvp => (IReadOnlyCollection<Edge>)kvp.Value),
             Ports = this._requestPorts,
             OutputExecutors = this._outputExecutors
         };

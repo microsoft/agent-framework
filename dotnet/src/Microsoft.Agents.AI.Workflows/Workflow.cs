@@ -23,7 +23,18 @@ public class Workflow
     /// </summary>
     internal Dictionary<string, ExecutorBinding> ExecutorBindings { get; init; } = [];
 
-    internal Dictionary<string, HashSet<Edge>> Edges { get; init; } = [];
+    /// <summary>
+    /// Gets the workflow edges grouped by their source executor identifier.
+    /// </summary>
+    /// <remarks>
+    /// This property exposes the live routing data through read-only interfaces; it is not a deep-copy snapshot.
+    /// The read-only interfaces do not provide deep immutability: callers that downcast the returned collections or
+    /// mutate the lists on an edge connection can affect the live routing data. Treat the returned data as read-only.
+    /// Use <see cref="ReflectEdges"/> when a serializable representation of the workflow graph is required.
+    /// </remarks>
+    public IReadOnlyDictionary<string, IReadOnlyCollection<Edge>> Edges { get; internal init; } =
+        new Dictionary<string, IReadOnlyCollection<Edge>>();
+
     internal Dictionary<string, HashSet<OutputTag>> OutputExecutors { get; init; } = new(StringComparer.Ordinal);
 
     internal bool IsTerminalOutput(string executorId)
