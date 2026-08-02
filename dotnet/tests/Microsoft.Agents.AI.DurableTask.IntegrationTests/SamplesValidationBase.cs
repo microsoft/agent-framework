@@ -406,7 +406,15 @@ public abstract class SamplesValidationBase : IAsyncLifetime
         }
 
         SetAndLogEnvironmentVariable("AZURE_OPENAI_ENDPOINT", openAiEndpoint);
+
+        // The console samples are inconsistent in how they name the deployment environment variable:
+        // the DurableWorkflows samples read AZURE_OPENAI_DEPLOYMENT while the DurableAgents samples
+        // (e.g. 06_LongRunningTools, 07_ReliableStreaming) read AZURE_OPENAI_DEPLOYMENT_NAME. Set both so
+        // that either family starts successfully. Previously only AZURE_OPENAI_DEPLOYMENT was set, which
+        // caused every DurableAgents sample to throw "AZURE_OPENAI_DEPLOYMENT_NAME is not set." on startup
+        // in CI, resulting in the persistent failures tracked by issue #6732.
         SetAndLogEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT", openAiDeployment);
+        SetAndLogEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME", openAiDeployment);
         SetAndLogEnvironmentVariable("DURABLE_TASK_SCHEDULER_CONNECTION_STRING",
             $"Endpoint=http://localhost:{DtsPort};TaskHub={taskHubName};Authentication=None");
 
