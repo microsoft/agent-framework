@@ -272,8 +272,7 @@ public abstract class Executor : IIdentified
                 RunId = runId ?? string.Empty,
                 Stage = ExecutorStage.PreExecution,
                 WorkflowContext = context,
-                TraceContext = context.TraceContext,
-                Properties = null
+                TraceContext = context.TraceContext
             };
 
             return await behaviorPipeline.ExecuteExecutorPipelineAsync(

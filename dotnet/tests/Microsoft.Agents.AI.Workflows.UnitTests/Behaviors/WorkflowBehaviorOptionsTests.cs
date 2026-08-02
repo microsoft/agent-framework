@@ -99,7 +99,7 @@ public class WorkflowBehaviorOptionsTests
     }
 
     [Fact]
-    public async Task WorkflowBuilder_WithBehaviors_ConfiguresBehaviorsAsync()
+    public void WorkflowBuilder_WithBehaviors_ConfiguresBehaviors()
     {
         // Arrange
         var behavior = new TestExecutorBehavior();
@@ -117,7 +117,7 @@ public class WorkflowBehaviorOptionsTests
     }
 
     [Fact]
-    public async Task WorkflowBuilder_WithBehaviors_SupportsFluentAPIAsync()
+    public void WorkflowBuilder_WithBehaviors_SupportsFluentAPI()
     {
         // Arrange
         var executor = new SimpleExecutor("test");
@@ -139,7 +139,7 @@ public class WorkflowBehaviorOptionsTests
     }
 
     [Fact]
-    public async Task WorkflowBuilder_WithoutBehaviors_HasNullPipelineAsync()
+    public void WorkflowBuilder_WithoutBehaviors_HasNullPipeline()
     {
         // Arrange
         var executor = new SimpleExecutor("test");

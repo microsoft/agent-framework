@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -512,6 +513,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
     {
         if (Interlocked.Exchange(ref this._runEnded, 1) == 0)
         {
+            ExceptionDispatchInfo? runEndingFailure = null;
+
             if (this._onRunEnding is not null)
             {
                 // CancellationToken.None is intentional here. This call originates from IAsyncDisposable.DisposeAsync()
@@ -519,7 +522,18 @@ internal sealed class InProcessRunnerContext : IRunnerContext
                 // and reaches this point with no token in scope. As a result, behaviors registered for
                 // WorkflowStage.Ending cannot observe cancellation. A proper fix would require adding a
                 // CancellationToken overload to ISuperStepRunner.RequestEndRunAsync and threading it through.
-                await this._onRunEnding(CancellationToken.None).ConfigureAwait(false);
+                try
+                {
+                    await this._onRunEnding(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    // Teardown must proceed even when an Ending behavior throws. Letting the exception escape here
+                    // would skip executor disposal and workflow ownership release, leaking resources for the rest of
+                    // the process lifetime. The failure is captured and rethrown once teardown completes, so it is
+                    // surfaced to the caller rather than silently swallowed.
+                    runEndingFailure = ExceptionDispatchInfo.Capture(ex);
+                }
             }
 
             foreach (string executorId in this._executors.Keys)
@@ -542,6 +556,8 @@ internal sealed class InProcessRunnerContext : IRunnerContext
                 await this._workflow.ReleaseOwnershipAsync(this, this._previousOwnership).ConfigureAwait(false);
                 this._ownsWorkflow = false;
             }
+
+            runEndingFailure?.Throw();
         }
     }
 

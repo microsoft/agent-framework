@@ -265,6 +265,55 @@ public class WorkflowBehaviorEndToEndTests
         behaviorException.Stage.Should().Be(nameof(ExecutorStage.PreExecution));
     }
 
+    [Fact]
+    public async Task Workflow_WithExecutorBehaviors_PropertiesFlowBetweenBehaviorsAsync()
+    {
+        // Arrange - an outer behavior enriches the context, an inner behavior reads what it wrote
+        object? observedByInner = null;
+        var enriching = new EnrichingExecutorBehavior("tenant-id", "contoso");
+        var reading = new CapturingExecutorBehavior(
+            ctx => observedByInner = ctx.Properties.TryGetValue("tenant-id", out var value) ? value : null);
+
+        var executor = new SimpleExecutor("executor");
+        var workflow = new WorkflowBuilder(executor)
+            .WithBehaviors(options =>
+            {
+                options.AddExecutorBehavior(enriching);
+                options.AddExecutorBehavior(reading);
+            })
+            .Build();
+
+        // Act
+        await using var run = await InProcessExecution.RunAsync(workflow, "test-input");
+
+        // Assert - the property bag is framework-initialized and shared down the chain
+        observedByInner.Should().Be("contoso");
+    }
+
+    [Fact]
+    public async Task Workflow_EndingBehaviorThrows_ExecutorsAreStillDisposedAsync()
+    {
+        // Arrange
+        var disposedExecutors = new List<string>();
+        var faultyBehavior = new FaultyEndingWorkflowBehavior();
+        var executor = new DisposableExecutor("disposable-executor", disposedExecutors);
+
+        var workflow = new WorkflowBuilder(executor)
+            .WithBehaviors(options => options.AddWorkflowBehavior(faultyBehavior))
+            .Build();
+
+        var run = await InProcessExecution.RunAsync(workflow, "test-input");
+
+        // Act - the Ending stage runs during disposal
+        Func<Task> disposeRun = async () => await run.DisposeAsync();
+
+        // Assert - the failure is surfaced to the caller...
+        await disposeRun.Should().ThrowAsync<BehaviorExecutionException>();
+
+        // ...but teardown still ran to completion, so executors were disposed rather than leaked.
+        disposedExecutors.Should().Contain("disposable-executor");
+    }
+
     // Test Executors
     private sealed class LoggingExecutor : Executor
     {
@@ -294,6 +343,29 @@ public class WorkflowBehaviorEndToEndTests
                 await context.SendMessageAsync(message, ct);
                 return message;
             }));
+    }
+
+    private sealed class DisposableExecutor : Executor, IAsyncDisposable
+    {
+        private readonly List<string> _disposed;
+
+        public DisposableExecutor(string id, List<string> disposed) : base(id)
+        {
+            this._disposed = disposed;
+        }
+
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+            protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<string, string>(async (message, context, ct) =>
+            {
+                await context.SendMessageAsync(message, ct);
+                return message;
+            }));
+
+        public ValueTask DisposeAsync()
+        {
+            this._disposed.Add(this.Id);
+            return default;
+        }
     }
 
     private sealed class DelayExecutor : Executor
@@ -349,6 +421,43 @@ public class WorkflowBehaviorEndToEndTests
             CancellationToken cancellationToken)
         {
             this._log.Add($"WorkflowBehavior:{context.Stage}");
+            return await continuation(cancellationToken);
+        }
+    }
+
+    private sealed class EnrichingExecutorBehavior : IExecutorBehavior
+    {
+        private readonly string _key;
+        private readonly object _value;
+
+        public EnrichingExecutorBehavior(string key, object value)
+        {
+            this._key = key;
+            this._value = value;
+        }
+
+        public async ValueTask<object?> HandleAsync(
+            ExecutorBehaviorContext context,
+            ExecutorBehaviorContinuation continuation,
+            CancellationToken cancellationToken)
+        {
+            context.Properties[this._key] = this._value;
+            return await continuation(cancellationToken);
+        }
+    }
+
+    private sealed class FaultyEndingWorkflowBehavior : IWorkflowBehavior
+    {
+        public async ValueTask<TResult> HandleAsync<TResult>(
+            WorkflowBehaviorContext context,
+            WorkflowBehaviorContinuation<TResult> continuation,
+            CancellationToken cancellationToken)
+        {
+            if (context.Stage == WorkflowStage.Ending)
+            {
+                throw new InvalidOperationException("Ending behavior failed");
+            }
+
             return await continuation(cancellationToken);
         }
     }

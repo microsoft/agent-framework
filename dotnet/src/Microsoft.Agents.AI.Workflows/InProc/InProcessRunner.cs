@@ -179,8 +179,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
             WorkflowDescription = this.Workflow.Description,
             RunId = this.SessionId,
             StartExecutorId = this.StartExecutorId,
-            Stage = WorkflowStage.Starting,
-            Properties = null
+            Stage = WorkflowStage.Starting
         };
 
         await this.Workflow.BehaviorPipeline!.ExecuteWorkflowPipelineAsync(
@@ -206,8 +205,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
                 WorkflowDescription = this.Workflow.Description,
                 RunId = this.SessionId,
                 StartExecutorId = this.StartExecutorId,
-                Stage = WorkflowStage.Ending,
-                Properties = null
+                Stage = WorkflowStage.Ending
             };
 
             await this.Workflow.BehaviorPipeline.ExecuteWorkflowPipelineAsync(

@@ -26,20 +26,25 @@ Multiple behaviors can be chained together, forming a pipeline where each behavi
 
 ```
 Workflow Start
-    ├─> WorkflowBehavior 1 (Starting)
+    ├─> WorkflowBehavior 1 (Starting)      // entered in registration order
     ├─> WorkflowBehavior 2 (Starting)
     │
     ├─> SuperStep Loop
     │   └─> Executor Message Processing
-    │       ├─> ExecutorBehavior 1 (PreExecution)
-    │       ├─> ExecutorBehavior 2 (PreExecution)
+    │       ├─> ExecutorBehavior 1         // code before `await continuation()`
+    │       ├─> ExecutorBehavior 2
     │       ├─> Actual Handler Execution
-    │       ├─> ExecutorBehavior 2 (PostExecution)
-    │       └─> ExecutorBehavior 1 (PostExecution)
+    │       ├─> ExecutorBehavior 2         // code after `await continuation()`
+    │       └─> ExecutorBehavior 1
     │
-    ├─> WorkflowBehavior 2 (Ending)
-    └─> WorkflowBehavior 1 (Ending)
+    ├─> WorkflowBehavior 1 (Ending)        // a separate pipeline pass, also
+    └─> WorkflowBehavior 2 (Ending)        // entered in registration order
 ```
+
+Executor behaviors form a single nested chain around the handler, so the first-registered behavior is
+the outermost one: it runs first on the way in and last on the way out. The `Starting` and `Ending`
+workflow stages are two *independent* pipeline passes — `Ending` is not an unwinding of `Starting`,
+so both are entered in registration order.
 
 ### Pipeline Behavior Interfaces
 
@@ -63,11 +68,15 @@ public interface IExecutorBehavior
 - `Message` - The message being processed
 - `MessageType` - Type of the message
 - `RunId` - Unique workflow run identifier
-- `Stage` - Execution stage:
-  - `PreExecution` - Before the executor begins processing the message
-  - `PostExecution` - After the executor completes processing the message
+- `Stage` - Execution stage. Currently only `PreExecution`: the behavior is invoked once per executor
+  call, before the executor begins processing the message. To run logic after the executor completes,
+  place it after the `await continuation()` call rather than looking for a separate post-execution stage.
 - `WorkflowContext` - Access to workflow operations
 - `TraceContext` - Distributed tracing information
+- `Properties` - Mutable `IDictionary<string, object>`, initialized empty by the framework, for passing
+  data between behaviors. A fresh instance is created per executor invocation, so values written by an
+  outer behavior are visible to inner behaviors and to code after `await continuation()` in the same
+  call, but do not flow to later invocations. Not thread-safe.
 
 #### IWorkflowBehavior
 
@@ -91,7 +100,9 @@ public interface IWorkflowBehavior
 - `Stage` - Workflow execution stage:
   - `Starting` - The workflow is beginning execution
   - `Ending` - The workflow is completing execution
-- `Properties` - Custom properties dictionary
+- `Properties` - Mutable `IDictionary<string, object>`, initialized empty by the framework, for passing
+  data between behaviors within a single stage. `Starting` and `Ending` each get their own instance, so
+  values do not carry across stages. Not thread-safe.
 
 ## Usage Examples
 
@@ -487,7 +498,7 @@ Pipeline behaviors are completely opt-in:
 ### Enums
 
 - `WorkflowStage` - Starting, Ending
-- `ExecutorStage` - PreExecution, PostExecution
+- `ExecutorStage` - PreExecution
 
 ### Extension Methods
 

@@ -75,9 +75,15 @@ public sealed class WorkflowBehaviorContext
     public WorkflowStage Stage { get; init; }
 
     /// <summary>
-    /// Gets optional custom properties that can be used to pass additional context.
+    /// Gets a mutable property bag that behaviors can use to pass additional context to one another.
     /// </summary>
-    public IReadOnlyDictionary<string, object>? Properties { get; init; }
+    /// <remarks>
+    /// The framework initializes this to an empty dictionary, so behaviors may write to it without a null check.
+    /// A distinct instance is created for each <see cref="WorkflowStage"/> invocation, meaning values written
+    /// during <see cref="WorkflowStage.Starting"/> are not visible during <see cref="WorkflowStage.Ending"/>.
+    /// The dictionary is not thread-safe; behaviors that fan out concurrently must synchronize their own access.
+    /// </remarks>
+    public IDictionary<string, object> Properties { get; init; } = new Dictionary<string, object>();
 }
 
 /// <summary>
