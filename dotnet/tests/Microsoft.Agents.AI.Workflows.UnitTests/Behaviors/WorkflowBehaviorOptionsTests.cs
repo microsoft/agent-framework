@@ -178,6 +178,87 @@ public class WorkflowBehaviorOptionsTests
         act.Should().Throw<ArgumentNullException>();
     }
 
+    [Fact]
+    public void AddExecutorBehavior_GenericOverload_RegistersBehavior()
+    {
+        // Arrange
+        var options = new WorkflowBehaviorOptions();
+
+        // Act
+        options.AddExecutorBehavior<TestExecutorBehavior>();
+        var pipeline = options.BuildPipeline();
+
+        // Assert
+        pipeline.Should().NotBeNull();
+        pipeline!.HasExecutorBehaviors.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AddWorkflowBehavior_GenericOverload_RegistersBehavior()
+    {
+        // Arrange
+        var options = new WorkflowBehaviorOptions();
+
+        // Act
+        options.AddWorkflowBehavior<TestWorkflowBehavior>();
+        var pipeline = options.BuildPipeline();
+
+        // Assert
+        pipeline.Should().NotBeNull();
+        pipeline!.HasWorkflowBehaviors.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AddBehavior_ReturnsSameOptionsInstance_ForChaining()
+    {
+        // Arrange
+        var options = new WorkflowBehaviorOptions();
+
+        // Act - every registration overload is documented as chainable
+        var chained = options
+            .AddExecutorBehavior(new TestExecutorBehavior())
+            .AddWorkflowBehavior(new TestWorkflowBehavior())
+            .AddExecutorBehavior<TestExecutorBehavior>()
+            .AddWorkflowBehavior<TestWorkflowBehavior>();
+
+        // Assert
+        chained.Should().BeSameAs(options);
+        var pipeline = options.BuildPipeline();
+        pipeline!.HasExecutorBehaviors.Should().BeTrue();
+        pipeline.HasWorkflowBehaviors.Should().BeTrue();
+    }
+
+    [Fact]
+    public void WorkflowBuilder_WithBehaviors_NullConfigure_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var builder = new WorkflowBuilder(new SimpleExecutor("test"));
+
+        // Act
+        Action act = () => builder.WithBehaviors(null!);
+
+        // Assert - a null configure callback must not be silently ignored
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void WorkflowBuilder_WithBehaviors_CalledTwice_AccumulatesBehaviors()
+    {
+        // Arrange
+        var executor = new SimpleExecutor("test");
+
+        // Act - successive calls share one options instance rather than replacing it
+        var workflow = new WorkflowBuilder(executor)
+            .WithBehaviors(options => options.AddExecutorBehavior(new TestExecutorBehavior()))
+            .WithBehaviors(options => options.AddWorkflowBehavior(new TestWorkflowBehavior()))
+            .Build();
+
+        // Assert
+        workflow.BehaviorPipeline.Should().NotBeNull();
+        workflow.BehaviorPipeline!.HasExecutorBehaviors.Should().BeTrue();
+        workflow.BehaviorPipeline.HasWorkflowBehaviors.Should().BeTrue();
+    }
+
     // Test helper classes
     private sealed class TestExecutorBehavior : IExecutorBehavior
     {

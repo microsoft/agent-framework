@@ -8,6 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Behaviors;
+using Microsoft.Agents.AI.Workflows.Execution;
+using Microsoft.Agents.AI.Workflows.InProc;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests.Behaviors;
 
@@ -296,10 +298,12 @@ public class WorkflowBehaviorEndToEndTests
         // Arrange
         var disposedExecutors = new List<string>();
         var faultyBehavior = new FaultyEndingWorkflowBehavior();
-        var executor = new DisposableExecutor("disposable-executor", disposedExecutors);
+        var asyncExecutor = new DisposableExecutor("async-disposable", disposedExecutors);
+        var syncExecutor = new SyncDisposableExecutor("sync-disposable", disposedExecutors);
 
-        var workflow = new WorkflowBuilder(executor)
+        var workflow = new WorkflowBuilder(asyncExecutor)
             .WithBehaviors(options => options.AddWorkflowBehavior(faultyBehavior))
+            .AddEdge(asyncExecutor, syncExecutor)
             .Build();
 
         var run = await InProcessExecution.RunAsync(workflow, "test-input");
@@ -311,7 +315,155 @@ public class WorkflowBehaviorEndToEndTests
         await disposeRun.Should().ThrowAsync<BehaviorExecutionException>();
 
         // ...but teardown still ran to completion, so executors were disposed rather than leaked.
-        disposedExecutors.Should().Contain("disposable-executor");
+        disposedExecutors.Should().Contain("async-disposable");
+        disposedExecutors.Should().Contain("sync-disposable");
+    }
+
+    [Fact]
+    public async Task Workflow_ExecutorBehaviorContext_IsFullyPopulatedAsync()
+    {
+        // Arrange
+        ExecutorBehaviorContext? captured = null;
+        var behavior = new CapturingExecutorBehavior(ctx => captured ??= ctx);
+
+        var executor = new SimpleExecutor("the-executor");
+        var workflow = new WorkflowBuilder(executor)
+            .WithBehaviors(options => options.AddExecutorBehavior(behavior))
+            .Build();
+
+        // Act
+        await using var run = await InProcessExecution.RunAsync(workflow, "test-input");
+
+        // Assert - every context field the public API advertises is populated
+        captured.Should().NotBeNull();
+        captured!.ExecutorId.Should().Be("the-executor");
+        captured.ExecutorType.Should().Be<SimpleExecutor>();
+        captured.Message.Should().Be("test-input");
+        captured.MessageType.Should().Be<string>();
+        captured.Stage.Should().Be(ExecutorStage.PreExecution);
+        captured.WorkflowContext.Should().NotBeNull();
+        captured.RunId.Should().NotBeNullOrEmpty();
+        captured.Properties.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Workflow_WorkflowBehaviorContext_IsFullyPopulatedAsync()
+    {
+        // Arrange
+        WorkflowBehaviorContext? captured = null;
+        var behavior = new CapturingWorkflowBehavior(ctx => captured ??= ctx);
+
+        var executor = new SimpleExecutor("start-executor");
+        var workflow = new WorkflowBuilder(executor)
+            .WithName("my-workflow")
+            .WithDescription("my-description")
+            .WithBehaviors(options => options.AddWorkflowBehavior(behavior))
+            .Build();
+
+        // Act
+        await using var run = await InProcessExecution.RunAsync(workflow, "test-input");
+
+        // Assert
+        captured.Should().NotBeNull();
+        captured!.WorkflowName.Should().Be("my-workflow");
+        captured.WorkflowDescription.Should().Be("my-description");
+        captured.StartExecutorId.Should().Be("start-executor");
+        captured.Stage.Should().Be(WorkflowStage.Starting);
+        captured.RunId.Should().NotBeNullOrEmpty();
+        captured.Properties.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Workflow_WorkflowBehaviorProperties_AreIsolatedBetweenStagesAsync()
+    {
+        // Arrange - Starting and Ending are separate pipeline passes with separate contexts
+        bool? endingSawStartingValue = null;
+        var behavior = new StagePropertyBehavior(saw => endingSawStartingValue = saw);
+
+        var executor = new SimpleExecutor("executor");
+        var workflow = new WorkflowBuilder(executor)
+            .WithBehaviors(options => options.AddWorkflowBehavior(behavior))
+            .Build();
+
+        // Act - disposal triggers the Ending stage
+        await using (await InProcessExecution.RunAsync(workflow, "test-input"))
+        {
+        }
+
+        // Assert - values written during Starting do not leak into Ending
+        endingSawStartingValue.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Workflow_ExecutorBehaviorProperties_AreIsolatedBetweenInvocationsAsync()
+    {
+        // Arrange - each executor invocation gets a fresh property bag
+        var sawExistingValue = new List<bool>();
+        var behavior = new PerInvocationPropertyBehavior(sawExistingValue);
+
+        var executor1 = new SimpleExecutor("executor1");
+        var executor2 = new SimpleExecutor("executor2");
+        var workflow = new WorkflowBuilder(executor1)
+            .WithBehaviors(options => options.AddExecutorBehavior(behavior))
+            .AddEdge(executor1, executor2)
+            .Build();
+
+        // Act
+        await using var run = await InProcessExecution.RunAsync(workflow, "test-input");
+
+        // Assert - two invocations, neither of which observed the other's value
+        sawExistingValue.Should().HaveCountGreaterThanOrEqualTo(2);
+        sawExistingValue.Should().AllSatisfy(saw => saw.Should().BeFalse());
+    }
+
+    [Fact]
+    public async Task Workflow_EndingBehaviors_RunInRegistrationOrderAsync()
+    {
+        // Arrange - Ending is a separate pass, not an unwinding of Starting
+        var executionLog = new List<string>();
+        var executor = new SimpleExecutor("executor");
+
+        var workflow = new WorkflowBuilder(executor)
+            .WithBehaviors(options =>
+            {
+                options.AddWorkflowBehavior(new NamedWorkflowBehavior("first", executionLog));
+                options.AddWorkflowBehavior(new NamedWorkflowBehavior("second", executionLog));
+            })
+            .Build();
+
+        // Act
+        await using (await InProcessExecution.RunAsync(workflow, "test-input"))
+        {
+        }
+
+        // Assert - both stages are entered in registration order
+        executionLog.Should().Equal(
+            "first:Starting",
+            "second:Starting",
+            "first:Ending",
+            "second:Ending");
+    }
+
+    [Fact]
+    public void RunnerContext_SetRunEndingCallback_CalledTwice_Throws()
+    {
+        // Arrange - the runner registers exactly one Ending callback; a second must not silently overwrite it
+        var workflow = new WorkflowBuilder(new SimpleExecutor("executor")).Build();
+        var context = new InProcessRunnerContext(
+            workflow,
+            sessionId: "test-session",
+            checkpointingEnabled: false,
+            outgoingEvents: new ConcurrentEventSink(),
+            stepTracer: null);
+
+        context.SetRunEndingCallback(_ => default);
+
+        // Act
+        Action act = () => context.SetRunEndingCallback(_ => default);
+
+        // Assert
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*already been registered*");
     }
 
     // Test Executors
@@ -366,6 +518,25 @@ public class WorkflowBehaviorEndToEndTests
             this._disposed.Add(this.Id);
             return default;
         }
+    }
+
+    private sealed class SyncDisposableExecutor : Executor, IDisposable
+    {
+        private readonly List<string> _disposed;
+
+        public SyncDisposableExecutor(string id, List<string> disposed) : base(id)
+        {
+            this._disposed = disposed;
+        }
+
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+            protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<string, string>(async (message, context, ct) =>
+            {
+                await context.SendMessageAsync(message, ct);
+                return message;
+            }));
+
+        public void Dispose() => this._disposed.Add(this.Id);
     }
 
     private sealed class DelayExecutor : Executor
@@ -442,6 +613,74 @@ public class WorkflowBehaviorEndToEndTests
             CancellationToken cancellationToken)
         {
             context.Properties[this._key] = this._value;
+            return await continuation(cancellationToken);
+        }
+    }
+
+    private sealed class StagePropertyBehavior : IWorkflowBehavior
+    {
+        private readonly Action<bool> _reportEndingSawValue;
+
+        public StagePropertyBehavior(Action<bool> reportEndingSawValue)
+        {
+            this._reportEndingSawValue = reportEndingSawValue;
+        }
+
+        public async ValueTask<TResult> HandleAsync<TResult>(
+            WorkflowBehaviorContext context,
+            WorkflowBehaviorContinuation<TResult> continuation,
+            CancellationToken cancellationToken)
+        {
+            if (context.Stage == WorkflowStage.Starting)
+            {
+                context.Properties["from-starting"] = "value";
+            }
+            else
+            {
+                this._reportEndingSawValue(context.Properties.ContainsKey("from-starting"));
+            }
+
+            return await continuation(cancellationToken);
+        }
+    }
+
+    private sealed class PerInvocationPropertyBehavior : IExecutorBehavior
+    {
+        private readonly List<bool> _sawExistingValue;
+
+        public PerInvocationPropertyBehavior(List<bool> sawExistingValue)
+        {
+            this._sawExistingValue = sawExistingValue;
+        }
+
+        public async ValueTask<object?> HandleAsync(
+            ExecutorBehaviorContext context,
+            ExecutorBehaviorContinuation continuation,
+            CancellationToken cancellationToken)
+        {
+            this._sawExistingValue.Add(context.Properties.ContainsKey("marker"));
+            context.Properties["marker"] = "set";
+            return await continuation(cancellationToken);
+        }
+    }
+
+    private sealed class NamedWorkflowBehavior : IWorkflowBehavior
+    {
+        private readonly string _name;
+        private readonly List<string> _log;
+
+        public NamedWorkflowBehavior(string name, List<string> log)
+        {
+            this._name = name;
+            this._log = log;
+        }
+
+        public async ValueTask<TResult> HandleAsync<TResult>(
+            WorkflowBehaviorContext context,
+            WorkflowBehaviorContinuation<TResult> continuation,
+            CancellationToken cancellationToken)
+        {
+            this._log.Add($"{this._name}:{context.Stage}");
             return await continuation(cancellationToken);
         }
     }

@@ -347,6 +347,273 @@ public class BehaviorPipelineTests
         pipeline!.HasWorkflowBehaviors.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task WorkflowPipeline_WithNoBehaviors_ReturnsFastPathAsync()
+    {
+        // Arrange
+        var options = new WorkflowBehaviorOptions();
+        var pipeline = options.BuildPipeline();
+        var executed = false;
+
+        // Act
+        var result = await pipeline!.ExecuteWorkflowPipelineAsync(
+            CreateWorkflowContext(),
+            async ct => { executed = true; return await Task.FromResult(42); },
+            CancellationToken.None);
+
+        // Assert
+        executed.Should().BeTrue();
+        result.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task WorkflowPipeline_WithNoBehaviors_FinalHandlerExceptionNotWrappedAsync()
+    {
+        // Arrange
+        var options = new WorkflowBehaviorOptions();
+        var pipeline = options.BuildPipeline();
+
+        // Act
+        Func<Task> act = async () => await pipeline!.ExecuteWorkflowPipelineAsync<int>(
+            CreateWorkflowContext(),
+            ct => throw new InvalidOperationException("Core handler error"),
+            CancellationToken.None);
+
+        // Assert - without behaviors the raw exception propagates unwrapped
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("Core handler error");
+    }
+
+    [Fact]
+    public async Task WorkflowPipeline_ReturnsFinalHandlerResultThroughBehaviorsAsync()
+    {
+        // Arrange - TResult must survive the trip through the behavior chain
+        var options = new WorkflowBehaviorOptions();
+        options.AddWorkflowBehavior(new TestWorkflowBehavior(_ => { }));
+        options.AddWorkflowBehavior(new TestWorkflowBehavior(_ => { }));
+        var pipeline = options.BuildPipeline();
+
+        // Act
+        var result = await pipeline!.ExecuteWorkflowPipelineAsync(
+            CreateWorkflowContext(),
+            async ct => await Task.FromResult("handler-result"),
+            CancellationToken.None);
+
+        // Assert
+        result.Should().Be("handler-result");
+    }
+
+    [Fact]
+    public async Task WorkflowPipeline_BehaviorCanShortCircuit_SkipsRemainingPipelineAsync()
+    {
+        // Arrange
+        var innerRan = false;
+        var finalHandlerRan = false;
+
+        var options = new WorkflowBehaviorOptions();
+        options.AddWorkflowBehavior(new ShortCircuitingWorkflowBehavior("short-circuited"));
+        options.AddWorkflowBehavior(new TestWorkflowBehavior(_ => innerRan = true));
+        var pipeline = options.BuildPipeline();
+
+        // Act
+        var result = await pipeline!.ExecuteWorkflowPipelineAsync(
+            CreateWorkflowContext(),
+            async ct => { finalHandlerRan = true; return await Task.FromResult("handler-result"); },
+            CancellationToken.None);
+
+        // Assert - neither the inner behavior nor the final handler runs
+        result.Should().Be("short-circuited");
+        innerRan.Should().BeFalse();
+        finalHandlerRan.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WorkflowPipeline_VoidOverload_ExecutesBehaviorsAndFinalHandlerAsync()
+    {
+        // Arrange - the non-generic overload is what InProcessRunner uses for Starting/Ending
+        var executionOrder = new List<string>();
+
+        var options = new WorkflowBehaviorOptions();
+        options.AddWorkflowBehavior(new TestWorkflowBehavior(_ => executionOrder.Add("behavior1")));
+        options.AddWorkflowBehavior(new TestWorkflowBehavior(_ => executionOrder.Add("behavior2")));
+        var pipeline = options.BuildPipeline();
+
+        // Act
+        await pipeline!.ExecuteWorkflowPipelineAsync(
+            CreateWorkflowContext(),
+            ct => { executionOrder.Add("final"); return default; },
+            CancellationToken.None);
+
+        // Assert
+        executionOrder.Should().Equal("behavior1", "behavior2", "final");
+    }
+
+    [Fact]
+    public async Task WorkflowPipeline_VoidOverload_WithNoBehaviors_ExecutesFinalHandlerAsync()
+    {
+        // Arrange
+        var options = new WorkflowBehaviorOptions();
+        var pipeline = options.BuildPipeline();
+        var executed = false;
+
+        // Act
+        await pipeline!.ExecuteWorkflowPipelineAsync(
+            CreateWorkflowContext(),
+            ct => { executed = true; return default; },
+            CancellationToken.None);
+
+        // Assert
+        executed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecutorPipeline_BehaviorExecutionException_IsNotDoubleWrappedAsync()
+    {
+        // Arrange - an inner behavior's already-wrapped failure must not be re-wrapped by outer behaviors
+        var options = new WorkflowBehaviorOptions();
+        options.AddExecutorBehavior(new TestExecutorBehavior(_ => { }));
+        options.AddExecutorBehavior(new ThrowingExecutorBehavior());
+        var pipeline = options.BuildPipeline();
+
+        // Act
+        Func<Task> act = async () => await pipeline!.ExecuteExecutorPipelineAsync(
+            CreateExecutorContext(),
+            async ct => await Task.FromResult<object?>("result"),
+            CancellationToken.None);
+
+        // Assert - exactly one layer of wrapping, with the original exception underneath
+        var wrapped = (await act.Should().ThrowAsync<BehaviorExecutionException>()).Which;
+        wrapped.BehaviorType.Should().Contain(nameof(ThrowingExecutorBehavior));
+        wrapped.InnerException.Should().BeOfType<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task WorkflowPipeline_BehaviorExecutionException_IsNotDoubleWrappedAsync()
+    {
+        // Arrange
+        var options = new WorkflowBehaviorOptions();
+        options.AddWorkflowBehavior(new TestWorkflowBehavior(_ => { }));
+        options.AddWorkflowBehavior(new ThrowingWorkflowBehavior());
+        var pipeline = options.BuildPipeline();
+
+        // Act
+        Func<Task> act = async () => await pipeline!.ExecuteWorkflowPipelineAsync(
+            CreateWorkflowContext(),
+            async ct => await Task.FromResult(0),
+            CancellationToken.None);
+
+        // Assert
+        var wrapped = (await act.Should().ThrowAsync<BehaviorExecutionException>()).Which;
+        wrapped.BehaviorType.Should().Contain(nameof(ThrowingWorkflowBehavior));
+        wrapped.InnerException.Should().BeOfType<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task ExecutorPipeline_CancellationTokenIsPropagatedToBehaviorsAndHandlerAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        CancellationToken observedByBehavior = default;
+        CancellationToken observedByHandler = default;
+
+        var options = new WorkflowBehaviorOptions();
+        options.AddExecutorBehavior(new TokenCapturingExecutorBehavior(ct => observedByBehavior = ct));
+        var pipeline = options.BuildPipeline();
+
+        // Act
+        await pipeline!.ExecuteExecutorPipelineAsync(
+            CreateExecutorContext(),
+            async ct => { observedByHandler = ct; return await Task.FromResult<object?>("result"); },
+            cts.Token);
+
+        // Assert
+        observedByBehavior.Should().Be(cts.Token);
+        observedByHandler.Should().Be(cts.Token);
+    }
+
+    [Fact]
+    public async Task WorkflowPipeline_CancellationTokenIsPropagatedToBehaviorsAndHandlerAsync()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        CancellationToken observedByBehavior = default;
+        CancellationToken observedByHandler = default;
+
+        var options = new WorkflowBehaviorOptions();
+        options.AddWorkflowBehavior(new TokenCapturingWorkflowBehavior(ct => observedByBehavior = ct));
+        var pipeline = options.BuildPipeline();
+
+        // Act
+        await pipeline!.ExecuteWorkflowPipelineAsync(
+            CreateWorkflowContext(),
+            async ct => { observedByHandler = ct; return await Task.FromResult(0); },
+            cts.Token);
+
+        // Assert
+        observedByBehavior.Should().Be(cts.Token);
+        observedByHandler.Should().Be(cts.Token);
+    }
+
+    [Fact]
+    public async Task ExecutorPipeline_BehaviorTransformsResult_ReturnsTransformedValueAsync()
+    {
+        // Arrange - behaviors may rewrite the handler's result on the way out
+        var options = new WorkflowBehaviorOptions();
+        options.AddExecutorBehavior(new ResultTransformingExecutorBehavior(r => $"outer({r})"));
+        options.AddExecutorBehavior(new ResultTransformingExecutorBehavior(r => $"inner({r})"));
+        var pipeline = options.BuildPipeline();
+
+        // Act
+        var result = await pipeline!.ExecuteExecutorPipelineAsync(
+            CreateExecutorContext(),
+            async ct => await Task.FromResult<object?>("core"),
+            CancellationToken.None);
+
+        // Assert - the innermost behavior transforms first, the outermost last
+        result.Should().Be("outer(inner(core))");
+    }
+
+    [Fact]
+    public async Task ExecutorPipeline_MultipleBehaviors_NestInRegistrationOrderAsync()
+    {
+        // Arrange - the first registered behavior should be outermost: first in, last out
+        var log = new List<string>();
+
+        var options = new WorkflowBehaviorOptions();
+        options.AddExecutorBehavior(new NestingExecutorBehavior("A", log));
+        options.AddExecutorBehavior(new NestingExecutorBehavior("B", log));
+        var pipeline = options.BuildPipeline();
+
+        // Act
+        await pipeline!.ExecuteExecutorPipelineAsync(
+            CreateExecutorContext(),
+            async ct => { log.Add("handler"); return await Task.FromResult<object?>("result"); },
+            CancellationToken.None);
+
+        // Assert
+        log.Should().Equal("A:enter", "B:enter", "handler", "B:exit", "A:exit");
+    }
+
+    private static WorkflowBehaviorContext CreateWorkflowContext(WorkflowStage stage = WorkflowStage.Starting) =>
+        new()
+        {
+            WorkflowName = "test-workflow",
+            RunId = Guid.NewGuid().ToString(),
+            StartExecutorId = "start",
+            Stage = stage
+        };
+
+    private static ExecutorBehaviorContext CreateExecutorContext() =>
+        new()
+        {
+            ExecutorId = "test-executor",
+            ExecutorType = typeof(BehaviorPipelineTests),
+            Message = "test",
+            MessageType = typeof(string),
+            RunId = Guid.NewGuid().ToString(),
+            Stage = ExecutorStage.PreExecution,
+            WorkflowContext = NullWorkflowContext.Instance
+        };
+
     // Test helper behaviors
     private sealed class TestExecutorBehavior : IExecutorBehavior
     {
@@ -424,6 +691,105 @@ public class BehaviorPipelineTests
             CancellationToken cancellationToken)
         {
             throw new InvalidOperationException("Test exception from workflow behavior");
+        }
+    }
+
+    private sealed class ShortCircuitingWorkflowBehavior : IWorkflowBehavior
+    {
+        private readonly object _result;
+
+        public ShortCircuitingWorkflowBehavior(object result)
+        {
+            this._result = result;
+        }
+
+        public ValueTask<TResult> HandleAsync<TResult>(
+            WorkflowBehaviorContext context,
+            WorkflowBehaviorContinuation<TResult> continuation,
+            CancellationToken cancellationToken)
+        {
+            // Short-circuit: don't call continuation
+            return new ValueTask<TResult>((TResult)this._result);
+        }
+    }
+
+    private sealed class TokenCapturingExecutorBehavior : IExecutorBehavior
+    {
+        private readonly Action<CancellationToken> _capture;
+
+        public TokenCapturingExecutorBehavior(Action<CancellationToken> capture)
+        {
+            this._capture = capture;
+        }
+
+        public async ValueTask<object?> HandleAsync(
+            ExecutorBehaviorContext context,
+            ExecutorBehaviorContinuation continuation,
+            CancellationToken cancellationToken)
+        {
+            this._capture(cancellationToken);
+            return await continuation(cancellationToken);
+        }
+    }
+
+    private sealed class TokenCapturingWorkflowBehavior : IWorkflowBehavior
+    {
+        private readonly Action<CancellationToken> _capture;
+
+        public TokenCapturingWorkflowBehavior(Action<CancellationToken> capture)
+        {
+            this._capture = capture;
+        }
+
+        public async ValueTask<TResult> HandleAsync<TResult>(
+            WorkflowBehaviorContext context,
+            WorkflowBehaviorContinuation<TResult> continuation,
+            CancellationToken cancellationToken)
+        {
+            this._capture(cancellationToken);
+            return await continuation(cancellationToken);
+        }
+    }
+
+    private sealed class ResultTransformingExecutorBehavior : IExecutorBehavior
+    {
+        private readonly Func<object?, object?> _transform;
+
+        public ResultTransformingExecutorBehavior(Func<object?, object?> transform)
+        {
+            this._transform = transform;
+        }
+
+        public async ValueTask<object?> HandleAsync(
+            ExecutorBehaviorContext context,
+            ExecutorBehaviorContinuation continuation,
+            CancellationToken cancellationToken)
+        {
+            var result = await continuation(cancellationToken);
+            return this._transform(result);
+        }
+    }
+
+    private sealed class NestingExecutorBehavior : IExecutorBehavior
+    {
+        private readonly string _name;
+        private readonly List<string> _log;
+
+        public NestingExecutorBehavior(string name, List<string> log)
+        {
+            this._name = name;
+            this._log = log;
+        }
+
+        public async ValueTask<object?> HandleAsync(
+            ExecutorBehaviorContext context,
+            ExecutorBehaviorContinuation continuation,
+            CancellationToken cancellationToken)
+        {
+            this._log.Add($"{this._name}:enter");
+            var result = await continuation(cancellationToken);
+            this._log.Add($"{this._name}:exit");
+            return result;
         }
     }
 

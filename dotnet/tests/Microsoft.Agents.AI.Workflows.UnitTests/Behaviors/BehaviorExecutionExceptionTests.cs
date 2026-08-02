@@ -87,7 +87,7 @@ public class BehaviorExecutionExceptionTests
     public void Message_ContainsStage()
     {
         // Arrange
-        const string stage = "PostExecution";
+        const string stage = "Ending";
         var exception = new BehaviorExecutionException(
             "TestBehavior",
             stage,
@@ -174,7 +174,7 @@ public class BehaviorExecutionExceptionTests
     public void Stage_IsAccessible()
     {
         // Arrange
-        const string stage = "PostExecution";
+        const string stage = "Ending";
         var exception = new BehaviorExecutionException(
             "TestBehavior",
             stage,
@@ -185,6 +185,74 @@ public class BehaviorExecutionExceptionTests
 
         // Assert
         result.Should().Be(stage);
+    }
+
+    [Fact]
+    public void Constructor_Parameterless_UsesDefaultMessageAndEmptyMetadata()
+    {
+        // Act
+        var exception = new BehaviorExecutionException();
+
+        // Assert
+        exception.Message.Should().Be("Error executing behavior");
+        exception.BehaviorType.Should().BeEmpty();
+        exception.Stage.Should().BeEmpty();
+        exception.InnerException.Should().BeNull();
+    }
+
+    [Fact]
+    public void Constructor_WithMessage_SetsMessageAndEmptyMetadata()
+    {
+        // Act
+        var exception = new BehaviorExecutionException("custom message");
+
+        // Assert
+        exception.Message.Should().Be("custom message");
+        exception.BehaviorType.Should().BeEmpty();
+        exception.Stage.Should().BeEmpty();
+        exception.InnerException.Should().BeNull();
+    }
+
+    [Fact]
+    public void Constructor_WithMessageAndInnerException_SetsBoth()
+    {
+        // Arrange
+        var innerException = new InvalidOperationException("inner");
+
+        // Act
+        var exception = new BehaviorExecutionException("custom message", innerException);
+
+        // Assert
+        exception.Message.Should().Be("custom message");
+        exception.InnerException.Should().BeSameAs(innerException);
+        exception.BehaviorType.Should().BeEmpty();
+        exception.Stage.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Constructor_WithEmptyBehaviorType_ThrowsArgumentException()
+    {
+        // Arrange
+        var innerException = new InvalidOperationException();
+
+        // Act
+        Action act = () => _ = new BehaviorExecutionException(string.Empty, "stage", innerException);
+
+        // Assert - empty must be rejected distinctly from null, so the message is never "behavior '' at stage"
+        act.Should().Throw<ArgumentException>().Which.Should().NotBeOfType<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_WithEmptyStage_ThrowsArgumentException()
+    {
+        // Arrange
+        var innerException = new InvalidOperationException();
+
+        // Act
+        Action act = () => _ = new BehaviorExecutionException("behavior", string.Empty, innerException);
+
+        // Assert
+        act.Should().Throw<ArgumentException>().Which.Should().NotBeOfType<ArgumentNullException>();
     }
 
     private static void ThrowTestException()
