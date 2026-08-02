@@ -241,10 +241,8 @@ class TestCreateAgentEntity:
         # Verify the result was set (likely error result)
         assert mock_context.set_result.called
 
-    def test_entity_function_handles_event_loop_runtime_error(self) -> None:
-        """Test that the entity function handles RuntimeError from get_event_loop by creating a new loop."""
-        from unittest.mock import patch
-
+    def test_entity_function_runs_on_persistent_loop(self) -> None:
+        """Entity coroutines run on the shared persistent loop and set a result."""
         mock_agent = Mock()
         mock_agent.run = AsyncMock(return_value=_agent_response("Response"))
 
@@ -253,60 +251,42 @@ class TestCreateAgentEntity:
         mock_context = Mock()
         mock_context.operation_name = "run"
         mock_context.entity_key = "conv-loop-test"
-        mock_context.get_input.return_value = {"message": "Test"}
+        mock_context.get_input.return_value = {"message": "Test", "correlationId": "corr-loop-test"}
         mock_context.get_state.return_value = None
 
-        # Simulate RuntimeError when getting event loop
-        with (
-            patch("asyncio.get_event_loop", side_effect=RuntimeError("No event loop")),
-            patch("asyncio.new_event_loop") as mock_new_loop,
-            patch("asyncio.set_event_loop") as mock_set_loop,
-        ):
-            mock_loop = Mock()
-            mock_loop.is_running.return_value = False
-            mock_loop.run_until_complete = Mock()
-            mock_new_loop.return_value = mock_loop
+        # Execute - the persistent loop should run the coroutine and set a result.
+        entity_function(mock_context)
 
-            # Execute
-            entity_function(mock_context)
+        assert mock_context.set_result.called
+        mock_agent.run.assert_awaited()
 
-            # Verify new event loop was created
-            mock_new_loop.assert_called_once()
-            mock_set_loop.assert_called_once_with(mock_loop)
+    def test_entity_function_runs_across_threads_without_hang(self) -> None:
+        """Successive entity invocations from different threads must not hang.
 
-    def test_entity_function_handles_running_event_loop(self) -> None:
-        """Test that the entity function handles a running event loop by creating a temporary loop."""
-        from unittest.mock import patch
+        This reproduces the cross-loop scenario that previously deadlocked: a
+        shared async resource bound to one loop being awaited from a different
+        worker thread. The persistent loop keeps every invocation on one loop.
+        """
+        from concurrent.futures import ThreadPoolExecutor
 
         mock_agent = Mock()
         mock_agent.run = AsyncMock(return_value=_agent_response("Response"))
 
         entity_function = create_agent_entity(mock_agent)
 
-        mock_context = Mock()
-        mock_context.operation_name = "run"
-        mock_context.entity_key = "conv-running-loop"
-        mock_context.get_input.return_value = {"message": "Test"}
-        mock_context.get_state.return_value = None
+        def invoke(i: int) -> bool:
+            ctx = Mock()
+            ctx.operation_name = "run"
+            ctx.entity_key = f"conv-{i}"
+            ctx.get_input.return_value = {"message": f"Test {i}", "correlationId": f"corr-{i}"}
+            ctx.get_state.return_value = None
+            entity_function(ctx)
+            return ctx.set_result.called
 
-        # Simulate a running event loop
-        mock_existing_loop = Mock()
-        mock_existing_loop.is_running.return_value = True
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            results = list(ex.map(invoke, range(16)))
 
-        mock_temp_loop = Mock()
-        mock_temp_loop.run_until_complete = Mock()
-        mock_temp_loop.close = Mock()
-
-        with (
-            patch("asyncio.get_event_loop", return_value=mock_existing_loop),
-            patch("asyncio.new_event_loop", return_value=mock_temp_loop),
-        ):
-            # Execute
-            entity_function(mock_context)
-
-            # Verify temporary loop was created and closed
-            mock_temp_loop.run_until_complete.assert_called_once()
-            mock_temp_loop.close.assert_called_once()
+        assert all(results)
 
 
 if __name__ == "__main__":

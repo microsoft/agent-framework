@@ -5,16 +5,16 @@
 // This is provided for demonstration purposes only.
 
 using System.Diagnostics;
+using System.Text.Json;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 
 /// <summary>
 /// Executes file-based skill scripts as local subprocesses.
 /// </summary>
 /// <remarks>
-/// This runner uses the script's absolute path, converts the arguments
-/// to CLI flags, and returns captured output. It is intended for
-/// demonstration purposes only.
+/// This runner uses the script's absolute path and converts the arguments
+/// to CLI arguments. When the LLM sends a JSON array, each element is used
+/// as a positional argument. It is intended for demonstration purposes only.
 /// </remarks>
 internal static class SubprocessScriptRunner
 {
@@ -24,7 +24,8 @@ internal static class SubprocessScriptRunner
     public static async Task<object?> RunAsync(
         AgentFileSkill skill,
         AgentFileSkillScript script,
-        AIFunctionArguments arguments,
+        JsonElement? arguments,
+        IServiceProvider? serviceProvider,
         CancellationToken cancellationToken)
     {
         if (!File.Exists(script.FullPath))
@@ -61,23 +62,26 @@ internal static class SubprocessScriptRunner
             startInfo.FileName = script.FullPath;
         }
 
-        if (arguments is not null)
+        if (arguments is { ValueKind: JsonValueKind.Array } json)
         {
-            foreach (var (key, value) in arguments)
+            // Positional CLI arguments
+            foreach (var element in json.EnumerateArray())
             {
-                if (value is bool boolValue)
+                if (element.ValueKind != JsonValueKind.String)
                 {
-                    if (boolValue)
-                    {
-                        startInfo.ArgumentList.Add(NormalizeKey(key));
-                    }
+                    throw new InvalidOperationException(
+                        $"File-based skill scripts only accept string CLI arguments but received a JSON element of kind '{element.ValueKind}'. " +
+                        "All array elements must be JSON strings.");
                 }
-                else if (value is not null)
-                {
-                    startInfo.ArgumentList.Add(NormalizeKey(key));
-                    startInfo.ArgumentList.Add(value.ToString()!);
-                }
+
+                startInfo.ArgumentList.Add(element.GetString()!);
             }
+        }
+        else if (arguments is not null && arguments.Value.ValueKind != JsonValueKind.Null && arguments.Value.ValueKind != JsonValueKind.Undefined)
+        {
+            throw new InvalidOperationException(
+                $"Expected a JSON array of CLI arguments but received {arguments.Value.ValueKind}. " +
+                "File-based skill scripts expect positional arguments as a JSON array of strings.");
         }
 
         Process? process = null;
@@ -128,10 +132,4 @@ internal static class SubprocessScriptRunner
             process?.Dispose();
         }
     }
-
-    /// <summary>
-    /// Normalizes a parameter key to a consistent --flag format.
-    /// Models may return keys with or without leading dashes (e.g., "value" vs "--value").
-    /// </summary>
-    private static string NormalizeKey(string key) => "--" + key.TrimStart('-');
 }

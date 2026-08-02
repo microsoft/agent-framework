@@ -1,4 +1,4 @@
----
+﻿---
 name: verify-samples-tool
 description: How to use the verify-samples tool to run, verify, and manage sample definitions in the Agent Framework repository. Use this when adding, updating, or running sample verification.
 ---
@@ -9,9 +9,16 @@ The `verify-samples` project (`dotnet/eng/verify-samples/`) is an automated tool
 
 ## Running verify-samples
 
+**Important:** By default, samples must be pre-built before running verify-samples. Build the solution first, or pass `--build` to build samples during the run:
+
 ```bash
 cd dotnet
+dotnet build agent-framework-dotnet.slnx -f net10.0
+```
 
+Then run verify-samples:
+
+```bash
 # Run all samples across all categories
 dotnet run --project eng/verify-samples -- --log results.log --csv results.csv
 
@@ -23,6 +30,10 @@ dotnet run --project eng/verify-samples -- Agent_Step02_StructuredOutput Agent_S
 
 # Control parallelism (default 8)
 dotnet run --project eng/verify-samples -- --parallel 8 --log results.log
+
+# Build samples during run (skips the need for a prior build step)
+# This may cause build conflicts as multiple samples are built in parallel, so use with caution
+dotnet run --project eng/verify-samples -- --build --log results.log
 
 # Combine options
 dotnet run --project eng/verify-samples -- --category 03-workflows --parallel 4 --log results.log --csv results.csv --md results.md
@@ -146,7 +157,7 @@ new SampleDefinition
 new SampleDefinition
 {
     Name = "Agent_With_AzureOpenAIChatCompletion",
-    ProjectPath = "samples/02-agents/AgentProviders/Agent_With_AzureOpenAIChatCompletion",
+    ProjectPath = "samples/02-agents/AgentProviders/azure/Agent_With_AzureOpenAIChatCompletion",
     RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
     OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
     ExpectedOutputDescription =
@@ -162,11 +173,11 @@ new SampleDefinition
 ```csharp
 new SampleDefinition
 {
-    Name = "Workflow_Declarative_GenerateCode",
-    ProjectPath = "samples/03-workflows/Declarative/GenerateCode",
+    Name = "Workflow_Visualization",
+    ProjectPath = "samples/03-workflows/Visualization",
     IsDeterministic = true,
-    MustContain = ["WORKFLOW: Parsing", "WORKFLOW: Defined"],
-    ExpectedOutputDescription = ["The output should show a YAML workflow being parsed and C# code being generated from it."],
+    MustContain = ["Generating workflow visualization...", "Mermaid string:", "DiGraph string:"],
+    ExpectedOutputDescription = ["The output should show workflow visualization in Mermaid and DiGraph formats."],
 },
 ```
 
@@ -212,3 +223,5 @@ new SampleDefinition
     SkipReason = "Runs as an MCP stdio server that does not exit on its own.",
 },
 ```
+
+

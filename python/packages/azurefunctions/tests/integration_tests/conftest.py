@@ -338,7 +338,12 @@ def _load_and_validate_env(sample_path: Path) -> None:
         "DURABLE_TASK_SCHEDULER_CONNECTION_STRING",
         "FUNCTIONS_WORKER_RUNTIME",
     ]
-    if sample_path.name == "11_workflow_parallel":
+    # Samples that host no AI agents need no model credentials (only the DTS emulator
+    # and Azurite). The suite-level gate still requires *some* LLM config to be present.
+    no_llm_samples = {"13_subworkflow_hitl"}
+    if sample_path.name in no_llm_samples:
+        pass
+    elif sample_path.name == "11_workflow_parallel":
         required_env_vars.extend(["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_MODEL"])
     else:
         required_env_vars.extend(["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL"])
@@ -365,6 +370,14 @@ def _start_function_app(sample_path: Path, port: int) -> subprocess.Popen[Any]:
     # use the task hub name to separate orchestration state.
     env["TASKHUB_NAME"] = f"test{uuid.uuid4().hex[:8]}"
 
+    # The Azure Functions Python worker's dependency isolation mechanism crashes
+    # on Python 3.13 with a SIGSEGV in the protobuf C extension (google._upb).
+    # Disabling isolation lets the worker load dependencies from the app's own
+    # environment, which avoids the crash.
+    # See: https://github.com/Azure/azure-functions-python-worker/issues/1797
+    if sys.version_info >= (3, 13):
+        env.setdefault("PYTHON_ISOLATE_WORKER_DEPENDENCIES", "0")
+
     # On Windows, use CREATE_NEW_PROCESS_GROUP to allow proper termination
     # shell=True only on Windows to handle PATH resolution
     if sys.platform == "win32":
@@ -375,8 +388,15 @@ def _start_function_app(sample_path: Path, port: int) -> subprocess.Popen[Any]:
             shell=True,
             env=env,
         )
-    # On Unix, don't use shell=True to avoid shell wrapper issues
-    return subprocess.Popen(["func", "start", "--port", str(port)], cwd=str(sample_path), env=env)
+    # On Unix, use start_new_session=True to isolate the process group from the
+    # pytest-xdist worker.  Without this, signals (e.g. from test-timeout) can
+    # propagate to the func host and vice-versa, potentially killing the worker.
+    return subprocess.Popen(
+        ["func", "start", "--port", str(port)],
+        cwd=str(sample_path),
+        env=env,
+        start_new_session=True,
+    )
 
 
 def _wait_for_function_app_ready(func_process: subprocess.Popen[Any], port: int, max_wait: int = 60) -> None:
@@ -533,18 +553,33 @@ def function_app_for_test(request: pytest.FixtureRequest) -> Iterator[dict[str, 
     _load_and_validate_env(sample_path)
 
     max_attempts = 3
+    # The overall budget MUST be shorter than the pytest-timeout value
+    # (--timeout=120 by default) so that the fixture finishes cleanly instead
+    # of being killed by os._exit() which crashes the xdist worker.
+    overall_budget = 100  # seconds – leaves headroom below the 120 s test timeout
     last_error: Exception | None = None
     func_process: subprocess.Popen[Any] | None = None
     base_url = ""
     port = 0
+    overall_start = time.monotonic()
+    attempts_made = 0
 
     for _ in range(max_attempts):
+        remaining = overall_budget - (time.monotonic() - overall_start)
+        if remaining < 10:
+            # Not enough time for another attempt; bail out.
+            break
+
+        attempts_made += 1
         port = _find_available_port()
         base_url = _build_base_url(port)
         func_process = _start_function_app(sample_path, port)
 
         try:
-            _wait_for_function_app_ready(func_process, port)
+            # Cap each attempt's wait to the remaining budget minus a small
+            # buffer for cleanup.
+            per_attempt_wait = min(60, int(remaining) - 5)
+            _wait_for_function_app_ready(func_process, port, max_wait=max(per_attempt_wait, 10))
             last_error = None
             break
         except FunctionAppStartupError as exc:
@@ -553,7 +588,8 @@ def function_app_for_test(request: pytest.FixtureRequest) -> Iterator[dict[str, 
             func_process = None
 
     if func_process is None:
-        error_message = f"Function app failed to start after {max_attempts} attempt(s)."
+        elapsed = int(time.monotonic() - overall_start)
+        error_message = f"Function app failed to start after {attempts_made} attempt(s) ({elapsed}s elapsed)."
         if last_error is not None:
             error_message += f" Last error: {last_error}"
         pytest.fail(error_message)

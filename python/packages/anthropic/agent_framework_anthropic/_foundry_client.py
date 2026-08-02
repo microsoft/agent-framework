@@ -6,13 +6,13 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, ClassVar, Generic, TypedDict
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
 )
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropicFoundry
 
@@ -33,7 +33,7 @@ class AnthropicFoundrySettings(TypedDict, total=False):
 class RawAnthropicFoundryClient(RawAnthropicClient[AnthropicOptionsT], Generic[AnthropicOptionsT]):
     """Raw Anthropic Foundry chat client without middleware, telemetry, or function invocation support."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
 
     def __init__(
         self,
@@ -91,14 +91,14 @@ class RawAnthropicFoundryClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
                     base_url=base_url_setting,
                     api_key=api_key_value,
                     azure_ad_token_provider=azure_ad_token_provider,
-                    default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+                    default_headers={"User-Agent": get_user_agent()},
                 )
             else:
                 anthropic_client = AsyncAnthropicFoundry(
                     resource=resource_setting,
                     api_key=api_key_value,
                     azure_ad_token_provider=azure_ad_token_provider,
-                    default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+                    default_headers={"User-Agent": get_user_agent()},
                 )
 
         super().__init__(
@@ -109,7 +109,7 @@ class RawAnthropicFoundryClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
         )
 
 
-class AnthropicFoundryClient(  # type: ignore[misc]
+class AnthropicFoundryClient(
     FunctionInvocationLayer[AnthropicOptionsT],
     ChatMiddlewareLayer[AnthropicOptionsT],
     ChatTelemetryLayer[AnthropicOptionsT],

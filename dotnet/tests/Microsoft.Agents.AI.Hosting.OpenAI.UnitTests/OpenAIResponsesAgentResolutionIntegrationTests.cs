@@ -267,7 +267,43 @@ public sealed class OpenAIResponsesAgentResolutionIntegrationTests : IAsyncDispo
         Assert.Equal(System.Net.HttpStatusCode.BadRequest, httpResponse.StatusCode);
 
         string responseJson = await httpResponse.Content.ReadAsStringAsync();
-        Assert.Contains("agent.name", responseJson, StringComparison.OrdinalIgnoreCase);
+        using JsonDocument errorDoc1 = JsonDocument.Parse(responseJson);
+        string? errorCode = errorDoc1.RootElement.GetProperty("error").GetProperty("code").GetString();
+        Assert.Equal("missing_required_parameter", errorCode);
+    }
+
+    /// <summary>
+    /// Verifies that the model field alone is not used for agent resolution.
+    /// The multi-agent endpoint requires agent.name or metadata.entity_id; setting only model returns 400.
+    /// </summary>
+    [Fact]
+    public async Task CreateResponse_WithModelOnly_ReturnsBadRequestAsync()
+    {
+        // Arrange
+        const string AgentName = "test-agent";
+
+        this._httpClient = await this.CreateTestServerWithAgentResolutionAsync(
+            (AgentName, "Instructions", "Response"));
+
+        // Act - Send request with model=agentName but no agent.name or metadata.entity_id
+        using StringContent requestContent = new(JsonSerializer.Serialize(new
+        {
+            model = AgentName,
+            input = new[]
+            {
+                new { type = "message", role = "user", content = "Test message" }
+            }
+        }), Encoding.UTF8, "application/json");
+
+        using HttpResponseMessage httpResponse = await this._httpClient!.PostAsync(new Uri("/v1/responses", UriKind.Relative), requestContent);
+
+        // Assert - model is not used for agent resolution
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, httpResponse.StatusCode);
+
+        string responseJson = await httpResponse.Content.ReadAsStringAsync();
+        using JsonDocument errorDoc2 = JsonDocument.Parse(responseJson);
+        string? errorCode = errorDoc2.RootElement.GetProperty("error").GetProperty("code").GetString();
+        Assert.Equal("missing_required_parameter", errorCode);
     }
 
     /// <summary>

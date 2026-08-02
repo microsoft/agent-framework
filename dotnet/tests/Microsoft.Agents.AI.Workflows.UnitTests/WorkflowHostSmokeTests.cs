@@ -206,6 +206,28 @@ internal sealed class TurnTrackingStartExecutor : ChatProtocolExecutor
     }
 }
 
+public class NonChatProtocolExecutor() : Executor<string>(nameof(NonChatProtocolExecutor))
+{
+    public override ValueTask HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        return default;
+    }
+}
+
+internal sealed class UppercaseStringExecutor(string name = "UppercaseStringExecutor") : Executor<IList<ChatMessage>, string>(name)
+{
+    public override ValueTask<string> HandleAsync(
+        IList<ChatMessage> message,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default)
+    {
+        string text = string.Join(
+            "\n",
+            message.Select(chatMessage => chatMessage.Text).Where(text => !string.IsNullOrWhiteSpace(text)));
+        return new(text.ToUpperInvariant());
+    }
+}
+
 public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 {
     private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
@@ -732,6 +754,25 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             .BeEmpty();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Test_AsAgent_FailsWhenNotChatProtocolAsync(bool runAsync)
+    {
+        // Arrange
+        NonChatProtocolExecutor executor = new();
+        executor.DescribeProtocol().IsChatProtocol().Should().BeFalse();
+
+        Workflow workflow = new WorkflowBuilder(executor).Build();
+        AIAgent workflowAsAgent = workflow.AsAIAgent();
+
+        Func<Task> action = runAsync
+                          ? () => workflowAsAgent.RunStreamingAsync().ToAgentResponseAsync()
+                          : () => workflowAsAgent.RunAsync();
+
+        await action.Should().ThrowAsync<InvalidOperationException>();
+    }
+
     private async Task Run_AsAgent_OutgoingMessagesInHistoryAsync(Workflow workflow, bool runAsync)
     {
         // Arrange
@@ -796,5 +837,331 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         TestReplayAgent agent = new(TestMessages, TestAgentId, TestAgentName);
         Workflow handoffWorkflow = new HandoffWorkflowBuilder(agent).Build();
         return this.Run_AsAgent_OutgoingMessagesInHistoryAsync(handoffWorkflow, runAsync);
+    }
+
+    [Fact]
+    public async Task Test_AsAgent_UsesDesignatedWorkflowOutputInsteadOfIntermediateAgentResponsesAsync()
+    {
+        TestReplayAgent firstAgent = new(TestReplayAgent.ToChatMessages("first answer"), "first-agent", "First Agent");
+        TestReplayAgent secondAgent = new(TestReplayAgent.ToChatMessages("second answer"), "second-agent", "Second Agent");
+        ExecutorBinding first = firstAgent.BindAsExecutor(new AIAgentHostOptions { ForwardIncomingMessages = false });
+        ExecutorBinding second = secondAgent.BindAsExecutor(new AIAgentHostOptions { ForwardIncomingMessages = false });
+        UppercaseStringExecutor uppercase = new();
+
+        Workflow workflow = new WorkflowBuilder(first)
+            .AddEdge(first, second)
+            .AddEdge(second, uppercase)
+            .WithOutputFrom(uppercase)
+            .Build();
+
+        AgentResponse response = await workflow
+            .AsAIAgent("WorkflowAgent")
+            .RunAsync(new ChatMessage(ChatRole.User, "hello"));
+
+        response.Text.Should().Be("SECOND ANSWER");
+        response.Messages.Should().ContainSingle()
+            .Which.Text.Should().Be("SECOND ANSWER");
+    }
+
+    // ----- Phase 5: Workflow-as-Agent intermediate forwarding -----------------
+
+    [Collection(Futures.FuturesSerialCollection.Name)]
+    public class IntermediateForwarding
+    {
+        private const string InterText = "progress";
+        private const string FinalText = "final";
+
+        private static async Task<List<AgentResponseUpdate>> RunStreamingAsync(
+            Workflow workflow,
+            bool includeWorkflowOutputsInResponse = false)
+        {
+            return await workflow
+                .AsAIAgent("WorkflowAgent", includeWorkflowOutputsInResponse: includeWorkflowOutputsInResponse)
+                .RunStreamingAsync(new ChatMessage(ChatRole.User, "hi"))
+                .ToListAsync();
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_IntermediateAgentResponseForwardedInStreamingAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: true);
+            TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(InterText));
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            Workflow workflow = new WorkflowBuilder(binding)
+                .WithIntermediateOutputFrom([binding])
+                .Build();
+
+            // Under Futures-on, AgentResponseEvent mirrors AgentResponseUpdateEvent: always
+            // forwarded regardless of the include flag. The intermediate tag is observable on
+            // the surfaced event for consumers that care to distinguish.
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: false);
+
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent are && are.IsIntermediate() && u.Contents.Count == 0)
+                .Should().BeTrue("the completion event remains observable without duplicating streamed text");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_TerminalAgentResponseForwardedUnconditionallyWhenFuturesOnAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: true);
+            TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(FinalText));
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            Workflow workflow = new WorkflowBuilder(binding)
+                .WithOutputFrom(binding)
+                .Build();
+
+            // Even a terminal-only designation surfaces without the include flag — the gating
+            // asymmetry between AgentResponse and AgentResponseUpdate is gone under Futures-on.
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: false);
+
+            updates.Count(u => u.Text == FinalText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0)
+                .Should().BeTrue("the completion event remains observable without duplicating streamed text");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_EmptyAgentResponseDoesNotCreateObservabilityUpdateAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: true);
+            TestReplayAgent agent = new(new List<ChatMessage>());
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            Workflow workflow = new WorkflowBuilder(binding)
+                .WithOutputFrom(binding)
+                .Build();
+
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: false);
+
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent)
+                .Should().BeFalse("an empty response did not previously produce an observable completion update");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_TerminalAgentResponseGatedWhenFuturesOffAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+
+            static Workflow Build()
+            {
+                TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(FinalText));
+                ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+                return new WorkflowBuilder(binding).WithOutputFrom(binding).Build();
+            }
+
+            // Legacy semantics: AgentResponseEvent stays behind the include flag when Futures
+            // is off. Two fresh workflows because in-process runs aren't reentrant.
+            List<AgentResponseUpdate> gated = await RunStreamingAsync(Build(), includeWorkflowOutputsInResponse: false);
+            gated.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeFalse("terminal AgentResponseEvent stays gated under Futures-off");
+
+            List<AgentResponseUpdate> included = await RunStreamingAsync(Build(), includeWorkflowOutputsInResponse: true);
+            included.Count(u => u.Text == FinalText).Should().Be(1);
+            included.Any(u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0)
+                .Should().BeTrue("opting in preserves the completion event without duplicating streamed text");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_UndesignatedExecutorEmitsNoAgentResponseEventWhenFuturesOnAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: true);
+            TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(InterText));
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            // No designation — under Futures-on, the AgentResponse is dropped by the filter.
+            Workflow workflow = new WorkflowBuilder(binding).Build();
+
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent)
+                .Should().BeFalse("an undesignated AIAgent executor produces no AgentResponseEvent under Futures-on");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_UndesignatedAgentResponseSurfacesWhenFuturesOffAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(InterText));
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            Workflow workflow = new WorkflowBuilder(binding).Build();
+
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0)
+                .Should().BeTrue("legacy bypass preserves the completion event without duplicating streamed text");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_IntermediateTagAvailableViaRawRepresentationAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: true);
+            TestReplayAgent agent = new(TestReplayAgent.ToChatMessages(InterText));
+            ExecutorBinding binding = agent.BindAsExecutor(new AIAgentHostOptions { EmitAgentResponseEvents = true });
+            Workflow workflow = new WorkflowBuilder(binding)
+                .WithIntermediateOutputFrom([binding])
+                .Build();
+
+            List<AgentResponseUpdate> updates = await RunStreamingAsync(workflow);
+
+            AgentResponseUpdate progress = updates.First(u => u.RawRepresentation is AgentResponseEvent);
+            AgentResponseEvent raw = (AgentResponseEvent)progress.RawRepresentation!;
+            raw.IsIntermediate().Should().BeTrue();
+            raw.Tags.Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_DistinctCompletedResponseFromSameExecutorIsForwardedAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            Workflow workflow = new WorkflowBuilder(new StreamThenCompleteExecutor()).Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Count(u => u.Text == FinalText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeTrue("a different response from the same executor must not be suppressed");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_DistinctCompletedMessageFromSameResponseIsForwardedAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            Workflow workflow = new WorkflowBuilder(new StreamThenCompleteExecutor(useSameResponseId: true)).Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Count(u => u.Text == FinalText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeTrue("a response ID alone must not suppress a distinct completed message");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_WhitespaceMessageIdDoesNotSuppressCompletionAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            Workflow workflow =
+                new WorkflowBuilder(
+                    new StreamThenCompleteExecutor(
+                        useSameResponseId: true,
+                        streamedMessageId: " ",
+                        completedMessageId: " "))
+                .Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Count(u => u.Text == FinalText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeTrue("whitespace-only message IDs cannot reliably correlate streamed and completed messages");
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_UnstreamedMessageFromSameResponseIsForwardedAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            Workflow workflow = new WorkflowBuilder(new PartiallyStreamedResponseExecutor()).Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            updates.Count(u => u.Text == InterText).Should().Be(1);
+            updates.Count(u => u.Text == FinalText).Should().Be(1);
+            updates.Any(u => u.RawRepresentation is AgentResponseEvent && u.Text == FinalText)
+                .Should().BeTrue("only the correlated message in a multi-message response should be suppressed");
+        }
+
+        private sealed class StreamThenCompleteExecutor(
+            bool useSameResponseId = false,
+            string streamedMessageId = "streamed-message",
+            string completedMessageId = "completed-message") : Executor("stream-then-complete")
+        {
+            protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+                protocolBuilder.ConfigureRoutes(
+                    routeBuilder =>
+                        routeBuilder
+                            .AddHandler<IEnumerable<ChatMessage>>(this.HandleMessagesAsync)
+                            .AddHandler<TurnToken, AgentResponse>(this.HandleTurnAsync));
+
+            private ValueTask HandleMessagesAsync(
+                IEnumerable<ChatMessage> messages,
+                IWorkflowContext context,
+                CancellationToken cancellationToken) => default;
+
+            private async ValueTask<AgentResponse> HandleTurnAsync(
+                TurnToken turnToken,
+                IWorkflowContext context,
+                CancellationToken cancellationToken)
+            {
+                AgentResponseUpdate update =
+                    new(ChatRole.Assistant, InterText)
+                    {
+                        MessageId = streamedMessageId,
+                        ResponseId = "streamed-response",
+                    };
+                await context.AddEventAsync(
+                    new AgentResponseUpdateEvent(this.Id, update),
+                    cancellationToken);
+
+                ChatMessage message =
+                    new(ChatRole.Assistant, FinalText)
+                    {
+                        MessageId = completedMessageId,
+                    };
+                return new AgentResponse([message])
+                {
+                    ResponseId = useSameResponseId ? update.ResponseId : "completed-response",
+                };
+            }
+        }
+
+        private sealed class PartiallyStreamedResponseExecutor() : Executor("partially-streamed-response")
+        {
+            protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+                protocolBuilder.ConfigureRoutes(
+                    routeBuilder =>
+                        routeBuilder
+                            .AddHandler<IEnumerable<ChatMessage>>(this.HandleMessagesAsync)
+                            .AddHandler<TurnToken, AgentResponse>(this.HandleTurnAsync));
+
+            private ValueTask HandleMessagesAsync(
+                IEnumerable<ChatMessage> messages,
+                IWorkflowContext context,
+                CancellationToken cancellationToken) => default;
+
+            private async ValueTask<AgentResponse> HandleTurnAsync(
+                TurnToken turnToken,
+                IWorkflowContext context,
+                CancellationToken cancellationToken)
+            {
+                const string ResponseId = "shared-response";
+                ChatMessage streamedMessage =
+                    new(ChatRole.Assistant, InterText)
+                    {
+                        MessageId = "streamed-message",
+                    };
+                AgentResponseUpdate streamedUpdate =
+                    new(ChatRole.Assistant, InterText)
+                    {
+                        MessageId = streamedMessage.MessageId,
+                        ResponseId = ResponseId,
+                    };
+                await context.AddEventAsync(
+                    new AgentResponseUpdateEvent(
+                        this.Id,
+                        streamedUpdate),
+                    cancellationToken);
+
+                ChatMessage completedOnlyMessage =
+                    new(ChatRole.Assistant, FinalText)
+                    {
+                        MessageId = "completed-only-message",
+                    };
+                return new AgentResponse([streamedMessage, completedOnlyMessage]) { ResponseId = ResponseId };
+            }
+        }
     }
 }

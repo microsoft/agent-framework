@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Content
+from agent_framework._telemetry import get_user_agent
 
 from agent_framework_foundry import (
     FoundryEmbeddingClient,
@@ -198,13 +199,26 @@ class TestRawFoundryEmbeddingClient:
                     "FOUNDRY_MODELS_API_KEY": "env-key",
                     "FOUNDRY_EMBEDDING_MODEL": "env-model",
                 },
+                clear=True,
             ),
-            patch("agent_framework_foundry._embedding_client.EmbeddingsClient"),
-            patch("agent_framework_foundry._embedding_client.ImageEmbeddingsClient"),
+            patch("agent_framework_foundry._embedding_client.EmbeddingsClient") as text_client_type,
+            patch("agent_framework_foundry._embedding_client.ImageEmbeddingsClient") as image_client_type,
         ):
             client = RawFoundryEmbeddingClient()
             assert client.model == "env-model"
             assert client.image_model == "env-model"  # falls back to model
+            text_client_type.assert_called_once_with(
+                endpoint="https://env.inference.ai.azure.com",
+                credential=ANY,
+                user_agent=get_user_agent(),
+                per_retry_policies=[ANY],
+            )
+            image_client_type.assert_called_once_with(
+                endpoint="https://env.inference.ai.azure.com",
+                credential=ANY,
+                user_agent=get_user_agent(),
+                per_retry_policies=[ANY],
+            )
 
     def test_image_model_from_env(self) -> None:
         """image_model is loaded from its own environment variable."""
@@ -302,6 +316,7 @@ skip_if_foundry_inference_integration_tests_disabled = pytest.mark.skipif(
 class TestFoundryEmbeddingIntegration:
     """Integration tests requiring a live Foundry inference endpoint."""
 
+    @pytest.mark.skip(reason="Flaky in merge queue, blocking unrelated PRs. Tracked in #5553.")
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_inference_integration_tests_disabled

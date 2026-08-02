@@ -1,17 +1,17 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to define Agent Skills as C# classes using AgentClassSkill.
-// Class-based skills bundle all components into a single class implementation.
+// This sample demonstrates how to define Agent Skills as C# classes using AgentClassSkill
+// with attributes for automatic script and resource discovery.
 
+using System.ComponentModel;
 using System.Text.Json;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Responses;
 
 // --- Configuration ---
-string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // --- Class-Based Skill ---
 // Instantiate the skill class.
@@ -21,18 +21,20 @@ var unitConverter = new UnitConverterSkill();
 var skillsProvider = new AgentSkillsProvider(unitConverter);
 
 // --- Agent Setup ---
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetResponsesClient()
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
     .AsAIAgent(new ChatClientAgentOptions
     {
         Name = "UnitConverterAgent",
         ChatOptions = new()
         {
+            ModelId = deploymentName,
             Instructions = "You are a helpful assistant that can convert units.",
         },
         AIContextProviders = [skillsProvider],
-    },
-    model: deploymentName);
+    });
 
 // --- Example: Unit conversion ---
 Console.WriteLine("Converting units with class-based skills");
@@ -44,17 +46,16 @@ AgentResponse response = await agent.RunAsync(
 Console.WriteLine($"Agent: {response.Text}");
 
 /// <summary>
-/// A unit-converter skill defined as a C# class.
+/// A unit-converter skill defined as a C# class using attributes for discovery.
 /// </summary>
 /// <remarks>
-/// Class-based skills bundle all components (name, description, body, resources, scripts)
-/// into a single class.
+/// Properties annotated with <see cref="AgentSkillResourceAttribute"/> are automatically
+/// discovered as skill resources, and methods annotated with <see cref="AgentSkillScriptAttribute"/>
+/// are automatically discovered as skill scripts. Alternatively,
+/// <see cref="AgentClassSkill{TSelf}.Resources"/> and <see cref="AgentClassSkill{TSelf}.Scripts"/> can be overridden.
 /// </remarks>
-internal sealed class UnitConverterSkill : AgentClassSkill
+internal sealed class UnitConverterSkill : AgentClassSkill<UnitConverterSkill>
 {
-    private IReadOnlyList<AgentSkillResource>? _resources;
-    private IReadOnlyList<AgentSkillScript>? _scripts;
-
     /// <inheritdoc/>
     public override AgentSkillFrontmatter Frontmatter { get; } = new(
         "unit-converter",
@@ -69,31 +70,40 @@ internal sealed class UnitConverterSkill : AgentClassSkill
         3. Present the result clearly with both units.
         """;
 
-    /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillResource>? Resources => this._resources ??=
-    [
-        CreateResource(
-            "conversion-table",
-            """
-            # Conversion Tables
+    /// <summary>
+    /// Gets the <see cref="JsonSerializerOptions"/> used to marshal parameters and return values
+    /// for scripts and resources.
+    /// </summary>
+    /// <remarks>
+    /// This override is not necessary for this sample, but can be used to provide custom
+    /// serialization options, for example a source-generated <c>JsonTypeInfoResolver</c>
+    /// for Native AOT compatibility.
+    /// </remarks>
+    protected override JsonSerializerOptions? SerializerOptions => null;
 
-            Formula: **result = value × factor**
+    /// <summary>
+    /// A conversion table resource providing multiplication factors.
+    /// </summary>
+    [AgentSkillResource("conversion-table")]
+    [Description("Lookup table of multiplication factors for common unit conversions.")]
+    public string ConversionTable => """
+        # Conversion Tables
 
-            | From        | To          | Factor   |
-            |-------------|-------------|----------|
-            | miles       | kilometers  | 1.60934  |
-            | kilometers  | miles       | 0.621371 |
-            | pounds      | kilograms   | 0.453592 |
-            | kilograms   | pounds      | 2.20462  |
-            """),
-    ];
+        Formula: **result = value × factor**
 
-    /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillScript>? Scripts => this._scripts ??=
-    [
-        CreateScript("convert", ConvertUnits),
-    ];
+        | From        | To          | Factor   |
+        |-------------|-------------|----------|
+        | miles       | kilometers  | 1.60934  |
+        | kilometers  | miles       | 0.621371 |
+        | pounds      | kilograms   | 0.453592 |
+        | kilograms   | pounds      | 2.20462  |
+        """;
 
+    /// <summary>
+    /// Converts a value by the given factor.
+    /// </summary>
+    [AgentSkillScript("convert")]
+    [Description("Multiplies a value by a conversion factor and returns the result as JSON.")]
     private static string ConvertUnits(double value, double factor)
     {
         double result = Math.Round(value * factor, 4);

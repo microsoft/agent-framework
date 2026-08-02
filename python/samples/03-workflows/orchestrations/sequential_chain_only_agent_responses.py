@@ -25,7 +25,7 @@ Compare with `sequential_agents.py`, which uses the default behavior where the f
 conversation context is passed to each agent.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be the deployment name of a model in your Foundry project.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
@@ -66,13 +66,13 @@ async def main() -> None:
     workflow = SequentialBuilder(
         participants=[writer, translator, reviewer],
         chain_only_agent_responses=True,
-        intermediate_outputs=True,
+        intermediate_output_from=[writer, translator],
     ).build()
 
     # 3) Run and collect outputs
     last_agent: str | None = None
     async for event in workflow.run("Write a tagline for a budget-friendly eBike.", stream=True):
-        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
+        if event.type in ("intermediate", "output") and isinstance(event.data, AgentResponseUpdate):
             if event.data.author_name != last_agent:
                 last_agent = event.data.author_name
                 print()

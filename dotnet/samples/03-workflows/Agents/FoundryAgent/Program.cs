@@ -23,10 +23,13 @@ public static class Program
     private static async Task Main()
     {
         // Set up the Azure AI Project client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-            ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-        var aiProjectClient = new AIProjectClient(new Uri(endpoint), new AzureCliCredential());
+        var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+            ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+        var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+        var aiProjectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
         // Create agents
         AIAgent frenchAgent = await CreateTranslationAgentAsync("French", aiProjectClient, deploymentName);
@@ -53,6 +56,18 @@ public static class Program
                 {
                     Console.WriteLine($"{executorComplete.ExecutorId}: {executorComplete.Data}");
                 }
+                else if (evt is WorkflowErrorEvent workflowError)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                    Console.ResetColor();
+                }
+                else if (evt is ExecutorFailedEvent executorFailed)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                    Console.ResetColor();
+                }
             }
         }
         finally
@@ -77,7 +92,7 @@ public static class Program
         string model)
     {
         ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
-            $"{targetLanguage} Translator",
+            $"{targetLanguage}Translator",
             new ProjectsAgentVersionCreationOptions(
                 new DeclarativeAgentDefinition(model: model)
                 {

@@ -143,29 +143,29 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
     assert len(spans) == 3
 
     # Check workflow span
-    workflow_span = next(s for s in spans if s.name == "workflow.run")
-    assert workflow_span.kind == trace.SpanKind.INTERNAL
-    assert workflow_span.attributes is not None
-    assert workflow_span.attributes.get(OtelAttr.WORKFLOW_ID) == "test-workflow-123"
-    assert workflow_span.events is not None
-    event_names = [event.name for event in workflow_span.events]
+    workflow_span = next(s for s in spans if s.name == "workflow.run")  # type: ignore[assignment, misc]
+    assert workflow_span.kind == trace.SpanKind.INTERNAL  # type: ignore[attr-defined]
+    assert workflow_span.attributes is not None  # type: ignore[attr-defined]
+    assert workflow_span.attributes.get(OtelAttr.WORKFLOW_ID) == "test-workflow-123"  # type: ignore[attr-defined]
+    assert workflow_span.events is not None  # type: ignore[attr-defined]
+    event_names = [event.name for event in workflow_span.events]  # type: ignore[attr-defined]
     assert "workflow.started" in event_names
 
     # Check processing span - span name uses format "executor.process {executor_id}"
-    processing_span = next(s for s in spans if s.name == "executor.process executor-456")
-    assert processing_span.kind == trace.SpanKind.INTERNAL
-    assert processing_span.attributes is not None
-    assert processing_span.attributes.get("executor.id") == "executor-456"
-    assert processing_span.attributes.get("executor.type") == "TestExecutor"
-    assert processing_span.attributes.get("message.type") == str(MessageType.STANDARD)
-    assert processing_span.attributes.get("message.payload_type") == "TestMessage"
+    processing_span = next(s for s in spans if s.name == "executor.process executor-456")  # type: ignore[assignment, misc]
+    assert processing_span.kind == trace.SpanKind.INTERNAL  # type: ignore[attr-defined]
+    assert processing_span.attributes is not None  # type: ignore[attr-defined]
+    assert processing_span.attributes.get("executor.id") == "executor-456"  # type: ignore[attr-defined]
+    assert processing_span.attributes.get("executor.type") == "TestExecutor"  # type: ignore[attr-defined]
+    assert processing_span.attributes.get("message.type") == str(MessageType.STANDARD)  # type: ignore[attr-defined]
+    assert processing_span.attributes.get("message.payload_type") == "TestMessage"  # type: ignore[attr-defined]
 
     # Check sending span
-    sending_span = next(s for s in spans if s.name == "message.send")
-    assert sending_span.kind == trace.SpanKind.PRODUCER
-    assert sending_span.attributes is not None
-    assert sending_span.attributes.get("message.type") == "ResponseMessage"
-    assert sending_span.attributes.get("message.destination_executor_id") == "target-789"
+    sending_span = next(s for s in spans if s.name == "message.send")  # type: ignore[assignment, misc]
+    assert sending_span.kind == trace.SpanKind.PRODUCER  # type: ignore[attr-defined]
+    assert sending_span.attributes is not None  # type: ignore[attr-defined]
+    assert sending_span.attributes.get("message.type") == "ResponseMessage"  # type: ignore[attr-defined]
+    assert sending_span.attributes.get("message.destination_executor_id") == "target-789"  # type: ignore[attr-defined]
 
 
 async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> None:

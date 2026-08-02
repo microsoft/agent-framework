@@ -10,7 +10,7 @@ These are the "zero-code-change" evaluation paths — the agent has already run,
 and you're evaluating what happened after the fact.
 
 Prerequisites:
-- An Azure AI Foundry project with a deployed model
+- A Microsoft Foundry project with a deployed model
 - Response IDs from prior agent runs (for Pattern 1)
 - OTel traces exported to App Insights (for Pattern 2)
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
@@ -97,7 +97,7 @@ if __name__ == "__main__":
 
 
 """
-Sample output (with actual Azure AI Foundry project and valid response IDs):
+Sample output (with actual Microsoft Foundry project and valid response IDs):
 
 ============================================================
 Pattern 1: evaluate_traces(response_ids=...)

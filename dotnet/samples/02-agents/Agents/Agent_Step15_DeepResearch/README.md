@@ -1,4 +1,4 @@
-# What this sample demonstrates
+﻿# What this sample demonstrates
 
 This sample demonstrates how to create an Azure AI Agent with the Deep Research Tool, which leverages the o3-deep-research reasoning model to perform comprehensive research on complex topics.
 
@@ -13,7 +13,7 @@ Before running this sample, ensure you have:
 
 1. A Microsoft Foundry project set up
 2. A deep research model deployment (e.g., o3-deep-research)
-3. A model deployment (e.g., gpt-4o)
+3. A model deployment (e.g., gpt-5.4-mini)
 4. A Bing Connection configured in your Microsoft Foundry project
 5. Azure CLI installed and authenticated
 
@@ -37,7 +37,7 @@ Set the following environment variables:
 
 ```powershell
 # Replace with your Microsoft Foundry project endpoint
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/"
+$env:FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/"
 
 # Replace with your Bing Grounding connection ID (full ARM resource URI)
 $env:AZURE_AI_BING_CONNECTION_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>/connections/<connection-name>"
@@ -45,5 +45,5 @@ $env:AZURE_AI_BING_CONNECTION_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/pr
 # Optional, defaults to o3-deep-research
 $env:AZURE_AI_REASONING_DEPLOYMENT_NAME="o3-deep-research"
 
-# Optional, defaults to gpt-4o
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o"
+# Optional, defaults to gpt-5.4-mini
+$env:FOUNDRY_MODEL="gpt-5.4-mini"

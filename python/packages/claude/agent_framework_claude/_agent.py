@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 
@@ -22,10 +23,12 @@ from agent_framework import (
     Message,
     ResponseStream,
     ToolTypes,
+    UsageDetails,
     load_settings,
     normalize_messages,
     normalize_tools,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentException
 from agent_framework.observability import AgentTelemetryLayer
 from claude_agent_sdk import (
@@ -40,10 +43,12 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import StreamEvent, TextBlock
 
+from ._feature_usage import FeatureIndex
+
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
 else:
@@ -66,11 +71,67 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework.claude")
 
+FINISH_REASON_MAP: dict[str, str] = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "tool_use": "tool_calls",
+    "refusal": "content_filter",
+}
+
 
 # Name of the in-process MCP server that hosts Agent Framework tools.
 # FunctionTool instances are converted to SDK MCP tools and served
 # through this server, as Claude Code CLI only supports tools via MCP.
 TOOLS_MCP_SERVER_NAME = "_agent_framework_tools"
+
+
+FunctionApprovalCallback = Callable[[Content], "bool | Awaitable[bool]"]
+"""Callback invoked by the agent before executing a FunctionTool that requires approval.
+
+The callback receives a ``FunctionCallContent`` describing the pending call
+(``name``, ``arguments``, and a synthetic ``call_id``) and must return ``True``
+to allow execution or ``False`` to deny it. Both synchronous and ``await``-able
+return values are supported.
+
+The Claude Agent SDK manages its own tool-calling loop, so the framework cannot
+round-trip a ``FunctionApprovalRequestContent`` / ``FunctionApprovalResponseContent``
+pair the way the standard chat-client pipeline does. This callback is the
+agent-level enforcement point for tools declared with
+``approval_mode="always_require"``: when no callback is configured the agent
+denies these calls by default.
+"""
+
+
+async def _resolve_function_approval(
+    callback: FunctionApprovalCallback | None,
+    func_tool: FunctionTool,
+    arguments: Mapping[str, Any] | None,
+) -> bool:
+    """Run the agent-level approval callback for a pending tool call.
+
+    Returns ``True`` only when ``callback`` is configured and explicitly returns
+    a truthy value. A missing callback or any callback failure is treated as a
+    denial so the secure-by-default policy holds even if the user code raises.
+    """
+    if callback is None:
+        return False
+    request = Content.from_function_call(
+        call_id=f"af-claude-approval::{func_tool.name}",
+        name=func_tool.name,
+        arguments=None if arguments is None else dict(arguments),
+    )
+    try:
+        outcome = callback(request)
+        if inspect.isawaitable(outcome):
+            outcome = await outcome
+    except Exception:
+        logger.exception(
+            "on_function_approval callback raised for tool '%s'; denying execution.",
+            func_tool.name,
+        )
+        return False
+    return bool(outcome)
 
 
 class ClaudeAgentSettings(TypedDict, total=False):
@@ -172,8 +233,37 @@ class ClaudeAgentOptions(TypedDict, total=False):
     thinking: ThinkingConfig
     """Extended thinking configuration (adaptive, enabled, or disabled)."""
 
-    effort: Literal["low", "medium", "high", "max"]
+    effort: Literal["low", "medium", "high", "xhigh", "max"]
     """Effort level for thinking depth."""
+
+    skills: list[str] | Literal["all"]
+    """Skills to enable for the main session. Use ``"all"`` for every discovered skill,
+    a list of named skills, or ``[]`` to suppress all skills."""
+
+    session_id: str
+    """Use a specific session ID (must be a valid UUID) instead of auto-generated."""
+
+    task_budget: dict[str, int]
+    """API-side task budget in tokens for pacing tool use."""
+
+    include_hook_events: bool
+    """When True, hook lifecycle events are emitted in the message stream."""
+
+    strict_mcp_config: bool
+    """When True, only use MCP servers passed via ``mcp_servers``, ignoring all others."""
+
+    continue_conversation: bool
+    """Continue the most recent conversation instead of starting a new one."""
+
+    fork_session: bool
+    """When True, resumed sessions fork to a new session ID."""
+
+    on_function_approval: FunctionApprovalCallback
+    """Approval callback for ``FunctionTool`` instances declared with
+    ``approval_mode="always_require"``. The callback is awaited (sync or async)
+    inside the SDK tool-handler before the tool is executed; a falsy return
+    value denies the call. If omitted, calls to such tools are denied with an
+    explanatory message returned to the model."""
 
 
 OptionsT = TypeVar(
@@ -275,6 +365,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         max_turns = opts.pop("max_turns", None)
         max_budget_usd = opts.pop("max_budget_usd", None)
         self._mcp_servers: dict[str, Any] = opts.pop("mcp_servers", None) or {}
+        self._function_approval_handler: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
 
         # Load settings from environment and options
         self._settings = load_settings(
@@ -298,6 +389,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         self._default_options = opts
         self._started = False
         self._current_session_id: str | None = None
+        self._structured_output: Any = None
 
     def _normalize_tools(
         self,
@@ -313,7 +405,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         non_builtin_tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] = []
         if not isinstance(tools, list):
-            tools = [tools]  # type: ignore[assignment, reportUnknownVariableType]
+            tools = [tools]
         for tool in tools:  # type: ignore[reportUnknownVariableType]
             if isinstance(tool, str):
                 self._builtin_tools.append(tool)
@@ -321,7 +413,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 non_builtin_tools.append(tool)  # type: ignore[union-attr, reportUnknownArgumentType]
         if not non_builtin_tools:
             return
-        self._custom_tools.extend(normalize_tools(non_builtin_tools))  # type: ignore[reportUnknownVariableType]
+        self._custom_tools.extend(normalize_tools(non_builtin_tools))
 
     async def __aenter__(self) -> RawClaudeAgent[OptionsT]:
         """Start the agent when entering async context."""
@@ -487,10 +579,29 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         Returns:
             An SdkMcpTool instance.
         """
+        approval_handler = self._function_approval_handler
+        requires_approval = func_tool.approval_mode == "always_require"
 
         async def handler(args: dict[str, Any]) -> dict[str, Any]:
             """Handler that invokes the FunctionTool."""
             try:
+                if requires_approval and not await _resolve_function_approval(approval_handler, func_tool, args):
+                    deny_text = (
+                        f"Tool '{func_tool.name}' requires human approval "
+                        "(approval_mode='always_require') and the request was denied."
+                        if approval_handler is not None
+                        else (
+                            f"Tool '{func_tool.name}' requires human approval "
+                            "(approval_mode='always_require') but no on_function_approval "
+                            "callback is configured on the agent; the request was denied."
+                        )
+                    )
+                    logger.warning(
+                        "Denying execution of tool '%s' (approval_mode='always_require', %s)",
+                        func_tool.name,
+                        "callback denied" if approval_handler is not None else "no callback configured",
+                    )
+                    return {"content": [{"type": "text", "text": deny_text}]}
                 if func_tool.input_model:
                     args_instance = func_tool.input_model(**args)
                     result = await func_tool.invoke(arguments=args_instance)
@@ -538,6 +649,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         if not options or not self._client:
             return
 
+        if "on_function_approval" in options:
+            raise ValueError(
+                "on_function_approval is a security-sensitive option and must be set "
+                "via default_options at agent construction time. It cannot be overridden "
+                "per run."
+            )
+
         if "model" in options:
             await self._client.set_model(options["model"])
 
@@ -580,11 +698,10 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         Returns:
             An AgentResponse with structured_output set as value if present.
         """
-        structured_output = getattr(self, "_structured_output", None)
-        return AgentResponse.from_updates(updates, value=structured_output)
+        return AgentResponse.from_updates(updates, value=self._structured_output)
 
     @overload
-    def run(  # type: ignore[override]
+    def run(
         self,
         messages: AgentRunInputs | None = None,
         *,
@@ -595,7 +712,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
-    def run(  # type: ignore[override]
+    def run(
         self,
         messages: AgentRunInputs | None = None,
         *,
@@ -612,7 +729,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         stream: bool = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,  # type: ignore
+        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages.
 
@@ -652,7 +769,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         session = session or self.create_session()
 
         # Ensure we're connected to the right session
-        await self._ensure_session(session.service_session_id)
+        await self._ensure_session(self._get_chat_conversation_id(session))
 
         if not self._client:
             raise RuntimeError("Claude SDK client not initialized.")
@@ -665,6 +782,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         session_id: str | None = None
         structured_output: Any = None
 
+        mark_feature_used(FeatureIndex.CLAUDE)
         await self._client.query(prompt)
         async for message in self._client.receive_response():
             if isinstance(message, StreamEvent):
@@ -718,6 +836,36 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                     raise AgentException(f"Claude API error: {error_msg}")
                 session_id = message.session_id
                 structured_output = message.structured_output
+                usage = message.usage or {}
+                input_tokens = usage.get("input_tokens")
+                output_tokens = usage.get("output_tokens")
+                total_token_count = (
+                    input_tokens + output_tokens
+                    if isinstance(input_tokens, int) and isinstance(output_tokens, int)
+                    else None
+                )
+                usage_details = UsageDetails(**{
+                    key: value
+                    for key, value in {
+                        "input_token_count": input_tokens,
+                        "output_token_count": output_tokens,
+                        "total_token_count": total_token_count,
+                        "cache_creation_input_token_count": usage.get("cache_creation_input_tokens"),
+                        "cache_read_input_token_count": usage.get("cache_read_input_tokens"),
+                    }.items()
+                    if isinstance(value, int)
+                })
+                finish_reason = (
+                    FINISH_REASON_MAP.get(message.stop_reason, message.stop_reason) if message.stop_reason else None
+                )
+                if usage_details or finish_reason:
+                    yield AgentResponseUpdate(
+                        contents=[Content.from_usage(usage_details, raw_representation=message)]
+                        if usage_details
+                        else None,
+                        finish_reason=cast(Any, finish_reason),
+                        raw_representation=message,
+                    )
 
         # Update session with session ID
         if session_id:
@@ -748,7 +896,7 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
                 print(response.text)
     """
 
-    @overload  # type: ignore[override]
+    @overload
     def run(
         self,
         messages: AgentRunInputs | None = None,
@@ -765,7 +913,7 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
-    @overload  # type: ignore[override]
+    @overload
     def run(
         self,
         messages: AgentRunInputs | None = None,
@@ -782,7 +930,7 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
-    def run(  # pyright: ignore[reportIncompatibleMethodOverride]  # type: ignore[override]
+    def run(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         messages: AgentRunInputs | None = None,
         *,

@@ -13,6 +13,7 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -94,14 +95,16 @@ def capture_agent_stream_with_tracing(client: OpenAI, agent_id: str, scenario: s
             stream=True,
         )
 
-        events = []
+        events: list[dict[str, Any]] = []
         for event in stream:
             # Serialize the entire event object
             try:
-                event_dict = json.loads(event.model_dump_json())
+                raw_event_dict = json.loads(event.model_dump_json())
             except Exception:
                 # Fallback to dict conversion if model_dump_json fails
-                event_dict = event.__dict__ if hasattr(event, "__dict__") else str(event)
+                raw_event_dict = event.__dict__ if hasattr(event, "__dict__") else {"event": str(event)}
+
+            event_dict = dict(raw_event_dict) if isinstance(raw_event_dict, Mapping) else {"event": str(event)}
 
             events.append(event_dict)
 
@@ -138,14 +141,16 @@ def capture_workflow_stream_with_tracing(
             stream=True,
         )
 
-        events = []
+        events: list[dict[str, Any]] = []
         for event in stream:
             # Serialize the entire event object
             try:
-                event_dict = json.loads(event.model_dump_json())
+                raw_event_dict = json.loads(event.model_dump_json())
             except Exception:
                 # Fallback to dict conversion if model_dump_json fails
-                event_dict = event.__dict__ if hasattr(event, "__dict__") else str(event)
+                raw_event_dict = event.__dict__ if hasattr(event, "__dict__") else {"event": str(event)}
+
+            event_dict = dict(raw_event_dict) if isinstance(raw_event_dict, Mapping) else {"event": str(event)}
 
             events.append(event_dict)
 

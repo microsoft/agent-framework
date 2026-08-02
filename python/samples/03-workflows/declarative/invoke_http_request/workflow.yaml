@@ -1,0 +1,57 @@
+#
+# This workflow demonstrates the HttpRequestAction declarative action.
+#
+# HttpRequestAction lets a workflow author issue an HTTP call directly from
+# YAML without writing any Python glue. It can:
+#
+#   - fetch data from external REST endpoints,
+#   - store the parsed response in a workflow variable, and
+#   - add the response body to the conversation so a downstream agent can
+#     answer questions based on it.
+#
+# This sample fetches public metadata for the microsoft/agent-framework
+# repository from the GitHub REST API (no authentication required) and uses
+# a Foundry agent to answer a single question about it.
+#
+# Example input:
+#   How many open issues does the repository have?
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_invoke_http_request_demo
+  actions:
+
+    # Set the repository org/name used to form the request URL.
+    - kind: SetVariable
+      id: set_repo_name
+      variable: Local.RepoName
+      value: microsoft/agent-framework
+
+    # Invoke the GitHub repo API. The response body is parsed into
+    # Local.RepoInfo and also added to the conversation (via conversationId)
+    # so the agent below can answer questions based on it.
+    - kind: HttpRequestAction
+      id: fetch_repo_info
+      conversationId: =System.ConversationId
+      method: GET
+      url: =Concatenate("https://api.github.com/repos/", Local.RepoName)
+      headers:
+        Accept: application/vnd.github+json
+        User-Agent: agent-framework-sample
+      response: Local.RepoInfo
+
+    # Use the agent to answer the user's question using the conversation
+    # context (which now contains the GitHub JSON response). The user's
+    # original message is already in the conversation as System.LastMessage,
+    # and the executor's input fallback chain extracts its ``Text`` field
+    # automatically when ``input.messages`` is omitted.
+    - kind: InvokeAzureAgent
+      id: answer_question
+      conversationId: =System.ConversationId
+      agent:
+        name: GitHubRepoInfoAgent
+      output:
+        autoSend: true
+        messages: Local.AgentResponse

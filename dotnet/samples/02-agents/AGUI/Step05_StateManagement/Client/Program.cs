@@ -2,8 +2,9 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using AGUI.Abstractions;
+using AGUI.Client;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AGUI;
 using Microsoft.Extensions.AI;
 using RecipeClient;
 
@@ -17,7 +18,7 @@ using HttpClient httpClient = new()
     Timeout = TimeSpan.FromSeconds(60)
 };
 
-AGUIChatClient chatClient = new(httpClient, serverUrl);
+AGUIChatClient chatClient = new(new(httpClient, serverUrl));
 
 AIAgent baseAgent = chatClient.AsAIAgent(
     name: "recipe-client",
@@ -65,7 +66,7 @@ try
 
         // Stream the response
         bool isFirstUpdate = true;
-        string? sessionId = null;
+        string? threadId = null;
         bool stateReceived = false;
 
         Console.WriteLine();
@@ -77,9 +78,11 @@ try
             // First update indicates run started
             if (isFirstUpdate)
             {
-                sessionId = chatUpdate.ConversationId;
+                // AGUIChatClient is stateless and never surfaces a ConversationId; the thread
+                // id is carried on the AG-UI RUN_STARTED event's raw representation.
+                threadId = (chatUpdate.RawRepresentation as RunStartedEvent)?.ThreadId;
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[Run Started - Session: {chatUpdate.ConversationId}, Run: {chatUpdate.ResponseId}]");
+                Console.WriteLine($"[Run Started - Thread: {threadId}, Run: {chatUpdate.ResponseId}]");
                 Console.ResetColor();
                 isFirstUpdate = false;
             }
@@ -113,7 +116,7 @@ try
         }
 
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"\n[Run Finished - Session: {sessionId}]");
+        Console.WriteLine($"\n[Run Finished - Thread: {threadId}]");
         Console.ResetColor();
 
         // Display final state if received

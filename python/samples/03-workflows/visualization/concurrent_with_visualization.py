@@ -33,7 +33,7 @@ What it does:
 - Visualization: generate Mermaid and GraphViz representations via `WorkflowViz` and optionally export SVG.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 - For visualization export: `pip install graphviz>=0.20.0` and install GraphViz binaries.

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +9,7 @@ from agent_framework._settings import load_settings
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
+from agent_framework_claude._feature_usage import FeatureIndex
 
 # region Test ClaudeAgentSettings
 
@@ -231,9 +232,13 @@ class TestClaudeAgentRun:
         ]
         mock_client = self._create_mock_client(messages)
 
-        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework_claude._agent.mark_feature_used") as mark_feature_used,
+        ):
             agent = ClaudeAgent()
             response = await agent.run("Hello")
+            mark_feature_used.assert_called_once_with(FeatureIndex.CLAUDE)
             assert response.text == "Hello!"
 
     async def test_run_captures_session_id(self) -> None:
@@ -270,6 +275,61 @@ class TestClaudeAgentRun:
             session = agent.create_session()
             await agent.run("Hello", session=session)
             assert session.service_session_id == "test-session-id"
+
+    @pytest.mark.parametrize(
+        ("stop_reason", "expected_finish_reason"),
+        [("end_turn", "stop"), ("pause_turn", "pause_turn")],
+    )
+    async def test_run_captures_result_message_usage_and_finish_reason(
+        self, stop_reason: str, expected_finish_reason: str
+    ) -> None:
+        """Test that ResultMessage metadata is propagated to the final AgentResponse."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Response"},
+                },
+                uuid="event-1",
+                session_id="test-session-id",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Response")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session-id",
+                stop_reason=stop_reason,
+                usage={
+                    "input_tokens": 42,
+                    "output_tokens": 18,
+                    "cache_creation_input_tokens": 3,
+                    "cache_read_input_tokens": 5,
+                },
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            response = await agent.run("Hello")
+
+        assert response.finish_reason == expected_finish_reason
+        assert response.usage_details == {
+            "input_token_count": 42,
+            "output_token_count": 18,
+            "total_token_count": 60,
+            "cache_creation_input_token_count": 3,
+            "cache_read_input_token_count": 5,
+        }
 
     async def test_run_with_session(self) -> None:
         """Test run with existing session."""
@@ -377,6 +437,51 @@ class TestClaudeAgentRunStream:
             assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
+
+    async def test_run_stream_final_response_captures_usage_and_finish_reason(self) -> None:
+        """Test run(stream=True) final response includes ResultMessage metadata."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Streaming response"},
+                },
+                uuid="event-1",
+                session_id="stream-session",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Streaming response")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="stream-session",
+                stop_reason="max_tokens",
+                usage={"input_tokens": 7, "output_tokens": 9},
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            stream = agent.run("Hello", stream=True)
+            async for _ in stream:
+                pass
+            response = await stream.get_final_response()
+
+        assert response.finish_reason == "length"
+        assert response.usage_details == {
+            "input_token_count": 7,
+            "output_token_count": 9,
+            "total_token_count": 16,
+        }
 
     async def test_run_stream_raises_on_assistant_message_error(self) -> None:
         """Test run raises AgentException when AssistantMessage has an error."""
@@ -567,10 +672,11 @@ class TestClaudeAgentToolConversion:
 
         # Verify $defs is preserved in the schema
         assert sdk_tool.input_schema is not None
-        assert "$defs" in sdk_tool.input_schema  # type: ignore[operator]
-        assert "Address" in sdk_tool.input_schema["$defs"]  # type: ignore[index]
+        input_schema = cast(dict[str, Any], sdk_tool.input_schema)
+        assert "$defs" in input_schema
+        assert "Address" in input_schema["$defs"]
         # Verify the nested reference exists in properties
-        assert "person" in sdk_tool.input_schema["properties"]  # type: ignore[index]
+        assert "person" in input_schema["properties"]
 
     async def test_tool_handler_success(self) -> None:
         """Test tool handler executes successfully."""
@@ -600,6 +706,141 @@ class TestClaudeAgentToolConversion:
         result = await sdk_tool.handler({})
         assert "Error:" in result["content"][0]["text"]
         assert "Something went wrong" in result["content"][0]["text"]
+
+
+# region Test ClaudeAgent Function Approval Enforcement
+
+
+class TestClaudeAgentFunctionApproval:
+    """Tests that ``approval_mode='always_require'`` is enforced at the agent boundary."""
+
+    async def test_handler_denies_when_no_callback_configured(self) -> None:
+        """Approval-required tool must be denied without executing when no callback is set."""
+        invocations: list[Any] = []
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            invocations.append(path)
+            return f"deleted {path}"
+
+        agent = ClaudeAgent()
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"path": "/critical"})
+
+        assert invocations == []
+        text = result["content"][0]["text"]
+        assert "requires human approval" in text
+        assert "no on_function_approval callback is configured" in text
+
+    async def test_handler_denies_when_callback_returns_false(self) -> None:
+        """Falsy callback return value must deny the call and skip execution."""
+        invocations: list[Any] = []
+        seen: list[Content] = []
+
+        def deny(call: Content) -> bool:
+            seen.append(call)
+            return False
+
+        @tool(approval_mode="always_require")
+        def dangerous(path: str) -> str:
+            """A tool that requires human approval."""
+            invocations.append(path)
+            return f"deleted {path}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": deny})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"path": "/critical"})
+
+        assert invocations == []
+        assert len(seen) == 1
+        assert seen[0].type == "function_call"
+        assert seen[0].name == "dangerous"  # type: ignore[attr-defined]
+        assert seen[0].arguments == {"path": "/critical"}  # type: ignore[attr-defined]
+        assert "denied" in result["content"][0]["text"].lower()
+
+    async def test_handler_executes_when_callback_returns_true(self) -> None:
+        """Truthy callback return value must allow the tool to execute normally."""
+
+        def approve(call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def guarded(x: int) -> str:
+            """A tool that requires human approval."""
+            return f"result={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": approve})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(guarded)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 42})
+
+        assert result["content"][0]["text"] == "result=42"
+
+    async def test_handler_supports_async_callback(self) -> None:
+        """Async callback must be awaited and respected."""
+
+        async def approve(call: Content) -> bool:
+            return True
+
+        @tool(approval_mode="always_require")
+        def guarded(x: int) -> str:
+            """A tool that requires human approval."""
+            return f"async={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": approve})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(guarded)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 7})
+
+        assert result["content"][0]["text"] == "async=7"
+
+    async def test_callback_failure_denies_safely(self) -> None:
+        """A callback that raises must result in denial, not in tool execution."""
+        invocations: list[Any] = []
+
+        def boom(call: Content) -> bool:
+            raise RuntimeError("nope")
+
+        @tool(approval_mode="always_require")
+        def dangerous(x: int) -> str:
+            """A tool that requires human approval."""
+            invocations.append(x)
+            return f"x={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": boom})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(dangerous)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 1})
+
+        assert invocations == []
+        assert "denied" in result["content"][0]["text"].lower()
+
+    async def test_handler_does_not_invoke_callback_for_never_require(self) -> None:
+        """Tools without approval_mode='always_require' must not trigger the callback."""
+        callback_calls: list[Any] = []
+
+        def approve(call: Content) -> bool:
+            callback_calls.append(call)
+            return True
+
+        @tool
+        def safe(x: int) -> str:
+            """A tool that does not require approval."""
+            return f"safe={x}"
+
+        agent = ClaudeAgent(default_options={"on_function_approval": approve})
+        sdk_tool = agent._function_tool_to_sdk_mcp_tool(safe)  # type: ignore[reportPrivateUsage]
+
+        result = await sdk_tool.handler({"x": 5})
+
+        assert callback_calls == []
+        assert result["content"][0]["text"] == "safe=5"
+
+
+# endregion
 
 
 # region Test ClaudeAgent Permissions
@@ -783,6 +1024,20 @@ class TestApplyRuntimeOptions:
         agent._client = mock_client  # type: ignore[reportPrivateUsage]
 
         await agent._apply_runtime_options(None)  # type: ignore[reportPrivateUsage]
+        mock_client.set_model.assert_not_called()
+        mock_client.set_permission_mode.assert_not_called()
+
+    async def test_apply_runtime_on_function_approval_rejected(self) -> None:
+        """on_function_approval cannot be overridden per run."""
+        mock_client = MagicMock()
+        mock_client.set_model = AsyncMock()
+        mock_client.set_permission_mode = AsyncMock()
+
+        agent = ClaudeAgent()
+        agent._client = mock_client  # type: ignore[reportPrivateUsage]
+
+        with pytest.raises(ValueError, match="on_function_approval"):
+            await agent._apply_runtime_options({"on_function_approval": lambda _c: True})  # type: ignore[reportPrivateUsage]
         mock_client.set_model.assert_not_called()
         mock_client.set_permission_mode.assert_not_called()
 

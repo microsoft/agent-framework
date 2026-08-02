@@ -1,5 +1,5 @@
 ### Start Workflow Orchestration - Spam Email
-POST http://localhost:7071/api/workflow/run
+POST http://localhost:7071/api/workflow/email_triage/run
 Content-Type: application/json
 
 {
@@ -10,7 +10,7 @@ Content-Type: application/json
 ###
 
 ### Start Workflow Orchestration - Legitimate Email
-POST http://localhost:7071/api/workflow/run
+POST http://localhost:7071/api/workflow/email_triage/run
 Content-Type: application/json
 
 {
@@ -22,7 +22,7 @@ Content-Type: application/json
 
 ### Get Workflow Status
 # Replace {instanceId} with the actual instance ID from the start response
-GET http://localhost:7071/api/workflow/status/{instanceId}
+GET http://localhost:7071/api/workflow/email_triage/status/{instanceId}
 
 ###
 

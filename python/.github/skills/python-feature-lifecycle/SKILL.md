@@ -1,5 +1,3 @@
-# Copyright (c) Microsoft. All rights reserved.
-
 ---
 name: python-feature-lifecycle
 description: >

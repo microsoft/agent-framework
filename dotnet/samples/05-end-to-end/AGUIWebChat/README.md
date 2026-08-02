@@ -15,7 +15,7 @@ The server requires Azure OpenAI credentials. Set the following environment vari
 
 ```powershell
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-$env:AZURE_OPENAI_DEPLOYMENT_NAME="your-deployment-name"  # e.g., "gpt-4o"
+$env:AZURE_OPENAI_DEPLOYMENT_NAME="your-deployment-name"  # e.g., "gpt-5.4-mini"
 ```
 
 The server uses `DefaultAzureCredential` for authentication. Ensure you are logged in using one of the following methods:
@@ -79,7 +79,7 @@ ChatClientAgent agent = chatClient.AsAIAgent(
     instructions: "You are a helpful assistant.");
 
 // Map AG-UI endpoint
-app.MapAGUI("/ag-ui", agent);
+app.MapAGUIServer("/ag-ui", agent);
 ```
 
 The server exposes the agent via the AG-UI protocol at `http://localhost:5100/ag-ui`.
@@ -93,8 +93,8 @@ string serverUrl = builder.Configuration["AGUI_SERVER_URL"] ?? "http://localhost
 
 builder.Services.AddHttpClient("aguiserver", httpClient => httpClient.BaseAddress = new Uri(serverUrl));
 
-builder.Services.AddChatClient(sp => new AGUIChatClient(
-    sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver"), "ag-ui"));
+builder.Services.AddChatClient(sp => new AGUIChatClient(new(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("aguiserver"), "ag-ui")));
 ```
 
 The Blazor UI (`Client/Components/Pages/Chat/Chat.razor`) uses the `IChatClient` to:

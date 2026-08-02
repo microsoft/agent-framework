@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using OpenAI.Responses;
 
 #pragma warning disable OPENAI001
@@ -27,7 +26,6 @@ namespace Microsoft.Agents.AI.Foundry;
 /// <c>FoundryAITool.CreateOpenApiTool(definition)</c>
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static class FoundryAITool
 {
     /// <summary>
@@ -112,6 +110,16 @@ public static class FoundryAITool
     public static AITool CreateA2ATool(Uri baseUri, string? agentCardPath = null)
         => ProjectsAgentTool.CreateA2ATool(baseUri, agentCardPath).AsAITool();
 
+    /// <summary>
+    /// Creates an <see cref="AITool"/> marker that references a Foundry Toolbox by name so
+    /// the hosted server side can resolve and expose its MCP tools for a single request.
+    /// </summary>
+    /// <param name="toolboxName">The Foundry toolbox name.</param>
+    /// <param name="version">Optional pinned toolbox version. When <see langword="null"/>, the project's default version is used.</param>
+    /// <returns>An <see cref="AITool"/> marker backed by <see cref="HostedMcpToolboxAITool"/>.</returns>
+    public static AITool CreateHostedMcpToolbox(string toolboxName, string? version = null)
+        => new HostedMcpToolboxAITool(toolboxName, version);
+
     // --- OpenAI SDK ResponseTool factories ---
 
     /// <summary>
@@ -167,9 +175,25 @@ public static class FoundryAITool
     /// <param name="headers">Optional custom headers.</param>
     /// <param name="allowedTools">Optional filter for allowed tools.</param>
     /// <param name="toolCallApprovalPolicy">Optional tool call approval policy.</param>
+    /// <param name="projectConnectionId">
+    /// Optional Foundry project connection ID that stores authentication and connection details for the MCP server.
+    /// When set, the platform injects the connection's credentials at request time. Mirrors the
+    /// Python <c>FoundryChatClient.get_mcp_tool(..., project_connection_id=...)</c> parameter.
+    /// </param>
     /// <returns>An <see cref="AITool"/> for MCP server tools.</returns>
-    public static AITool CreateMcpTool(string serverLabel, Uri serverUri, string? authorizationToken = null, string? serverDescription = null, IDictionary<string, string>? headers = null, McpToolFilter? allowedTools = null, McpToolCallApprovalPolicy? toolCallApprovalPolicy = null)
-        => ResponseTool.CreateMcpTool(serverLabel, serverUri, authorizationToken, serverDescription, headers, allowedTools, toolCallApprovalPolicy).AsAITool();
+    public static AITool CreateMcpTool(string serverLabel, Uri serverUri, string? authorizationToken = null, string? serverDescription = null, IDictionary<string, string>? headers = null, McpToolFilter? allowedTools = null, McpToolCallApprovalPolicy? toolCallApprovalPolicy = null, string? projectConnectionId = null)
+    {
+        McpTool tool = ResponseTool.CreateMcpTool(serverLabel, serverUri, authorizationToken, serverDescription, headers, allowedTools, toolCallApprovalPolicy);
+
+        if (projectConnectionId is not null)
+        {
+            // ProjectConnectionId is a Foundry extension (Azure.AI.Projects.Agents) that patches
+            // "project_connection_id" onto the MCP tool so the platform injects the connection's credentials.
+            tool.ProjectConnectionId = projectConnectionId;
+        }
+
+        return tool.AsAITool();
+    }
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for MCP (Model Context Protocol) server tools using a connector ID.

@@ -1,0 +1,389 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.FileSystemGlobbing;
+using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
+
+namespace Microsoft.Agents.AI;
+
+/// <summary>
+/// A file-system-backed implementation of <see cref="AgentFileStore"/> that stores files on disk
+/// under a configurable root directory.
+/// </summary>
+/// <remarks>
+/// <para>
+/// All paths passed to this store are resolved relative to the root directory provided
+/// at construction time. Lexical path traversal attempts (for example, via <c>..</c> segments
+/// or absolute paths) are rejected with an <see cref="ArgumentException"/>.
+/// </para>
+/// <para>
+/// The root directory is created automatically if it does not already exist.
+/// </para>
+/// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+public sealed class FileSystemAgentFileStore : AgentFileStore
+{
+    /// <summary>
+    /// The canonical full path of the root directory, always ending with a directory separator.
+    /// </summary>
+    private readonly string _rootPath;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FileSystemAgentFileStore"/> class.
+    /// </summary>
+    /// <param name="rootDirectory">
+    /// The root directory under which all files are stored. Created if it does not exist.
+    /// </param>
+    public FileSystemAgentFileStore(string rootDirectory)
+    {
+        _ = Throw.IfNullOrWhitespace(rootDirectory);
+
+        // Canonicalize the root and ensure it ends with a separator for prefix comparison.
+        string fullRoot = Path.GetFullPath(rootDirectory);
+        if (!fullRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal) &&
+            !fullRoot.EndsWith(Path.AltDirectorySeparatorChar.ToString(), StringComparison.Ordinal))
+        {
+            fullRoot += Path.DirectorySeparatorChar;
+        }
+
+        this._rootPath = fullRoot;
+        Directory.CreateDirectory(fullRoot);
+    }
+
+    /// <inheritdoc />
+    public override async Task WriteAsync(string path, string content, CancellationToken cancellationToken = default)
+    {
+        string fullPath = this.ResolveSafePath(path);
+
+        // Ensure the parent directory exists.
+        string? parentDir = Path.GetDirectoryName(fullPath);
+        if (parentDir is not null)
+        {
+            Directory.CreateDirectory(parentDir);
+        }
+
+#if NET8_0_OR_GREATER
+        await File.WriteAllTextAsync(fullPath, content, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+#else
+        using var writer = new StreamWriter(fullPath, false, Encoding.UTF8);
+        await writer.WriteAsync(content).ConfigureAwait(false);
+#endif
+    }
+
+    /// <inheritdoc />
+    public override async Task<string?> ReadAsync(string path, CancellationToken cancellationToken = default)
+    {
+        string fullPath = this.ResolveSafePath(path);
+
+        if (!File.Exists(fullPath))
+        {
+            return null;
+        }
+
+#if NET8_0_OR_GREATER
+        return await File.ReadAllTextAsync(fullPath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+#else
+        using var reader = new StreamReader(fullPath, Encoding.UTF8);
+        return await reader.ReadToEndAsync().ConfigureAwait(false);
+#endif
+    }
+
+    /// <inheritdoc />
+    public override Task<bool> DeleteAsync(string path, CancellationToken cancellationToken = default)
+    {
+        string fullPath = this.ResolveSafePath(path);
+
+        if (!File.Exists(fullPath))
+        {
+            return Task.FromResult(false);
+        }
+
+        File.Delete(fullPath);
+        return Task.FromResult(true);
+    }
+
+    /// <inheritdoc />
+    public override Task<IReadOnlyList<FileStoreEntry>> ListChildrenAsync(string directory, CancellationToken cancellationToken = default)
+    {
+        string fullDir = this.ResolveSafeDirectoryPath(directory);
+
+        if (!Directory.Exists(fullDir))
+        {
+            return Task.FromResult<IReadOnlyList<FileStoreEntry>>([]);
+        }
+
+        // Subdirectories first, then files. Skip symlinks/reparse points for both.
+        var entries = new List<FileStoreEntry>();
+
+        foreach (string dir in Directory.GetDirectories(fullDir))
+        {
+            if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0)
+            {
+                continue;
+            }
+
+            string? name = Path.GetFileName(dir);
+            if (name is not null)
+            {
+                entries.Add(new FileStoreEntry(name, FileStoreEntry.Directory));
+            }
+        }
+
+        foreach (string file in Directory.GetFiles(fullDir))
+        {
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+            {
+                continue;
+            }
+
+            string? name = Path.GetFileName(file);
+            if (name is not null)
+            {
+                entries.Add(new FileStoreEntry(name, FileStoreEntry.File));
+            }
+        }
+
+        return Task.FromResult<IReadOnlyList<FileStoreEntry>>(entries);
+    }
+
+    /// <inheritdoc />
+    public override Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken = default)
+    {
+        string fullPath = this.ResolveSafePath(path);
+        return Task.FromResult(File.Exists(fullPath));
+    }
+
+    /// <inheritdoc />
+    public override async Task<IReadOnlyList<FileSearchResult>> SearchAsync(
+        string directory,
+        string regexPattern,
+        string? globPattern = null,
+        bool recursive = false,
+        CancellationToken cancellationToken = default)
+    {
+        string fullDir = this.ResolveSafeDirectoryPath(directory);
+
+        if (!Directory.Exists(fullDir))
+        {
+            return [];
+        }
+
+        // Compile the regex with a timeout to guard against catastrophic backtracking (ReDoS).
+        var regex = new Regex(regexPattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
+        Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
+        var results = new List<FileSearchResult>();
+
+        foreach (string filePath in EnumerateFiles(fullDir, recursive))
+        {
+            // The file path relative to the search directory, using forward slashes.
+            string relativeName = GetRelativeStorePath(fullDir, filePath);
+
+            // Apply the optional glob filter on the relative path.
+            if (!StorePaths.MatchesGlob(relativeName, matcher))
+            {
+                continue;
+            }
+
+            // Read file content.
+#if NET8_0_OR_GREATER
+            string fileContent = await File.ReadAllTextAsync(filePath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
+#else
+            string fileContent;
+            using (var reader = new StreamReader(filePath, Encoding.UTF8))
+            {
+                fileContent = await reader.ReadToEndAsync().ConfigureAwait(false);
+            }
+#endif
+
+            // Search each line for regex matches, tracking line numbers and building a snippet.
+            string[] lines = fileContent.Split('\n');
+            var matchingLines = new List<FileSearchMatch>();
+            string? firstSnippet = null;
+            int lineStartOffset = 0;
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                Match match = regex.Match(lines[i]);
+                if (match.Success)
+                {
+                    matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i].TrimEnd('\r') });
+
+                    // Build a context snippet around the first match (±50 chars).
+                    if (firstSnippet is null)
+                    {
+                        int charIndex = lineStartOffset + match.Index;
+                        int snippetStart = Math.Max(0, charIndex - 50);
+                        int snippetEnd = Math.Min(fileContent.Length, charIndex + match.Value.Length + 50);
+                        firstSnippet = fileContent.Substring(snippetStart, snippetEnd - snippetStart);
+                    }
+                }
+
+                // Advance the offset past this line (including the '\n' separator).
+                lineStartOffset += lines[i].Length + 1;
+            }
+
+            if (matchingLines.Count > 0)
+            {
+                results.Add(new FileSearchResult
+                {
+                    FileName = relativeName,
+                    Snippet = firstSnippet!,
+                    MatchingLines = matchingLines,
+                });
+            }
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Enumerates the files directly under <paramref name="directory"/> (or all descendant files when
+    /// <paramref name="recursive"/> is <see langword="true"/>), skipping symlinks/reparse points for both
+    /// files and directories to prevent reading outside the root.
+    /// </summary>
+    private static IEnumerable<string> EnumerateFiles(string directory, bool recursive)
+    {
+        foreach (string filePath in Directory.EnumerateFiles(directory))
+        {
+            // Skip files that are symlinks/reparse points.
+            if ((File.GetAttributes(filePath) & FileAttributes.ReparsePoint) != 0)
+            {
+                continue;
+            }
+
+            yield return filePath;
+        }
+
+        if (!recursive)
+        {
+            yield break;
+        }
+
+        foreach (string subDir in Directory.EnumerateDirectories(directory))
+        {
+            // Skip symlinked/reparse-point directories so recursion cannot escape the root.
+            if ((File.GetAttributes(subDir) & FileAttributes.ReparsePoint) != 0)
+            {
+                continue;
+            }
+
+            foreach (string filePath in EnumerateFiles(subDir, recursive: true))
+            {
+                yield return filePath;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns the path of <paramref name="filePath"/> relative to <paramref name="baseDirectory"/>,
+    /// normalized to forward-slash separators. Assumes <paramref name="filePath"/> resides under
+    /// <paramref name="baseDirectory"/> (as produced by <see cref="EnumerateFiles"/>).
+    /// </summary>
+    private static string GetRelativeStorePath(string baseDirectory, string filePath)
+    {
+        string baseTrimmed = baseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string relative = filePath.Substring(baseTrimmed.Length)
+            .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return relative.Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/');
+    }
+
+    /// <inheritdoc />
+    public override Task CreateDirectoryAsync(string path, CancellationToken cancellationToken = default)
+    {
+        string fullPath = this.ResolveSafeDirectoryPath(path);
+        Directory.CreateDirectory(fullPath);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Resolves a relative file path to a safe absolute path under the root directory.
+    /// Rejects paths that would escape the root via traversal, rooted paths, or symbolic links.
+    /// </summary>
+    private string ResolveSafePath(string relativePath)
+    {
+        // Normalize and validate the relative path (rejects rooted, traversal, etc.).
+        string normalized = StorePaths.NormalizeRelativePath(relativePath);
+
+        // Convert to OS-native separators before combining.
+        string nativePath = normalized.Replace('/', Path.DirectorySeparatorChar);
+        string combined = Path.Combine(this._rootPath, nativePath);
+        string fullPath = Path.GetFullPath(combined);
+
+        if (!fullPath.StartsWith(this._rootPath, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"Invalid path: '{relativePath}'. The resolved path escapes the root directory.",
+                nameof(relativePath));
+        }
+
+        // Reject symlinks/reparse points in any path segment to prevent escaping the root.
+        ThrowIfContainsSymlink(fullPath, this._rootPath);
+
+        return fullPath;
+    }
+
+    /// <summary>
+    /// Checks each path segment between the trusted root and the resolved path for symbolic links
+    /// or reparse points. Throws <see cref="ArgumentException"/> if any segment is a symlink.
+    /// Stops checking at the first segment that does not exist on disk (for write scenarios).
+    /// Uses <see cref="File.GetAttributes(string)"/> directly so that dangling symlinks (whose targets
+    /// do not exist) are still detected via their <see cref="FileAttributes.ReparsePoint"/> flag.
+    /// </summary>
+    private static void ThrowIfContainsSymlink(string fullPath, string rootPath)
+    {
+        string rootTrimmed = rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string relative = fullPath.Substring(rootTrimmed.Length);
+        string[] segments = relative.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+
+        string current = rootTrimmed;
+        foreach (string segment in segments)
+        {
+            current = Path.Combine(current, segment);
+
+            FileAttributes attributes;
+            try
+            {
+                attributes = File.GetAttributes(current);
+            }
+            catch (FileNotFoundException)
+            {
+                // Segment does not exist on disk (write scenario); stop checking.
+                break;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                break;
+            }
+
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new ArgumentException(
+                    "Invalid path: the resolved path contains a symbolic link or reparse point.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Resolves a relative directory path to a safe absolute path under the root directory.
+    /// An empty string resolves to the root directory itself.
+    /// </summary>
+    private string ResolveSafeDirectoryPath(string relativeDirectory)
+    {
+        if (string.IsNullOrEmpty(relativeDirectory))
+        {
+            return this._rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+
+        return this.ResolveSafePath(relativeDirectory);
+    }
+}

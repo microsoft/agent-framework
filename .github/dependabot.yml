@@ -24,12 +24,14 @@ updates:
       - ".NET"
       - "dependencies"
 
-  # Maintain dependencies for python
+  # Maintain dependencies for python.
+  # TODO: Remove these Python Dependabot entries after we have confidence in the
+  # Python dependency-maintenance workflow.
   - package-ecosystem: "pip"
     directory: "python/"
     schedule:
       interval: "weekly"
-      day: "monday"
+      day: "thursday"
     labels:
       - "python"
       - "dependencies"
@@ -37,16 +39,22 @@ updates:
     directory: "python/"
     schedule:
       interval: "weekly"
-      day: "monday"
+      day: "thursday"
     labels:
       - "python"
       - "dependencies"
 
   # Maintain dependencies for github-actions
   - package-ecosystem: "github-actions"
-    # Workflow files stored in the
-    # default location of `.github/workflows`
-    directory: "/"
+    # Cover both the standard workflow location and our composite actions.
+    # With `directory: "/"` Dependabot only scans `.github/workflows/*.{yml,yaml}`
+    # plus a root-level `action.yml/action.yaml`. It does NOT recurse into
+    # `.github/actions/*/action.yml`, so the glob below is required to keep the
+    # composite actions in `.github/actions/<name>/` up to date as well.
+    # Ref: https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#directories-or-directory--
+    directories:
+      - "/"
+      - "/.github/actions/*"
     schedule:
       interval: "weekly"
       day: "sunday"

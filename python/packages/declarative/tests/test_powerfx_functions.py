@@ -2,6 +2,8 @@
 
 """Tests for custom PowerFx-like functions."""
 
+from typing import cast
+
 from agent_framework_declarative._workflows._powerfx_functions import (
     CUSTOM_FUNCTIONS,
     assistant_message,
@@ -59,7 +61,7 @@ class TestUserMessage:
 
     def test_user_message_with_none(self):
         """Test UserMessage with None."""
-        msg = user_message(None)
+        msg = user_message(cast("str", None))
         assert msg == {"role": "user", "content": ""}
 
 
@@ -354,7 +356,7 @@ class TestAgentMessage:
         """Test AgentMessage with None."""
         from agent_framework_declarative._workflows._powerfx_functions import agent_message
 
-        msg = agent_message(None)
+        msg = agent_message(cast("str", None))
         assert msg == {"role": "assistant", "content": ""}
 
 

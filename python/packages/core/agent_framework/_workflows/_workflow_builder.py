@@ -4,9 +4,10 @@ import logging
 import sys
 import uuid
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 from .._agents import SupportsAgentRun
+from .._telemetry import FeatureIndex, mark_feature_used
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent_executor import AgentExecutor
 from ._agent_utils import resolve_agent_id
@@ -27,16 +28,26 @@ from ._edge import (
 )
 from ._executor import Executor
 from ._runner_context import InProcRunnerContext
-from ._validation import validate_workflow_graph
-from ._workflow import Workflow
+from ._validation import ValidationTypeEnum, WorkflowValidationError, validate_workflow_graph
+from ._workflow import (
+    _MISSING,  # pyright: ignore[reportPrivateUsage]
+    Workflow,
+    _coalesce_output_from_kwarg,  # pyright: ignore[reportPrivateUsage]
+)
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # type: ignore # pragma: no cover
+    from typing import Self  # pragma: no cover
 else:
-    from typing_extensions import Self  # type: ignore # pragma: no cover
+    from typing_extensions import Self  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+
+_ALL_OUTPUTS: Literal["all"] = "all"
+_ALL_OTHER_OUTPUTS: Literal["all_other"] = "all_other"
+_OutputSelection = list[Executor | SupportsAgentRun] | Literal["all"] | None
+_IntermediateOutputSelection = list[Executor | SupportsAgentRun] | Literal["all", "all_other"] | None
+_AnyOutputSelection = _OutputSelection | _IntermediateOutputSelection
 
 
 class WorkflowBuilder:
@@ -75,6 +86,8 @@ class WorkflowBuilder:
             print(events.get_outputs())  # ['OLLEH']
     """
 
+    _FEATURE_USAGE_INDEX: ClassVar[FeatureIndex | None] = FeatureIndex.CORE_WORKFLOW
+
     def __init__(
         self,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
@@ -83,12 +96,16 @@ class WorkflowBuilder:
         *,
         start_executor: Executor | SupportsAgentRun,
         checkpoint_storage: CheckpointStorage | None = None,
-        output_executors: list[Executor | SupportsAgentRun] | None = None,
+        output_from: list[Executor | SupportsAgentRun] | Literal["all"] | None = _MISSING,
+        intermediate_output_from: _IntermediateOutputSelection = _MISSING,
+        output_executors: list[Executor | SupportsAgentRun] | None = _MISSING,
     ):
         """Initialize the WorkflowBuilder.
 
         Args:
-            max_iterations: Maximum number of iterations for workflow convergence. Default is 100.
+            max_iterations: Maximum number of iterations for workflow convergence. The first
+                iteration is the initial run of the start executor, and each subsequent iteration
+                is a superstep. Default is 100.
             name: A human-readable name for the workflow builder. This name will be the identifier
                 for all workflow instances created from this builder. If not provided, a unique name
                 will be generated. This will be useful for versioning, monitoring, checkpointing, and
@@ -98,9 +115,38 @@ class WorkflowBuilder:
             start_executor: The starting executor for the workflow. Can be an Executor instance
                 or SupportsAgentRun instance.
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
-            output_executors: Optional list of executors whose outputs should be collected.
-                If not provided, outputs from all executors are collected.
+            output_from: Designates which executors emit workflow output
+                (``type='output'`` workflow events). Pass ``"all"`` to explicitly select every
+                executor with declared workflow output types.
+            intermediate_output_from: Designates which executors emit intermediate output
+                (``type='intermediate'`` workflow events). Pass ``"all"`` to select every executor
+                with declared workflow output types as intermediate (no executor emits ``output``).
+                Pass ``"all_other"`` to select every executor with declared workflow output types
+                that is not selected by ``output_from``.
+                If neither ``output_from`` nor ``intermediate_output_from`` is provided,
+                every ``yield_output`` produces ``type='output'``. If either is provided,
+                explicit mode applies: listed
+                workflow-output executors emit ``output``, listed intermediate executors emit
+                ``intermediate``, and unlisted executor yields are hidden.
+
+                Output selection behavior:
+                - Omit both selections: every ``yield_output`` emits ``output``.
+                - ``output_from="all"``: every output-capable executor emits ``output``.
+                - ``output_from=[A]``: only A emits ``output``; other executor payloads are hidden.
+                - ``output_from=[A], intermediate_output_from="all_other"``: A emits ``output``;
+                  all other output-capable executors emit ``intermediate``.
+                - ``intermediate_output_from="all_other"``: no executor emits ``output``; every
+                  output-capable executor emits ``intermediate``.
+                - ``output_from=[], intermediate_output_from="all_other"``: no executor emits
+                  ``output``; every output-capable executor emits ``intermediate``.
+                - ``output_from=[A], intermediate_output_from=[B, C]``: A emits ``output``; B and C
+                  emit ``intermediate``; other executor payloads are hidden.
+            output_executors: **Deprecated** alias for ``output_from``. Will be removed in a
+                future version.
         """
+        output_from = _coalesce_output_from_kwarg(output_from, output_executors)
+        if intermediate_output_from is _MISSING:
+            intermediate_output_from = None
         self._edge_groups: list[EdgeGroup] = []
         self._executors: dict[str, Executor] = {}
         self._start_executor: Executor | None = None
@@ -113,8 +159,12 @@ class WorkflowBuilder:
         # being created for the same agent.
         self._agent_wrappers: dict[str, Executor] = {}
 
-        # Output executors filter; if set, only outputs from these executors are yielded
-        self._output_executors: list[Executor | SupportsAgentRun] = output_executors if output_executors else []
+        # ``None`` for both means the default all-output behavior.
+        # If either is provided, explicit mode applies and unlisted executor yields are hidden.
+        self._output_from: _OutputSelection = self._coerce_output_from(output_from)
+        self._intermediate_output_from: _IntermediateOutputSelection = self._coerce_intermediate_output_from(
+            intermediate_output_from
+        )
 
         # Set the start executor
         self._set_start_executor(start_executor)
@@ -134,7 +184,7 @@ class WorkflowBuilder:
         # New executor
         self._executors[executor.id] = executor
         # Add an internal edge group for each unique executor
-        self._edge_groups.append(InternalEdgeGroup(executor.id))  # type: ignore[call-arg]
+        self._edge_groups.append(InternalEdgeGroup(executor.id))
 
         return executor.id
 
@@ -151,13 +201,13 @@ class WorkflowBuilder:
             An Executor instance, wrapping the agent if necessary.
         """
         try:  # Local import to avoid hard dependency at import time
-            from agent_framework import SupportsAgentRun  # type: ignore
+            from agent_framework import SupportsAgentRun
         except Exception:  # pragma: no cover - defensive
-            SupportsAgentRun = object  # type: ignore
+            SupportsAgentRun = object
 
         if isinstance(candidate, Executor):  # Already an executor
             return candidate
-        if isinstance(candidate, SupportsAgentRun):  # type: ignore[arg-type]
+        if isinstance(candidate, SupportsAgentRun):
             # Reuse existing wrapper for the same agent instance if present
             agent_instance_id = str(id(candidate))
             existing = self._agent_wrappers.get(agent_instance_id)
@@ -281,7 +331,7 @@ class WorkflowBuilder:
         target_execs = [self._maybe_wrap_agent(t) for t in targets]
         source_id = self._add_executor(source_exec)
         target_ids = [self._add_executor(t) for t in target_execs]
-        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))  # type: ignore[call-arg]
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))
 
         return self
 
@@ -362,13 +412,13 @@ class WorkflowBuilder:
         internal_cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
         for case in cases:
             # Allow case targets to be agents
-            case.target = self._maybe_wrap_agent(case.target)  # type: ignore[arg-type]
+            case.target = self._maybe_wrap_agent(case.target)
             self._add_executor(case.target)
             if isinstance(case, Default):
                 internal_cases.append(SwitchCaseEdgeGroupDefault(target_id=case.target.id))
             else:
                 internal_cases.append(SwitchCaseEdgeGroupCase(condition=case.condition, target_id=case.target.id))
-        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, internal_cases))  # type: ignore[call-arg]
+        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, internal_cases))
 
         return self
 
@@ -454,7 +504,7 @@ class WorkflowBuilder:
         target_execs = [self._maybe_wrap_agent(t) for t in targets]
         source_id = self._add_executor(source_exec)
         target_ids = [self._add_executor(t) for t in target_execs]
-        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))  # type: ignore[call-arg]
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))
 
         return self
 
@@ -509,7 +559,7 @@ class WorkflowBuilder:
         target_exec = self._maybe_wrap_agent(target)
         source_ids = [self._add_executor(s) for s in source_execs]
         target_id = self._add_executor(target_exec)
-        self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))  # type: ignore[call-arg]
+        self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))
 
         return self
 
@@ -584,6 +634,96 @@ class WorkflowBuilder:
         if existing is not wrapped:
             self._add_executor(wrapped)
 
+    def _coerce_output_from(self, output_from: Any) -> _OutputSelection:
+        """Coerce workflow-output selection while preserving the explicit ``"all"`` literal."""
+        if output_from is None:
+            return None
+        if output_from == _ALL_OUTPUTS:
+            return _ALL_OUTPUTS
+        if isinstance(output_from, str):
+            raise ValueError(f"Unsupported output_from literal {output_from!r}; use 'all' or a list of executors.")
+        return list(output_from)
+
+    def _coerce_intermediate_output_from(self, intermediate_output_from: Any) -> _IntermediateOutputSelection:
+        """Coerce intermediate-output selection and reject output-only literals."""
+        if intermediate_output_from is None:
+            return None
+        if isinstance(intermediate_output_from, str):
+            if intermediate_output_from == _ALL_OUTPUTS:
+                return _ALL_OUTPUTS
+            if intermediate_output_from == _ALL_OTHER_OUTPUTS:
+                return _ALL_OTHER_OUTPUTS
+            raise ValueError(
+                f"Unsupported intermediate_output_from literal {intermediate_output_from!r}; "
+                "use 'all', 'all_other', or a list of executors."
+            )
+        return list(intermediate_output_from)
+
+    def _resolve_designated_executor_ids(
+        self,
+        designated: _AnyOutputSelection,
+    ) -> list[str] | None:
+        """Resolve an optional designation list into executor IDs without mutating the graph."""
+        if designated is None:
+            return None
+        if designated == _ALL_OUTPUTS:
+            return [executor_id for executor_id, executor in self._executors.items() if executor.workflow_output_types]
+        if designated == _ALL_OTHER_OUTPUTS:
+            raise ValueError("intermediate_output_from='all_other' must be expanded relative to output_from.")
+        ids: list[str] = []
+        for item in designated:
+            if isinstance(item, Executor):
+                ids.append(item.id)
+            elif isinstance(item, SupportsAgentRun):
+                ids.append(resolve_agent_id(item))
+            else:
+                raise TypeError(
+                    "WorkflowBuilder expected designation entries to be Executor or SupportsAgentRun instances; "
+                    f"got {type(item).__name__}."
+                )
+        return ids
+
+    def _validate_designation_lists(
+        self,
+        output_executor_ids: list[str] | None,
+        intermediate_executor_ids: list[str] | None,
+    ) -> None:
+        """Validate builder-level designation rules that need omitted-vs-explicit context."""
+        explicit_mode = output_executor_ids is not None or intermediate_executor_ids is not None
+        if not explicit_mode:
+            return
+
+        output_ids = output_executor_ids or []
+        intermediate_ids = intermediate_executor_ids or []
+        if not output_ids and not intermediate_ids:
+            raise WorkflowValidationError(
+                "Explicit workflow output designation must include at least one output or intermediate executor.",
+                validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
+            )
+
+        duplicate_outputs = sorted({executor_id for executor_id in output_ids if output_ids.count(executor_id) > 1})
+        if duplicate_outputs:
+            raise WorkflowValidationError(
+                f"Duplicate output executor designation(s): {duplicate_outputs}",
+                validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
+            )
+
+        duplicate_intermediates = sorted({
+            executor_id for executor_id in intermediate_ids if intermediate_ids.count(executor_id) > 1
+        })
+        if duplicate_intermediates:
+            raise WorkflowValidationError(
+                f"Duplicate intermediate executor designation(s): {duplicate_intermediates}",
+                validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
+            )
+
+        overlap = sorted(set(output_ids).intersection(intermediate_ids))
+        if overlap:
+            raise WorkflowValidationError(
+                f"Executors cannot be both output and intermediate designated: {overlap}",
+                validation_type=ValidationTypeEnum.OUTPUT_VALIDATION,
+            )
+
     def build(self) -> Workflow:
         """Build and return the constructed workflow.
 
@@ -625,7 +765,46 @@ class WorkflowBuilder:
                 # Workflows can be reused multiple times
                 events2 = await workflow.run("world")
                 print(events2.get_outputs())  # ['WORLD']
+
+                # Select one executor as Workflow Output.
+                workflow = WorkflowBuilder(start_executor=executor, output_from=[executor]).build()
+                events = await workflow.run("hello")
+                print(events.get_outputs())  # ['HELLO']
+                print(events.get_intermediate_outputs())  # []
+
+                # Make one executor Workflow Output and every other output-capable executor Intermediate Output.
+                workflow = (
+                    WorkflowBuilder(
+                        start_executor=planner,
+                        output_from=[answerer],
+                        intermediate_output_from="all_other",
+                    )
+                    .add_edge(planner, answerer)
+                    .build()
+                )
+                events = await workflow.run("hello")
+                print(events.get_outputs())  # outputs from answerer
+                print(events.get_intermediate_outputs())  # outputs from planner
+
+                # Build a progress-only workflow: no Workflow Output, all output-capable executors are intermediate.
+                workflow = (
+                    WorkflowBuilder(start_executor=planner, intermediate_output_from="all_other")
+                    .add_edge(planner, answerer)
+                    .build()
+                )
+                events = await workflow.run("hello")
+                print(events.get_outputs())  # []
+                print(events.get_intermediate_outputs())  # outputs from planner and answerer
+
+                # Explicitly select all output-capable executors.
+                workflow = (
+                    WorkflowBuilder(start_executor=planner, output_from="all").add_edge(planner, answerer).build()
+                )
+                events = await workflow.run("hello")
+                print(events.get_outputs())  # outputs from planner and answerer
         """
+        if self._FEATURE_USAGE_INDEX is not None:
+            mark_feature_used(self._FEATURE_USAGE_INDEX)
         # Create workflow build span that includes validation and workflow creation
         with create_workflow_span(OtelAttr.WORKFLOW_BUILD_SPAN) as span:
             try:
@@ -640,16 +819,34 @@ class WorkflowBuilder:
                 start_executor = self._start_executor
                 executors = self._executors
                 edge_groups = self._edge_groups
-                output_executors = [ex.id for ex in self._output_executors if isinstance(ex, Executor)] + [
-                    resolve_agent_id(agent) for agent in self._output_executors if isinstance(agent, SupportsAgentRun)
-                ]
+                output_ids = self._resolve_designated_executor_ids(self._output_from)
+                intermediate_output_ids: list[str] | None
+                if self._intermediate_output_from == _ALL_OTHER_OUTPUTS:
+                    output_ids_for_all_other = output_ids or []
+                    intermediate_output_ids = [
+                        executor_id
+                        for executor_id, executor in self._executors.items()
+                        if executor.workflow_output_types and executor_id not in output_ids_for_all_other
+                    ]
+                else:
+                    intermediate_output_ids = self._resolve_designated_executor_ids(self._intermediate_output_from)
+                self._validate_designation_lists(output_ids, intermediate_output_ids)
+
+                explicit_mode = output_ids is not None or intermediate_output_ids is not None
+                output_for_workflow: list[str] | None = output_ids if explicit_mode else None
+                if explicit_mode and output_for_workflow is None:
+                    output_for_workflow = []
+                intermediate_output_for_workflow: list[str] | None = intermediate_output_ids if explicit_mode else None
+                if explicit_mode and intermediate_output_for_workflow is None:
+                    intermediate_output_for_workflow = []
 
                 # Perform validation before creating the workflow
                 validate_workflow_graph(
                     edge_groups,
                     executors,
                     start_executor,
-                    output_executors,
+                    output_for_workflow or [],
+                    intermediate_output_for_workflow or [],
                 )
 
                 # Add validation completed event
@@ -666,7 +863,8 @@ class WorkflowBuilder:
                     self._name,
                     description=self._description,
                     max_iterations=self._max_iterations,
-                    output_executors=output_executors,
+                    output_from=output_for_workflow,
+                    intermediate_output_from=intermediate_output_for_workflow,
                 )
                 build_attributes: dict[str, Any] = {
                     OtelAttr.WORKFLOW_BUILDER_NAME: self._name,

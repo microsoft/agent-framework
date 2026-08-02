@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 import pytest
 
+pytest.importorskip("agent_framework_orchestrations")
+
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
@@ -232,16 +234,18 @@ async def test_groupchat_kwargs_flow_to_agents() -> None:
 
 async def test_kwargs_stored_in_state() -> None:
     """Test that function_invocation_kwargs are stored in State with the correct key."""
-    from agent_framework import Executor, WorkflowContext, handler
+    from typing_extensions import Never
+
+    from agent_framework import AgentResponse, Executor, WorkflowContext, handler
 
     stored_kwargs: dict[str, Any] | None = None
 
     class _StateInspector(Executor):
         @handler
-        async def inspect(self, msgs: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
+        async def inspect(self, msgs: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
             nonlocal stored_kwargs
             stored_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
-            await ctx.send_message(msgs)
+            await ctx.yield_output(AgentResponse(messages=msgs))
 
     inspector = _StateInspector(id="inspector")
     workflow = SequentialBuilder(participants=[inspector]).build()
@@ -256,16 +260,18 @@ async def test_kwargs_stored_in_state() -> None:
 
 async def test_empty_kwargs_stored_as_empty_dict() -> None:
     """Test that empty kwargs are stored as empty dict in State."""
-    from agent_framework import Executor, WorkflowContext, handler
+    from typing_extensions import Never
+
+    from agent_framework import AgentResponse, Executor, WorkflowContext, handler
 
     stored_kwargs: Any = "NOT_CHECKED"
 
     class _StateChecker(Executor):
         @handler
-        async def check(self, msgs: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
+        async def check(self, msgs: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
             nonlocal stored_kwargs
             stored_kwargs = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
-            await ctx.send_message(msgs)
+            await ctx.yield_output(AgentResponse(messages=msgs))
 
     checker = _StateChecker(id="checker")
     workflow = SequentialBuilder(participants=[checker]).build()
@@ -373,7 +379,7 @@ async def test_kwargs_preserved_on_response_continuation() -> None:
     from agent_framework import WorkflowBuilder
 
     agent = _ApprovalCapturingAgent()
-    workflow = WorkflowBuilder(start_executor=agent, output_executors=[agent]).build()
+    workflow = WorkflowBuilder(start_executor=agent, output_from=[agent]).build()
 
     # Initial run with function_invocation_kwargs — workflow should pause for approval
     fi_kwargs = {"token": "abc"}
@@ -428,8 +434,8 @@ async def test_handoff_kwargs_flow_to_agents() -> None:
 
     workflow = (
         HandoffBuilder(termination_condition=lambda conv: len(conv) >= 4)
-        .participants([agent1, agent2])  # type: ignore[list-item]
-        .with_start_agent(agent1)  # type: ignore[arg-type]
+        .participants([agent1, agent2])  # type: ignore[list-item]  # ty: ignore[invalid-argument-type]
+        .with_start_agent(agent1)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
         .with_autonomous_mode()
         .build()
     )
@@ -695,7 +701,9 @@ async def test_subworkflow_kwargs_accessible_via_state() -> None:
     Verifies that WORKFLOW_RUN_KWARGS_KEY is populated in the subworkflow's State
     with kwargs from the parent workflow.
     """
-    from agent_framework import Executor, WorkflowContext, handler
+    from typing_extensions import Never
+
+    from agent_framework import AgentResponse, Executor, WorkflowContext, handler
     from agent_framework._workflows._workflow_executor import WorkflowExecutor
 
     captured_kwargs_from_state: list[dict[str, Any]] = []
@@ -704,10 +712,10 @@ async def test_subworkflow_kwargs_accessible_via_state() -> None:
         """Executor that reads kwargs from State for verification."""
 
         @handler
-        async def read_kwargs(self, msgs: list[Message], ctx: WorkflowContext[list[Message]]) -> None:
+        async def read_kwargs(self, msgs: list[Message], ctx: WorkflowContext[Never, AgentResponse]) -> None:  # type: ignore[valid-type]
             kwargs_from_state = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY)
             captured_kwargs_from_state.append(kwargs_from_state or {})
-            await ctx.send_message(msgs)
+            await ctx.yield_output(AgentResponse(messages=msgs))
 
     # Build inner workflow with State reader
     state_reader = _StateReader(id="state_reader")

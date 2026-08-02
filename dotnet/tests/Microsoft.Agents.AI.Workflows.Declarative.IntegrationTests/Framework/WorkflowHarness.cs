@@ -4,12 +4,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Extensions.AI;
-using Shared.Code;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
@@ -59,27 +57,6 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         IReadOnlyList<WorkflowEvent> workflowEvents = await MonitorAndDisposeWorkflowRunAsync(run, response).ToArrayAsync();
         this._lastCheckpoint = workflowEvents.OfType<SuperStepCompletedEvent>().LastOrDefault()?.CompletionInfo?.Checkpoint;
         return new WorkflowEvents(workflowEvents);
-    }
-
-    public static async Task<WorkflowHarness> GenerateCodeAsync<TInput>(
-        string runId,
-        string workflowProviderCode,
-        string workflowProviderName,
-        string workflowProviderNamespace,
-        DeclarativeWorkflowOptions options,
-        TInput input) where TInput : notnull
-    {
-        // Compile the code
-        Assembly assembly = Compiler.Build(workflowProviderCode, Compiler.RepoDependencies(typeof(DeclarativeWorkflowBuilder)));
-        Type? type = assembly.GetType($"{workflowProviderNamespace}.{workflowProviderName}");
-        Assert.NotNull(type);
-        MethodInfo? method = type.GetMethod("CreateWorkflow");
-        Assert.NotNull(method);
-        MethodInfo genericMethod = method.MakeGenericMethod(typeof(TInput));
-        object? workflowObject = genericMethod.Invoke(null, [options, null]);
-        Workflow workflow = Assert.IsType<Workflow>(workflowObject);
-
-        return new WorkflowHarness(workflow, runId);
     }
 
     private CheckpointManager GetCheckpointManager(bool useJson = false)

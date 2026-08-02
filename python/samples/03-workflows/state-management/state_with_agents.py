@@ -17,6 +17,7 @@ from agent_framework import (
     executor,
 )
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -39,7 +40,7 @@ Show how to:
 - Compose agent backed executors with function style executors and yield the final output when the workflow completes.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Familiarity with WorkflowBuilder, executors, conditional edges, and streaming runs.
@@ -172,7 +173,7 @@ def create_spam_detection_agent() -> Agent:
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool) and reason (string)."
         ),
-        default_options={"response_format": DetectionResultAgent},
+        default_options=OpenAIChatOptions[Any](response_format=DetectionResultAgent),
         # response_format enforces structured JSON from each agent.
         name="spam_detection_agent",
     )
@@ -191,7 +192,7 @@ def create_email_assistant_agent() -> Agent:
             "Return JSON with a single field 'response' containing the drafted reply."
         ),
         # response_format enforces structured JSON from each agent.
-        default_options={"response_format": EmailResponse},
+        default_options=OpenAIChatOptions[Any](response_format=EmailResponse),
         name="email_assistant_agent",
     )
 

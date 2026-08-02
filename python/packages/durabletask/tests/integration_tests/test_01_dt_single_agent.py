@@ -10,7 +10,19 @@ Tests basic agent operations including:
 - Empty thread ID handling
 """
 
+from typing import Any, Protocol
+
 import pytest
+
+from agent_framework_durabletask import DurableAIAgentClient
+
+
+class AgentClientFactoryProtocol(Protocol):
+    """Protocol for the agent client factory fixture."""
+
+    @classmethod
+    def create(cls, max_poll_retries: int = 90) -> tuple[Any, DurableAIAgentClient]: ...
+
 
 # Module-level markers - applied to all tests in this module
 pytestmark = [
@@ -27,7 +39,7 @@ class TestSingleAgent:
     """Test suite for single agent functionality."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, agent_client_factory: type) -> None:
+    def setup(self, agent_client_factory: type[AgentClientFactoryProtocol]) -> None:
         """Setup test fixtures."""
         # Create agent client using the factory fixture
         _, self.agent_client = agent_client_factory.create()

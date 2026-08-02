@@ -21,6 +21,28 @@ public sealed class AgentResponseUpdateEvent : WorkflowOutputEvent
     }
 
     /// <summary>
+    /// Initializes a new instance of the <see cref="AgentResponseUpdateEvent"/> class with the given output tag.
+    /// </summary>
+    /// <param name="executorId">The identifier of the executor that generated this event.</param>
+    /// <param name="update">The agent run response update.</param>
+    /// <param name="tag">The output tag to associate with this event.</param>
+    public AgentResponseUpdateEvent(string executorId, AgentResponseUpdate update, OutputTag tag) : base(update, executorId, tag)
+    {
+        this.Update = Throw.IfNull(update);
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentResponseUpdateEvent"/> class with the given output tags.
+    /// </summary>
+    /// <param name="executorId">The identifier of the executor that generated this event.</param>
+    /// <param name="update">The agent run response update.</param>
+    /// <param name="tags">The output tags to associate with this event. May be <see langword="null"/> or empty.</param>
+    public AgentResponseUpdateEvent(string executorId, AgentResponseUpdate update, IEnumerable<OutputTag>? tags) : base(update, executorId, tags)
+    {
+        this.Update = Throw.IfNull(update);
+    }
+
+    /// <summary>
     /// Gets the agent run response update.
     /// </summary>
     public AgentResponseUpdate Update { get; }

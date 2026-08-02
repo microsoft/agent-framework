@@ -8,21 +8,21 @@
 // Three different skill sources are registered here:
 // 1. File-based: unit-converter (miles↔km, pounds↔kg) from SKILL.md on disk
 // 2. Code-defined: volume-converter (gallons↔liters) using AgentInlineSkill
-// 3. Class-based: temperature-converter (°F↔°C↔K) using AgentClassSkill
+// 3. Class-based: temperature-converter (°F↔°C↔K) using AgentClassSkill with attributes
 //
 // For simpler, single-source scenarios, see the earlier steps in this sample series
 // (e.g., Step01 for file-based, Step02 for code-defined, Step03 for class-based).
 
+using System.ComponentModel;
 using System.Text.Json;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Responses;
 
 // --- Configuration ---
-string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // --- 1. Code-Defined Skill: volume-converter ---
 var volumeConverterSkill = new AgentInlineSkill(
@@ -63,18 +63,20 @@ var skillsProvider = new AgentSkillsProviderBuilder()
     .Build();
 
 // --- Agent Setup ---
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetResponsesClient()
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
     .AsAIAgent(new ChatClientAgentOptions
     {
         Name = "MultiConverterAgent",
         ChatOptions = new()
         {
+            ModelId = deploymentName,
             Instructions = "You are a helpful assistant that can convert units, volumes, and temperatures.",
         },
         AIContextProviders = [skillsProvider],
-    },
-    model: deploymentName);
+    });
 
 // --- Example: Use all three skills ---
 Console.WriteLine("Converting with mixed skills (file + code + class)");
@@ -89,13 +91,15 @@ AgentResponse response = await agent.RunAsync(
 Console.WriteLine($"Agent: {response.Text}");
 
 /// <summary>
-/// A temperature-converter skill defined as a C# class.
+/// A temperature-converter skill defined as a C# class using attributes for discovery.
 /// </summary>
-internal sealed class TemperatureConverterSkill : AgentClassSkill
+/// <remarks>
+/// Properties annotated with <see cref="AgentSkillResourceAttribute"/> are automatically
+/// discovered as skill resources, and methods annotated with <see cref="AgentSkillScriptAttribute"/>
+/// are automatically discovered as skill scripts.
+/// </remarks>
+internal sealed class TemperatureConverterSkill : AgentClassSkill<TemperatureConverterSkill>
 {
-    private IReadOnlyList<AgentSkillResource>? _resources;
-    private IReadOnlyList<AgentSkillScript>? _scripts;
-
     /// <inheritdoc/>
     public override AgentSkillFrontmatter Frontmatter { get; } = new(
         "temperature-converter",
@@ -110,29 +114,27 @@ internal sealed class TemperatureConverterSkill : AgentClassSkill
         3. Present the result clearly with both temperature scales.
         """;
 
-    /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillResource>? Resources => this._resources ??=
-    [
-        CreateResource(
-            "temperature-conversion-formulas",
-            """
-            # Temperature Conversion Formulas
+    /// <summary>
+    /// A reference table of temperature conversion formulas.
+    /// </summary>
+    [AgentSkillResource("temperature-conversion-formulas")]
+    [Description("Formulas for converting between Fahrenheit, Celsius, and Kelvin.")]
+    public string ConversionFormulas => """
+        # Temperature Conversion Formulas
 
-            | From        | To          | Formula                   |
-            |-------------|-------------|---------------------------|
-            | Fahrenheit  | Celsius     | °C = (°F − 32) × 5/9     |
-            | Celsius     | Fahrenheit  | °F = (°C × 9/5) + 32     |
-            | Celsius     | Kelvin      | K = °C + 273.15           |
-            | Kelvin      | Celsius     | °C = K − 273.15           |
-            """),
-    ];
+        | From        | To          | Formula                   |
+        |-------------|-------------|---------------------------|
+        | Fahrenheit  | Celsius     | °C = (°F − 32) × 5/9     |
+        | Celsius     | Fahrenheit  | °F = (°C × 9/5) + 32     |
+        | Celsius     | Kelvin      | K = °C + 273.15           |
+        | Kelvin      | Celsius     | °C = K − 273.15           |
+        """;
 
-    /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillScript>? Scripts => this._scripts ??=
-    [
-        CreateScript("convert-temperature", ConvertTemperature),
-    ];
-
+    /// <summary>
+    /// Converts a temperature value between scales.
+    /// </summary>
+    [AgentSkillScript("convert-temperature")]
+    [Description("Converts a temperature value from one scale to another.")]
     private static string ConvertTemperature(double value, string from, string to)
     {
         double result = (from.ToUpperInvariant(), to.ToUpperInvariant()) switch

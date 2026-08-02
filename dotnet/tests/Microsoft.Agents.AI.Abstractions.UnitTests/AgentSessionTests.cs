@@ -24,6 +24,45 @@ public class AgentSessionTests
         Assert.Equal("value1", session.StateBag.GetValue<string>("key1"));
     }
 
+    [Fact]
+    public void StateBag_Default_IsEmpty()
+    {
+        // Arrange & Act
+        var session = new TestAgentSession();
+
+        // Assert
+        Assert.Equal(0, session.StateBag.Count);
+    }
+
+    [Fact]
+    public void StateBag_MultipleKeys_StoreAndRetrieveIndependently()
+    {
+        // Arrange
+        var session = new TestAgentSession();
+
+        // Act
+        session.StateBag.SetValue("key1", "value1");
+        session.StateBag.SetValue("key2", "value2");
+
+        // Assert
+        Assert.Equal("value1", session.StateBag.GetValue<string>("key1"));
+        Assert.Equal("value2", session.StateBag.GetValue<string>("key2"));
+    }
+
+    [Fact]
+    public void StateBag_OverwriteValue_ReturnsUpdatedValue()
+    {
+        // Arrange
+        var session = new TestAgentSession();
+        session.StateBag.SetValue("key1", "original");
+
+        // Act
+        session.StateBag.SetValue("key1", "updated");
+
+        // Assert
+        Assert.Equal("updated", session.StateBag.GetValue<string>("key1"));
+    }
+
     #endregion
 
     #region GetService Method Tests

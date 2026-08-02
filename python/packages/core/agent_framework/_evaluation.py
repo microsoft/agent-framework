@@ -3,7 +3,7 @@
 """Provider-agnostic evaluation framework for Microsoft Agent Framework.
 
 Defines the core evaluation types and orchestration functions that work with
-any evaluation provider (Azure AI Foundry, local evaluators, third-party
+any evaluation provider (Microsoft Foundry, local evaluators, third-party
 libraries, etc.).  Also includes ``LocalEvaluator`` and built-in check
 functions for fast, API-free evaluation during inner-loop development and
 CI smoke tests.
@@ -311,12 +311,15 @@ class EvalScoreResult:
         score: Numeric score from the evaluator.
         passed: Whether the item passed this evaluator's threshold.
         sample: Optional raw evaluator output (rationale, metadata).
+        dimensions: Per-dimension scores when this evaluator is a rubric
+            evaluator.  ``None`` for non-rubric (e.g. built-in) evaluators.
     """
 
     name: str
     score: float
     passed: bool | None = None
     sample: dict[str, Any] | None = None
+    dimensions: list[RubricScore] | None = None
 
 
 @experimental(feature_id=ExperimentalFeature.EVALS)
@@ -496,6 +499,179 @@ class EvalResults:
                     detail += f" Errored items: {', '.join(summaries)}."
             raise EvalNotPassedError(detail)
 
+    def assert_score_at_least(
+        self,
+        min_score: float,
+        *,
+        evaluator: str | None = None,
+        msg: str | None = None,
+    ) -> None:
+        """Assert every item's score (optionally filtered by evaluator) is ``>= min_score``.
+
+        Designed for CI gates on generated rubric evaluators (e.g.
+        ``results.assert_score_at_least(0.80)``).  Includes any
+        sub-results from workflow evaluations.
+
+        Args:
+            min_score: Minimum acceptable score (inclusive).
+            evaluator: When set, only check scores from the evaluator
+                whose ``EvalScoreResult.name`` matches.
+            msg: Optional custom failure message.
+
+        Raises:
+            EvalNotPassedError: When any matching score is below the threshold.
+        """
+        offenders: list[str] = []
+
+        def _check(results: EvalResults) -> None:
+            for item in results.items:
+                for score in item.scores:
+                    if evaluator is not None and score.name != evaluator:
+                        continue
+                    if score.score < min_score:
+                        offenders.append(f"{item.item_id}/{score.name}={score.score:.3f}")
+            for sub in results.sub_results.values():
+                _check(sub)
+
+        _check(self)
+        if offenders:
+            detail = msg or (
+                f"{len(offenders)} score(s) below threshold {min_score}"
+                f"{' for ' + evaluator if evaluator else ''}: {', '.join(offenders[:5])}"
+                + (f" (+{len(offenders) - 5} more)" if len(offenders) > 5 else "")
+            )
+            raise EvalNotPassedError(detail)
+
+    def assert_dimension_score_at_least(
+        self,
+        dimension_id: str,
+        min_score: float,
+        *,
+        evaluator: str | None = None,
+        require_applicable: bool = False,
+        msg: str | None = None,
+    ) -> None:
+        """Assert every item's score for a rubric *dimension* is ``>= min_score``.
+
+        Walks ``EvalScoreResult.dimensions`` looking for the named
+        dimension across all items (and sub-results).  Non-applicable
+        dimensions are skipped by default; pass
+        ``require_applicable=True`` to fail when no applicable score is
+        produced.
+
+        Args:
+            dimension_id: Dimension id (matches the rubric definition).
+            min_score: Minimum acceptable dimension score (inclusive).
+            evaluator: When set, only consider scores from the evaluator
+                whose ``EvalScoreResult.name`` matches.
+            require_applicable: When ``True``, missing or non-applicable
+                dimension scores raise.  Defaults to ``False`` (skip).
+            msg: Optional custom failure message.
+
+        Raises:
+            EvalNotPassedError: When the dimension fails the threshold.
+        """
+        offenders: list[str] = []
+        missing_items: list[str] = []
+
+        def _check(results: EvalResults) -> None:
+            for item in results.items:
+                found_applicable = False
+                for score in item.scores:
+                    if evaluator is not None and score.name != evaluator:
+                        continue
+                    if not score.dimensions:
+                        continue
+                    for rs in score.dimensions:
+                        if rs.id != dimension_id:
+                            continue
+                        if not rs.applicable:
+                            continue
+                        found_applicable = True
+                        if rs.score is None or rs.score < min_score:
+                            offenders.append(
+                                f"{item.item_id}/{score.name}/{dimension_id}="
+                                f"{rs.score if rs.score is not None else 'None'}"
+                            )
+                if require_applicable and not found_applicable:
+                    missing_items.append(item.item_id)
+            for sub in results.sub_results.values():
+                _check(sub)
+
+        _check(self)
+        problems: list[str] = []
+        if offenders:
+            problems.append(
+                f"{len(offenders)} dimension score(s) for '{dimension_id}' below {min_score}: "
+                f"{', '.join(offenders[:5])}" + (f" (+{len(offenders) - 5} more)" if len(offenders) > 5 else "")
+            )
+        if missing_items:
+            problems.append(
+                f"Dimension '{dimension_id}' not applicable on {len(missing_items)} item(s): "
+                f"{', '.join(missing_items[:5])}"
+            )
+        if problems:
+            raise EvalNotPassedError(msg or "; ".join(problems))
+
+    def assert_no_failed_items(self, msg: str | None = None) -> None:
+        """Assert no item ended in ``fail`` or ``error`` status.
+
+        Includes any sub-results from workflow evaluations.
+
+        Args:
+            msg: Optional custom failure message.
+
+        Raises:
+            EvalNotPassedError: When any item failed or errored.
+        """
+        bad: list[str] = []
+
+        def _check(results: EvalResults) -> None:
+            for item in results.items:
+                if item.is_failed or item.is_error:
+                    bad.append(f"{item.item_id}:{item.status}")
+            for sub in results.sub_results.values():
+                _check(sub)
+
+        _check(self)
+        if bad:
+            detail = msg or (
+                f"{len(bad)} item(s) failed or errored: {', '.join(bad[:5])}"
+                + (f" (+{len(bad) - 5} more)" if len(bad) > 5 else "")
+            )
+            raise EvalNotPassedError(detail)
+
+
+# endregion
+
+# region Generated rubric evaluators
+
+
+@experimental(feature_id=ExperimentalFeature.EVALS)
+@dataclass(frozen=True)
+class RubricScore:
+    """A single dimension's score from a rubric-based evaluator run.
+
+    Rubric evaluators emit one ``RubricScore`` per dimension per item.
+    Attached to :class:`EvalScoreResult` as a typed view of the raw
+    ``properties.rubric_scores`` payload returned by providers such as
+    Foundry's generated rubric evaluators.
+
+    Attributes:
+        id: Dimension id (matches the rubric definition).
+        score: Numeric score, or ``None`` when the dimension was marked
+            non-applicable for this item.
+        applicable: Whether the dimension applied to this item.
+        weight: Dimension weight (mirrors the rubric definition).
+        reason: Short rationale produced by the evaluator.
+    """
+
+    id: str
+    score: int | None
+    applicable: bool
+    weight: int
+    reason: str
+
 
 # endregion
 
@@ -507,7 +683,7 @@ class EvalResults:
 class Evaluator(Protocol):
     """Protocol for evaluation providers.
 
-    Any evaluation backend (Azure AI Foundry, local LLM-as-judge, custom
+    Any evaluation backend (Microsoft Foundry, local LLM-as-judge, custom
     scorers, etc.) implements this protocol. The provider encapsulates all
     connection details, evaluator selection, and execution logic.
 
@@ -793,7 +969,7 @@ def _extract_agent_eval_data(
             agent_exec_response: AgentExecutorResponse | None = None
 
             if isinstance(completion_data, list):
-                for cdata_item in cast(list[Any], completion_data):  # type: ignore[redundant-cast]
+                for cdata_item in cast(list[Any], completion_data):
                     if isinstance(cdata_item, AgentExecutorResponse):
                         agent_exec_response = cdata_item
                         break
@@ -806,7 +982,7 @@ def _extract_agent_eval_data(
             query: str | list[Message]
             if agent_exec_response.full_conversation:
                 user_msgs = [m for m in agent_exec_response.full_conversation if m.role == "user"]
-                query = user_msgs or agent_exec_response.full_conversation  # type: ignore[assignment]
+                query = user_msgs or agent_exec_response.full_conversation
             elif executor_id in invoked_data:
                 input_data: Any = invoked_data[executor_id]
                 query = (  # type: ignore[assignment]
@@ -841,7 +1017,7 @@ def _extract_overall_query(workflow_result: WorkflowRunResult) -> str | None:
             if isinstance(data, str):
                 return data
             if isinstance(data, list) and data:
-                items_list = cast(list[Any], data)  # type: ignore[redundant-cast]
+                items_list = cast(list[Any], data)
                 first = items_list[0]
                 if isinstance(first, Message):
                     msgs: list[Message] = [m for m in items_list if isinstance(m, Message)]
@@ -1316,7 +1492,7 @@ def evaluator(
                 result = await result
             return _coerce_result(value=result, check_name=check_name)
 
-        _check.__name__ = check_name  # type: ignore[attr-defined,assignment]
+        _check.__name__ = check_name
         _check.__doc__ = func.__doc__
         return _check
 
@@ -1659,6 +1835,7 @@ async def evaluate_workflow(
     workflow: Workflow,
     workflow_result: WorkflowRunResult | None = None,
     queries: str | Sequence[str] | None = None,
+    expected_output: str | Sequence[str] | None = None,
     evaluators: Evaluator | Callable[..., Any] | Sequence[Evaluator | Callable[..., Any]],
     eval_name: str | None = None,
     include_overall: bool = True,
@@ -1683,6 +1860,11 @@ async def evaluate_workflow(
         workflow: The workflow instance.
         workflow_result: A completed ``WorkflowRunResult``.
         queries: Test queries to run through the workflow.
+        expected_output: Ground-truth expected output(s), one per query. A
+            single string is wrapped into a one-element list. When provided,
+            must be the same length as ``queries``. Each value is stamped on
+            the corresponding ``EvalItem.expected_output`` for evaluators
+            that compare against a reference answer (e.g. similarity).
         evaluators: One or more ``Evaluator`` instances.
         eval_name: Display name for the evaluation.
         include_overall: Whether to evaluate the workflow's final output.
@@ -1720,9 +1902,19 @@ async def evaluate_workflow(
     # Normalize singular query to list
     if isinstance(queries, str):
         queries = [queries]
+    if isinstance(expected_output, str):
+        expected_output = [expected_output]
 
     if workflow_result is None and queries is None:
         raise ValueError("Provide either 'workflow_result' or 'queries'.")
+
+    if expected_output is not None and queries is None:
+        raise ValueError(
+            "Provide 'queries' when using 'expected_output';"
+            " 'expected_output' is not supported with 'workflow_result' only."
+        )
+    if expected_output is not None and queries is not None and len(expected_output) != len(queries):
+        raise ValueError(f"Got {len(queries)} queries but {len(expected_output)} expected_output values.")
 
     if num_repetitions < 1:
         raise ValueError(f"num_repetitions must be >= 1, got {num_repetitions}.")
@@ -1737,7 +1929,7 @@ async def evaluate_workflow(
     if queries is not None:
         results_list: list[WRR] = []
         for _rep in range(num_repetitions):
-            for q in queries:
+            for qi, q in enumerate(queries):
                 result = await workflow.run(q)
                 if not isinstance(result, WRR):
                     raise TypeError(f"Expected WorkflowRunResult from workflow.run(), got {type(result).__name__}.")
@@ -1746,9 +1938,11 @@ async def evaluate_workflow(
                 if include_overall:
                     overall_item = _build_overall_item(q, result)
                     if overall_item:
+                        if expected_output is not None:
+                            overall_item.expected_output = expected_output[qi]
                         overall_items.append(overall_item)
     else:
-        assert workflow_result is not None  # noqa: S101  # nosec B101
+        assert workflow_result is not None  # ruff:ignore[assert]  # nosec B101
         all_agent_data = _extract_agent_eval_data(workflow_result, workflow)
         if include_overall:
             original_query = _extract_overall_query(workflow_result)
@@ -1846,7 +2040,7 @@ def _build_overall_item(
     final_output: Any = outputs[-1]
     overall_response: AgentResponse[None]
     if isinstance(final_output, list) and final_output and isinstance(final_output[0], Message):
-        msgs: list[Message] = [m for m in cast(list[Any], final_output) if isinstance(m, Message)]  # type: ignore[redundant-cast]
+        msgs: list[Message] = [m for m in cast(list[Any], final_output) if isinstance(m, Message)]
         response_text = " ".join(str(m.text) for m in msgs if m.role == "assistant")
         overall_response = AgentResponse(messages=[Message("assistant", [response_text])])
     elif isinstance(final_output, AgentResponse):

@@ -1,14 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from __future__ import annotations
-
-import base64
-import logging
-import pickle  # nosec  # noqa: S403
-from typing import Any
-
-from ..exceptions import WorkflowCheckpointException
-
 """Checkpoint encoding using JSON structure with pickle+base64 for arbitrary data.
 
 This hybrid approach provides:
@@ -16,19 +7,213 @@ This hybrid approach provides:
 - Full Python object fidelity via pickle for data values (non-JSON-native types)
 - Base64 encoding to embed binary pickle data in JSON strings
 
-SECURITY WARNING: Checkpoints use pickle for data serialization. Only load checkpoints
-from trusted sources. Loading a malicious checkpoint file can execute arbitrary code.
+When ``allowed_types`` is supplied to :func:`decode_checkpoint_value`, a
+``RestrictedUnpickler`` is used that limits which classes may be instantiated
+during deserialization.  The default built-in safe set covers common Python
+value types (primitives, datetime, uuid, ...), all ``agent_framework`` internal
+types, and all ``openai.types`` types.  Callers can extend the set by passing
+additional ``"module:qualname"`` strings.
+
+Security Model
+--------------
+Checkpoint storage is treated as a **trusted data source**.  The serialization
+format uses Python's ``pickle`` module which can execute arbitrary code during
+deserialization.  The ``RestrictedUnpickler`` provides a defense-in-depth
+allowlist that limits instantiable classes, but it is **not** a security
+boundary — certain reconstruction helpers are required for legitimate object
+reconstruction and application-defined types can provide custom pickle
+behavior.
+
+Developers **must** ensure that:
+
+1. The checkpoint storage backend (file system, Cosmos DB, Azure Blob, Durable
+   Functions storage) is access-controlled and not writable by untrusted
+   parties.
+2. Data flowing into ``decode_checkpoint_value`` originates exclusively from
+   the application's own checkpoint storage — never from user-supplied HTTP
+   requests, message payloads, or other untrusted sources.
+3. The ``allowed_types`` parameter is specified whenever possible to restrict
+   the set of reconstructible types to the minimum required by the application.
+4. Never pass untrusted external input to ``decode_checkpoint_value``. If you
+   must accept external JSON that might contain checkpoint markers, sanitize it
+   first (for example, :func:`agent_framework_durabletask._workflows.serialization.strip_pickle_markers`).
+
+The allowlist is a mitigation that reduces attack surface but does not
+eliminate the inherent risks of deserializing untrusted pickle data.  Treat
+your checkpoint storage with the same access controls you would apply to
+application secrets or database credentials.
 """
 
+from __future__ import annotations
+
+import base64
+import io
+import logging
+import pickle  # nosec  # ruff:ignore[suspicious-pickle-import]
+from enum import EnumMeta
+from typing import Any, cast
+
+from ..exceptions import WorkflowCheckpointException
 
 logger = logging.getLogger("agent_framework")
 
 # Marker to identify pickled values in serialized JSON
 _PICKLE_MARKER = "__pickled__"
 _TYPE_MARKER = "__type__"
+_RESERVED_DICT_KEYS: frozenset[str] = frozenset({
+    _PICKLE_MARKER,
+    _TYPE_MARKER,
+})
 
 # Types that are natively JSON-serializable and don't need pickling
 _JSON_NATIVE_TYPES = (str, int, float, bool, type(None))
+
+# Module prefix for framework-internal types that are always allowed
+_FRAMEWORK_MODULE_PREFIX = "agent_framework."
+
+# Module prefix for OpenAI SDK types that are always allowed
+_OPENAI_MODULE_PREFIX = "openai.types."
+
+# Module-level helpers remain blocked even when their package prefix is otherwise auto-allowed.
+_BLOCKED_FRAMEWORK_GLOBAL_KEYS: frozenset[str] = frozenset({
+    "agent_framework._workflows._checkpoint_encoding:_RestrictedUnpickler",
+    "agent_framework._workflows._checkpoint_encoding:_base64_to_unpickle",
+    "agent_framework._workflows._checkpoint_encoding:decode_checkpoint_value",
+    "agent_framework._workflows._checkpoint_encoding:encode_checkpoint_value",
+})
+
+# Built-in globals considered safe for checkpoint deserialization.
+# Each entry is a ``module:qualname`` string matching the format produced by
+# :func:`_type_to_key`.  These are the globals for which pickle's
+# ``find_class`` will be called when unpickling common Python value types.
+_BUILTIN_ALLOWED_TYPE_KEYS: frozenset[str] = frozenset({
+    # builtins
+    "builtins:object",
+    "builtins:complex",
+    "builtins:range",
+    "builtins:slice",
+    "builtins:int",
+    "builtins:float",
+    "builtins:str",
+    "builtins:bytes",
+    "builtins:bytearray",
+    "builtins:bool",
+    "builtins:set",
+    "builtins:frozenset",
+    "builtins:list",
+    "builtins:dict",
+    "builtins:tuple",
+    "builtins:type",
+    # getattr is used by pickle to reconstruct nested types. find_class
+    # substitutes a restricted implementation during unpickling.
+    "builtins:getattr",
+    # copyreg helpers used by pickle for object reconstruction
+    "copyreg:_reconstructor",
+    # datetime
+    "datetime:datetime",
+    "datetime:date",
+    "datetime:time",
+    "datetime:timedelta",
+    "datetime:timezone",
+    # uuid
+    "uuid:UUID",
+    # decimal
+    "decimal:Decimal",
+    # collections
+    "collections:OrderedDict",
+    "collections:defaultdict",
+    "collections:deque",
+})
+
+_GETATTR_GLOBAL_KEYS: frozenset[str] = frozenset({
+    "builtins:getattr",
+    # Protocol 2 pickles use Python 2's module name for the same global.
+    "__builtin__:getattr",
+})
+
+
+class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-usage]
+    """Unpickler that restricts which classes may be instantiated.
+
+    Only classes whose ``module:qualname`` key appears in the combined allow
+    set (built-in safe types + framework types + OpenAI SDK types +
+    caller-specified extras) are permitted.  All other classes raise
+    :class:`pickle.UnpicklingError`.
+    """
+
+    def __init__(self, data: bytes, allowed_types: frozenset[str]) -> None:
+        super().__init__(io.BytesIO(data))
+        self._allowed_types = allowed_types
+
+    def _is_allowed_type(self, resolved: type) -> bool:
+        type_key = _type_to_key(resolved)
+        return (
+            type_key in _BUILTIN_ALLOWED_TYPE_KEYS
+            or type_key in self._allowed_types
+            or resolved.__module__.startswith(_FRAMEWORK_MODULE_PREFIX)
+            or resolved.__module__.startswith(_OPENAI_MODULE_PREFIX)
+        )
+
+    def _restricted_getattr(self, obj: Any, name: str) -> Any:
+        """Resolve an allowlisted nested type or named enum member."""
+        if not isinstance(obj, type) or not isinstance(name, str):
+            raise pickle.UnpicklingError("Checkpoint deserialization blocked for unsafe attribute traversal.")
+
+        resolved = getattr(obj, name)
+        if isinstance(resolved, type):
+            if not self._is_allowed_type(resolved):
+                type_key = _type_to_key(resolved)
+                raise pickle.UnpicklingError(
+                    f"Checkpoint deserialization blocked for nested type '{type_key}'. "
+                    f"Include the nested type in 'allowed_types' before loading the checkpoint."
+                )
+            return resolved
+
+        # enum.pickle_by_enum_name reconstructs a member with getattr(EnumClass, member_name).
+        if isinstance(obj, EnumMeta) and self._is_allowed_type(obj):
+            members = obj.__members__
+            if name in members and members[name] is resolved:
+                return resolved
+
+        raise pickle.UnpicklingError(
+            f"Checkpoint deserialization blocked for non-type attribute '{obj.__module__}:{obj.__qualname__}.{name}'."
+        )
+
+    def find_class(self, module: str, name: str) -> Any:
+        type_key = f"{module}:{name}"
+
+        if type_key in _BLOCKED_FRAMEWORK_GLOBAL_KEYS:
+            raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for type '{type_key}'.")
+
+        if type_key in _GETATTR_GLOBAL_KEYS:
+            return self._restricted_getattr
+
+        if type_key in _BUILTIN_ALLOWED_TYPE_KEYS:
+            return super().find_class(module, name)  # nosec
+
+        if type_key in self._allowed_types:
+            resolved = super().find_class(module, name)  # nosec
+            if isinstance(resolved, type):
+                return resolved
+            raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for non-type global '{type_key}'.")
+
+        if module.startswith(_FRAMEWORK_MODULE_PREFIX) or module.startswith(_OPENAI_MODULE_PREFIX):
+            # Pickle dotted names traverse attributes on an allowed module; keep the prefix allowlist to concrete
+            # top-level classes rather than helper callables reachable through module attributes.
+            if "." in name:
+                raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for type '{type_key}'.")
+            resolved = super().find_class(module, name)  # nosec
+            if isinstance(resolved, type):
+                return resolved
+            raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for non-type global '{type_key}'.")
+
+        raise pickle.UnpicklingError(
+            f"Checkpoint deserialization blocked for type '{type_key}'. "
+            f"To allow this type, either include its 'module:qualname' key in the "
+            f"'allowed_types' set passed to 'decode_checkpoint_value', or add it to "
+            f"'allowed_checkpoint_types' on your checkpoint storage "
+            f"(for example, 'FileCheckpointStorage.allowed_checkpoint_types')."
+        )
 
 
 def encode_checkpoint_value(value: Any) -> Any:
@@ -48,29 +233,51 @@ def encode_checkpoint_value(value: Any) -> Any:
     return _encode(value)
 
 
-def decode_checkpoint_value(value: Any) -> Any:
+def decode_checkpoint_value(value: Any, *, allowed_types: frozenset[str] | None = None) -> Any:
     """Decode a value from checkpoint storage.
 
     Reverses the encoding performed by encode_checkpoint_value.
     Pickled values (identified by _PICKLE_MARKER) are decoded and unpickled.
 
-    WARNING: Only call this with trusted data. Pickle can execute
-    arbitrary code during deserialization. The post-unpickle type verification
-    detects accidental corruption or type mismatches, but cannot prevent
-    arbitrary code execution from malicious pickle payloads.
-
     Args:
         value: A JSON-deserialized value from checkpoint storage.
+        allowed_types: If not ``None``, restrict pickle deserialization to the
+            built-in safe set, framework types, and the types listed here.
+            Each entry should use ``"module:qualname"`` format — that is, the
+            dotted module path followed by a colon and the class
+            ``__qualname__``.  For example, given a user-defined class::
+
+                # my_app/models.py
+                class MyState: ...
+
+            the corresponding entry would be ``"my_app.models:MyState"``::
+
+                decode_checkpoint_value(
+                    data,
+                    allowed_types=frozenset({"my_app.models:MyState"}),
+                )
+
+            When using :class:`FileCheckpointStorage`, pass the same strings
+            via ``allowed_checkpoint_types``::
+
+                storage = FileCheckpointStorage(
+                    "/tmp/checkpoints",
+                    allowed_checkpoint_types=["my_app.models:MyState"],
+                )
+
+            If ``None``, no restriction is applied (backward-compatible
+            behavior).
 
     Returns:
         The original Python value.
 
     Raises:
         WorkflowCheckpointException: If the unpickled object's type doesn't match
-            the recorded type, indicating corruption, or if the base64/pickle
-            data is malformed.
+            the recorded type, indicating corruption, if the base64/pickle
+            data is malformed, or if a disallowed type is encountered during
+            restricted deserialization.
     """
-    return _decode(value)
+    return _decode(value, allowed_types=allowed_types)
 
 
 def _encode(value: Any) -> Any:
@@ -81,20 +288,21 @@ def _encode(value: Any) -> Any:
 
     # Recursively encode dict values (keys become strings)
     if isinstance(value, dict):
-        return {str(k): _encode(v) for k, v in value.items()}  # type: ignore
+        typed_dict = cast(dict[Any, Any], value)
+        if any(str(k) in _RESERVED_DICT_KEYS for k in typed_dict):
+            return _encode_pickle(value)
+        encoded_dict: dict[str, Any] = {str(k): _encode(v) for k, v in typed_dict.items()}
+        return encoded_dict
 
     # Recursively encode list items (lists are JSON-native collections)
     if isinstance(value, list):
         return [_encode(item) for item in value]  # type: ignore
 
     # Everything else (tuples, sets, dataclasses, custom objects, etc.): pickle and base64 encode
-    return {
-        _PICKLE_MARKER: _pickle_to_base64(value),
-        _TYPE_MARKER: _type_to_key(type(value)),  # type: ignore
-    }
+    return _encode_pickle(value)
 
 
-def _decode(value: Any) -> Any:
+def _decode(value: Any, *, allowed_types: frozenset[str] | None = None) -> Any:
     """Recursively decode a value from JSON storage."""
     # JSON-native types pass through
     if isinstance(value, _JSON_NATIVE_TYPES):
@@ -102,20 +310,29 @@ def _decode(value: Any) -> Any:
 
     # Handle encoded dicts
     if isinstance(value, dict):
+        typed_dict = cast(dict[str, Any], value)
         # Pickled value: decode, unpickle, and verify type
-        if _PICKLE_MARKER in value and _TYPE_MARKER in value:
-            obj = _base64_to_unpickle(value[_PICKLE_MARKER])  # type: ignore
-            _verify_type(obj, value.get(_TYPE_MARKER))  # type: ignore
+        if _PICKLE_MARKER in typed_dict and _TYPE_MARKER in typed_dict:
+            obj = _base64_to_unpickle(cast(str, typed_dict[_PICKLE_MARKER]), allowed_types=allowed_types)
+            _verify_type(obj, cast(str, typed_dict.get(_TYPE_MARKER)))
             return obj
 
         # Regular dict: decode values recursively
-        return {k: _decode(v) for k, v in value.items()}  # type: ignore
+        return {k: _decode(v, allowed_types=allowed_types) for k, v in typed_dict.items()}
 
     # Handle encoded lists
     if isinstance(value, list):
-        return [_decode(item) for item in value]  # type: ignore
+        return [_decode(item, allowed_types=allowed_types) for item in value]  # type: ignore
 
     return value
+
+
+def _encode_pickle(value: Any) -> dict[str, str]:
+    """Encode a value as a pickle envelope."""
+    return {
+        _PICKLE_MARKER: _pickle_to_base64(value),
+        _TYPE_MARKER: _value_type_to_key(value),
+    }
 
 
 def _verify_type(obj: Any, expected_type_key: str) -> None:
@@ -148,20 +365,33 @@ def _pickle_to_base64(value: Any) -> str:
     return base64.b64encode(pickled).decode("ascii")
 
 
-def _base64_to_unpickle(encoded: str) -> Any:
+def _base64_to_unpickle(encoded: str, *, allowed_types: frozenset[str] | None = None) -> Any:
     """Decode base64 string and unpickle.
 
+    Args:
+        encoded: Base64-encoded pickle data.
+        allowed_types: If not ``None``, use restricted unpickling that only
+            permits built-in safe types, framework types, and the specified
+            extra types.
+
     Raises:
-        WorkflowCheckpointException: If the base64 data is corrupted or the pickle
-            format is incompatible.
+        WorkflowCheckpointException: If the base64 data is corrupted, the pickle
+            format is incompatible, or a disallowed type is encountered.
     """
     try:
         pickled = base64.b64decode(encoded.encode("ascii"))
-        return pickle.loads(pickled)  # nosec  # noqa: S301
+        if allowed_types is not None:
+            return _RestrictedUnpickler(pickled, allowed_types).load()
+        return pickle.loads(pickled)  # nosec  # ruff:ignore[suspicious-pickle-usage]
     except Exception as exc:
         raise WorkflowCheckpointException(f"Failed to decode pickled checkpoint data: {exc}") from exc
 
 
-def _type_to_key(t: type) -> str:
+def _type_to_key(t: type[Any]) -> str:
     """Convert a type to a module:qualname string."""
     return f"{t.__module__}:{t.__qualname__}"
+
+
+def _value_type_to_key(value: object) -> str:
+    """Convert a value's type to a module:qualname string."""
+    return _type_to_key(type(value))

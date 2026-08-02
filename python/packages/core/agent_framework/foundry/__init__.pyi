@@ -4,6 +4,13 @@
 # Install the relevant packages for full type support.
 
 from agent_framework_anthropic import AnthropicFoundryClient, RawAnthropicFoundryClient
+from agent_framework_azure_contentunderstanding import (
+    AnalysisSection,
+    ContentUnderstandingContextProvider,
+    DocumentStatus,
+    FileSearchBackend,
+    FileSearchConfig,
+)
 from agent_framework_foundry import (
     FoundryAgent,
     FoundryChatClient,
@@ -13,12 +20,20 @@ from agent_framework_foundry import (
     FoundryEmbeddingSettings,
     FoundryEvals,
     FoundryMemoryProvider,
+    GeneratedEvaluatorRef,
     RawFoundryAgent,
     RawFoundryAgentChatClient,
     RawFoundryChatClient,
     RawFoundryEmbeddingClient,
     evaluate_foundry_target,
     evaluate_traces,
+    to_prompt_agent,
+)
+from agent_framework_foundry_hosting import (
+    FoundrySessionStore,
+    FoundryToolbox,
+    InvocationsHostServer,
+    ResponsesHostServer,
 )
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
@@ -27,7 +42,12 @@ from agent_framework_foundry_local import (
 )
 
 __all__ = [
+    "AnalysisSection",
     "AnthropicFoundryClient",
+    "ContentUnderstandingContextProvider",
+    "DocumentStatus",
+    "FileSearchBackend",
+    "FileSearchConfig",
     "FoundryAgent",
     "FoundryChatClient",
     "FoundryChatOptions",
@@ -39,11 +59,17 @@ __all__ = [
     "FoundryLocalClient",
     "FoundryLocalSettings",
     "FoundryMemoryProvider",
+    "FoundrySessionStore",
+    "FoundryToolbox",
+    "GeneratedEvaluatorRef",
+    "InvocationsHostServer",
     "RawAnthropicFoundryClient",
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
     "RawFoundryChatClient",
     "RawFoundryEmbeddingClient",
+    "ResponsesHostServer",
     "evaluate_foundry_target",
     "evaluate_traces",
+    "to_prompt_agent",
 ]

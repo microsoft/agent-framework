@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import copy
-from typing import TYPE_CHECKING, Any, Literal, Union
+from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
@@ -18,19 +18,22 @@ from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 
+from ._feature_usage import create_feature_usage_http_client
+
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from agent_framework import Content
     from azure.core.credentials import TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
 
     AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 
-AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # noqa: S105 # nosec B105
+AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # ruff:ignore[hardcoded-password-string] # nosec B105
 
 
 RESPONSE_TYPE = Union[
@@ -47,6 +50,25 @@ RESPONSE_TYPE = Union[
 ]
 
 AzureTokenProvider = Callable[[], str | Awaitable[str]]
+
+
+PROMPT_CACHE_BREAKPOINT_KEY = "prompt_cache_breakpoint"
+
+
+def _attach_prompt_cache_breakpoint(  # pyright: ignore[reportUnusedFunction]
+    part: dict[str, Any], content: Content
+) -> dict[str, Any]:
+    """Copy a prompt cache breakpoint from content metadata onto an outgoing part.
+
+    GPT-5.6 and later models accept an explicit cache breakpoint on supported content
+    blocks; users opt in per part via
+    ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    """
+    props = content.additional_properties
+    breakpoint_value = props.get(PROMPT_CACHE_BREAKPOINT_KEY) if props else None
+    if isinstance(breakpoint_value, Mapping):
+        part[PROMPT_CACHE_BREAKPOINT_KEY] = dict(cast("Mapping[str, Any]", breakpoint_value))
+    return part
 
 
 class OpenAISettings(TypedDict, total=False):
@@ -162,6 +184,7 @@ def load_openai_service_settings(
     openai_model_fields: Sequence[OpenAIModelSettingName] = ("model",),
     azure_model_fields: Sequence[OpenAIModelSettingName] = ("model",),
     responses_mode: bool = False,
+    timeout: float | None = None,
 ) -> tuple[dict[str, Any], AsyncOpenAI, bool]:
     """Load OpenAI settings, including Azure OpenAI model aliases.
 
@@ -218,6 +241,8 @@ def load_openai_service_settings(
             }
             if base_url := openai_settings.get("base_url"):
                 client_args["base_url"] = base_url
+            if timeout is not None:
+                client_args["timeout"] = timeout
             return openai_settings, AsyncOpenAI(**client_args), False  # type: ignore[return-value]
         checked_openai = True
     azure_settings = load_settings(
@@ -262,6 +287,7 @@ def load_openai_service_settings(
     if client:
         return azure_settings, client, True  # type: ignore[return-value]
     client_args["default_headers"] = merged_headers
+    client_args["http_client"] = create_feature_usage_http_client()
     if endpoint := azure_settings.get("endpoint"):
         if responses_mode:
             client_args["base_url"] = f"{endpoint.rstrip('/')}/openai/v1/"
@@ -282,7 +308,49 @@ def load_openai_service_settings(
             "Azure OpenAI client requires either an API key or an Azure AD token provider."
             " This can be provided either as a callable api_key or via the credential parameter."
         )
+
+    # The /openai/v1 endpoint exposes an OpenAI-compatible API surface.
+    # AsyncAzureOpenAI rewrites certain request paths (e.g. /embeddings,
+    # /chat/completions) by inserting /deployments/{model}/, which produces
+    # 404s on this endpoint.  Use AsyncOpenAI instead so request URLs are
+    # sent as-is.  responses_mode is excluded because the Responses API path
+    # (/responses) is not rewritten by the Azure SDK.
+    resolved_base_url = client_args.get("base_url", "")
+    if not responses_mode and resolved_base_url and resolved_base_url.rstrip("/").endswith("/openai/v1"):
+        openai_args: dict[str, Any] = {
+            "base_url": resolved_base_url,
+            "default_headers": client_args.get("default_headers"),
+            "http_client": client_args["http_client"],
+        }
+        if "azure_ad_token_provider" in client_args:
+            openai_args["api_key"] = _ensure_async_token_provider(client_args["azure_ad_token_provider"])
+        elif "api_key" in client_args:
+            openai_args["api_key"] = client_args["api_key"]
+        if timeout is not None:
+            openai_args["timeout"] = timeout
+        return azure_settings, AsyncOpenAI(**openai_args), True  # type: ignore[return-value]
+
+    if timeout is not None:
+        client_args["timeout"] = timeout
     return azure_settings, AsyncAzureOpenAI(**client_args), True  # type: ignore[return-value]
+
+
+def _ensure_async_token_provider(
+    provider: AzureTokenProvider,
+) -> Callable[[], Awaitable[str]]:
+    """Wrap a (possibly synchronous) token provider so it always returns an awaitable.
+
+    ``AsyncOpenAI`` requires callable ``api_key`` values to return ``Awaitable[str]``.
+    Azure token providers may return a plain ``str``, so this normalises them.
+    """
+
+    async def _wrapper() -> str:
+        result = provider()
+        if isinstance(result, str):
+            return result
+        return await result
+
+    return _wrapper
 
 
 def _resolve_azure_credential_to_token_provider(
@@ -305,7 +373,7 @@ def _resolve_azure_credential_to_token_provider(
     if isinstance(credential, AsyncTokenCredential):
         return get_async_bearer_token_provider(credential, AZURE_OPENAI_TOKEN_SCOPE)
     if isinstance(credential, TokenCredential):
-        return get_bearer_token_provider(credential, AZURE_OPENAI_TOKEN_SCOPE)  # type: ignore[arg-type]
+        return get_bearer_token_provider(credential, AZURE_OPENAI_TOKEN_SCOPE)
     raise ValueError(
         "The 'credential' parameter must be an Azure TokenCredential, AsyncTokenCredential, or a "
         "callable token provider."

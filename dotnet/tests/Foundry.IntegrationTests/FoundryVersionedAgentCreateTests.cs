@@ -183,7 +183,7 @@ public class FoundryVersionedAgentCreateTests
     /// invokes the server-side OpenAPI function through <c>RunAsync</c>.
     /// Regression test for https://github.com/microsoft/agent-framework/issues/4883.
     /// </summary>
-    [RetryFact(Constants.RetryCount, Constants.RetryDelay, Skip = "For manual testing only")]
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public async Task AsAIAgent_WithOpenAPITool_NativeSDKCreation_InvokesServerSideToolAsync()
     {
         // Arrange — create agent version with OpenAPI tool using native Azure.AI.Projects SDK types.

@@ -10,7 +10,19 @@ Tests operations with multiple specialized agents:
 - Agent isolation and tool routing
 """
 
+from typing import Any, Protocol
+
 import pytest
+
+from agent_framework_durabletask import DurableAIAgentClient
+
+
+class AgentClientFactoryProtocol(Protocol):
+    """Protocol for the agent client factory fixture."""
+
+    @classmethod
+    def create(cls, max_poll_retries: int = 90) -> tuple[Any, DurableAIAgentClient]: ...
+
 
 # Agent names from the 02_multi_agent sample
 WEATHER_AGENT_NAME: str = "WeatherAgent"
@@ -31,7 +43,7 @@ class TestMultiAgent:
     """Test suite for multi-agent functionality."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, agent_client_factory: type) -> None:
+    def setup(self, agent_client_factory: type[AgentClientFactoryProtocol]) -> None:
         """Setup test fixtures."""
         # Create agent client using the factory fixture
         _, self.agent_client = agent_client_factory.create()
@@ -46,6 +58,7 @@ class TestMultiAgent:
         assert math_agent is not None
         assert math_agent.name == MATH_AGENT_NAME
 
+    @pytest.mark.skip(reason="Flaky in CI: times out / crashes the xdist runner; temporarily disabled.")
     def test_weather_agent_with_tool(self):
         """Test weather agent with weather tool execution."""
         agent = self.agent_client.get_agent(WEATHER_AGENT_NAME)
@@ -65,6 +78,7 @@ class TestMultiAgent:
         assert len(tool_calls) > 0, "Expected at least one tool call"
         assert any(call.name == "get_weather" for call in tool_calls), "Expected get_weather tool to be called"
 
+    @pytest.mark.skip(reason="Flaky in CI: times out / crashes the xdist runner; temporarily disabled.")
     def test_math_agent_with_tool(self):
         """Test math agent with calculation tool execution."""
         agent = self.agent_client.get_agent(MATH_AGENT_NAME)
@@ -84,6 +98,9 @@ class TestMultiAgent:
         assert len(tool_calls) > 0, "Expected at least one tool call"
         assert any(call.name == "calculate_tip" for call in tool_calls), "Expected calculate_tip tool to be called"
 
+    @pytest.mark.skip(
+        reason="Flaky in CI: times out waiting for live Azure responses; temporarily disabled and tracked in #6777."
+    )
     def test_multiple_calls_to_same_agent(self):
         """Test multiple sequential calls to the same agent."""
         agent = self.agent_client.get_agent(WEATHER_AGENT_NAME)

@@ -9,6 +9,7 @@ Samples demonstrating Agent Skills capabilities. Each sample shows a different w
 | [Agent_Step03_ClassBasedSkills](Agent_Step03_ClassBasedSkills/) | Define skills as C# classes using `AgentClassSkill`. |
 | [Agent_Step04_MixedSkills](Agent_Step04_MixedSkills/) | **(Advanced)** Combine file-based, code-defined, and class-based skills using `AgentSkillsProviderBuilder`. |
 | [Agent_Step05_SkillsWithDI](Agent_Step05_SkillsWithDI/) | Use Dependency Injection with both code-defined (`AgentInlineSkill`) and class-based (`AgentClassSkill`) skills. |
+| [Agent_Step06_McpBasedSkills](Agent_Step06_McpBasedSkills/) | Discover skills served over the [Model Context Protocol (MCP)](https://modelcontextprotocol.io) via `AgentMcpSkillsSource`. Spins up an in-process MCP server that exposes skills as resources (`skill://...`) and connects an `McpClient` to it. |
 
 ## Key Concepts
 

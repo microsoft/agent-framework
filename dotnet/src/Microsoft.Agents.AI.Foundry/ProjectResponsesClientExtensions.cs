@@ -13,7 +13,6 @@ namespace Azure.AI.Extensions.OpenAI;
 /// Provides extension methods for <see cref="ProjectResponsesClient"/>
 /// to simplify the creation of AI agents that work with Azure AI services.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static class ProjectResponsesClientExtensions
 {
     /// <summary>

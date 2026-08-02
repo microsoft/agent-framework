@@ -23,7 +23,7 @@ public static class WorkflowHostingExtensions
     /// <param name="includeExceptionDetails">If <see langword="true"/>, will include <see cref="System.Exception.Message"/>
     /// in the <see cref="ErrorContent"/> representing the workflow error.</param>
     /// <param name="includeWorkflowOutputsInResponse">If <see langword="true"/>, will transform outgoing workflow outputs
-    /// into into content in <see cref="AgentResponseUpdate"/>s or the <see cref="AgentResponse"/> as appropriate.</param>
+    /// into content in <see cref="AgentResponseUpdate"/>s or the <see cref="AgentResponse"/> as appropriate.</param>
     /// <returns></returns>
     public static AIAgent AsAIAgent(
         this Workflow workflow,
@@ -41,7 +41,7 @@ public static class WorkflowHostingExtensions
     {
         Dictionary<string, object?> parameters = new()
         {
-            { "data", request.Data}
+            { "data", request.Data }
         };
 
         return new FunctionCallContent(request.RequestId, request.PortInfo.PortId, parameters);

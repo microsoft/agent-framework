@@ -78,7 +78,7 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
     ):
         exporter = InMemorySpanExporter()
         if enable_instrumentation or enable_sensitive_data:
-            tracer_provider = trace.get_tracer_provider()
+            tracer_provider = trace.get_tracer_provider()  # type: ignore[assignment]
             if not hasattr(tracer_provider, "add_span_processor"):
                 raise RuntimeError("Tracer provider does not support adding span processors.")
 

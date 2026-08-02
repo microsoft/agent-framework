@@ -45,17 +45,17 @@ def test_normalize_type_to_list_union_pipe_syntax() -> None:
 
 def test_normalize_type_to_list_union_typing_syntax() -> None:
     """Test normalize_type_to_list with Union[] from typing module."""
-    result = normalize_type_to_list(Union[str, int])  # pyright: ignore[reportArgumentType]
+    result = normalize_type_to_list(Union[str, int])  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     assert set(result) == {str, int}
 
-    result = normalize_type_to_list(Union[str, int, bool])  # pyright: ignore[reportArgumentType]
+    result = normalize_type_to_list(Union[str, int, bool])  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     assert set(result) == {str, int, bool}
 
 
 def test_normalize_type_to_list_optional() -> None:
     """Test normalize_type_to_list with Optional types (Union[T, None])."""
     # Optional[str] is Union[str, None]
-    result = normalize_type_to_list(Optional[str])  # pyright: ignore[reportArgumentType]
+    result = normalize_type_to_list(Optional[str])  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     assert str in result
     assert type(None) in result
     assert len(result) == 2
@@ -125,20 +125,20 @@ def test_resolve_type_annotation_string_custom_type() -> None:
     assert result is MyCustomType
 
     result = resolve_type_annotation("MyCustomType | str", {"MyCustomType": MyCustomType, "str": str})
-    assert set(result.__args__) == {MyCustomType, str}  # type: ignore[union-attr]
+    assert set(result.__args__) == {MyCustomType, str}  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 def test_resolve_type_annotation_string_typing_union() -> None:
     """Test resolve_type_annotation resolves Union[] syntax in strings."""
     result = resolve_type_annotation("Union[str, int]", {"str": str, "int": int})
-    assert set(result.__args__) == {str, int}  # type: ignore[union-attr]
+    assert set(result.__args__) == {str, int}  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 def test_resolve_type_annotation_string_optional() -> None:
     """Test resolve_type_annotation resolves Optional[] syntax in strings."""
     result = resolve_type_annotation("Optional[str]", {"str": str})
-    assert str in result.__args__  # type: ignore[union-attr]
-    assert type(None) in result.__args__  # type: ignore[union-attr]
+    assert str in result.__args__  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert type(None) in result.__args__  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 def test_resolve_type_annotation_unresolvable_raises() -> None:

@@ -9,7 +9,7 @@
 # 4. Uses an agent to summarize the results
 #
 # Example input: 
-# gpt-4.1
+# gpt-5.4-mini
 #
 kind: Workflow
 trigger:

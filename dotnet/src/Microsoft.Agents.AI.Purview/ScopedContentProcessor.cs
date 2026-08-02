@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Purview.Models.Common;
@@ -74,9 +75,10 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
         foreach (ChatMessage message in messages)
         {
             if (message.AdditionalProperties != null &&
-                message.AdditionalProperties.TryGetValue(Constants.UserId, out userId) &&
-                !string.IsNullOrEmpty(userId))
+                message.AdditionalProperties.TryGetValue(Constants.UserId, out string? potentialUserId) &&
+                Guid.TryParse(potentialUserId, out Guid _))
             {
+                userId = potentialUserId;
                 return true;
             }
             else if (Guid.TryParse(message.AuthorName, out Guid _))
@@ -102,20 +104,13 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     private async Task<List<ProcessContentRequest>> MapMessageToPCRequestsAsync(IEnumerable<ChatMessage> messages, string? sessionId, Activity activity, PurviewSettings settings, string? userId, CancellationToken cancellationToken)
     {
         List<ProcessContentRequest> pcRequests = [];
-        TokenInfo? tokenInfo = null;
-
-        bool needUserId = userId == null && TryGetUserIdFromPayload(messages, out userId);
-
-        // Only get user info if the tenant id is null or if there's no location.
-        // If location is missing, we will create a new location using the client id.
-        if (settings.TenantId == null ||
-            settings.PurviewAppLocation == null ||
-            needUserId)
+        TokenInfo? tokenInfo = await this._purviewClient.GetUserInfoFromTokenAsync(cancellationToken, settings.TenantId).ConfigureAwait(false);
+        string tenantId = tokenInfo?.TenantId ?? settings.TenantId ?? throw new PurviewRequestException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");
+        string? resolvedUserId = !string.IsNullOrEmpty(tokenInfo?.UserId) ? tokenInfo.UserId : userId;
+        if (string.IsNullOrEmpty(resolvedUserId) && TryGetUserIdFromPayload(messages, out string? payloadUserId))
         {
-            tokenInfo = await this._purviewClient.GetUserInfoFromTokenAsync(cancellationToken, settings.TenantId).ConfigureAwait(false);
+            resolvedUserId = payloadUserId;
         }
-
-        string tenantId = settings.TenantId ?? tokenInfo?.TenantId ?? throw new PurviewRequestException("No tenant id provided or inferred for Purview request. Please provide a tenant id in PurviewSettings or configure the TokenCredential to authenticate to a tenant.");
 
         foreach (ChatMessage message in messages)
         {
@@ -165,18 +160,12 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
             };
             ContentToProcess contentToProcess = new([conversationMetadata], activityMetadata, deviceMetadata, integratedAppMetadata, protectedAppMetadata);
 
-            if (userId == null &&
-                tokenInfo?.UserId != null)
+            if (string.IsNullOrEmpty(resolvedUserId))
             {
-                userId = tokenInfo.UserId;
+                throw new PurviewRequestException("No user id provided or inferred for Purview request. Please provide an Entra user id in each message, pass a user id to the processor, or configure the TokenCredential to authenticate to an Entra user.");
             }
 
-            if (string.IsNullOrEmpty(userId))
-            {
-                throw new PurviewRequestException("No user id provided or inferred for Purview request. Please provide an Entra user id in each message's AuthorName, set a default Entra user id in PurviewSettings, or configure the TokenCredential to authenticate to an Entra user.");
-            }
-
-            ProcessContentRequest pcRequest = new(contentToProcess, userId, tenantId);
+            ProcessContentRequest pcRequest = new(contentToProcess, resolvedUserId, tenantId);
             pcRequests.Add(pcRequest);
         }
 
@@ -193,49 +182,90 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     {
         ProtectionScopesRequest psRequest = CreateProtectionScopesRequest(pcRequest, pcRequest.UserId, pcRequest.TenantId, pcRequest.CorrelationId);
 
+        PaymentRequiredCacheEntry? cachedPaymentRequired = await this._cacheProvider.GetAsync<PaymentRequiredCacheKey, PaymentRequiredCacheEntry>(
+            new PaymentRequiredCacheKey(pcRequest.TenantId),
+            cancellationToken).ConfigureAwait(false);
+
+        if (cachedPaymentRequired != null)
+        {
+            throw new PurviewPaymentRequiredException(cachedPaymentRequired.Message ?? "Payment required");
+        }
+
         ProtectionScopesCacheKey cacheKey = new(psRequest);
 
         ProtectionScopesResponse? cacheResponse = await this._cacheProvider.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(cacheKey, cancellationToken).ConfigureAwait(false);
 
-        ProtectionScopesResponse psResponse;
-
         if (cacheResponse != null)
         {
-            psResponse = cacheResponse;
-        }
-        else
-        {
-            psResponse = await this._purviewClient.GetProtectionScopesAsync(psRequest, cancellationToken).ConfigureAwait(false);
-            await this._cacheProvider.SetAsync(cacheKey, psResponse, cancellationToken).ConfigureAwait(false);
+            return await this.ProcessWithCachedScopesAsync(pcRequest, cacheResponse, cacheKey, cancellationToken).ConfigureAwait(false);
         }
 
+        try
+        {
+            this._channelHandler.QueueJob(new ScopeRetrievalJob(psRequest, cacheKey, pcRequest));
+        }
+        catch (PurviewJobException)
+        {
+            // QueueJob already logs failures. Scope warmup is best effort; don't block ProcessContent.
+        }
+
+        return await this.CallProcessContentAsync(pcRequest, cacheKey, dlpActions: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Apply locally-cached protection scopes to the request and dispatch ProcessContent appropriately.
+    /// </summary>
+    private async Task<ProcessContentResponse> ProcessWithCachedScopesAsync(
+        ProcessContentRequest pcRequest,
+        ProtectionScopesResponse psResponse,
+        ProtectionScopesCacheKey cacheKey,
+        CancellationToken cancellationToken)
+    {
         pcRequest.ScopeIdentifier = psResponse.ScopeIdentifier;
 
         (bool shouldProcess, List<DlpActionInfo> dlpActions, ExecutionMode executionMode) = CheckApplicableScopes(pcRequest, psResponse);
 
         if (shouldProcess)
         {
+            pcRequest.ProcessInline = executionMode == ExecutionMode.EvaluateInline;
+
             if (executionMode == ExecutionMode.EvaluateOffline)
             {
                 this._channelHandler.QueueJob(new ProcessContentJob(pcRequest));
                 return new ProcessContentResponse();
             }
 
-            ProcessContentResponse pcResponse = await this._purviewClient.ProcessContentAsync(pcRequest, cancellationToken).ConfigureAwait(false);
-
-            if (pcResponse.ProtectionScopeState == ProtectionScopeState.Modified)
-            {
-                await this._cacheProvider.RemoveAsync(cacheKey, cancellationToken).ConfigureAwait(false);
-            }
-
-            pcResponse = CombinePolicyActions(pcResponse, dlpActions);
-            return pcResponse;
+            return await this.CallProcessContentAsync(pcRequest, cacheKey, dlpActions, cancellationToken).ConfigureAwait(false);
         }
 
         ContentActivitiesRequest caRequest = new(pcRequest.UserId, pcRequest.TenantId, pcRequest.ContentToProcess, pcRequest.CorrelationId);
         this._channelHandler.QueueJob(new ContentActivityJob(caRequest));
 
         return new ProcessContentResponse();
+    }
+
+    /// <summary>
+    /// Call ProcessContent and invalidate the protection scopes cache when the response indicates the cached scopes are stale.
+    /// </summary>
+    private async Task<ProcessContentResponse> CallProcessContentAsync(
+        ProcessContentRequest pcRequest,
+        ProtectionScopesCacheKey cacheKey,
+        List<DlpActionInfo>? dlpActions,
+        CancellationToken cancellationToken)
+    {
+        ProcessContentResponse pcResponse = await this._purviewClient.ProcessContentAsync(pcRequest, cancellationToken).ConfigureAwait(false);
+
+        if (pcRequest.ScopeIdentifier != null && pcResponse.ProtectionScopeState == ProtectionScopeState.Modified)
+        {
+            await this._cacheProvider.RemoveAsync(cacheKey, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (dlpActions?.Count > 0)
+        {
+            pcResponse = CombinePolicyActions(pcResponse, dlpActions);
+        }
+
+        return pcResponse;
     }
 
     /// <summary>
@@ -248,9 +278,21 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     {
         if (actionInfos?.Count > 0)
         {
-            pcResponse.PolicyActions = pcResponse.PolicyActions is null ?
-                actionInfos :
-                [.. pcResponse.PolicyActions, .. actionInfos];
+            List<DlpActionInfo> combinedActions = [];
+            HashSet<(DlpAction Action, RestrictionAction? RestrictionAction)> seenActions = [];
+            IEnumerable<DlpActionInfo> allActions = pcResponse.PolicyActions is null
+                ? actionInfos
+                : pcResponse.PolicyActions.Concat(actionInfos);
+
+            foreach (DlpActionInfo actionInfo in allActions)
+            {
+                if (seenActions.Add((actionInfo.Action, actionInfo.RestrictionAction)))
+                {
+                    combinedActions.Add(actionInfo);
+                }
+            }
+
+            pcResponse.PolicyActions = combinedActions;
         }
 
         return pcResponse;
@@ -262,7 +304,7 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     /// <param name="pcRequest">The process content request.</param>
     /// <param name="psResponse">The protection scopes response that was returned for the process content request.</param>
     /// <returns>A bool indicating if the content needs to be processed. A list of applicable actions from the scopes response, and the execution mode for the process content request.</returns>
-    private static (bool shouldProcess, List<DlpActionInfo> dlpActions, ExecutionMode executionMode) CheckApplicableScopes(ProcessContentRequest pcRequest, ProtectionScopesResponse psResponse)
+    internal static (bool shouldProcess, List<DlpActionInfo> dlpActions, ExecutionMode executionMode) CheckApplicableScopes(ProcessContentRequest pcRequest, ProtectionScopesResponse psResponse)
     {
         ProtectionScopeActivities requestActivity = TranslateActivity(pcRequest.ContentToProcess.ActivityMetadata.Activity);
 
@@ -284,7 +326,11 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
 
             foreach (var location in scope.Locations ?? Array.Empty<PolicyLocation>())
             {
-                locationMatch = location.DataType.EndsWith(locationType, StringComparison.OrdinalIgnoreCase) && location.Value.Equals(locationValue, StringComparison.OrdinalIgnoreCase);
+                if (location.DataType.EndsWith(locationType, StringComparison.OrdinalIgnoreCase) && location.Value.Equals(locationValue, StringComparison.OrdinalIgnoreCase))
+                {
+                    locationMatch = true;
+                    break;
+                }
             }
 
             if (activityMatch && locationMatch)

@@ -45,7 +45,7 @@ Set the following environment variables:
 | Variable | Description |
 |---|---|
 | `AZURE_OPENAI_ENDPOINT` | Your Azure OpenAI endpoint URL |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Model deployment name (defaults to `gpt-4o-mini`) |
+| `AZURE_OPENAI_DEPLOYMENT_NAME` | Model deployment name (defaults to `gpt-5.4-mini`) |
 
 ## Running the Sample
 

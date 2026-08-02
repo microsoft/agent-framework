@@ -13,16 +13,16 @@
 // showing that DI works identically regardless of how the skill is defined.
 // When prompted with a question spanning both domains, the agent uses both skills.
 
+using System.ComponentModel;
 using System.Text.Json;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
-using OpenAI.Responses;
 
 // --- Configuration ---
-string endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // --- DI Container ---
 // Register application services that skill resources and scripts can resolve at execution time.
@@ -62,8 +62,8 @@ var distanceSkill = new AgentInlineSkill(
 // Approach 2: Class-Based Skill with DI (AgentClassSkill)
 // =====================================================================
 // Handles weight conversions (pounds ↔ kilograms).
-// Resources and scripts are encapsulated in a class. Factory methods
-// CreateResource and CreateScript accept delegates with IServiceProvider.
+// Resources and scripts are discovered via reflection using attributes.
+// Methods with an IServiceProvider parameter receive DI automatically.
 //
 // Alternatively, class-based skills can accept dependencies through their
 // constructor. Register the skill class itself in the ServiceCollection and
@@ -79,19 +79,21 @@ var weightSkill = new WeightConverterSkill();
 var skillsProvider = new AgentSkillsProvider(distanceSkill, weightSkill);
 
 // --- Agent Setup ---
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetResponsesClient()
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
     .AsAIAgent(
         options: new ChatClientAgentOptions
         {
             Name = "UnitConverterAgent",
             ChatOptions = new()
             {
+                ModelId = deploymentName,
                 Instructions = "You are a helpful assistant that can convert units.",
             },
             AIContextProviders = [skillsProvider],
         },
-        model: deploymentName,
         services: serviceProvider);
 
 // --- Example: Unit conversion ---
@@ -113,14 +115,13 @@ Console.WriteLine($"Agent: {response.Text}");
 /// </summary>
 /// <remarks>
 /// This skill resolves <see cref="ConversionService"/> from the DI container
-/// in both its resource and script functions. This enables clean separation of
-/// concerns and testability while retaining the class-based skill pattern.
+/// in both its resource and script methods. Methods with an <see cref="IServiceProvider"/>
+/// parameter are automatically injected by the framework. Properties and methods annotated
+/// with <see cref="AgentSkillResourceAttribute"/> and <see cref="AgentSkillScriptAttribute"/>
+/// are automatically discovered via reflection.
 /// </remarks>
-internal sealed class WeightConverterSkill : AgentClassSkill
+internal sealed class WeightConverterSkill : AgentClassSkill<WeightConverterSkill>
 {
-    private IReadOnlyList<AgentSkillResource>? _resources;
-    private IReadOnlyList<AgentSkillScript>? _scripts;
-
     /// <inheritdoc/>
     public override AgentSkillFrontmatter Frontmatter { get; } = new(
         "weight-converter",
@@ -135,25 +136,27 @@ internal sealed class WeightConverterSkill : AgentClassSkill
         3. Present the result clearly with both units.
         """;
 
-    /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillResource>? Resources => this._resources ??=
-    [
-        CreateResource("weight-table", (IServiceProvider serviceProvider) =>
-        {
-            var service = serviceProvider.GetRequiredService<ConversionService>();
-            return service.GetWeightTable();
-        }),
-    ];
+    /// <summary>
+    /// Returns the weight conversion table from the DI-registered <see cref="ConversionService"/>.
+    /// </summary>
+    [AgentSkillResource("weight-table")]
+    [Description("Lookup table of multiplication factors for weight conversions.")]
+    private static string GetWeightTable(IServiceProvider serviceProvider)
+    {
+        var service = serviceProvider.GetRequiredService<ConversionService>();
+        return service.GetWeightTable();
+    }
 
-    /// <inheritdoc/>
-    public override IReadOnlyList<AgentSkillScript>? Scripts => this._scripts ??=
-    [
-        CreateScript("convert", (double value, double factor, IServiceProvider serviceProvider) =>
-        {
-            var service = serviceProvider.GetRequiredService<ConversionService>();
-            return service.Convert(value, factor);
-        }),
-    ];
+    /// <summary>
+    /// Converts a value by the given factor using the DI-registered <see cref="ConversionService"/>.
+    /// </summary>
+    [AgentSkillScript("convert")]
+    [Description("Multiplies a value by a conversion factor and returns the result as JSON.")]
+    private static string Convert(double value, double factor, IServiceProvider serviceProvider)
+    {
+        var service = serviceProvider.GetRequiredService<ConversionService>();
+        return service.Convert(value, factor);
+    }
 }
 
 // ---------------------------------------------------------------------------

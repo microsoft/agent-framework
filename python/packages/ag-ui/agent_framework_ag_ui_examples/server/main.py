@@ -24,6 +24,7 @@ from ..agents.subgraphs_agent import subgraphs_agent
 from ..agents.task_steps_agent import task_steps_agent_wrapped
 from ..agents.ui_generator_agent import ui_generator_agent
 from ..agents.weather_agent import weather_agent
+from ..agents.weather_state_agent import weather_state_agent
 
 AnthropicClient: type[Any] | None
 try:
@@ -123,7 +124,7 @@ add_agent_framework_fastapi_endpoint(
 # Agentic Generative UI - task steps agent with streaming state updates
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=task_steps_agent_wrapped(client),  # type: ignore[arg-type]
+    agent=task_steps_agent_wrapped(client),
     path="/agentic_generative_ui",
 )
 
@@ -139,6 +140,14 @@ add_agent_framework_fastapi_endpoint(
     app=app,
     agent=subgraphs_agent(),
     path="/subgraphs",
+)
+
+# Deterministic Tool-Driven State - tool returns state_update() to push snapshot
+# from actual tool output (see issue #3167).
+add_agent_framework_fastapi_endpoint(
+    app=app,
+    agent=weather_state_agent(client),
+    path="/deterministic_state",
 )
 
 

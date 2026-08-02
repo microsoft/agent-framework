@@ -7,8 +7,12 @@ from typing import Any
 
 import pytest
 from pytest import MonkeyPatch, mark, param
-from samples.getting_started.threads.custom_chat_message_store_thread import main as threads_custom_store
-from samples.getting_started.threads.suspend_resume_thread import main as threads_suspend_resume
+from samples.getting_started.threads.custom_chat_message_store_thread import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
+    main as threads_custom_store,
+)
+from samples.getting_started.threads.suspend_resume_thread import (  # pyrefly: ignore[missing-import] # ty: ignore[unresolved-import]
+    main as threads_suspend_resume,
+)
 
 # Environment variable for controlling sample tests
 RUN_SAMPLES_TESTS = "RUN_SAMPLES_TESTS"
@@ -49,4 +53,4 @@ async def test_thread_samples(sample: Callable[..., Awaitable[Any]], responses: 
         return responses.pop(0) if responses else "exit"
 
     monkeypatch.setattr("builtins.input", mock_input)
-    await sample
+    await sample()

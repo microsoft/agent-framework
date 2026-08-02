@@ -1,6 +1,8 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "agent-framework-openai",
+#     "agent-framework-orchestrations",
 #     "semantic-kernel",
 # ]
 # ///
@@ -164,13 +166,13 @@ async def run_agent_framework_example(prompt: str) -> str | None:
     workflow = MagenticBuilder(
         participants=[researcher, coder],
         manager_agent=manager_agent,  # type: ignore
-        intermediate_outputs=True,
+        intermediate_output_from=[researcher, coder],
     ).build()
 
     output_messages: list[Message] = []
     last_message_id: str | None = None
     async for event in workflow.run(prompt, stream=True):
-        if event.type == "output":
+        if event.type in ("intermediate", "output"):
             if isinstance(event.data, AgentResponseUpdate):
                 if event.data.message_id != last_message_id:
                     last_message_id = event.data.message_id

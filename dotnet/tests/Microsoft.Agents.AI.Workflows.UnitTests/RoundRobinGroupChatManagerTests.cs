@@ -136,4 +136,55 @@ public class RoundRobinGroupChatManagerTests
         FluentActions.Invoking(() => new RoundRobinGroupChatManager([]))
             .Should().Throw<System.ArgumentException>();
     }
+
+    [Fact]
+    public async Task RoundRobinGroupChat_CheckpointRoundTrip_PreservesIterationCountAndCursorAsync()
+    {
+        TestEchoAgent agent1 = new(id: "agent1");
+        TestEchoAgent agent2 = new(id: "agent2");
+        TestEchoAgent agent3 = new(id: "agent3");
+        List<AIAgent> agents = [agent1, agent2, agent3];
+        List<ChatMessage> history = [];
+
+        TestRunState sharedState = new();
+        TestWorkflowContext sourceContext = new("gcm-host", sharedState);
+        TestWorkflowContext sinkContext = new("gcm-host", sharedState);
+
+        RoundRobinGroupChatManager source = new(agents);
+        await source.SelectNextAgentAsync(history); // cursor -> agent2
+        source.IterationCount = 7;
+
+        await source.CheckpointAsync(sourceContext);
+
+        RoundRobinGroupChatManager restored = new(agents);
+        restored.IterationCount.Should().Be(0, "freshly constructed manager has no iteration count");
+
+        await restored.RestoreCheckpointAsync(sinkContext);
+
+        restored.IterationCount.Should().Be(7, "the base hook must rehydrate IterationCount");
+
+        AIAgent next = await restored.SelectNextAgentAsync(history);
+        next.Should().BeSameAs(agent2, "the round-robin cursor should resume where the source left off");
+    }
+
+    [Fact]
+    public async Task RoundRobinGroupChat_RestoreWithoutCheckpoint_DefaultsToZeroStateAsync()
+    {
+        TestEchoAgent agent1 = new(id: "agent1");
+        TestEchoAgent agent2 = new(id: "agent2");
+        List<AIAgent> agents = [agent1, agent2];
+        List<ChatMessage> history = [];
+
+        TestWorkflowContext emptyContext = new("gcm-host");
+
+        RoundRobinGroupChatManager manager = new(agents);
+        manager.IterationCount = 3;
+        await manager.SelectNextAgentAsync(history); // cursor advanced
+
+        await manager.RestoreCheckpointAsync(emptyContext);
+
+        manager.IterationCount.Should().Be(0, "restore from an empty checkpoint should clear IterationCount");
+        AIAgent next = await manager.SelectNextAgentAsync(history);
+        next.Should().BeSameAs(agent1, "restore from an empty checkpoint should reset the cursor to the first agent");
+    }
 }

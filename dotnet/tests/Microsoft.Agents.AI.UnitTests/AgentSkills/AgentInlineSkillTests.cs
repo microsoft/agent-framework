@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
@@ -102,13 +105,13 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_ContainsNameDescriptionAndInstructions()
+    public async Task Content_ContainsNameDescriptionAndInstructionsAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Do the thing.");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
         Assert.Contains("<name>my-skill</name>", content);
@@ -117,13 +120,13 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_EscapesXmlCharacters()
+    public async Task Content_EscapesXmlCharactersAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "x<y>z\"w & it's more", "1 & 2 < 3");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
         Assert.Contains("<name>my-skill</name>", content);
@@ -132,81 +135,81 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_IsCachedAcrossAccesses()
+    public async Task Content_IsCachedAcrossAccessesAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
 
         // Act
-        var first = skill.Content;
-        var second = skill.Content;
+        var first = await skill.GetContentAsync();
+        var second = await skill.GetContentAsync();
 
         // Assert
         Assert.Same(first, second);
     }
 
     [Fact]
-    public void Content_IncludesResourcesAddedBeforeFirstAccess()
+    public async Task Content_IncludesResourcesInBodyAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddResource("config", "value1", "A config resource.");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
-        // Assert
-        Assert.Contains("<resources>", content);
-        Assert.Contains("config", content);
+        // Assert — resources are rendered in the body so the model can discover them
+        Assert.Contains("<available_resources>", content);
+        Assert.Contains("<resource name=\"config\" description=\"A config resource.\"/>", content);
     }
 
     [Fact]
-    public void Content_IncludesDelegateResourcesAddedBeforeFirstAccess()
+    public async Task Content_IncludesDelegateResourcesInBodyAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddResource("dynamic", () => "hello");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
-        // Assert
-        Assert.Contains("<resources>", content);
-        Assert.Contains("dynamic", content);
+        // Assert — resources are rendered in the body
+        Assert.Contains("<available_resources>", content);
+        Assert.Contains("<resource name=\"dynamic\"/>", content);
     }
 
     [Fact]
-    public void Content_IncludesScriptsAddedBeforeFirstAccess()
+    public async Task Content_IncludesScriptsAddedBeforeFirstAccessAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddScript("run", () => "result", "Runs something.");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
-        Assert.Contains("<scripts>", content);
-        Assert.Contains("run", content);
+        Assert.Contains("<available_scripts>", content);
+        Assert.Contains("<script name=\"run\"", content);
     }
 
     [Fact]
-    public void Content_IsCachedAndNotRebuilt()
+    public async Task Content_IsCachedAndNotRebuiltAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddResource("r1", "v1");
 
         // Act
-        var first = skill.Content;
-        var second = skill.Content;
+        var first = await skill.GetContentAsync();
+        var second = await skill.GetContentAsync();
 
         // Assert
         Assert.Same(first, second);
     }
 
     [Fact]
-    public void Content_IncludesResourcesAndScriptsAddedBeforeFirstAccess()
+    public async Task Content_IncludesScriptSchemasAddedBeforeFirstAccessAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -214,27 +217,29 @@ public sealed class AgentInlineSkillTests
         skill.AddScript("s1", () => "ok");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert
-        Assert.Contains("<resources>", content);
+        Assert.Contains("<available_resources>", content);
         Assert.Contains("r1", content);
-        Assert.Contains("<scripts>", content);
+        Assert.Contains("<available_scripts>", content);
         Assert.Contains("s1", content);
     }
 
     [Fact]
-    public void Content_ParametersSchema_IsXmlEscaped()
+    public async Task Content_ParametersSchema_IsXmlEscapedAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddScript("search", (string query, int limit) => $"found {limit} results for {query}");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
-        // Assert — JSON schema should be present and XML content chars escaped
-        Assert.Contains("parameters_schema", content);
+        // Assert — JSON schema should be present inside <parameters_schema> element with preserved quotes
+        Assert.Contains("<script name=\"search\">", content);
+        Assert.Contains("<parameters_schema>", content);
+        Assert.Contains("\"query\"", content);
         Assert.DoesNotContain("<![CDATA[", content);
     }
 
@@ -277,17 +282,103 @@ public sealed class AgentInlineSkillTests
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
 
         // Act & Assert
-        Assert.Null(skill.Resources);
+        Assert.Null(skill.GetTestResources());
     }
 
     [Fact]
-    public void Scripts_WhenNoneAdded_ReturnsNull()
+    public async Task Scripts_WhenNoneAdded_ReturnsNullAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
 
         // Act & Assert
-        Assert.Null(skill.Scripts);
+        Assert.Null(await skill.GetScriptAsync("nonexistent"));
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_ExistingName_ReturnsResourceAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+        skill.AddResource("r1", "v1");
+        skill.AddResource("r2", "v2");
+
+        // Act
+        var resource = await skill.GetResourceAsync("r2");
+
+        // Assert
+        Assert.NotNull(resource);
+        Assert.Equal("r2", resource!.Name);
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_NonExistingName_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+        skill.AddResource("r1", "v1");
+
+        // Act
+        var resource = await skill.GetResourceAsync("missing");
+
+        // Assert
+        Assert.Null(resource);
+    }
+
+    [Fact]
+    public async Task GetResourceAsync_NoResourcesAdded_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+
+        // Act
+        var resource = await skill.GetResourceAsync("missing");
+
+        // Assert
+        Assert.Null(resource);
+    }
+
+    [Fact]
+    public async Task GetScriptAsync_ExistingName_ReturnsScriptAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+        skill.AddScript("s1", () => "first");
+        skill.AddScript("s2", () => "second");
+
+        // Act
+        var script = await skill.GetScriptAsync("s2");
+
+        // Assert
+        Assert.NotNull(script);
+        Assert.Equal("s2", script!.Name);
+    }
+
+    [Fact]
+    public async Task GetScriptAsync_NonExistingName_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+        skill.AddScript("s1", () => "ok");
+
+        // Act
+        var script = await skill.GetScriptAsync("missing");
+
+        // Assert
+        Assert.Null(script);
+    }
+
+    [Fact]
+    public async Task GetScriptAsync_NoScriptsAdded_ReturnsNullAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
+
+        // Act
+        var script = await skill.GetScriptAsync("missing");
+
+        // Assert
+        Assert.Null(script);
     }
 
     [Fact]
@@ -330,72 +421,73 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_NoResourcesOrScripts_DoesNotContainResourcesOrScriptsTags()
+    public async Task Content_NoResourcesOrScripts_EmitsSelfClosingTagsAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
-        // Assert
-        Assert.DoesNotContain("<resources>", content);
-        Assert.DoesNotContain("<scripts>", content);
+        // Assert — empty self-closing elements are emitted when no resources or scripts exist
+        Assert.Contains("<available_resources />", content);
+        Assert.Contains("<available_scripts />", content);
     }
 
     [Fact]
-    public void Content_ResourcesAddedAfterCaching_AreNotIncluded()
+    public async Task Content_ResourcesAddedAfterCaching_AreNotIncludedAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
-        _ = skill.Content; // trigger caching
+        _ = await skill.GetContentAsync(); // trigger caching
         skill.AddResource("late-resource", "late-value");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert — the late resource should not appear because content was cached
         Assert.DoesNotContain("late-resource", content);
     }
 
     [Fact]
-    public void Content_ScriptsAddedAfterCaching_AreNotIncluded()
+    public async Task Content_ScriptsAddedAfterCaching_AreNotIncludedAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
-        _ = skill.Content; // trigger caching
+        _ = await skill.GetContentAsync(); // trigger caching
         skill.AddScript("late-script", () => "late");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert — the late script should not appear because content was cached
         Assert.DoesNotContain("late-script", content);
     }
 
     [Fact]
-    public void Content_ScriptWithDescription_IncludesDescriptionAttribute()
+    public async Task Content_ScriptWithDescription_EmitsDescriptionAttributeAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddScript("my-script", () => "ok", "Runs something.");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
-        // Assert
+        // Assert — the script description is emitted as an attribute
+        Assert.Contains("<script name=\"my-script\"", content);
         Assert.Contains("description=\"Runs something.\"", content);
     }
 
     [Fact]
-    public void Content_ScriptWithoutParametersOrDescription_UsesSelfClosingTag()
+    public async Task Content_ScriptWithoutParametersOrDescription_UsesSelfClosingTagAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
         skill.AddScript("simple", () => "ok");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
         // Assert — parameterless Action delegates still produce a schema, so this
         // verifies the script is at least included in the output
@@ -403,7 +495,7 @@ public sealed class AgentInlineSkillTests
     }
 
     [Fact]
-    public void Content_ResourceWithDescription_IncludesDescriptionAttribute()
+    public async Task Content_ResourceWithDescription_RenderedInBodyWithDescriptionAsync()
     {
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
@@ -411,10 +503,91 @@ public sealed class AgentInlineSkillTests
         skill.AddResource("no-desc", "value");
 
         // Act
-        var content = skill.Content;
+        var content = await skill.GetContentAsync();
 
-        // Assert
-        Assert.Contains("description=\"A described resource.\"", content);
-        Assert.DoesNotContain("no-desc\" description", content);
+        // Assert — resources with descriptions include the attribute; those without omit it
+        Assert.Contains("<available_resources>", content);
+        Assert.Contains("<resource name=\"with-desc\" description=\"A described resource.\"/>", content);
+        Assert.Contains("<resource name=\"no-desc\"/>", content);
+    }
+
+    [Fact]
+    public async Task AddScript_SkillLevelSerializerOptions_AppliedToScriptAsync()
+    {
+        // Arrange — skill-level JSO with source-generated context for custom types
+        var jso = SkillTestJsonContext.Default.Options;
+        var skill = new AgentInlineSkill("jso-skill", "JSO test.", "Instructions.", serializerOptions: jso);
+        skill.AddScript("lookup", (LookupRequest request) => new LookupResponse
+        {
+            Items = [$"result for {request.Query}"],
+            TotalCount = request.MaxResults,
+        });
+        var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "test", MaxResults = 3 }, jso);
+        using var argsDoc = JsonDocument.Parse($$"""{ "request": {{inputJson.GetRawText()}} }""");
+        var args = argsDoc.RootElement;
+
+        // Act
+        var result = await (await skill.GetScriptAsync("lookup"))!.RunAsync(skill, args, null, CancellationToken.None);
+
+        // Assert — the custom input was deserialized via skill-level JSO and response was produced
+        Assert.NotNull(result);
+        Assert.Contains("result for test", result!.ToString()!);
+    }
+
+    [Fact]
+    public async Task AddScript_PerScriptSerializerOptions_OverridesSkillLevelAsync()
+    {
+        // Arrange — skill-level JSO uses snake_case naming; per-script JSO overrides with source-generated context
+        var skillJso = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+        var scriptJso = SkillTestJsonContext.Default.Options;
+        var skill = new AgentInlineSkill("override-skill", "Override test.", "Instructions.", serializerOptions: skillJso);
+        skill.AddScript("lookup", (LookupRequest request) => new LookupResponse
+        {
+            Items = [$"found {request.Query}"],
+            TotalCount = request.MaxResults,
+        }, serializerOptions: scriptJso);
+        var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "override", MaxResults = 7 }, scriptJso);
+        using var argsDoc = JsonDocument.Parse($$"""{ "request": {{inputJson.GetRawText()}} }""");
+        var args = argsDoc.RootElement;
+
+        // Act
+        var result = await (await skill.GetScriptAsync("lookup"))!.RunAsync(skill, args, null, CancellationToken.None);
+
+        // Assert — per-script JSO takes effect and custom types are properly marshaled
+        Assert.NotNull(result);
+        Assert.Contains("found override", result!.ToString()!);
+    }
+
+    [Fact]
+    public async Task AddResource_SkillLevelSerializerOptions_AppliedToDelegateResourceAsync()
+    {
+        // Arrange — skill-level JSO with source-generated context; delegate resource returns a custom type
+        var jso = SkillTestJsonContext.Default.Options;
+        var skill = new AgentInlineSkill("custom-type-resource-skill", "Custom type resource test.", "Instructions.", serializerOptions: jso);
+        skill.AddResource("config", () => new SkillConfig { Theme = "dark", Verbose = true });
+
+        // Act
+        var result = await skill.GetTestResources()![0].ReadAsync();
+
+        // Assert — the custom type was returned successfully via skill-level JSO
+        Assert.NotNull(result);
+        Assert.Contains("dark", result!.ToString()!);
+    }
+
+    [Fact]
+    public async Task AddResource_PerResourceSerializerOptions_OverridesSkillLevelAsync()
+    {
+        // Arrange — skill-level JSO uses snake_case naming; per-resource JSO overrides with source-generated context
+        var skillJso = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+        var resourceJso = SkillTestJsonContext.Default.Options;
+        var skill = new AgentInlineSkill("override-resource-skill", "Override resource test.", "Instructions.", serializerOptions: skillJso);
+        skill.AddResource("config", () => new SkillConfig { Theme = "dark", Verbose = true }, serializerOptions: resourceJso);
+
+        // Act
+        var result = await skill.GetTestResources()![0].ReadAsync();
+
+        // Assert — per-resource JSO takes effect and custom type is properly marshaled
+        Assert.NotNull(result);
+        Assert.Contains("dark", result!.ToString()!);
     }
 }

@@ -9,7 +9,6 @@ allows for long-running agent conversations.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any, cast
@@ -20,6 +19,7 @@ from agent_framework_durabletask import (
     AgentEntity,
     AgentEntityStateProviderMixin,
     AgentResponseCallbackProtocol,
+    run_agent_coroutine,
 )
 
 logger = logging.getLogger("agent_framework.azurefunctions")
@@ -101,23 +101,16 @@ def create_agent_entity(
             context.set_result({"error": str(exc), "status": "error"})
 
     def entity_function(context: df.DurableEntityContext) -> None:
-        """Synchronous wrapper invoked by the Durable Functions runtime."""
+        """Synchronous wrapper invoked by the Durable Functions runtime.
+
+        All agent coroutines run on a single process-wide persistent event loop
+        (see ``run_agent_coroutine``). This keeps async resources created by
+        shared agent clients/credentials bound to a live loop across every
+        invocation, preventing cross-loop hangs when the host dispatches
+        successive entity operations onto different worker threads.
+        """
         try:
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            if loop.is_running():
-                temp_loop = asyncio.new_event_loop()
-                try:
-                    temp_loop.run_until_complete(_entity_coroutine(context))
-                finally:
-                    temp_loop.close()
-            else:
-                loop.run_until_complete(_entity_coroutine(context))
-
+            run_agent_coroutine(_entity_coroutine(context))
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.error("[entity_function] Unexpected error executing entity: %s", exc, exc_info=True)
             context.set_result({"error": str(exc), "status": "error"})

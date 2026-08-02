@@ -14,19 +14,22 @@ internal sealed class VerificationOrchestrator
     private readonly LogFileWriter? _logWriter;
     private readonly string _dotnetRoot;
     private readonly TimeSpan _timeout;
+    private readonly bool _buildSamples;
 
     public VerificationOrchestrator(
         SampleVerifier verifier,
         ConsoleReporter reporter,
         string dotnetRoot,
         TimeSpan timeout,
-        LogFileWriter? logWriter = null)
+        LogFileWriter? logWriter = null,
+        bool buildSamples = false)
     {
         this._verifier = verifier;
         this._reporter = reporter;
         this._logWriter = logWriter;
         this._dotnetRoot = dotnetRoot;
         this._timeout = timeout;
+        this._buildSamples = buildSamples;
     }
 
     /// <summary>
@@ -136,8 +139,8 @@ internal sealed class VerificationOrchestrator
 
             var projectPath = Path.Combine(this._dotnetRoot, sample.ProjectPath);
             var run = sample.Inputs.Length > 0
-                ? await SampleRunner.RunAsync(projectPath, this._timeout, sample.Inputs, sample.InputDelayMs)
-                : await SampleRunner.RunAsync(projectPath, this._timeout);
+                ? await SampleRunner.RunAsync(projectPath, this._timeout, sample.Inputs, sample.InputDelayMs, build: this._buildSamples)
+                : await SampleRunner.RunAsync(projectPath, this._timeout, build: this._buildSamples);
 
             log.Add($"[{sample.Name}] Completed ({run.Elapsed.TotalSeconds:F1}s, exit={run.ExitCode})");
             this._reporter.WriteLineWithPrefix(

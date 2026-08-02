@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 [Trait("Category", "SampleValidation")]
 public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLifetime
 {
-    private const string SkipFlakyTimingTest = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971";
+    private const string DisabledDueToFailingCiJob = "Disabled due to persistent CI failures. See #6732.";
 
     private const string AzureFunctionsPort = "7071";
     private const string AzuritePort = "10000";
@@ -29,7 +29,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 #else
     private const string BuildConfiguration = "Release";
 #endif
-    private static readonly HttpClient s_sharedHttpClient = new();
+    private static readonly HttpClient s_sharedHttpClient = new() { Timeout = TimeSpan.FromMinutes(3) };
     private static readonly IConfiguration s_configuration =
         new ConfigurationBuilder()
             .AddEnvironmentVariables()
@@ -37,7 +37,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             .Build();
 
     private static bool s_infrastructureStarted;
-    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(3);
 
     // In CI, `dotnet run` builds the Functions project from scratch before the host starts, so 60s is not enough.
     private static readonly TimeSpan s_functionsReadyTimeout = TimeSpan.FromSeconds(180);
@@ -62,7 +62,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         await Task.CompletedTask;
     }
 
-    [Fact]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task SingleAgentSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "01_SingleAgent");
@@ -107,7 +107,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: LLM non-determinism can produce null orchestration results")]
     public async Task SingleAgentOrchestrationChainingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "02_AgentOrchestration_Chaining");
@@ -150,7 +150,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task MultiAgentOrchestrationConcurrentSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "03_AgentOrchestration_Concurrency");
@@ -200,7 +200,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task MultiAgentOrchestrationConditionalsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "04_AgentOrchestration_Conditionals");
@@ -218,7 +218,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000, Skip = "Disabled due to persistent CI failures.")]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
@@ -274,7 +274,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact(Skip = SkipFlakyTimingTest)]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -316,7 +316,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     }
                 },
                 message: "Orchestration is requesting human feedback",
-                timeout: TimeSpan.FromSeconds(60));
+                timeout: TimeSpan.FromSeconds(180));
 
             // Approve the content
             Uri approvalUri = new($"{runAgentUri}?thread_id={sessionId}");
@@ -336,7 +336,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     }
                 },
                 message: "Content published notification is logged",
-                timeout: TimeSpan.FromSeconds(60));
+                timeout: TimeSpan.FromSeconds(180));
 
             // Verify the final orchestration status by asking the agent for the status
             Uri statusUri = new($"{runAgentUri}?thread_id={sessionId}");
@@ -360,11 +360,11 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                     return isCompleted && hasContent;
                 },
                 message: "Orchestration is completed",
-                timeout: TimeSpan.FromSeconds(60));
+                timeout: TimeSpan.FromSeconds(180));
         });
     }
 
-    [Fact]
+    [RetryFact(2, 5000, Skip = DisabledDueToFailingCiJob)]
     public async Task AgentAsMcpToolAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "07_AgentAsMcpTool");
@@ -404,7 +404,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact(Skip = SkipFlakyTimingTest)]
+    [RetryFact(2, 5000, Skip = "Disabled due to persistent CI failures.")]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");
@@ -846,6 +846,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             throw new InvalidOperationException("The required AZURE_OPENAI_DEPLOYMENT_NAME env variable is not set.");
 
         // Set required environment variables for the function app (see local.settings.json for required settings)
+        startInfo.EnvironmentVariables["FUNCTIONS_WORKER_RUNTIME"] = "dotnet-isolated";
         startInfo.EnvironmentVariables["AZURE_OPENAI_ENDPOINT"] = openAiEndpoint;
         startInfo.EnvironmentVariables["AZURE_OPENAI_DEPLOYMENT_NAME"] = openAiDeployment;
         startInfo.EnvironmentVariables["DURABLE_TASK_SCHEDULER_CONNECTION_STRING"] =

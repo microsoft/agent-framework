@@ -18,11 +18,13 @@ from agent_framework import (
     normalize_messages,
 )
 from agent_framework._settings import load_settings
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._types import AgentRunInputs
 from agent_framework.exceptions import AgentException
 from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings, CopilotClient, PowerPlatformCloud
 
 from ._acquire_token import acquire_token
+from ._feature_usage import FeatureIndex
 
 
 class CopilotStudioSettings(TypedDict, total=False):
@@ -244,13 +246,19 @@ class CopilotStudioAgent(BaseAgent):
         """Non-streaming implementation of run."""
         if not session:
             session = self.create_session()
-        session.service_session_id = await self._start_new_conversation()
+        service_session_id = session.service_session_id
+        if service_session_id is None:
+            session.service_session_id = await self._start_new_conversation()
+            service_session_id = session.service_session_id
+        if not isinstance(service_session_id, str):
+            raise AgentException("CopilotStudioAgent requires service_session_id to be a string")
 
         input_messages = normalize_messages(messages)
 
         question = "\n".join([message.text for message in input_messages])
 
-        activities = self.client.ask_question(question, session.service_session_id)
+        mark_feature_used(FeatureIndex.COPILOTSTUDIO)
+        activities = self.client.ask_question(question, service_session_id)
         response_messages: list[Message] = []
         response_id: str | None = None
 
@@ -271,13 +279,19 @@ class CopilotStudioAgent(BaseAgent):
             nonlocal session
             if not session:
                 session = self.create_session()
-            session.service_session_id = await self._start_new_conversation()
+            service_session_id = session.service_session_id
+            if service_session_id is None:
+                session.service_session_id = await self._start_new_conversation()
+                service_session_id = session.service_session_id
+            if not isinstance(service_session_id, str):
+                raise AgentException("CopilotStudioAgent requires service_session_id to be a string")
 
             input_messages = normalize_messages(messages)
 
             question = "\n".join([message.text for message in input_messages])
 
-            activities = self.client.ask_question(question, session.service_session_id)
+            mark_feature_used(FeatureIndex.COPILOTSTUDIO)
+            activities = self.client.ask_question(question, service_session_id)
 
             async for message in self._process_activities(activities, streaming=True):
                 yield AgentResponseUpdate(

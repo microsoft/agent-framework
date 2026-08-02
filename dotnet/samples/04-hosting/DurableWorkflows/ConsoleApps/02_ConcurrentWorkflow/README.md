@@ -59,7 +59,7 @@ DURABLE_TASK_SCHEDULER_CONNECTION_STRING="Endpoint=http://localhost:8080;TaskHub
 
 # Azure OpenAI (required)
 AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-AZURE_OPENAI_DEPLOYMENT="gpt-4o"
+AZURE_OPENAI_DEPLOYMENT="gpt-5.4-mini"
 AZURE_OPENAI_KEY="your-key"  # Optional if using Azure CLI credentials
 ```
 

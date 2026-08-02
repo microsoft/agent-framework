@@ -26,8 +26,8 @@ internal static class GetStartedSamples
         {
             Name = "01_hello_agent",
             ProjectPath = "samples/01-get-started/01_hello_agent",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should contain a joke about a pirate.",
@@ -40,8 +40,8 @@ internal static class GetStartedSamples
         {
             Name = "02_add_tools",
             ProjectPath = "samples/01-get-started/02_add_tools",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain = [],
             ExpectedOutputDescription =
             [
@@ -56,8 +56,8 @@ internal static class GetStartedSamples
         {
             Name = "03_multi_turn",
             ProjectPath = "samples/01-get-started/03_multi_turn",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             ExpectedOutputDescription =
             [
                 "The output should contain a joke about a pirate.",
@@ -71,8 +71,8 @@ internal static class GetStartedSamples
         {
             Name = "04_memory",
             ProjectPath = "samples/01-get-started/04_memory",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             MustContain =
             [
                 ">> Use session with blank memory",
@@ -97,8 +97,8 @@ internal static class GetStartedSamples
         {
             Name = "06_host_your_agent",
             ProjectPath = "samples/01-get-started/06_host_your_agent",
-            RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
-            OptionalEnvironmentVariables = ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
             SkipReason = "Requires Azure Functions Core Tools runtime and starts a web server.",
         },
     ];

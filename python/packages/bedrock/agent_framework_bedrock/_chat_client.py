@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import sys
@@ -13,7 +14,6 @@ from typing import Any, ClassVar, Generic, Literal, TypedDict
 from uuid import uuid4
 
 from agent_framework import (
-    AGENT_FRAMEWORK_USER_AGENT,
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
@@ -31,25 +31,29 @@ from agent_framework import (
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.exceptions import ChatClientInvalidResponseException
 from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
+from botocore.exceptions import ClientError
 from pydantic import BaseModel
 
+from ._feature_usage import FeatureIndex
+
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.bedrock")
 
@@ -115,13 +119,20 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
             translates to ``toolConfig.tools``.
         tool_choice: How the model should use tools,
             translates to ``toolConfig.toolChoice``.
+        response_format: Structured output format. Accepts a Pydantic BaseModel
+            subclass or an OpenAI-style dict schema
+            (``{"json_schema": {"name": ..., "schema": ...}}``).
+            When provided, the Converse API request includes
+            ``outputConfig.textFormat`` with the schema serialized as a JSON
+            string. ``ChatResponse.value`` will be populated with the parsed
+            model instance. Only supported on models that support
+            ``outputConfig.textFormat``. Unsupported models raise a ValueError.
 
         # Options not supported in Bedrock Converse API:
         seed: Not supported.
         frequency_penalty: Not supported.
         presence_penalty: Not supported.
         allow_multiple_tool_calls: Not supported (models handle parallel calls automatically).
-        response_format: Not directly supported (use model-specific prompting).
         user: Not supported.
         store: Not supported.
         logit_bias: Not supported.
@@ -161,9 +172,6 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
     allow_multiple_tool_calls: None  # type: ignore[misc]
     """Not supported. Bedrock models handle parallel tool calls automatically."""
 
-    response_format: None  # type: ignore[misc]
-    """Not directly supported. Use model-specific prompting for JSON output."""
-
     user: None  # type: ignore[misc]
     """Not supported in Bedrock Converse API."""
 
@@ -201,6 +209,7 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "max_tokens": "length",
     "length": "length",
     "content_filtered": "content_filter",
+    "guardrail_intervened": "content_filter",
     "tool_use": "tool_calls",
 }
 
@@ -224,7 +233,7 @@ class BedrockChatClient(
 ):
     """Async chat client for Amazon Bedrock's Converse API with middleware, telemetry, and function invocation."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"
 
     def __init__(
         self,
@@ -299,7 +308,7 @@ class BedrockChatClient(
             self._bedrock_client = session.client(
                 "bedrock-runtime",
                 region_name=region,
-                config=BotoConfig(user_agent_extra=AGENT_FRAMEWORK_USER_AGENT),
+                config=BotoConfig(user_agent_extra=get_user_agent()),
             )
 
         super().__init__(
@@ -324,10 +333,29 @@ class BedrockChatClient(
         return Boto3Session(**session_kwargs)
 
     def _invoke_converse(self, request: Mapping[str, Any]) -> dict[str, Any]:
-        response = self._bedrock_client.converse(**request)
-        if not isinstance(response, Mapping):
-            raise ChatClientInvalidResponseException("Bedrock converse response must be a mapping.")
-        return response
+        mark_feature_used(FeatureIndex.BEDROCK)
+        try:
+            response = self._bedrock_client.converse(**request)
+            if not isinstance(response, Mapping):
+                raise ChatClientInvalidResponseException("Bedrock converse response must be a mapping.")
+            return response
+        except ClientError as e:
+            error_details = e.response.get("Error", {})
+            error_code = error_details.get("Code", "")
+            error_message = error_details.get("Message", "")
+            # "outputConfig" in error_message catches cases where Bedrock explicitly
+            # rejects the outputConfig field (unsupported model). Other ValidationExceptions
+            # (e.g. malformed schema shape, invalid property values) will not mention
+            # "outputConfig" and will bubble up as raw ClientError without being misdiagnosed.
+            if error_code == "ValidationException" and (
+                "outputconfig" in error_message.lower() or "outputconfig" in str(e).lower()
+            ):
+                raise ValueError(
+                    f"Model '{self.model}' does not support structured output via outputConfig.textFormat. "
+                    "Check the model's Bedrock Converse outputConfig/textFormat support. "
+                    f"AWS error Code: {error_code}. AWS error Message: {error_message}"
+                ) from e
+            raise
 
     @override
     def _inner_get_response(
@@ -344,10 +372,10 @@ class BedrockChatClient(
             # Streaming mode - simulate streaming by yielding a single update
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 response = await asyncio.to_thread(self._invoke_converse, request)
-                parsed_response = self._process_converse_response(response)
+                parsed_response = self._process_converse_response(response, options)
                 contents = list(parsed_response.messages[0].contents if parsed_response.messages else [])
                 if parsed_response.usage_details:
-                    contents.append(Content.from_usage(usage_details=parsed_response.usage_details))  # type: ignore[arg-type]
+                    contents.append(Content.from_usage(usage_details=parsed_response.usage_details))
                 raw_finish_reason = (
                     parsed_response.finish_reason if isinstance(parsed_response.finish_reason, str) else None
                 )
@@ -360,12 +388,12 @@ class BedrockChatClient(
                     raw_representation=parsed_response.raw_representation,
                 )
 
-            return self._build_response_stream(_stream())
+            return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
             raw_response = await asyncio.to_thread(self._invoke_converse, request)
-            return self._process_converse_response(raw_response)
+            return self._process_converse_response(raw_response, options)
 
         return _get_response()
 
@@ -405,16 +433,22 @@ class BedrockChatClient(
 
         tool_config = self._prepare_tools(options.get("tools"))
         if tool_mode := validate_tool_mode(options.get("tool_choice")):
+            if "allowed_tools" in tool_mode:
+                logger.warning("allowed_tools is not supported by Bedrock; the setting will be ignored")
             match tool_mode.get("mode"):
                 case "none":
                     # Bedrock doesn't support toolChoice "none".
                     # Omit toolConfig entirely so the model won't attempt tool calls.
                     tool_config = None
                 case "auto":
-                    tool_config = tool_config or {}
-                    tool_config["toolChoice"] = {"auto": {}}
+                    if tool_config and "tools" in tool_config:
+                        tool_config["toolChoice"] = {"auto": {}}
                 case "required":
-                    tool_config = tool_config or {}
+                    if not (tool_config and "tools" in tool_config):
+                        raise ValueError(
+                            "tool_choice='required' requires at least one tool to be configured, "
+                            "but no tools were provided."
+                        )
                     if required_name := tool_mode.get("required_function_name"):
                         tool_config["toolChoice"] = {"tool": {"name": required_name}}
                     else:
@@ -423,6 +457,9 @@ class BedrockChatClient(
                     raise ValueError(f"Unsupported tool mode for Bedrock: {tool_mode.get('mode')}")
         if tool_config:
             run_options["toolConfig"] = tool_config
+
+        if output_config := self._prepare_output_config(options.get("response_format")):
+            run_options["outputConfig"] = output_config
 
         return run_options
 
@@ -622,7 +659,9 @@ class BedrockChatClient(
     def _generate_tool_call_id() -> str:
         return f"tool-call-{uuid4().hex}"
 
-    def _process_converse_response(self, response: dict[str, Any]) -> ChatResponse:
+    def _process_converse_response(
+        self, response: dict[str, Any], options: Mapping[str, Any] | None = None
+    ) -> ChatResponse:
         """Convert Bedrock Converse API response to ChatResponse."""
         output = response.get("output") or {}
         message = output.get("message") or {}
@@ -640,6 +679,7 @@ class BedrockChatClient(
             usage_details=usage_details,
             model=model,
             finish_reason=finish_reason,
+            response_format=options.get("response_format") if options else None,
             raw_representation=response,
         )
 
@@ -653,7 +693,12 @@ class BedrockChatClient(
             details["output_token_count"] = output_tokens
         if (total_tokens := usage.get("totalTokens")) is not None:
             details["total_token_count"] = total_tokens
-        return details
+        # Bedrock Converse reports these when prompt caching is active.
+        if (cache_read := usage.get("cacheReadInputTokens")) is not None:
+            details["cache_read_input_token_count"] = cache_read
+        if (cache_write := usage.get("cacheWriteInputTokens")) is not None:
+            details["cache_creation_input_token_count"] = cache_write
+        return details or None
 
     def _parse_message_contents(self, content_blocks: Sequence[dict[str, Any]]) -> list[Any]:
         contents: list[Any] = []
@@ -662,7 +707,9 @@ class BedrockChatClient(
                 contents.append(Content.from_text(text=text_value, raw_representation=block))
                 continue
             if (json_value := block.get("json")) is not None:
-                contents.append(Content.from_text(text=json.dumps(json_value), raw_representation=block))
+                contents.append(
+                    Content.from_text(text=json.dumps(json_value, ensure_ascii=False), raw_representation=block)
+                )
                 continue
             tool_use_value = block.get("toolUse")
             tool_use = (
@@ -709,7 +756,7 @@ class BedrockChatClient(
                     Content.from_function_result(
                         call_id=tool_use_id if isinstance(tool_use_id, str) else self._generate_tool_call_id(),
                         result=result_value,
-                        exception=str(exception) if exception else None,  # type: ignore[arg-type]
+                        exception=str(exception) if exception else None,
                         raw_representation=block,
                     )
                 )
@@ -717,10 +764,105 @@ class BedrockChatClient(
             logger.debug("Ignoring unsupported Bedrock content block: %s", block)
         return contents
 
-    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | None:
+    def _map_finish_reason(self, reason: str | None) -> str | None:
         if not reason:
             return None
-        return FINISH_REASON_MAP.get(reason.lower())
+        return FINISH_REASON_MAP.get(reason.lower(), reason)
+
+    def _prepare_output_config(self, response_format: Any | None) -> dict[str, Any] | None:
+        """Convert response_format into the AWS Bedrock outputConfig wire format.
+
+        Args:
+            response_format: A Pydantic model class or a dict schema, or None.
+
+        Returns:
+            A dict for the Converse API ``outputConfig`` parameter, or None if
+            response_format is not set.
+        """
+        if response_format is None:
+            return None
+
+        if isinstance(response_format, Mapping):
+            if "json_schema" in response_format:
+                # Shape A — OpenAI-style wrapper
+                json_schema_config = response_format["json_schema"]
+                schema_src = json_schema_config.get("schema", {})
+                name = json_schema_config.get("name", "output_schema")
+            elif "schema" in response_format:
+                # Shape B — inner shape directly {"name": ..., "schema": ...}
+                schema_src = response_format["schema"]
+                name = response_format.get("name", "output_schema")
+            else:
+                # Shape C — assume entire dict is the raw schema
+                logger.warning(
+                    "response_format dict has no 'json_schema' or 'schema' key; "
+                    "treating entire dict as raw JSON schema."
+                )
+                schema_src = dict(response_format)
+                name = "output_schema"
+
+            if isinstance(schema_src, str):
+                schema_src = json.loads(schema_src)
+            schema = copy.deepcopy(schema_src)
+        else:
+            if not isinstance(response_format, type) or not issubclass(response_format, BaseModel):
+                raise TypeError("response_format must be None, a dict JSON schema, or a Pydantic BaseModel subclass.")
+            # response_format is a Pydantic model class
+            schema = response_format.model_json_schema()
+            name = response_format.__name__
+
+        self._set_additional_properties_false(schema)
+
+        json_schema: dict[str, Any] = {
+            "name": name,
+            "schema": json.dumps(schema),
+        }
+
+        description = getattr(response_format, "__doc__", None) if not isinstance(response_format, Mapping) else None
+        if description and isinstance(description, str) and description.strip():
+            json_schema["description"] = description.strip()
+
+        return {
+            "textFormat": {
+                "type": "json_schema",
+                "structure": {"jsonSchema": json_schema},
+            }
+        }
+
+    def _set_additional_properties_false(self, schema: dict[str, Any]) -> None:
+        """Recursively set additionalProperties: false on all object types in a JSON schema.
+
+        AWS requires strict schema enforcement. This mirrors the approach used by
+        AnthropicChatClient._prepare_response_format().
+
+        Args:
+            schema: The JSON schema dict to modify in-place.
+        """
+        visited: set[int] = set()
+
+        def walk(node: Any) -> None:
+            if isinstance(node, dict):
+                node_id = id(node)
+                if node_id in visited:
+                    return
+                visited.add(node_id)
+                if node.get("type") == "object" or ("properties" in node and "type" not in node):
+                    existing = node.get("additionalProperties")
+                    if existing is None or existing is True:
+                        node["additionalProperties"] = False
+                for value in node.values():
+                    if isinstance(value, (dict, list)):
+                        walk(value)
+            elif isinstance(node, list):
+                node_id = id(node)
+                if node_id in visited:
+                    return
+                visited.add(node_id)
+                for item in node:
+                    if isinstance(item, (dict, list)):
+                        walk(item)
+
+        walk(schema)
 
     def service_url(self) -> str:
         """Returns the service URL for the Bedrock runtime in the configured AWS region.

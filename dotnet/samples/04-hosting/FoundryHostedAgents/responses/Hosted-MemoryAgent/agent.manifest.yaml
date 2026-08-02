@@ -1,0 +1,31 @@
+﻿# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: hosted-memory-agent
+displayName: "Hosted Memory Agent"
+
+description: >
+  A travel-assistant hosted agent that uses FoundryMemoryProvider to remember user-private
+  preferences and details across sessions. Memory is scoped per end user via the Foundry
+  platform's isolation key headers.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Streaming
+    - Agent Framework
+    - Memory
+    - Foundry Memory
+
+template:
+  name: hosted-memory-agent
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 2.0.0
+  resources:
+    cpu: "0.25"
+    memory: 0.5Gi
+parameters:
+  properties: []
+resources: []

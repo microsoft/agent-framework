@@ -19,13 +19,20 @@ if TYPE_CHECKING:
 
 """
 This sample shows how you can configure observability of an application with zero code changes.
-It relies on the OpenTelemetry auto-instrumentation capabilities, and the observability setup
-is done via environment variables.
 
-Follow the install guidance from https://opentelemetry.io/docs/zero-code/python/ to install the OpenTelemetry CLI tool,
-when using `uv` there are some additional steps, so follow the instructions carefully.
+Agent Framework is natively instrumented with OpenTelemetry, so no auto-instrumentation of the
+framework itself is required. Running the `opentelemetry-instrument` CLI wrapper simply configures
+the global tracer/meter providers and exporters from environment variables (or CLI flags) at
+process startup, so the application code does not need to set them up explicitly. The native
+spans/metrics emitted by Agent Framework are then picked up by that globally configured pipeline.
 
-And setup a local OpenTelemetry Collector instance to receive the traces and metrics (and update the endpoint below).
+See: https://opentelemetry.io/docs/zero-code/python/
+
+Install the OpenTelemetry CLI tool following the guidance above (when using `uv` there are some
+additional steps, so follow the instructions carefully).
+
+Then setup a local OpenTelemetry Collector instance to receive the traces and metrics (and update
+the endpoint below).
 
 Then you can run:
 ```bash

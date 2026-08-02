@@ -181,7 +181,7 @@ class TestDurableTaskEntityStateProvider:
         entity = DurableTaskEntityStateProvider()
         ctx = MockEntityContext(initial_state)
         # DurableEntity provides this hook; required for get_state/set_state to work in unit tests.
-        entity._initialize_entity_context(ctx)  # type: ignore[attr-defined]
+        entity._initialize_entity_context(ctx)  # type: ignore[attr-defined, arg-type] # ty: ignore[invalid-argument-type]
         return entity, ctx
 
     def test_reset_persists_cleared_state(self) -> None:

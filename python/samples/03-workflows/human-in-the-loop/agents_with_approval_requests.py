@@ -52,7 +52,7 @@ Demonstrate:
 - Handling approval requests during workflow execution.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, request_info events (type='request_info'), and streaming runs.
@@ -248,7 +248,7 @@ async def main() -> None:
 
     # Build the workflow
     workflow = (
-        WorkflowBuilder(start_executor=email_processor, output_executors=[conclude_workflow])
+        WorkflowBuilder(start_executor=email_processor, output_from=[conclude_workflow])
         .add_edge(email_processor, email_writer_agent)
         .add_edge(email_writer_agent, conclude_workflow)
         .build()

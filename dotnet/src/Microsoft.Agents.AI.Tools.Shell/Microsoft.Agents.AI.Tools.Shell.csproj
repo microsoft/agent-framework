@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Modern targets only; the underlying P/Invokes (setsid) and
+         async patterns are not validated against netstandard2.0/net472. -->
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <RootNamespace>Microsoft.Agents.AI.Tools.Shell</RootNamespace>
+    <VersionSuffix>preview</VersionSuffix>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
+    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <!-- These must appear AFTER the nuget-package.props import so they
+       override the shared defaults rather than being overwritten by them. -->
+  <PropertyGroup>
+    <Title>Microsoft Agent Framework - Shell Tools</Title>
+    <Description>Cross-platform shell tools for the Microsoft Agent Framework. Includes LocalShellExecutor and DockerShellExecutor with approval-in-the-loop semantics, plus ShellEnvironmentProvider for environment-aware system prompts.</Description>
+  </PropertyGroup>
+
+  <!-- Disable package validation baseline until the first release -->
+  <PropertyGroup>
+    <PackageValidationBaselineVersion />
+    <EnablePackageValidation>false</EnablePackageValidation>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Tools.Shell.UnitTests" />
+  </ItemGroup>
+
+</Project>

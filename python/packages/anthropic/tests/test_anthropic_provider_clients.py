@@ -3,7 +3,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, ChatMiddlewareLayer, FunctionInvocationLayer
+from agent_framework import Agent, ChatMiddlewareLayer, FunctionInvocationLayer
+from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 
 from agent_framework_anthropic import (
@@ -41,6 +42,71 @@ def test_provider_client_wraps_raw_client_with_standard_layer_order(public_clien
     assert mro.index(ChatTelemetryLayer) < mro.index(raw_client)
 
 
+def test_agent_accepts_anthropic_foundry_clients() -> None:
+    mock_transport = _create_mock_transport("https://test-resource.services.ai.azure.com/anthropic/")
+    with patch("agent_framework_anthropic._foundry_client.AsyncAnthropicFoundry", return_value=mock_transport):
+        raw_client = RawAnthropicFoundryClient(
+            model="claude-foundry-test",
+            resource="test-resource",
+            api_key="test-key",
+        )
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    with patch("agent_framework_anthropic._foundry_client.AsyncAnthropicFoundry", return_value=mock_transport):
+        client = AnthropicFoundryClient(
+            model="claude-foundry-test",
+            resource="test-resource",
+            api_key="test-key",
+        )
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
+
+
+def test_agent_accepts_anthropic_bedrock_clients() -> None:
+    mock_transport = _create_mock_transport("https://bedrock-runtime.us-east-1.amazonaws.com")
+    with patch("agent_framework_anthropic._bedrock_client.AsyncAnthropicBedrock", return_value=mock_transport):
+        raw_client = RawAnthropicBedrockClient(
+            model="claude-bedrock-test",
+            aws_access_key="access-key",
+            aws_secret_key="secret-key",
+            aws_region="us-east-1",
+        )
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    with patch("agent_framework_anthropic._bedrock_client.AsyncAnthropicBedrock", return_value=mock_transport):
+        client = AnthropicBedrockClient(
+            model="claude-bedrock-test",
+            aws_access_key="access-key",
+            aws_secret_key="secret-key",
+            aws_region="us-east-1",
+        )
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
+
+
+def test_agent_accepts_anthropic_vertex_clients() -> None:
+    mock_transport = _create_mock_transport("https://us-central1-aiplatform.googleapis.com/v1")
+    with patch("agent_framework_anthropic._vertex_client.AsyncAnthropicVertex", return_value=mock_transport):
+        raw_client = RawAnthropicVertexClient(
+            model="claude-vertex-test",
+            region="us-central1",
+            project_id="test-project",
+        )
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    with patch("agent_framework_anthropic._vertex_client.AsyncAnthropicVertex", return_value=mock_transport):
+        client = AnthropicVertexClient(
+            model="claude-vertex-test",
+            region="us-central1",
+            project_id="test-project",
+        )
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client
+
+
 def test_raw_anthropic_foundry_client_creates_sdk_client_from_settings(tmp_path) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
@@ -61,7 +127,7 @@ def test_raw_anthropic_foundry_client_creates_sdk_client_from_settings(tmp_path)
         resource="test-resource",
         api_key="test-key",
         azure_ad_token_provider=None,
-        default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+        default_headers={"User-Agent": get_user_agent()},
     )
 
 
@@ -85,7 +151,7 @@ def test_raw_anthropic_foundry_client_creates_sdk_client_from_base_url_settings(
         base_url="https://test-resource.services.ai.azure.com/anthropic/",
         api_key="test-key",
         azure_ad_token_provider=None,
-        default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+        default_headers={"User-Agent": get_user_agent()},
     )
 
 
@@ -130,7 +196,7 @@ def test_raw_anthropic_bedrock_client_creates_sdk_client_from_arguments() -> Non
         aws_profile=None,
         aws_session_token=None,
         base_url=None,
-        default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+        default_headers={"User-Agent": get_user_agent()},
     )
 
 
@@ -152,5 +218,5 @@ def test_raw_anthropic_vertex_client_creates_sdk_client_from_arguments() -> None
         access_token=None,
         credentials=None,
         base_url=None,
-        default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+        default_headers={"User-Agent": get_user_agent()},
     )

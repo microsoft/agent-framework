@@ -41,9 +41,9 @@ from dotenv import dotenv_values
 from .exceptions import SettingNotFoundError
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 SettingsT = TypeVar("SettingsT", default=dict[str, Any])

@@ -1,0 +1,64 @@
+name: Free runner disk space
+description: |
+  Reclaims disk space on GitHub-hosted Ubuntu runners by removing
+  pre-installed toolchains we do not use (Android SDK, GHC/Haskell,
+  CodeQL bundle), Docker images, and swap. Also relocates the
+  NuGet package cache to /mnt (which has ~75 GB free vs ~14 GB
+  on /). No-op on non-Linux runners.
+
+runs:
+  using: composite
+  steps:
+    - name: Free disk space (Linux only)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::Disk usage before cleanup"
+        df -h /
+        echo "::endgroup::"
+
+        # Remove pre-installed toolchains we never use on this repo's
+        # dotnet/python jobs. These reclaim ~25-30 GB on ubuntu-latest.
+        sudo rm -rf \
+          /usr/local/lib/android \
+          /usr/share/dotnet/sdk/NuGetFallbackFolder \
+          /opt/ghc \
+          /usr/local/.ghcup \
+          /opt/hostedtoolcache/CodeQL \
+          /opt/hostedtoolcache/PyPy \
+          /opt/hostedtoolcache/Ruby \
+          /opt/hostedtoolcache/go \
+          /usr/local/share/boost \
+          /usr/local/share/powershell \
+          /usr/local/share/chromium \
+          /usr/local/share/vcpkg \
+          /usr/local/lib/heroku \
+          "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}/PyPy" \
+          "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}/Ruby" \
+          "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}/go" || true
+
+        # Drop docker images shipped on the runner; jobs that need
+        # docker pull what they need fresh.
+        if command -v docker >/dev/null 2>&1; then
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+        fi
+
+        # Disable swap to free its backing file.
+        sudo swapoff -a || true
+        sudo rm -f /mnt/swapfile /swapfile || true
+
+        echo "::group::Disk usage after cleanup"
+        df -h /
+        echo "::endgroup::"
+
+    - name: Relocate NuGet package cache to /mnt (Linux only)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo mkdir -p /mnt/nuget
+        sudo chown -R "$USER":"$USER" /mnt/nuget
+        echo "NUGET_PACKAGES=/mnt/nuget" >> "$GITHUB_ENV"
+        echo "Relocated NuGet package cache to /mnt/nuget"
+        df -h /mnt || true

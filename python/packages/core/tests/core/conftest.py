@@ -6,6 +6,7 @@ import sys
 import warnings
 from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any, Generic
+from typing import TypedDict as TypedDict  # noqa: F401  # pydantic mypy plugin needs TypedDict in module scope
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -148,12 +149,12 @@ class MockBaseChatClient(
         self.call_count: int = 0
 
     @override
-    def _inner_get_response(
+    def _inner_get_response(  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
         self,
         *,
-        messages: MutableSequence[Message],
+        messages: MutableSequence[Message],  # type: ignore[override]
         stream: bool,
-        options: dict[str, Any],
+        options: dict[str, Any],  # type: ignore[override]
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Send a chat request to the AI service.
@@ -271,19 +272,19 @@ class MockAgentSession(AgentSession):
 # Mock Agent implementation for testing
 class MockAgent(SupportsAgentRun):
     @property
-    def id(self) -> str:
+    def id(self) -> str:  # type: ignore[override]  # pyrefly: ignore[bad-override]
         return str(uuid4())
 
     @property
-    def name(self) -> str | None:
+    def name(self) -> str | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]
         """Returns the name of the agent."""
         return "Name"
 
     @property
-    def description(self) -> str | None:
+    def description(self) -> str | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]
         return "Description"
 
-    def run(
+    def run(  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
@@ -315,7 +316,7 @@ class MockAgent(SupportsAgentRun):
         logger.debug(f"Running mock agent stream, with: {messages=}, {session=}, {kwargs=}")
         yield AgentResponseUpdate(contents=[Content.from_text("Response")])
 
-    def create_session(self) -> AgentSession:
+    def create_session(self) -> AgentSession:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
         return MockAgentSession()
 
 
@@ -326,4 +327,4 @@ def agent_session() -> AgentSession:
 
 @fixture
 def agent() -> SupportsAgentRun:
-    return MockAgent()
+    return MockAgent()  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]

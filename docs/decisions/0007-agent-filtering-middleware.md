@@ -1125,7 +1125,7 @@ Naming (Python): N/A (Composable Components)
 Supports: N  
 Observation: No explicit middleware/filters; modularity allows composable units but no dedicated interception hooks or callbacks for custom reading/modification mid-execution.
 
-For more details, see the official documentation: [Atomic Agents Docs](https://brainblend-ai.github.io/atomic-agents/). No specific code examples available for interception.
+No specific code examples available for interception.
 
 #### Smolagents (Hugging Face)
 

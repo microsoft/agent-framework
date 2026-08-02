@@ -41,7 +41,7 @@ async def test_bedrock_embedding_construction() -> None:
     client = BedrockEmbeddingClient(
         model="amazon.titan-embed-text-v2:0",
         region="us-west-2",
-        client=stub,
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
     assert client.model == "amazon.titan-embed-text-v2:0"
     assert client.region == "us-west-2"
@@ -62,7 +62,7 @@ async def test_bedrock_embedding_get_embeddings() -> None:
     client = BedrockEmbeddingClient(
         model="amazon.titan-embed-text-v2:0",
         region="us-west-2",
-        client=stub,
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
 
     result = await client.get_embeddings(["hello", "world"])
@@ -86,7 +86,7 @@ async def test_bedrock_embedding_get_embeddings_empty_input() -> None:
     client = BedrockEmbeddingClient(
         model="amazon.titan-embed-text-v2:0",
         region="us-west-2",
-        client=stub,
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
 
     result = await client.get_embeddings([])
@@ -102,14 +102,14 @@ async def test_bedrock_embedding_get_embeddings_with_options() -> None:
     client = BedrockEmbeddingClient(
         model="amazon.titan-embed-text-v2:0",
         region="us-west-2",
-        client=stub,
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
 
     options: BedrockEmbeddingOptions = {
         "dimensions": 5,
         "normalize": True,
     }
-    result = await client.get_embeddings(["hello"], options=options)
+    result = await client.get_embeddings(["hello"], options=options)  # ty: ignore[invalid-argument-type]
 
     assert len(result) == 1
     assert len(result[0].vector) == 5
@@ -125,9 +125,9 @@ async def test_bedrock_embedding_get_embeddings_no_model_raises() -> None:
     client = BedrockEmbeddingClient(
         model="amazon.titan-embed-text-v2:0",
         region="us-west-2",
-        client=stub,
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
-    client.model = None  # type: ignore[assignment]
+    client.model = None  # type: ignore[assignment] # ty: ignore[invalid-assignment]
 
     with pytest.raises(ValueError, match="model is required"):
         await client.get_embeddings(["hello"])
@@ -138,7 +138,7 @@ async def test_bedrock_embedding_default_region() -> None:
     stub = _StubBedrockEmbeddingRuntime()
     client = BedrockEmbeddingClient(
         model="amazon.titan-embed-text-v2:0",
-        client=stub,
+        client=stub,  # pyrefly: ignore[bad-argument-type] # ty: ignore[invalid-argument-type] # pyright: ignore[reportArgumentType]
     )
     assert client.region == "us-east-1"
 

@@ -78,7 +78,8 @@ async def main():
                         extension = image_output.media_type.split("/")[-1]
                     # Save images with correct extension
                     filename = output_dir / f"image{image_count}.{extension}"
-                    await save_image_from_data_uri(image_output.uri, str(filename))
+                    if image_output.uri is not None:
+                        await save_image_from_data_uri(image_output.uri, str(filename))
                     image_count += 1
     # Summary
     print("\n Summary:")

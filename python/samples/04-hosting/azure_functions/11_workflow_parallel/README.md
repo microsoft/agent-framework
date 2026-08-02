@@ -155,7 +155,7 @@ Use the `demo.http` file with REST Client extension or curl:
 
 ### Analyze a Document
 ```bash
-curl -X POST http://localhost:7071/api/workflow/run \
+curl -X POST http://localhost:7071/api/workflow/parallel_review/run \
   -H "Content-Type: application/json" \
   -d '{
     "document_id": "doc-001",
@@ -165,7 +165,7 @@ curl -X POST http://localhost:7071/api/workflow/run \
 
 ### Check Status
 ```bash
-curl http://localhost:7071/api/workflow/status/{instanceId}
+curl http://localhost:7071/api/workflow/parallel_review/status/{instanceId}
 ```
 
 ## Observing Parallel Execution

@@ -383,7 +383,7 @@ internal sealed class DurableStreamingWorkflowRun : IStreamingWorkflowRun
 
             if (wrapper?.TypeName is not null && wrapper.Data is not null)
             {
-                Type? eventType = Type.GetType(wrapper.TypeName);
+                Type? eventType = DurableTaskTypeResolver.Resolve(wrapper.TypeName);
                 if (eventType is not null)
                 {
                     return DeserializeEventByType(eventType, wrapper.Data);

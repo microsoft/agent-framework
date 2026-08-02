@@ -1,4 +1,4 @@
-# Agent with Memory Using Microsoft Foundry
+﻿# Agent with Memory Using Microsoft Foundry
 
 This sample demonstrates how to create and run an agent that uses Microsoft Foundry's managed memory service to extract and retrieve individual memories across sessions.
 
@@ -14,7 +14,7 @@ This sample demonstrates how to create and run an agent that uses Microsoft Foun
 ## Prerequisites
 
 1. Azure subscription with Microsoft Foundry project
-2. Azure OpenAI resource with a chat model deployment (e.g., gpt-4o-mini) and an embedding model deployment (e.g., text-embedding-ada-002)
+2. Azure OpenAI resource with a chat model deployment (e.g., gpt-5.4-mini) and an embedding model deployment (e.g., text-embedding-ada-002)
 3. .NET 10.0 SDK
 4. Azure CLI logged in (`az login`)
 
@@ -22,11 +22,11 @@ This sample demonstrates how to create and run an agent that uses Microsoft Foun
 
 ```bash
 # Microsoft Foundry project endpoint and memory store name
-export AZURE_AI_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
+export FOUNDRY_PROJECT_ENDPOINT="https://your-account.services.ai.azure.com/api/projects/your-project"
 export AZURE_AI_MEMORY_STORE_ID="my_memory_store"
 
 # Model deployment names (models deployed in your Foundry project)
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+export FOUNDRY_MODEL="gpt-5.4-mini"
 export AZURE_AI_EMBEDDING_DEPLOYMENT_NAME="text-embedding-ada-002"
 ```
 

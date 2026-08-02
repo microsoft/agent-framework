@@ -17,12 +17,20 @@ internal static class A2AAgentTaskExtensions
 
         List<ChatMessage>? messages = null;
 
-        if (agentTask?.Artifacts is { Count: > 0 })
+        if (agentTask.Artifacts is { Count: > 0 })
         {
             foreach (var artifact in agentTask.Artifacts)
             {
                 (messages ??= []).Add(artifact.ToChatMessage());
             }
+        }
+
+        if (agentTask.Status?.GetUserInputRequests() is { } userInputRequests)
+        {
+            (messages ??= []).Add(new(ChatRole.Assistant, userInputRequests)
+            {
+                RawRepresentation = agentTask.Status,
+            });
         }
 
         return messages;
@@ -40,6 +48,11 @@ internal static class A2AAgentTaskExtensions
             {
                 (aiContents ??= []).AddRange(artifact.ToAIContents());
             }
+        }
+
+        if (agentTask.Status?.GetUserInputRequests() is { } userInputRequests)
+        {
+            (aiContents ??= []).AddRange(userInputRequests);
         }
 
         return aiContents;

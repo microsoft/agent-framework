@@ -23,7 +23,7 @@ internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentC
     {
         OpenAIClientOptions options = new()
         {
-            Endpoint = new Uri(httpClient.BaseAddress!, "/v1/"),
+            Endpoint = new Uri(httpClient.BaseAddress!, $"/{Uri.EscapeDataString(agentName)}/v1/"),
             Transport = new HttpClientPipelineTransport(httpClient)
         };
 

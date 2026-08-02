@@ -227,7 +227,6 @@ class TestHandlerCoverage:
             "OnConversationStart",  # Trigger kind, not an action
             "ConditionGroup",  # Decomposed into evaluator/join nodes
             "GotoAction",  # Resolved as graph edges, not executor nodes
-            "Goto",  # Alias for GotoAction
         }
 
         missing_executors = all_action_kinds - registered_executors - structural_kinds

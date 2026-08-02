@@ -46,6 +46,8 @@ async def github_mcp_example() -> None:
     # The MCP tool manages the connection to the MCP server and makes its tools available
     # Set approval_mode="never_require" to allow the MCP tool to execute without approval
     client = OpenAIChatClient()
+    # Note that the tool created here will be executed remotely by OpenAI, not locally by
+    # your application.
     github_mcp_tool = client.get_mcp_tool(
         name="GitHub",
         url="https://api.githubcopilot.com/mcp/",

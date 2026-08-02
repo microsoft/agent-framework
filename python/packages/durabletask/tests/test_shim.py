@@ -6,7 +6,7 @@ Focuses on critical message normalization, delegation, and protocol compliance.
 Run with: pytest tests/test_shim.py -v
 """
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
@@ -41,8 +41,8 @@ def mock_executor() -> Mock:
 
         opts = dict(options) if options else {}
         response_format = opts.pop("response_format", None)
-        enable_tool_calls = opts.pop("enable_tool_calls", True)
-        wait_for_response = opts.pop("wait_for_response", True)
+        enable_tool_calls = cast("bool", opts.pop("enable_tool_calls", True))
+        wait_for_response = cast("bool", opts.pop("wait_for_response", True))
         return RunRequest(
             message=message,
             correlation_id=str(uuid.uuid4()),
@@ -147,7 +147,7 @@ class TestDurableAISupportsAgentRunCompliance:
 
     def test_agent_implements_protocol(self, test_agent: DurableAIAgent[Any]) -> None:
         """Verify DurableAIAgent implements SupportsAgentRun."""
-        assert isinstance(test_agent, SupportsAgentRun)
+        assert isinstance(test_agent, SupportsAgentRun)  # pyrefly: ignore[unsafe-overlap]
 
     def test_agent_has_required_properties(self, test_agent: DurableAIAgent[Any]) -> None:
         """Verify DurableAIAgent has all required SupportsAgentRun properties."""

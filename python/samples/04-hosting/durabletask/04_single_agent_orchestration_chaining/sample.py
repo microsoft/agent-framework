@@ -20,9 +20,9 @@ To run this sample:
 import logging
 
 # Import helper functions from worker and client modules
-from client import get_client, run_client
+from client import get_client, run_client  # pyrefly: ignore[missing-import]
 from dotenv import load_dotenv
-from worker import get_worker, setup_worker
+from worker import get_worker, setup_worker  # pyrefly: ignore[missing-import]
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, force=True)
@@ -34,7 +34,8 @@ def main():
     logger.debug("Starting Single Agent Orchestration Chaining Sample...")
     silent_handler = logging.NullHandler()
     # Create and start the worker using helper function and context manager
-    with get_worker(log_handler=silent_handler) as dts_worker:
+    dts_worker = get_worker(log_handler=silent_handler)
+    with dts_worker:
         # Register agents and orchestrations using helper function
         setup_worker(dts_worker)
         # Start the worker

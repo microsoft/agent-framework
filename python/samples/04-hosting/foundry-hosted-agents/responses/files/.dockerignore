@@ -1,0 +1,10 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+
+# Local-only client tooling and sample data; not needed inside the agent image.
+resources/

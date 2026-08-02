@@ -200,12 +200,12 @@ async def main() -> None:
         """Hook that converts text to uppercase."""
         if update.text:
             return ChatResponseUpdate(
-                contents=[Content.from_text(update.text.upper())], role=update.role, response_id=update.response_id
+                contents=[Content.from_text(update.text.upper())], role=None, response_id=update.response_id
             )
         return update
 
     # Pass transform_hooks directly to constructor
-    stream3 = ResponseStream(
+    stream3: ResponseStream[ChatResponseUpdate, ChatResponse] = ResponseStream(
         generate_updates(),
         finalizer=combine_updates,
         transform_hooks=[counting_hook, uppercase_hook],  # First counts, then uppercases
@@ -262,7 +262,7 @@ async def main() -> None:
         return response
 
     # Finalizer converts updates to response, then result hooks transform it
-    stream5 = ResponseStream(
+    stream5: ResponseStream[ChatResponseUpdate, ChatResponse] = ResponseStream(
         generate_updates(),
         finalizer=combine_updates,
         result_hooks=[add_metadata_hook, wrap_in_quotes_hook],  # First adds metadata, then wraps in quotes
@@ -285,7 +285,7 @@ async def main() -> None:
         """Map ChatResponseUpdate to agent format (simulated transformation)."""
         # In real code, this would convert to AgentResponseUpdate
         return ChatResponseUpdate(
-            contents=[Content.from_text(f"[AGENT] {update.text}")], role=update.role, response_id=update.response_id
+            contents=[Content.from_text(f"[AGENT] {update.text}")], role=None, response_id=update.response_id
         )
 
     def to_agent_response(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
@@ -337,7 +337,7 @@ async def main() -> None:
         return response
 
     # All hooks can be passed via constructor
-    full_stream = ResponseStream(
+    full_stream: ResponseStream[ChatResponseUpdate, ChatResponse] = ResponseStream(
         generate_updates(),
         finalizer=combine_updates,
         transform_hooks=[track_stats],

@@ -39,7 +39,7 @@ The AgentService requires an OpenAI-compatible endpoint. Set these environment v
 
 ```bash
 export OPENAI_API_KEY="<your-openai-api-key>"
-export OPENAI_MODEL="gpt-4.1-mini"
+export OPENAI_MODEL="gpt-5.4-mini"
 ```
 
 ## Running the Sample

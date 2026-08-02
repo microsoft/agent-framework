@@ -105,7 +105,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
         State state = this._sessionState.GetOrInitializeState(context.Session);
 
         // Add request and response messages to the provider
-        var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
+        var allNewMessages = (context.RequestMessages ?? []).Concat(context.ResponseMessages ?? []);
         state.Messages.AddRange(allNewMessages);
 
         if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
