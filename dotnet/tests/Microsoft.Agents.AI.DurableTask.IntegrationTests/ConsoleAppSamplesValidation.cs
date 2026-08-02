@@ -304,7 +304,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [RetryFact(2, 5000, Skip = "Disabled due to persistent CI failures.")]
+    [RetryFact(2, 5000)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -384,7 +384,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [RetryFact(2, 5000, Skip = "Disabled due to persistent CI failures.")]
+    [RetryFact(2, 5000)]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "07_ReliableStreaming");
