@@ -141,6 +141,8 @@ func start
 
 The Azure Functions app will be available at `http://localhost:7071`.
 
+If the hosted agent routes are not listed when the app starts, make sure the app defines at least one local `[OrchestrationTrigger]` function. In .NET isolated worker apps, the Durable extension is indexed from triggers discovered in the app assembly.
+
 ### Test the Azure Functions app
 
 The README.md file in each sample directory contains instructions for testing the sample. Each sample also includes a `demo.http` file that can be used to test the sample from the command line. These files can be opened in VS Code with the [REST Client](https://marketplace.visualstudio.com/items?itemName=humao.rest-client) extension or in the Visual Studio IDE.
