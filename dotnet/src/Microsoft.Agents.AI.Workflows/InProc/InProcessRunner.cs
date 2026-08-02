@@ -164,7 +164,9 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this.RunContext.CheckEnded();
 
         if (this.Workflow.BehaviorPipeline?.HasWorkflowBehaviors != true)
+        {
             return new ValueTask<AsyncRunHandle>(new AsyncRunHandle(this, this, mode));
+        }
 
         return new ValueTask<AsyncRunHandle>(this.BeginStreamWithBehaviorsAsync(mode, cancellationToken));
     }

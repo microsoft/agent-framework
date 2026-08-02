@@ -80,7 +80,7 @@ internal sealed class BehaviorPipeline
         Func<CancellationToken, ValueTask> finalHandler,
         CancellationToken cancellationToken)
     {
-        await this.ExecuteWorkflowPipelineAsync<int>(
+        await this.ExecuteWorkflowPipelineAsync(
             context,
             async ct => { await finalHandler(ct).ConfigureAwait(false); return 0; },
             cancellationToken).ConfigureAwait(false);
