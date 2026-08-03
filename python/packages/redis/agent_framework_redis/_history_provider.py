@@ -108,7 +108,7 @@ class RedisHistoryProvider(HistoryProvider):
 
     def _redis_key(self, session_id: str | None) -> str:
         """Get the Redis key for a given session's messages."""
-        return f"{self.key_prefix}:{session_id or 'default'}"
+        return f"{self.key_prefix}:{self.source_id}:{session_id or 'default'}"
 
     async def get_messages(
         self,

@@ -420,8 +420,16 @@ class TestRedisHistoryProviderRedisKey:
             mock_from_url.return_value = mock_redis_client
             provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", key_prefix="msgs")
 
-        assert provider._redis_key("session-123") == "msgs:session-123"
-        assert provider._redis_key(None) == "msgs:default"
+        assert provider._redis_key("session-123") == "msgs:mem:session-123"
+        assert provider._redis_key(None) == "msgs:mem:default"
+
+    def test_keys_isolated_per_source_id(self, mock_redis_client: MagicMock):
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            first = RedisHistoryProvider("audit", redis_url="redis://localhost:6379", key_prefix="msgs")
+            second = RedisHistoryProvider("primary", redis_url="redis://localhost:6379", key_prefix="msgs")
+
+        assert first._redis_key("s1") != second._redis_key("s1")
 
 
 class TestRedisHistoryProviderGetMessages:
@@ -482,7 +490,7 @@ class TestRedisHistoryProviderSaveMessages:
 
         await provider.save_messages("s1", [Message(role="user", contents=["msg"])])
 
-        mock_redis_client.ltrim.assert_called_once_with("chat_messages:s1", -10, -1)
+        mock_redis_client.ltrim.assert_called_once_with("chat_messages:mem:s1", -10, -1)
 
     async def test_no_trim_when_under_limit(self, mock_redis_client: MagicMock):
         mock_redis_client.llen = AsyncMock(return_value=3)
@@ -503,7 +511,18 @@ class TestRedisHistoryProviderClear:
             provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
 
         await provider.clear("session-1")
-        mock_redis_client.delete.assert_called_once_with("chat_messages:session-1")
+        mock_redis_client.delete.assert_called_once_with("chat_messages:mem:session-1")
+
+    async def test_clear_leaves_other_source_ids_untouched(self, mock_redis_client: MagicMock):
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            audit = RedisHistoryProvider("audit", redis_url="redis://localhost:6379")
+            primary = RedisHistoryProvider("primary", redis_url="redis://localhost:6379")
+
+        await audit.clear("session-1")
+        # the destructive case from #7471: clearing one provider must not
+        # delete the shared session's messages belonging to another provider
+        mock_redis_client.delete.assert_called_once_with("chat_messages:audit:session-1")
 
 
 class TestRedisHistoryProviderBeforeAfterRun:
