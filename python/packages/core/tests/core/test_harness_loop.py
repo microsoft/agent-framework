@@ -1530,3 +1530,60 @@ async def test_nested_agent_run_inside_loop_iteration_is_not_suppressed() -> Non
     await outer.run("start")
 
     assert inner_provider.after_calls == 1
+
+
+async def test_nested_same_agent_run_with_separate_session_is_not_suppressed() -> None:
+    turn_scoped = _TurnScopedRecordingProvider()
+    holder: dict[str, Any] = {}
+
+    @tool(name="run_nested", approval_mode="never_require")
+    async def run_nested() -> str:
+        # Recursively running the same agent on its own session is a separate
+        # turn boundary, so its turn-scoped providers must still fire.
+        await holder["agent"].run("nested task", session=AgentSession())
+        return "done"
+
+    outer_client = MockBaseChatClient()
+    outer_client.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="c1", name="run_nested", arguments="{}")],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["finished"])),
+    ]
+    outer = Agent(
+        client=outer_client,
+        tools=[run_nested],
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=1)],
+        context_providers=[turn_scoped],
+    )
+    holder["agent"] = outer
+
+    await outer.run("start", session=AgentSession())
+
+    # once for the loop's turn boundary, once for the nested run's own turn
+    assert turn_scoped.after_calls == 2
+
+
+async def test_concurrent_same_agent_run_during_stream_pause_is_not_suppressed() -> None:
+    turn_scoped = _TurnScopedRecordingProvider()
+    agent = Agent(
+        client=RecordingChatClient(),
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=1)],
+        context_providers=[turn_scoped],
+    )
+
+    stream = agent.run("start", stream=True)
+    first = True
+    async for _update in stream:
+        if first:
+            first = False
+            # a run started by the caller while the outer stream is paused is
+            # its own turn, not a loop iteration
+            await agent.run("concurrent turn", session=AgentSession())
+    await stream.get_final_response()
+
+    # once for the loop boundary, once for the concurrent run's own boundary
+    assert turn_scoped.after_calls == 2

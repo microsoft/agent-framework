@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from pydantic import BaseModel, Field
 from typing_extensions import Self
 
-from .._agents import _LOOP_ITERATION_ACTIVE
+from .._agents import _LOOP_ITERATION_TOKEN_KEY
 from .._feature_stage import ExperimentalFeature, experimental
 from .._middleware import AgentContext, AgentMiddleware, MiddlewareTermination
 from .._sessions import SessionContext
@@ -518,57 +518,45 @@ class AgentLoopMiddleware(AgentMiddleware):
         aggregated: list[Message] = []
         aggregated_usage: UsageDetails | None = None
         final_result: AgentResponse | None = None
-        while True:
-            loop_token = _LOOP_ITERATION_ACTIVE.set(context.agent)
-            try:
+        stamped_options = dict(context.options) if context.options is not None else {}
+        stamped_options[_LOOP_ITERATION_TOKEN_KEY] = object()
+        context.options = stamped_options
+        try:
+            while True:
                 await call_next()
-            finally:
-                _LOOP_ITERATION_ACTIVE.reset(loop_token)
-            iteration += 1
+                iteration += 1
 
-            result = context.result
-            if not isinstance(result, AgentResponse):
-                raise TypeError(
-                    "AgentLoopMiddleware expected an AgentResponse from a non-streaming run, "
-                    f"got {type(result).__name__}."
+                result = context.result
+                if not isinstance(result, AgentResponse):
+                    raise TypeError(
+                        "AgentLoopMiddleware expected an AgentResponse from a non-streaming run, "
+                        f"got {type(result).__name__}."
+                    )
+
+                final_result = result
+                aggregated.extend(result.messages)
+                if result.usage_details is not None:
+                    aggregated_usage = add_usage_details(aggregated_usage, result.usage_details)
+
+                # Escape hatch: if this iteration is asking for tool approval, stop and return the
+                # response so the caller can approve, instead of continuing or injecting next_message.
+                if self._has_pending_approval_request(result):
+                    break
+
+                messages_used = context.messages
+                loop_kwargs = self._build_loop_kwargs(
+                    context=context,
+                    iteration=iteration,
+                    last_result=result,
+                    messages_used=messages_used,
+                    original_messages=original_messages,
+                    progress=progress,
                 )
 
-            final_result = result
-            aggregated.extend(result.messages)
-            if result.usage_details is not None:
-                aggregated_usage = add_usage_details(aggregated_usage, result.usage_details)
-
-            # Escape hatch: if this iteration is asking for tool approval, stop and return the
-            # response so the caller can approve, instead of continuing or injecting next_message.
-            if self._has_pending_approval_request(result):
-                break
-
-            messages_used = context.messages
-            loop_kwargs = self._build_loop_kwargs(
-                context=context,
-                iteration=iteration,
-                last_result=result,
-                messages_used=messages_used,
-                original_messages=original_messages,
-                progress=progress,
-            )
-
-            work_iterations += 1
-            # Decide whether to stop and capture any feedback from should_continue first, so the
-            # feedback is available to both the progress and next-message callables this iteration.
-            stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
-            loop_kwargs = self._build_loop_kwargs(
-                context=context,
-                iteration=iteration,
-                last_result=result,
-                messages_used=messages_used,
-                original_messages=original_messages,
-                progress=progress,
-                feedback=feedback,
-            )
-            # Capture this iteration's progress entry, then refresh loop_kwargs so the next-message
-            # resolution sees the latest entry.
-            if await self._record_progress(result, loop_kwargs, progress):
+                work_iterations += 1
+                # Decide whether to stop and capture any feedback from should_continue first, so the
+                # feedback is available to both the progress and next-message callables this iteration.
+                stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
                 loop_kwargs = self._build_loop_kwargs(
                     context=context,
                     iteration=iteration,
@@ -578,15 +566,29 @@ class AgentLoopMiddleware(AgentMiddleware):
                     progress=progress,
                     feedback=feedback,
                 )
-            if stop:
-                break
-            if snapshot is not None and context.session is not None:
-                # Reset the session to the pre-loop baseline so the next run starts fresh; only the
-                # progress log (injected by _resolve_next_message) carries continuity forward.
-                self._restore_session(context.session, snapshot)
-            next_messages = await self._resolve_next_message(loop_kwargs, messages_used, original_messages)
-            context.messages = next_messages
-            aggregated.extend(next_messages)
+                # Capture this iteration's progress entry, then refresh loop_kwargs so the next-message
+                # resolution sees the latest entry.
+                if await self._record_progress(result, loop_kwargs, progress):
+                    loop_kwargs = self._build_loop_kwargs(
+                        context=context,
+                        iteration=iteration,
+                        last_result=result,
+                        messages_used=messages_used,
+                        original_messages=original_messages,
+                        progress=progress,
+                        feedback=feedback,
+                    )
+                if stop:
+                    break
+                if snapshot is not None and context.session is not None:
+                    # Reset the session to the pre-loop baseline so the next run starts fresh; only the
+                    # progress log (injected by _resolve_next_message) carries continuity forward.
+                    self._restore_session(context.session, snapshot)
+                next_messages = await self._resolve_next_message(loop_kwargs, messages_used, original_messages)
+                context.messages = next_messages
+                aggregated.extend(next_messages)
+        finally:
+            context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
@@ -611,9 +613,11 @@ class AgentLoopMiddleware(AgentMiddleware):
             iteration = 0
             work_iterations = 0
             progress: list[str] = []
+            stamped_options = dict(context.options) if context.options is not None else {}
+            stamped_options[_LOOP_ITERATION_TOKEN_KEY] = object()
+            context.options = stamped_options
             try:
                 while True:
-                    loop_token = _LOOP_ITERATION_ACTIVE.set(context.agent)
                     try:
                         await call_next()
                         inner = context.result
@@ -633,8 +637,6 @@ class AgentLoopMiddleware(AgentMiddleware):
                         # raised by a downstream middleware or during stream consumption surfaces here.
                         # Stop cleanly and keep whatever final response we have from a prior iteration.
                         return
-                    finally:
-                        _LOOP_ITERATION_ACTIVE.reset(loop_token)
 
                     iteration += 1
 
@@ -691,6 +693,7 @@ class AgentLoopMiddleware(AgentMiddleware):
                     for message in next_messages:
                         yield self._message_to_update(message)
             finally:
+                context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
                 await self._fire_turn_scoped_after_providers(context, holder["final"], original_messages)
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:

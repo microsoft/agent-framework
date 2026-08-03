@@ -7,7 +7,6 @@ import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from contextvars import ContextVar
 from copy import deepcopy
 from functools import partial
 from itertools import chain
@@ -74,12 +73,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework")
 
-# Set by AgentLoopMiddleware to the looping agent while a loop iteration is
-# running, so providers scoped to the whole user turn
+# AgentLoopMiddleware stamps this key into the run options while a loop
+# iteration is running, so providers scoped to the whole user turn
 # (``after_run_once_per_turn``) skip their per-iteration ``after_run`` and only
-# fire once at the loop boundary. Keyed to the agent instance: a nested
-# ``agent.run()`` inside the iteration is a separate run, not a loop iteration.
-_LOOP_ITERATION_ACTIVE: ContextVar[Any] = ContextVar("agent_loop_iteration_active", default=None)
+# fire once at the loop boundary. It rides the run's options rather than a
+# context variable: options reach only the runs the loop itself drives, so a
+# nested ``agent.run()`` (fresh options, its own session) keeps its own turn,
+# and nothing leaks into the caller's context while a stream is paused.
+_LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"
 
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -558,7 +559,9 @@ class BaseAgent(SerializationMixin):
         per_service_call_history_required = self.require_per_service_call_history_persistence and any(
             isinstance(provider, HistoryProvider) for provider in self.context_providers
         )
-        in_loop_iteration = _LOOP_ITERATION_ACTIVE.get() is self
+        # The loop stamps the runs it drives via their options; anything else
+        # (nested run, caller-side run while a stream is paused) is its own turn.
+        in_loop_iteration = context.options.get(_LOOP_ITERATION_TOKEN_KEY) is not None
         for provider in reversed(self.context_providers):
             if per_service_call_history_required and isinstance(provider, HistoryProvider):
                 continue
