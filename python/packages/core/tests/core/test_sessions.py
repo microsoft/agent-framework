@@ -1469,6 +1469,20 @@ class TestInMemoryHistoryProvider:
         texts = [m.text for m in stored]
         assert texts == ["turn 1", "reply 1", "turn 2", "reply 2"]
 
+    async def test_save_messages_preserves_duplicate_content(self) -> None:
+        """Two separate user 'yes' replies must both be persisted in memory."""
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+        
+        yes_1 = Message(role="user", contents=["yes"])
+        yes_2 = Message(role="user", contents=["yes"])
+        
+        await provider.save_messages("s1", [yes_1], state=state)
+        assert len(state["messages"]) == 1
+        
+        await provider.save_messages("s1", [yes_2], state=state)
+        assert len(state["messages"]) == 2
+
 
 class TestFileHistoryProvider:
     def test_is_marked_experimental(self) -> None:
@@ -1813,3 +1827,19 @@ class TestFileHistoryProvider:
         await provider.save_messages("s1", [msg1, msg2, msg3])
         raw_lines = (await asyncio.to_thread(session_file.read_text, encoding="utf-8")).splitlines()
         assert len(raw_lines) == 3
+
+    async def test_save_messages_preserves_duplicate_content(self, tmp_path: Path) -> None:
+        """Test that two separate identical user turns are both persisted."""
+        provider = FileHistoryProvider(tmp_path)
+
+        yes_1 = Message(role="user", contents=["yes"])
+        yes_2 = Message(role="user", contents=["yes"])
+
+        await provider.save_messages("s1", [yes_1])
+        loaded = await provider.get_messages("s1")
+        assert len(loaded) == 1
+
+        await provider.save_messages("s1", [yes_2])
+        loaded = await provider.get_messages("s1")
+        
+        assert len(loaded) == 2

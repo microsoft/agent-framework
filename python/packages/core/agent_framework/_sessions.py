@@ -187,7 +187,6 @@ def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[s
 
 def get_message_identity(message: Message) -> MessageIdentity:
     """Return a stable identity for a message for deduplication.
-
     Uses the message's ID if available, otherwise falls back to a hash of
     its role and serialized contents to prevent duplicate persistence.
     """
@@ -196,13 +195,18 @@ def get_message_identity(message: Message) -> MessageIdentity:
         msg_id = getattr(message, "id", None)
     if msg_id is not None:
         return ("id", str(msg_id))
-
+    
+    new_id = str(uuid.uuid4())
     try:
-        contents_data = [c.to_dict() for c in message.contents] if message.contents else []
-        serialized = json.dumps(contents_data, sort_keys=True, ensure_ascii=False)
-        return ("content", str(message.role), serialized)
+        message.message_id = new_id
+        return ("id", new_id)
     except Exception:
-        return ("content", str(message.role), str(message.contents))
+        try:
+            contents_data = [c.to_dict() for c in message.contents] if message.contents else []
+            serialized = json.dumps(contents_data, sort_keys=True, ensure_ascii=False)
+            return ("content", str(message.role), serialized)
+        except Exception:
+            return ("content", str(message.role), str(message.contents))
 
 
 def _is_middleware_sequence(
