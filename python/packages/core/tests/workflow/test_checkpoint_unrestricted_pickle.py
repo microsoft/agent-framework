@@ -35,9 +35,12 @@ from agent_framework._workflows._checkpoint_encoding import (
 
 @pytest.fixture(autouse=True)
 def cleanup_custom_checkpoint_types():
-    from agent_framework._workflows._checkpoint_encoding import _CUSTOM_ALLOWED_TYPES  # pyright: ignore[reportPrivateUsage]
+    from agent_framework._workflows._checkpoint_encoding import (
+        _CUSTOM_ALLOWED_TYPES,  # pyright: ignore[reportPrivateUsage]
+    )
 
     backup = set(_CUSTOM_ALLOWED_TYPES)
+    _CUSTOM_ALLOWED_TYPES.clear()
     yield
     _CUSTOM_ALLOWED_TYPES.clear()
     _CUSTOM_ALLOWED_TYPES.update(backup)
