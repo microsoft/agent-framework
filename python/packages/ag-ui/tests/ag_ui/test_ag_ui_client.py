@@ -4,7 +4,7 @@
 
 import json
 from collections.abc import AsyncGenerator, Awaitable, MutableSequence
-from typing import Any
+from typing import Any, cast
 
 from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
@@ -105,6 +105,30 @@ class TestAGUIChatClient:
         assert result_messages[0].text == "Hello"
         assert state == state_data
 
+    async def test_extract_state_from_messages_with_parameterized_data_uri(self) -> None:
+        """Test state extraction from JSON data URIs with media type parameters."""
+        import base64
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+
+        state_data = {"key": "value", "count": 42}
+        state_json = json.dumps(state_data)
+        state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("utf-8")
+
+        messages = [
+            Message(role="user", contents=["Hello"]),
+            Message(
+                role="user",
+                contents=[Content.from_uri(uri=f"data:application/json;charset=utf-8;base64,{state_b64}")],
+            ),
+        ]
+
+        result_messages, state = client.extract_state_from_messages(messages)
+
+        assert len(result_messages) == 1
+        assert result_messages[0].text == "Hello"
+        assert state == state_data
+
     async def test_extract_state_invalid_json(self) -> None:
         """Test state extraction with invalid JSON."""
         import base64
@@ -118,6 +142,22 @@ class TestAGUIChatClient:
             Message(
                 role="user",
                 contents=[Content.from_uri(uri=f"data:application/json;base64,{state_b64}")],
+            ),
+        ]
+
+        result_messages, state = client.extract_state_from_messages(messages)
+
+        assert result_messages == messages
+        assert state is None
+
+    async def test_extract_state_invalid_base64(self) -> None:
+        """Test state extraction with invalid base64."""
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+
+        messages = [
+            Message(
+                role="user",
+                contents=[Content.from_uri(uri="data:application/json;base64,not-valid-base64!")],
             ),
         ]
 
@@ -185,7 +225,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options=chat_options)
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(update)
+            updates.append(cast(ChatResponseUpdate, update))
 
         assert len(updates) == 4
         assert updates[0].additional_properties is not None
@@ -428,7 +468,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options={"tools": [my_tool]})
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(update)
+            updates.append(cast(ChatResponseUpdate, update))
 
         # Find the function_call content - it should have agui_thread_id
         found = False

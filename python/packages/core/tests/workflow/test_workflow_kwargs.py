@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 import pytest
 
+pytest.importorskip("agent_framework_orchestrations")
+
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,

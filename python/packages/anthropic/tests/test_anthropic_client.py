@@ -10,6 +10,7 @@ from agent_framework import (
     Agent,
     ChatMiddlewareLayer,
     ChatOptions,
+    ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
@@ -22,6 +23,7 @@ from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic.types.beta import (
     BetaMessage,
+    BetaMessageDeltaUsage,
     BetaTextBlock,
     BetaToolUseBlock,
     BetaUsage,
@@ -30,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from agent_framework_anthropic import AnthropicClient, RawAnthropicClient
 from agent_framework_anthropic._chat_client import AnthropicSettings
+from agent_framework_anthropic._feature_usage import FeatureIndex
 
 # Test constants
 VALID_PNG_BASE64 = b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
@@ -1270,6 +1273,48 @@ async def test_prepare_options_excludes_stream_option(
     assert "stream" not in run_options
 
 
+async def test_prepare_options_consumes_additional_beta_flags(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Per-run additional_beta_flags must be folded into betas, not forwarded raw.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/5764:
+    the key survived into run_options and was passed straight through to
+    ``AsyncMessages.create()``, which rejects it with
+    ``TypeError: got an unexpected keyword argument 'additional_beta_flags'``.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", contents=["Hello"])]
+    chat_options: dict[str, Any] = {"additional_beta_flags": ["extended-cache-ttl-2025-04-11"]}
+
+    run_options = client._prepare_options(messages, chat_options)
+
+    assert "additional_beta_flags" not in run_options
+    assert "extended-cache-ttl-2025-04-11" in run_options["betas"]
+
+
+async def test_prepare_options_drops_additional_beta_flags_passed_as_kwarg(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """additional_beta_flags must also be excluded when passed as a raw kwarg,
+    not just via the options dict.
+
+    Flagged in code review on the fix for #5764: the initial fix only excluded
+    the key from the options-dict copy, but filtered_kwargs (built from
+    **kwargs at the call site) had no equivalent exclusion, so
+    ``_prepare_options(messages, {}, additional_beta_flags=[...])`` would still
+    forward the raw key and reproduce the same TypeError.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", contents=["Hello"])]
+
+    run_options = client._prepare_options(messages, {}, additional_beta_flags=["extended-cache-ttl-2025-04-11"])
+
+    assert "additional_beta_flags" not in run_options
+
+
 async def test_prepare_options_filters_internal_kwargs(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -1561,10 +1606,12 @@ async def test_inner_get_response(mock_anthropic_client: MagicMock) -> None:
     messages = [Message(role="user", contents=["Hi"])]
     chat_options = ChatOptions(max_tokens=10)
 
-    response = await client._inner_get_response(  # type: ignore[attr-defined]
-        messages=messages, options=chat_options
-    )
+    with patch("agent_framework_anthropic._chat_client.mark_feature_used") as mark_feature_used:
+        response = await client._inner_get_response(  # type: ignore[attr-defined]
+            messages=messages, options=chat_options
+        )
 
+    mark_feature_used.assert_called_once_with(FeatureIndex.ANTHROPIC)
     assert response is not None
     assert response.response_id == "msg_test"
     assert len(response.messages) == 1
@@ -1672,6 +1719,82 @@ def test_process_stream_event_message_start_sets_assistant_role(mock_anthropic_c
 
     assert result is not None
     assert result.role == "assistant"
+
+
+def _usage_message_start_event(*, input_tokens: int, output_tokens: int) -> MagicMock:
+    event = MagicMock()
+    event.type = "message_start"
+    event.message.id = "msg_usage"
+    event.message.role = "assistant"
+    event.message.model = "claude-3-5-sonnet-20241022"
+    event.message.content = []
+    event.message.stop_reason = None
+    event.message.usage = BetaUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    return event
+
+
+def _usage_message_delta_event(*, output_tokens: int, input_tokens: int | None = None) -> MagicMock:
+    event = MagicMock()
+    event.type = "message_delta"
+    event.usage = BetaMessageDeltaUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_input_tokens=None,
+        cache_read_input_tokens=None,
+    )
+    event.delta.stop_reason = "end_turn"
+    return event
+
+
+def test_streaming_usage_not_double_counted(mock_anthropic_client: MagicMock) -> None:
+    """message_start's seed usage must not be summed onto message_delta's cumulative total.
+
+    Anthropic reports cumulative usage on message_delta (per their streaming docs), while
+    message_start carries an output_tokens=1 seed. ChatResponse.from_updates sums every
+    usage Content, which used to inflate output_token_count by the seed — 26 when the API
+    reported 25.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    emitted: dict[str, int] = {}
+    updates = [
+        u
+        for u in (
+            client._process_stream_event(_usage_message_start_event(input_tokens=10, output_tokens=1), emitted),
+            client._process_stream_event(_usage_message_delta_event(output_tokens=25), emitted),
+        )
+        if u is not None
+    ]
+
+    response = ChatResponse.from_updates(updates)
+
+    assert response.usage_details is not None
+    assert response.usage_details["output_token_count"] == 25
+    assert response.usage_details["input_token_count"] == 10
+
+
+def test_streaming_usage_delta_input_not_double_counted(mock_anthropic_client: MagicMock) -> None:
+    """When message_delta also reports cumulative input tokens, the input must not double.
+
+    Server-tool turns report cumulative input_tokens on message_delta; summing them onto
+    message_start's input snapshot double-counted the prompt. The final input_token_count
+    should equal the last cumulative value message_delta reports.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    emitted: dict[str, int] = {}
+    updates = [
+        u
+        for u in (
+            client._process_stream_event(_usage_message_start_event(input_tokens=10, output_tokens=1), emitted),
+            client._process_stream_event(_usage_message_delta_event(input_tokens=12, output_tokens=25), emitted),
+        )
+        if u is not None
+    ]
+
+    response = ChatResponse.from_updates(updates)
+
+    assert response.usage_details is not None
+    assert response.usage_details["output_token_count"] == 25
+    assert response.usage_details["input_token_count"] == 12
 
 
 def test_process_stream_event_message_start_role_prevents_tool_use_collapse() -> None:

@@ -75,5 +75,71 @@ public class MagenticWorkflowBuilderTests
         Action build = () => builder.Build();
         build.Should().Throw<InvalidOperationException>().WithMessage("*Stranger*");
     }
+
+    [Fact]
+    public void Test_MagenticWorkflowBuilder_WithResponseLanguage_ReturnsSameBuilderForChaining()
+    {
+        // Arrange
+        TestReplayAgent manager = new(name: "Manager");
+        MagenticWorkflowBuilder builder = new(manager);
+
+        // Act
+        MagenticWorkflowBuilder chained = builder.WithResponseLanguage("English");
+
+        // Assert
+        chained.Should().BeSameAs(builder);
+    }
+
+    [Fact]
+    public void Test_MagenticWorkflowBuilder_WithPromptOverrides_ReturnsSameBuilderForChaining()
+    {
+        // Arrange
+        TestReplayAgent manager = new(name: "Manager");
+        MagenticWorkflowBuilder builder = new(manager);
+
+        // Act
+        MagenticWorkflowBuilder chained = builder.WithPromptOverrides(new MagenticPromptOverrides { FinalAnswerPrompt = "custom {task}" });
+
+        // Assert
+        chained.Should().BeSameAs(builder);
+    }
+
+    [Fact]
+    public void Test_MagenticWorkflowBuilder_ProgressLedgerOverrideWithoutSchema_ThrowsOnBuild()
+    {
+        // Arrange
+        TestReplayAgent manager = new(name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        MagenticWorkflowBuilder builder = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .WithPromptOverrides(new MagenticPromptOverrides { ProgressLedgerPrompt = "Answer for {task} with no schema placeholder" });
+
+        // Act
+        Action build = () => builder.Build();
+
+        // Assert
+        build.Should().Throw<InvalidOperationException>().WithMessage("*{schema}*");
+    }
+
+    [Fact]
+    public void Test_MagenticWorkflowBuilder_ProgressLedgerOverrideWithSchema_BuildsSuccessfully()
+    {
+        // Arrange
+        TestReplayAgent manager = new(name: "Manager");
+        TestEchoAgent worker = new(name: "Worker");
+
+        MagenticWorkflowBuilder builder = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .WithPromptOverrides(new MagenticPromptOverrides { ProgressLedgerPrompt = "Answer for {task}\n{schema}" });
+
+        // Act
+        Action build = () => builder.Build();
+
+        // Assert
+        build.Should().NotThrow();
+    }
 }
 #pragma warning restore MAAIW001

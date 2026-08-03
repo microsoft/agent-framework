@@ -57,7 +57,6 @@ AIAgent webSearchAgent =
         DisableTodoProvider = true,
         DisableAgentModeProvider = true,
         DisableFileMemory = true,       // If enabled, this would allow the agent to store memories as files in a directory associated with the current session
-        DisableFileAccess = true,       // If enabled, this would allow the agent to read/write files in a working directory
         DisableToolAutoApproval = true, // If true, this disables the don't-ask-again approval functionality.
         ChatOptions = new ChatOptions
         {
@@ -107,7 +106,6 @@ AIAgent parentAgent =
         DisableTodoProvider = true,
         DisableAgentModeProvider = true,
         DisableFileMemory = true,       // If enabled, this would allow the agent to store memories as files in a directory associated with the current session
-        DisableFileAccess = true,       // If enabled, this would allow the agent to read/write files in a working directory
         DisableToolAutoApproval = true, // If true, this disables the don't-ask-again approval functionality.
         DisableWebSearch = true,
         BackgroundAgents = [webSearchAgent],

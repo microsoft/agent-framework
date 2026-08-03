@@ -54,9 +54,7 @@ async def main():
         "Why is the sky blue?",
     ]
 
-    with get_tracer().start_as_current_span(
-        "Scenario: Agent Chat", kind=SpanKind.CLIENT
-    ) as current_span:
+    with get_tracer().start_as_current_span("Scenario: Agent Chat", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
         agent = Agent(

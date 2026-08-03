@@ -19,9 +19,10 @@ from typing import TYPE_CHECKING, Any, TypedDict
 from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsShellTool, SupportsWebSearchTool
 from .._compaction import CompactionProvider, ContextWindowCompactionStrategy
-from .._feature_stage import ExperimentalFeature, experimental
+from .._feature_stage import ExperimentalFeature, warn_experimental_feature
 from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider, MessageInjectionMiddleware
 from .._skills import SkillsProvider
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._types import ChatOptions
 from ._background_agents import BackgroundAgentsProvider
 from ._file_access import AgentFileStore, FileAccessProvider, FileSystemAgentFileStore
@@ -151,7 +152,6 @@ def _assemble_context_providers(
     mode_provider: AgentModeProvider | None,
     disable_file_memory: bool,
     file_memory_store: AgentFileStore | None,
-    disable_file_access: bool,
     file_access_store: AgentFileStore | None,
     file_access_disable_write_tools: bool,
     file_access_disable_readonly_tool_approval: bool,
@@ -186,12 +186,11 @@ def _assemble_context_providers(
         memory_store = file_memory_store or FileSystemAgentFileStore(Path.cwd() / "agent-file-memory")
         providers.append(FileMemoryProvider(memory_store))
 
-    # Shared file access (on by default). Default store is rooted at ``{cwd}/working``.
-    if not disable_file_access:
-        access_store = file_access_store or FileSystemAgentFileStore(Path.cwd() / "working")
+    # Shared file access (opt-in). Only added when a store is supplied.
+    if file_access_store is not None:
         providers.append(
             FileAccessProvider(
-                access_store,
+                file_access_store,
                 disable_write_tools=file_access_disable_write_tools,
                 disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
                 disable_write_tool_approval=file_access_disable_write_tool_approval,
@@ -271,8 +270,35 @@ OptionsCoT = TypeVar(
     default="ChatOptions[None]",
 )
 
+# Dedup label for the pre-release shell tooling (provided by the alpha-stage
+# agent-framework-tools package). It is not a feature-stage-decorated feature, so it uses a
+# label distinct from ExperimentalFeature.HARNESS to avoid suppressing unrelated HARNESS warnings.
+_SHELL_TOOLING_FEATURE_ID = "SHELL_TOOLING"
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
+
+def _warn_experimental_harness_params(
+    param_names: Sequence[str],
+    *,
+    feature_id: str,
+    detail: str,
+) -> None:
+    """Emit a single ExperimentalWarning when experimental harness features are enabled.
+
+    ``create_harness_agent`` itself is released, but some of the features it can wire in
+    remain experimental or pre-release. When a caller opts into one of those features, warn
+    once (pointing at the caller's call site) naming the responsible parameter(s), and seed a
+    per-feature dedup key so the downstream experimental provider does not warn again.
+    """
+    if not param_names:
+        return
+    joined = ", ".join(repr(name) for name in param_names)
+    warn_experimental_feature(
+        f"[{feature_id}] create_harness_agent parameter(s) {joined} enable "
+        f"{detail} that may change or be removed in future versions without notice.",
+        feature_id=feature_id,
+    )
+
+
 def create_harness_agent(
     client: SupportsChatGetResponse[OptionsCoT],
     *,
@@ -295,7 +321,6 @@ def create_harness_agent(
     mode_provider: AgentModeProvider | None = None,
     disable_file_memory: bool = False,
     file_memory_store: AgentFileStore | None = None,
-    disable_file_access: bool = False,
     file_access_store: AgentFileStore | None = None,
     file_access_disable_write_tools: bool = False,
     file_access_disable_readonly_tool_approval: bool = False,
@@ -327,7 +352,7 @@ def create_harness_agent(
     - **TodoProvider** — todo list management
     - **AgentModeProvider** — plan/execute mode tracking
     - **FileMemoryProvider** — file-based session memory (on by default)
-    - **FileAccessProvider** — shared file read/write tools (on by default)
+    - **FileAccessProvider** — shared file read/write tools (opt-in via ``file_access_store``)
     - **SkillsProvider** — skill discovery and progressive loading
     - **BackgroundAgentsProvider** — delegate work to background sub-agents
     - **Tool approval** — "don't ask again" standing approval rules plus heuristic
@@ -336,6 +361,14 @@ def create_harness_agent(
     - **OpenTelemetry** — observability via ``AgentTelemetryLayer``
 
     Each feature can be disabled or customized via keyword arguments.
+
+    .. note:: Experimental features
+
+        ``create_harness_agent`` is released, but a few of the features it can wire in are
+        still experimental or pre-release: **background agents** (``background_agents``),
+        **file access** (``file_access_store``), **looping** (``loop_should_continue``), and
+        the **shell tooling** (``shell_executor``, provided by the pre-release
+        ``agent-framework-tools`` package). Enabling any of them emits an ``ExperimentalWarning``.
 
     Examples:
         Basic usage:
@@ -408,23 +441,22 @@ def create_harness_agent(
         file_memory_store: Custom AgentFileStore backing the FileMemoryProvider. When None
             (and disable_file_memory is False), a FileSystemAgentFileStore rooted at
             ``{cwd}/agent-file-memory`` is created. Ignored when disable_file_memory is True.
-        disable_file_access: When True, skip the FileAccessProvider. When False (default),
-            a FileAccessProvider is added, giving the agent shared read/write file tools.
-        file_access_store: Custom AgentFileStore backing the FileAccessProvider. When None
-            (and disable_file_access is False), a FileSystemAgentFileStore rooted at
-            ``{cwd}/working`` is created. Ignored when disable_file_access is True.
+        file_access_store: AgentFileStore backing the FileAccessProvider. File access is
+            opt-in: when None (default), no FileAccessProvider is added and the agent has no
+            file access tools. When set, a FileAccessProvider is added, giving the agent shared
+            read/write file tools backed by the supplied store.
         file_access_disable_write_tools: When True, the FileAccessProvider advertises only its
             read-only tools (read, ls, grep); the write tools (write, delete, replace,
-            replace_lines) are hidden. When False (default), all tools are advertised. Ignored
-            when disable_file_access is True.
+            replace_lines) are hidden. When False (default), all tools are advertised. Only
+            used when file_access_store is set.
         file_access_disable_readonly_tool_approval: When True, the FileAccessProvider's read-only
             tools (read, ls, grep) are registered with ``approval_mode="never_require"`` so they
-            run without host approval. When False (default), they require approval. Ignored when
-            disable_file_access is True.
+            run without host approval. When False (default), they require approval. Only used when
+            file_access_store is set.
         file_access_disable_write_tool_approval: When True, the FileAccessProvider's write tools
             (write, delete, replace, replace_lines) are registered with
             ``approval_mode="never_require"`` so they run without host approval. When False
-            (default), they require approval. Ignored when disable_file_access is True.
+            (default), they require approval. Only used when file_access_store is set.
         skills_provider: Custom SkillsProvider instance for code-defined skills.
             Can be combined with ``skills_paths`` to aggregate file and code-based skills.
             **Security:** if the provider is configured with an external skill source (e.g.
@@ -506,6 +538,28 @@ def create_harness_agent(
     ):
         raise ValueError("max_output_tokens must be less than max_context_window_tokens.")
 
+    # Warn when opting into harness features that are still experimental. create_harness_agent
+    # itself is released, but background agents, file access, and looping remain experimental,
+    # and the shell tooling is provided by the pre-release agent-framework-tools package.
+    experimental_params: list[str] = []
+    if background_agents:
+        experimental_params.append("background_agents")
+    if file_access_store is not None:
+        experimental_params.append("file_access_store")
+    if loop_should_continue is not None:
+        experimental_params.append("loop_should_continue")
+    _warn_experimental_harness_params(
+        experimental_params,
+        feature_id=ExperimentalFeature.HARNESS.value,
+        detail="experimental harness features",
+    )
+    if shell_executor is not None:
+        _warn_experimental_harness_params(
+            ["shell_executor"],
+            feature_id=_SHELL_TOOLING_FEATURE_ID,
+            detail="pre-release shell tooling from the agent-framework-tools package",
+        )
+
     # Build history provider.
     resolved_history = history_provider or InMemoryHistoryProvider()
 
@@ -539,7 +593,6 @@ def create_harness_agent(
         mode_provider=mode_provider,
         disable_file_memory=disable_file_memory,
         file_memory_store=file_memory_store,
-        disable_file_access=disable_file_access,
         file_access_store=file_access_store,
         file_access_disable_write_tools=file_access_disable_write_tools,
         file_access_disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
@@ -622,5 +675,6 @@ def create_harness_agent(
 
     # Set the telemetry provider name after construction.
     agent.otel_provider_name = otel_provider_name or HARNESS_AGENT_PROVIDER_NAME
+    mark_feature_used(FeatureIndex.CORE_HARNESS_AGENT)
 
     return agent

@@ -17,6 +17,7 @@ from typing_extensions import NotRequired, TypedDict
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import tool
 from .._types import Message
 
@@ -47,7 +48,6 @@ DEFAULT_TODO_INSTRUCTIONS = (
 )
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoItem(SerializationMixin):
     """Represent one todo item tracked for the current session."""
 
@@ -106,7 +106,6 @@ class TodoItem(SerializationMixin):
         )
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoInput(SerializationMixin):
     """Describe one todo item to create."""
 
@@ -142,7 +141,6 @@ class TodoInput(SerializationMixin):
         return cls(title=title, description=description)
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoCompleteInput(SerializationMixin):
     """Describe one todo item to mark as complete."""
 
@@ -227,7 +225,6 @@ def _safe_next_id(items: list[TodoItem], next_id: int) -> int:
     return max(next_id, max((item.id for item in items), default=0) + 1)
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoStore(ABC):
     """Abstract backing store for session todo items."""
 
@@ -245,7 +242,6 @@ class TodoStore(ABC):
         return items
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoSessionStore(TodoStore):
     """Store todo state inside ``AgentSession.state``."""
 
@@ -447,7 +443,6 @@ class TodoFileStore(TodoStore):
                 temp_path.unlink(missing_ok=True)
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class TodoProvider(ContextProvider):
     """Provide todo management tools and instructions to an agent.
 
@@ -504,6 +499,7 @@ class TodoProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject todo tools and instructions before the model runs."""
+        mark_feature_used(FeatureIndex.CORE_TODO_PROVIDER)
         del agent, state
 
         @tool(name="todos_add", approval_mode="never_require")

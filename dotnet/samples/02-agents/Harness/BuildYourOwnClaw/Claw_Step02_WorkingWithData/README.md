@@ -14,6 +14,12 @@ It builds on Post 1's personal finance assistant and teaches it to work with *yo
   saving and deleting still pause for approval. The `place_trade` tool is also wrapped in an
   `ApprovalRequiredAIFunction` (see `TradingTools.cs`), so the harness surfaces an approval prompt
   before any trade runs. The trade itself is simulated — no real order is placed.
+
+  > ⚠️ **Security — avoid tool-name collisions:** auto-approval rules such as
+  > `FileAccessProvider.ReadOnlyToolsAutoApprovalRule` match tool calls **solely by tool name**. Any
+  > other registered tool that shares one of the approved names (`file_access_read`, `file_access_ls`,
+  > `file_access_grep`) would be silently auto-approved, bypassing the human
+  > approval boundary. Ensure no other tool's name collides with the reserved names a rule approves.
 - **Durable memory, two ways:**
   - **File memory** (coarse-grained, explicit) — the agent reads/writes files such as
     `watchlist.md`. File memory is on by default; its files live on disk under

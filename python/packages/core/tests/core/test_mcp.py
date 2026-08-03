@@ -2954,6 +2954,65 @@ async def test_mcp_tool_sampling_callback_no_response_and_successful_message_cre
     assert success.content.text == "Hello"
 
 
+async def test_mcp_tool_sampling_callback_returns_tool_use_results():
+    """Test sampling callback returns structured MCP tool-use content from function calls."""
+    tool = MCPStdioTool(name="test_tool", command="python", sampling_approval_callback=_approve)
+
+    mock_chat_client = AsyncMock()
+    mock_chat_client.get_response.return_value = Mock(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call-1",
+                        name="Answer",
+                        arguments={"answer": "hello"},
+                    ),
+                ],
+            ),
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call-2",
+                        name="Citations",
+                        arguments={"sources": ["docs"]},
+                    ),
+                ],
+            ),
+        ],
+        model="test-model",
+    )
+    tool.client = mock_chat_client
+
+    params = Mock()
+    params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Answer"))]
+    params.temperature = None
+    params.maxTokens = 100
+    params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = [
+        types.Tool(name="Answer", description="Return an answer", inputSchema={"type": "object"}),
+        types.Tool(name="Citations", description="Return source citations", inputSchema={"type": "object"}),
+    ]
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResultWithTools)
+    assert result.role == "assistant"
+    assert result.model == "test-model"
+    assert result.stopReason == "toolUse"
+    assert isinstance(result.content, list)
+    tool_use_contents = [content for content in result.content if isinstance(content, types.ToolUseContent)]
+    assert tool_use_contents == result.content
+    assert [(content.id, content.name, content.input) for content in tool_use_contents] == [
+        ("call-1", "Answer", {"answer": "hello"}),
+        ("call-2", "Citations", {"sources": ["docs"]}),
+    ]
+
+
 async def test_mcp_tool_logging_callback_logs_at_requested_level() -> None:
     tool = MCPStdioTool(name="test_tool", command="python")
 
@@ -5968,6 +6027,187 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
+async def test_mcp_streamable_http_tool_header_provider_injects_on_ambient_request():
+    """Regression test for #7079: static header_provider must authenticate ambient requests.
+
+    The initialize handshake, load_tools/load_prompts discovery, and background pings run
+    outside call_tool, so the contextvar/snapshot are unset. A static header_provider should
+    still be invoked (with empty kwargs) so these requests carry auth headers.
+    """
+    import httpx
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"Authorization": "******"},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            # No contextvar set and no active call snapshot: simulates the initialize handshake.
+            request = httpx.Request("POST", "http://example.com/mcp")
+            await hooks[0](request)
+            assert request.headers.get("Authorization") == "******"
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
+async def test_mcp_streamable_http_tool_header_provider_ambient_request_tolerates_kwargs_provider():
+    """A header_provider that requires per-call kwargs must not crash ambient requests.
+
+    Providers that index runtime kwargs (e.g. kw["mcp_api_key"]) which are absent at connect
+    time raise KeyError. The hook should swallow that specific error and proceed without headers
+    rather than failing the initialize handshake.
+    """
+    import httpx
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"Authorization": f"Bearer {kw['mcp_api_key']}"},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            # No kwargs available at connect time -> provider raises KeyError -> hook swallows it.
+            request = httpx.Request("POST", "http://example.com/mcp")
+            await hooks[0](request)
+            assert "Authorization" not in request.headers
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
+async def test_mcp_streamable_http_tool_header_provider_empty_active_call_skips_ambient_fallback():
+    """Regression test: an active call that yields no headers must not trigger the ambient fallback.
+
+    When header_provider legitimately returns {} for a real call_tool invocation, the empty dict
+    is a valid "set" value. The hook must treat it as set-but-empty (leave the request unchanged)
+    rather than as "unset", which would re-invoke header_provider({}) mid-call and inject headers
+    the caller deliberately omitted.
+    """
+    import httpx
+
+    from agent_framework._mcp import _mcp_call_headers
+
+    call_count = 0
+
+    def provider(kw: dict[str, Any]) -> dict[str, str]:
+        nonlocal call_count
+        call_count += 1
+        # Non-empty for ambient ({}), empty for the active call below.
+        return {} if kw.get("suppress") else {"Authorization": "******"}
+
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com/mcp", header_provider=provider)
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            # Simulate an active call whose provider returned {} (both ContextVar and snapshot set).
+            token = _mcp_call_headers.set({})
+            tool._active_call_headers = {}
+            try:
+                call_count = 0
+                request = httpx.Request("POST", "http://example.com/mcp")
+                await hooks[0](request)
+                assert "Authorization" not in request.headers
+                assert call_count == 0, "ambient fallback must not run during a set-but-empty call"
+            finally:
+                tool._active_call_headers = None
+                _mcp_call_headers.reset(token)
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
+async def test_mcp_streamable_http_tool_header_provider_ambient_kwarg_error_is_benign(caplog):
+    """A kwargs-dependent provider that raises KeyError on ambient requests must not fail them.
+
+    Ambient requests (initialize/discovery plus recurring pings) call the provider with empty
+    kwargs, so a provider indexing a required per-call kwarg raises KeyError. That is tolerated:
+    the request proceeds without headers and only a DEBUG line is logged (no WARNING spam).
+    """
+    import logging
+
+    import httpx
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"Authorization": "Bearer " + kw["mcp_api_key"]},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            with caplog.at_level(logging.DEBUG, logger="agent_framework._mcp"):
+                for _ in range(3):
+                    request = httpx.Request("POST", "http://example.com/mcp")
+                    await hooks[0](request)
+                    assert "Authorization" not in request.headers
+
+            # The benign kwargs case must not escalate to WARNING/ERROR.
+            assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
+async def test_mcp_streamable_http_tool_header_provider_ambient_non_keyerror_propagates():
+    """A genuine header_provider failure on an ambient request must surface, not be swallowed.
+
+    Only the missing-kwargs case (KeyError) is tolerated. Any other error - e.g. a token-refresh
+    failure or a provider bug - propagates so it is not silently converted into unauthenticated
+    traffic, matching the call_tool path which does not catch header_provider exceptions.
+    """
+    import httpx
+
+    class TokenRefreshError(RuntimeError):
+        pass
+
+    def failing_provider(kw: dict[str, Any]) -> dict[str, str]:
+        raise TokenRefreshError("token endpoint unreachable")
+
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com/mcp", header_provider=failing_provider)
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            with pytest.raises(TokenRefreshError):
+                await hooks[0](httpx.Request("POST", "http://example.com/mcp"))
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
 async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redirect():
     """The request hook must not re-add caller headers after a cross-origin redirect."""
     import httpx
@@ -6123,6 +6363,184 @@ async def test_mcp_streamable_http_tool_header_provider_via_invoke_with_context(
         server.session.call_tool.assert_called_once()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         call_args = server.session.call_tool.call_args  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         assert call_args.kwargs.get("arguments", {}).get("name") == "Alice"
+
+
+async def test_mcp_streamable_http_tool_header_provider_applies_across_transport_tasks():
+    """Regression test for #7161: header_provider headers must reach tools/call requests.
+
+    The streamable HTTP transport sends requests from tasks spawned at connect time,
+    whose contexts never observe the ContextVar value set later inside call_tool. This
+    drives the real transport against an in-process mock server and asserts the
+    per-call Authorization header arrives on the tools/call HTTP request.
+    """
+    import httpx
+
+    captured_requests: list[tuple[str, str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        if request.method == "GET":
+            return httpx.Response(405)
+        body = json.loads(request.content.decode())
+        method = body.get("method", "")
+        captured_requests.append((request.method, method, {k.lower(): v for k, v in request.headers.items()}))
+        if method == "initialize":
+            result = {
+                "protocolVersion": body["params"]["protocolVersion"],
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "mock-server", "version": "1.0.0"},
+            }
+            return httpx.Response(
+                200,
+                headers={"mcp-session-id": "test-session"},
+                json={"jsonrpc": "2.0", "id": body["id"], "result": result},
+            )
+        if method == "tools/list":
+            result = {
+                "tools": [
+                    {
+                        "name": "greet",
+                        "description": "Says hello",
+                        "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}},
+                    }
+                ]
+            }
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+        if method == "tools/call":
+            result = {"content": [{"type": "text", "text": "Hello!"}], "isError": False}
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+        if "id" in body:
+            # Any other request (e.g. ping) gets an empty result so the session doesn't block on it.
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+        # Notifications (e.g. notifications/initialized)
+        return httpx.Response(202)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://127.0.0.1:8000/mcp",
+        load_prompts=False,
+        http_client=http_client,
+        header_provider=lambda kw: {"Authorization": f"Bearer {kw.get('api_key', '')}"},
+    )
+    try:
+        async with tool:
+            await tool.call_tool("greet", name="Alice", api_key="secret-token")
+    finally:
+        await http_client.aclose()
+
+    call_headers = [headers for _, method, headers in captured_requests if method == "tools/call"]
+    assert len(call_headers) == 1
+    assert call_headers[0].get("authorization") == "Bearer secret-token"
+
+
+async def test_mcp_streamable_http_tool_header_provider_snapshot_restored_after_call():
+    """Test that the instance-level header snapshot is set during a call and cleared after."""
+    observed_snapshots: list[dict[str, str] | None] = []
+    original_call_tool = MCPTool.call_tool
+
+    async def spy_call_tool(self, tool_name, **kwargs):
+        # Capture the snapshot value during the super call
+        observed_snapshots.append(self._active_call_headers)
+        return await original_call_tool(self, tool_name, **kwargs)
+
+    class _TestServer(MCPStreamableHTTPTool):
+        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="greet",
+                            description="Says hello",
+                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
+            )
+            self.session.send_ping = AsyncMock()
+            self.is_connected = True
+
+        def get_mcp_client(self):  # pyrefly: ignore[bad-override]
+            return None
+
+    server = _TestServer(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"X-Auth": kw.get("auth_token", "")},
+    )
+    async with server:
+        await server.load_tools()
+        with patch.object(MCPTool, "call_tool", spy_call_tool):
+            await server.call_tool("greet", name="Alice", auth_token="bearer-xyz")
+
+    assert observed_snapshots == [{"X-Auth": "bearer-xyz"}]
+    assert server._active_call_headers is None
+
+
+async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_calls():
+    """Concurrent call_tool invocations on the same tool must not mix per-call headers.
+
+    The framework executes parallel tool invocations concurrently, so a second call
+    must not overwrite the active header snapshot while the first call's requests
+    are still in flight (that would attach the wrong credentials).
+    """
+    release = asyncio.Event()
+    in_call = asyncio.Event()
+
+    async def blocking_call_tool(tool_name, *, arguments=None, meta=None):
+        in_call.set()
+        await release.wait()
+        return types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
+
+    class _TestServer(MCPStreamableHTTPTool):
+        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="greet",
+                            description="Says hello",
+                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(side_effect=blocking_call_tool)
+            self.session.send_ping = AsyncMock()
+            self.is_connected = True
+
+        def get_mcp_client(self):  # pyrefly: ignore[bad-override]
+            return None
+
+    server = _TestServer(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"X-Auth": kw.get("auth_token", "")},
+    )
+    async with server:
+        await server.load_tools()
+
+        first = asyncio.create_task(server.call_tool("greet", name="A", auth_token="token-a"))
+        await in_call.wait()
+        assert server._active_call_headers == {"X-Auth": "token-a"}
+
+        second = asyncio.create_task(server.call_tool("greet", name="B", auth_token="token-b"))
+        for _ in range(10):
+            await asyncio.sleep(0)
+        # The second call must be waiting on the first; its headers must not have
+        # replaced the snapshot the request hook reads for the in-flight call.
+        assert server._active_call_headers == {"X-Auth": "token-a"}
+
+        release.set()
+        await asyncio.gather(first, second)
+
+    assert server._active_call_headers is None
 
 
 # endregion

@@ -7,9 +7,11 @@ from typing import Any, cast
 
 from ag_ui.core import BaseEvent
 from agent_framework import SupportsAgentRun
+from agent_framework._telemetry import mark_feature_used
 
 from ._agent_run import PendingApprovalEntry, PendingApprovalKey, run_agent_stream
 from ._approval_state import InMemoryAGUIApprovalStateStore
+from ._feature_usage import FeatureIndex
 from ._snapshots import AGUIThreadSnapshotStore
 
 
@@ -30,7 +32,10 @@ class AgentConfig:
             state_schema: Optional state schema for state management; accepts dict or Pydantic model/class
             predict_state_config: Configuration for predictive state updates
             use_service_session: Whether the agent session is service-managed
-            require_confirmation: Whether predictive updates require user confirmation before applying
+            require_confirmation: When True (default), emit a ``confirm_changes`` tool call for
+                approval-gated tools so a human-in-the-loop frontend can prompt for approval, and require
+                confirmation for predictive state updates. When False, no ``confirm_changes`` call is
+                emitted; tools remain gated server-side.
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
                 endpoint setup also provides an explicit Snapshot Scope resolver.
         """
@@ -94,7 +99,10 @@ class AgentFrameworkAgent:
             description: Optional description
             state_schema: Optional state schema for state management; accepts dict or Pydantic model/class
             predict_state_config: Configuration for predictive state updates
-            require_confirmation: Whether predictive updates require user confirmation before applying
+            require_confirmation: When True (default), emit a ``confirm_changes`` tool call for
+                approval-gated tools so a human-in-the-loop frontend can prompt for approval, and require
+                confirmation for predictive state updates. When False, no ``confirm_changes`` call is
+                emitted; tools remain gated server-side.
             use_service_session: Whether the agent session is service-managed
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
                 endpoint setup also provides an explicit Snapshot Scope resolver.
@@ -136,6 +144,7 @@ class AgentFrameworkAgent:
         Yields:
             AG-UI events
         """
+        mark_feature_used(FeatureIndex.AG_UI)
         async for event in run_agent_stream(
             input_data,
             self.agent,

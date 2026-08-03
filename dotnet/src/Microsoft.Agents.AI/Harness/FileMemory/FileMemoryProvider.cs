@@ -3,12 +3,10 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -41,7 +39,6 @@ namespace Microsoft.Agents.AI;
 /// </list>
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class FileMemoryProvider : AIContextProvider, IDisposable
 {
     /// <summary>The name of the tool that writes a memory file.</summary>
@@ -72,8 +69,9 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     private const string DefaultInstructions =
         """
         ## File Based Memory
-        You have access to a session-scoped, file-based memory system via the `file_memory_*` tools for storing and retrieving information across interactions.
-        These files act as your working memory for the current session and are isolated from other sessions.
+        You have access to a file-based memory system via the `file_memory_*` tools for storing and retrieving information across interactions.
+        These files act as your working memory and persist beyond the current conversation, so they may already contain memories written earlier,
+        and anything you write now may remain available later.
         Use these tools to store plans, memories, processing results, or downloaded data.
 
         - Use descriptive file names (e.g., "projectarchitecture.md", "userpreferences.md").
@@ -510,7 +508,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
 
     /// <summary>
     /// Returns <see langword="true"/> if the normalized file name points into a subdirectory.
-    /// File memory is a flat, session-scoped space, so nested names are rejected up front.
+    /// File memory is a flat namespace within the working folder, so nested names are rejected up front.
     /// </summary>
     private static bool IsNestedPath(string normalizedFileName) =>
         normalizedFileName.IndexOf('/') >= 0;

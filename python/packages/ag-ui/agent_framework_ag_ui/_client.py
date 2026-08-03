@@ -8,6 +8,7 @@ import json
 import logging
 import sys
 import uuid
+from binascii import Error as BinasciiError
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableSequence, Sequence
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, TypedDict, cast
@@ -23,10 +24,12 @@ from agent_framework import (
     ResponseStream,
 )
 from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from agent_framework.observability import ChatTelemetryLayer
 
 from ._event_converters import AGUIEventConverter
+from ._feature_usage import FeatureIndex
 from ._http_service import AGUIHttpService, _serialize_available_interrupts, _serialize_resume
 from ._message_adapters import agent_framework_messages_to_agui
 from ._utils import convert_tools_to_agui_format
@@ -294,16 +297,17 @@ class AGUIChatClient(
             if isinstance(content, Content) and content.type == "data" and content.media_type == "application/json":
                 try:
                     uri = content.uri
-                    if uri.startswith("data:application/json;base64,"):  # type: ignore[union-attr]
+                    prefix, _, encoded_data = uri.partition(",")  # type: ignore[union-attr]
+                    media_type, *parameters = prefix[5:].split(";")
+                    if prefix.startswith("data:") and media_type == "application/json" and "base64" in parameters:
                         import base64
 
-                        encoded_data = uri.split(",", 1)[1]  # type: ignore[union-attr]
-                        decoded_bytes = base64.b64decode(encoded_data)
+                        decoded_bytes = base64.b64decode(encoded_data, validate=True)
                         state = json.loads(decoded_bytes.decode("utf-8"))
 
                         messages_without_state = list(messages[:-1]) if len(messages) > 1 else []
                         return messages_without_state, state
-                except (json.JSONDecodeError, ValueError, KeyError) as e:
+                except (BinasciiError, json.JSONDecodeError, ValueError, KeyError) as e:
                     logger.warning(f"Failed to extract state from message: {e}")
 
         return list(messages), None
@@ -396,6 +400,7 @@ class AGUIChatClient(
         Yields:
             ChatResponseUpdate objects
         """
+        mark_feature_used(FeatureIndex.AG_UI)
         messages_to_send, state = self._extract_state_from_messages(messages)
 
         thread_id = self._get_thread_id(options)

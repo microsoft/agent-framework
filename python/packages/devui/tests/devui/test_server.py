@@ -4,6 +4,7 @@
 
 import asyncio
 import inspect
+import logging
 import sys
 import tempfile
 from pathlib import Path
@@ -651,6 +652,33 @@ def test_devserver_auth_can_be_explicitly_disabled(monkeypatch):
         response = client.get("/v1/entities")
 
     assert response.status_code == 200
+
+
+def test_responses_endpoint_does_not_log_request_content(caplog):
+    """Request input and metadata must not be written to server logs."""
+    server = _server_with_mock_agent(host="127.0.0.1", auth_enabled=False)
+    app = server.get_app()
+    input_marker = "private-input-marker"
+    metadata_marker = "private-metadata-marker"
+    caplog.set_level(logging.DEBUG, logger="agent_framework_devui._server")
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.post(
+            "/v1/responses",
+            json={
+                "input": input_marker,
+                "metadata": {"entity_id": "mock", "private_value": metadata_marker},
+                "stream": False,
+            },
+        )
+
+    assert response.status_code == 404
+    assert any(
+        record.name == "agent_framework_devui._server" and record.getMessage() == "Extracted entity_id: mock"
+        for record in caplog.records
+    )
+    assert input_marker not in caplog.text
+    assert metadata_marker not in caplog.text
 
 
 def test_devserver_rejects_non_loopback_no_auth(monkeypatch):

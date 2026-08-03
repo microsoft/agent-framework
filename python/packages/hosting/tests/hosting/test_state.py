@@ -16,10 +16,12 @@ from agent_framework import (
     Content,
     Message,
     ResponseStream,
+    SessionStore,
     Workflow,
 )
 
-from agent_framework_hosting import AgentState, SessionStore, WorkflowState
+import agent_framework_hosting
+from agent_framework_hosting import AgentState, WorkflowState
 
 
 def _workflow_fixture(name: str) -> Any:
@@ -100,66 +102,11 @@ class _FakeAgent:
         return _get_response()
 
 
-class TestSessionStore:
-    async def test_get_returns_none_for_missing_id(self) -> None:
-        store = SessionStore()
-
-        assert await store.get("session-1") is None
-
-    async def test_set_then_get_returns_stored_session(self) -> None:
-        store = SessionStore()
-        session = AgentSession(session_id="session-1")
-
-        await store.set("session-1", session)
-
-        assert await store.get("session-1") is session
-
-    async def test_set_can_store_same_session_under_additional_id(self) -> None:
-        store = SessionStore()
-        session = AgentSession(session_id="resp_1")
-
-        await store.set("resp_1", session)
-        await store.set("resp_2", session)
-
-        assert await store.get("resp_1") is session
-        assert await store.get("resp_2") is session
-
-    async def test_set_replaces_existing_entry(self) -> None:
-        store = SessionStore()
-        first = AgentSession(session_id="session-1")
-        second = AgentSession(session_id="session-1")
-
-        await store.set("session-1", first)
-        await store.set("session-1", second)
-
-        assert await store.get("session-1") is second
-
-    async def test_delete_forgets_session(self) -> None:
-        store = SessionStore()
-        await store.set("session-1", AgentSession(session_id="session-1"))
-
-        await store.delete("session-1")
-
-        assert await store.get("session-1") is None
-
-    async def test_delete_missing_id_is_a_no_op(self) -> None:
-        store = SessionStore()
-
-        await store.delete("never-stored")
-
-    async def test_empty_session_id_raises(self) -> None:
-        store = SessionStore()
-        session = AgentSession(session_id="session-1")
-
-        with pytest.raises(ValueError, match="session_id"):
-            await store.get("")
-        with pytest.raises(ValueError, match="session_id"):
-            await store.set("", session)
-        with pytest.raises(ValueError, match="session_id"):
-            await store.delete("")
-
-
 class TestAgentState:
+    def test_session_store_is_owned_by_core(self) -> None:
+        assert "SessionStore" not in agent_framework_hosting.__all__
+        assert not hasattr(agent_framework_hosting, "SessionStore")
+
     def test_default_session_store_is_fresh_in_memory_store(self) -> None:
         agent = _FakeAgent()
         state = AgentState(agent)
@@ -247,9 +194,45 @@ class TestAgentState:
         first = await state.get_or_create_session("session-1")
         second = await state.get_or_create_session("session-1")
 
-        assert first is second
+        assert first is not second
         assert first.session_id == "session-1"
+        assert second.session_id == "session-1"
         assert len(agent.created_sessions) == 1
+
+    @pytest.mark.parametrize("session_id", ["two words", "tenant/user", "tenant:conversation", "' OR 1=1 --"])
+    async def test_get_or_create_session_passes_opaque_id_to_store(self, session_id: str) -> None:
+        class _RecordingSessionStore(SessionStore):
+            def __init__(self) -> None:
+                super().__init__()
+                self.keys: list[str] = []
+
+            async def get(self, session_id: str) -> AgentSession | None:
+                self.keys.append(session_id)
+                return await super().get(session_id)
+
+            async def set(self, session_id: str, session: AgentSession) -> None:
+                self.keys.append(session_id)
+                await super().set(session_id, session)
+
+        agent = _FakeAgent()
+        store = _RecordingSessionStore()
+        state = AgentState(agent, session_store=store)
+
+        session = await state.get_or_create_session(session_id)
+
+        assert session.session_id == session_id
+        assert len(agent.created_sessions) == 1
+        assert len(set(store.keys)) == 1
+        assert store.keys[0] == session_id
+
+    async def test_get_or_create_session_rejects_empty_id(self) -> None:
+        agent = _FakeAgent()
+        state = AgentState(agent)
+
+        with pytest.raises(ValueError, match="non-empty"):
+            await state.get_or_create_session("")
+
+        assert agent.created_sessions == []
 
     async def test_get_or_create_session_creates_once_for_concurrent_callers(self) -> None:
         class _YieldingSessionStore(SessionStore):
@@ -266,7 +249,8 @@ class TestAgentState:
 
         sessions = await asyncio.gather(*(state.get_or_create_session("session-1") for _ in range(20)))
 
-        assert all(session is sessions[0] for session in sessions)
+        assert len({id(session) for session in sessions}) == len(sessions)
+        assert all(session.session_id == "session-1" for session in sessions)
         assert len(agent.created_sessions) == 1
 
     async def test_get_or_create_session_reuses_a_session_set_on_the_state(self) -> None:
@@ -277,7 +261,8 @@ class TestAgentState:
 
         session = await state.get_or_create_session("session-1")
 
-        assert session is pre_existing
+        assert session is not pre_existing
+        assert session.session_id == pre_existing.session_id
         assert len(agent.created_sessions) == 0
 
 
@@ -331,6 +316,15 @@ class TestWorkflowState:
         second = await state.get_target()
 
         assert first is second
+
+    async def test_workflow_builder_returns_fresh_targets_when_cache_disabled(self) -> None:
+        builder = _workflow_fixture("echo_workflow_builder")()
+        state: WorkflowState[Workflow] = WorkflowState(builder, cache_target=False)
+
+        first = await state.get_target()
+        second = await state.get_target()
+
+        assert first is not second
 
     async def test_accepts_orchestration_style_builder_without_importing_orchestrations(self) -> None:
         """``SupportsBuild`` is structural: any object with a zero-arg ``build() -> Workflow``

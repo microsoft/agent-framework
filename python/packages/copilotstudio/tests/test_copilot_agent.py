@@ -9,6 +9,7 @@ from agent_framework.exceptions import AgentException
 from microsoft_agents.copilotstudio.client import CopilotClient
 
 from agent_framework_copilotstudio import CopilotStudioAgent
+from agent_framework_copilotstudio._feature_usage import FeatureIndex
 
 
 def create_async_generator(items: list[Any]) -> Any:
@@ -136,8 +137,10 @@ class TestCopilotStudioAgent:
         mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
         mock_copilot_client.ask_question.return_value = create_async_generator([mock_activity])
 
-        response = await agent.run("test message")
+        with patch("agent_framework_copilotstudio._agent.mark_feature_used") as mark_feature_used:
+            response = await agent.run("test message")
 
+        mark_feature_used.assert_called_once_with(FeatureIndex.COPILOTSTUDIO)
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
         content = response.messages[0].contents[0]

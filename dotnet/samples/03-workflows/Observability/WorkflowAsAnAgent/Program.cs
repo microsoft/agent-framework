@@ -70,7 +70,7 @@ public static class Program
 
         using var traceProvider = traceProviderBuilder.Build();
 
-        // Set up the Azure AI Foundry client
+        // Set up the Microsoft Foundry client
         var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
         var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
         AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());

@@ -3,30 +3,40 @@
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import sys
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from agent_framework import (
     Agent,
+    AgentExecutor,
     AgentResponse,
     AgentSession,
     ChatContext,
     ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
+    FunctionInvocationContext,
+    FunctionMiddleware,
     Message,
+    MiddlewareTermination,
+    WorkflowBuilder,
     tool,
 )
 from agent_framework_openai._chat_client import RawOpenAIChatClient
+from agent_framework_openai._feature_usage import FeatureIndex as OpenAIFeatureIndex
 from azure.ai.projects import models as projects_models
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+from openai import AsyncOpenAI
 
 from agent_framework_foundry._agent import (
     FoundryAgent,
@@ -35,6 +45,7 @@ from agent_framework_foundry._agent import (
     _FoundryAgentChatClient,
 )
 from agent_framework_foundry._chat_client import FoundryChatClient
+from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
 
 skip_if_foundry_agent_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("FOUNDRY_PROJECT_ENDPOINT", "") in ("", "https://test-project.services.ai.azure.com/")
@@ -49,6 +60,11 @@ _FOUNDRY_AZURE_AI_SEARCH_MODEL_ENV_VARS = (
     "AZURE_OPENAI_CHAT_MODEL",
     "FOUNDRY_MODEL",
 )
+
+
+def test_raw_foundry_agent_chat_client_does_not_mark_openai_feature() -> None:
+    assert RawOpenAIChatClient._FEATURE_USAGE_INDEX is OpenAIFeatureIndex.OPENAI
+    assert RawFoundryAgentChatClient._FEATURE_USAGE_INDEX is FeatureIndex.FOUNDRY_AGENT
 
 
 def _get_foundry_azure_ai_search_model() -> str | None:
@@ -108,6 +124,88 @@ def test_raw_foundry_agent_chat_client_init_with_agent_name() -> None:
     assert client.agent_name == "test-agent"
     assert client.agent_version == "1.0"
     mock_project.get_openai_client.assert_called_once_with()
+
+
+def test_raw_foundry_agent_chat_client_creates_project_client_with_feature_policy() -> None:
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    with patch("agent_framework_foundry._agent.AIProjectClient", return_value=mock_project) as factory:
+        RawFoundryAgentChatClient(
+            project_endpoint="https://test-project.services.ai.azure.com",
+            credential=MagicMock(),
+            agent_name="test-agent",
+        )
+
+    policies = factory.call_args.kwargs["per_retry_policies"]
+    assert len(policies) == 1
+    assert isinstance(policies[0], FeatureUsagePolicy)
+    assert "custom_hook_policy" not in factory.call_args.kwargs
+    mock_project.get_openai_client.assert_called_once_with(http_client=ANY)
+
+
+async def test_foundry_agent_basic_call_does_not_request_unsupported_encrypted_reasoning() -> None:
+    """A Foundry agent call must not opt into encrypted reasoning unless the caller requests it."""
+    mock_response = MagicMock()
+    mock_response.id = "response_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+    mock_response.parse.return_value = mock_response
+    mock_response.headers = {}
+
+    async def create_response(**kwargs: Any) -> Any:
+        if "reasoning.encrypted_content" in kwargs.get("include", []):
+            raise ValueError("Encrypted content is not supported with this model.")
+        return mock_response
+
+    mock_openai = MagicMock()
+    mock_openai.responses.with_raw_response.create = AsyncMock(side_effect=create_response)
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = mock_openai
+    client = RawFoundryAgentChatClient(project_client=mock_project, agent_name="test-agent")
+
+    response = await client.get_response([Message(role="user", contents=["Hello"])])
+
+    assert response.response_id == "response_123"
+
+
+async def test_foundry_agent_preserves_caller_requested_encrypted_reasoning() -> None:
+    """A caller can explicitly opt into encrypted reasoning on a capable Foundry deployment."""
+    mock_response = MagicMock()
+    mock_response.id = "response_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+    mock_response.parse.return_value = mock_response
+    mock_response.headers = {}
+
+    mock_openai = MagicMock()
+    mock_openai.responses.with_raw_response.create = AsyncMock(return_value=mock_response)
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = mock_openai
+    client = RawFoundryAgentChatClient(project_client=mock_project, agent_name="test-agent")
+
+    await client.get_response(
+        [Message(role="user", contents=["Hello"])],
+        options={"include": ["reasoning.encrypted_content"]},
+    )
+
+    await_args = mock_openai.responses.with_raw_response.create.await_args
+    assert await_args is not None
+    assert await_args.kwargs["include"] == ["reasoning.encrypted_content"]
 
 
 def test_agent_accepts_raw_foundry_agent_chat_client() -> None:
@@ -958,6 +1056,7 @@ async def test_raw_foundry_agent_prepare_run_context_creates_service_session_fro
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
+    mock_project.agents = SimpleNamespace()
     mock_project.beta = SimpleNamespace(
         agents=SimpleNamespace(
             create_session=AsyncMock(return_value=SimpleNamespace(agent_session_id="agent-session-123"))
@@ -997,6 +1096,32 @@ async def test_raw_foundry_agent_prepare_run_context_creates_service_session_fro
     mock_prepare_run_context.assert_awaited_once()
 
 
+async def test_raw_foundry_agent_create_service_session_uses_stable_agents_operations() -> None:
+    """Test that hosted sessions use the stable agents operations when available."""
+
+    create_session = AsyncMock(return_value=SimpleNamespace(agent_session_id="agent-session-123"))
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    mock_project.agents = SimpleNamespace(create_session=create_session)
+
+    agent = RawFoundryAgent(
+        project_client=mock_project,
+        agent_name="test-agent",
+        agent_version="1.0",
+        allow_preview=True,
+    )
+
+    result = await agent._create_service_session_id(isolation_key="iso-key")
+
+    assert result == "agent-session-123"
+    create_session.assert_awaited_once()
+    assert create_session.await_args is not None
+    create_session_kwargs = create_session.await_args.kwargs
+    assert create_session_kwargs["agent_name"] == "test-agent"
+    assert create_session_kwargs["isolation_key"] == "iso-key"
+    assert "version_indicator" in create_session_kwargs
+
+
 async def test_raw_foundry_agent_prepare_run_context_requires_preview_for_hosted_sessions() -> None:
     """Test that hosted-agent sessions require allow_preview=True."""
 
@@ -1029,12 +1154,13 @@ async def test_foundry_agent_create_conversation_returns_agent_session() -> None
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = openai_client
     agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
+    mock_project.get_openai_client.reset_mock()
 
     session = await agent.create_conversation()
 
     assert isinstance(session, AgentSession)
     assert session.service_session_id == "conv_123"
-    mock_project.get_openai_client.assert_called()
+    mock_project.get_openai_client.assert_not_called()
     openai_client.conversations.create.assert_awaited_once_with()
 
 
@@ -1046,11 +1172,13 @@ async def test_foundry_agent_create_conversation_accepts_local_session_id() -> N
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = openai_client
     agent = FoundryAgent(project_client=mock_project, agent_name="test-agent")
+    mock_project.get_openai_client.reset_mock()
 
     session = await agent.create_conversation(session_id="local-session")
 
     assert session.session_id == "local-session"
     assert session.service_session_id == "conv_123"
+    mock_project.get_openai_client.assert_not_called()
 
 
 def test_foundry_agent_init() -> None:
@@ -1165,6 +1293,176 @@ async def test_foundry_agent_configure_azure_monitor_import_error() -> None:
         pytest.raises(ImportError, match="azure-monitor-opentelemetry is required"),
     ):
         await agent.configure_azure_monitor()
+
+
+@pytest.mark.parametrize("terminate_tool_loop", [False, True])
+async def test_foundry_agent_workflow_replays_parallel_reasoning_function_group(
+    terminate_tool_loop: bool,
+) -> None:
+    """Stateless cross-agent replay keeps a parallel reasoning/function batch atomic."""
+    summary_inputs: list[list[dict[str, Any]]] = []
+
+    def _message(message_id: str, text: str) -> dict[str, Any]:
+        return {
+            "id": message_id,
+            "content": [{"annotations": [], "text": text, "type": "output_text"}],
+            "role": "assistant",
+            "status": "completed",
+            "type": "message",
+        }
+
+    def _response(response_id: str, output: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "id": response_id,
+            "created_at": 0,
+            "model": "gpt-5.4",
+            "object": "response",
+            "output": output,
+            "parallel_tool_calls": True,
+            "status": "completed",
+            "tool_choice": "auto",
+            "tools": [],
+        }
+
+    async def foundry_responses_boundary(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        agent_name = payload["agent_reference"]["name"]
+
+        if agent_name == "research-agent" and "previous_response_id" not in payload:
+            return httpx.Response(
+                200,
+                json=_response(
+                    "resp_research_tool",
+                    [
+                        {
+                            "encrypted_content": "encrypted-reasoning",
+                            "id": "rs_required",
+                            "summary": [{"text": "I need both local tools.", "type": "summary_text"}],
+                            "type": "reasoning",
+                        },
+                        {
+                            "arguments": '{"query":"Agent Framework"}',
+                            "call_id": "call_paired",
+                            "id": "fc_paired",
+                            "name": "lookup_docs",
+                            "status": "completed",
+                            "type": "function_call",
+                        },
+                        {
+                            "arguments": '{"query":"stateless replay"}',
+                            "call_id": "call_guarded",
+                            "id": "fc_guarded",
+                            "name": "guarded_lookup",
+                            "status": "completed",
+                            "type": "function_call",
+                        },
+                    ],
+                ),
+            )
+
+        if agent_name == "research-agent":
+            return httpx.Response(
+                200,
+                json=_response(
+                    "resp_research_final",
+                    [_message("msg_research", "Microsoft Agent Framework")],
+                ),
+            )
+
+        input_items = payload["input"]
+        summary_inputs.append(input_items)
+        input_types = {item.get("type") for item in input_items if isinstance(item, dict)}
+        if "function_call" in input_types and "reasoning" not in input_types:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": (
+                            "Item 'fc_paired' of type 'function_call' was provided without its "
+                            "required 'reasoning' item: 'rs_required'."
+                        ),
+                        "type": "invalid_request_error",
+                        "code": "invalid_request_error",
+                    }
+                },
+            )
+
+        return httpx.Response(
+            200,
+            json=_response(
+                "resp_summary",
+                [_message("msg_summary", "The research result was Microsoft Agent Framework.")],
+            ),
+        )
+
+    @tool(name="lookup_docs", approval_mode="never_require")
+    def lookup_docs(query: str) -> str:
+        return f"Found documentation for {query}"
+
+    @tool(name="guarded_lookup", approval_mode="never_require")
+    def guarded_lookup(query: str) -> str:
+        return f"Found guarded documentation for {query}"
+
+    class TerminateToolLoopMiddleware(FunctionMiddleware):
+        async def process(
+            self,
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            if context.function.name == "guarded_lookup":
+                context.result = "Blocked by policy"
+                raise MiddlewareTermination("Policy blocked tool execution")
+            await call_next()
+
+    transport = httpx.MockTransport(foundry_responses_boundary)
+    responses_client = AsyncOpenAI(
+        api_key="test-key",
+        http_client=httpx.AsyncClient(transport=transport),
+        max_retries=0,
+    )
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = responses_client
+
+    research_agent = FoundryAgent(
+        project_client=project_client,
+        agent_name="research-agent",
+        tools=[lookup_docs, guarded_lookup],
+        middleware=[TerminateToolLoopMiddleware()] if terminate_tool_loop else None,
+    )
+    summary_agent = FoundryAgent(
+        project_client=project_client,
+        agent_name="summary-agent",
+    )
+    research_executor = AgentExecutor(research_agent, id="research")
+    summary_executor = AgentExecutor(summary_agent, id="summary")
+    workflow = (
+        WorkflowBuilder(start_executor=research_executor, output_from=[summary_executor])
+        .add_edge(research_executor, summary_executor)
+        .build()
+    )
+
+    result = await workflow.run("Research Agent Framework and summarize the result")
+
+    outputs = result.get_outputs()
+    assert outputs
+    assert outputs[-1].text == "The research result was Microsoft Agent Framework."
+    assert len(summary_inputs) == 1
+    assert [item["type"] for item in summary_inputs[0]] == [
+        "message",
+        "reasoning",
+        "function_call",
+        "function_call",
+        "function_call_output",
+        "function_call_output",
+        *(["message"] if not terminate_tool_loop else []),
+    ]
+    assert summary_inputs[0][1]["encrypted_content"] == "encrypted-reasoning"
+    assert [item["call_id"] for item in summary_inputs[0][2:4]] == ["call_paired", "call_guarded"]
+    assert [item["call_id"] for item in summary_inputs[0][4:6]] == ["call_paired", "call_guarded"]
+    assert summary_inputs[0][4]["output"] == "Found documentation for Agent Framework"
+    assert summary_inputs[0][5]["output"] == (
+        "Blocked by policy" if terminate_tool_loop else "Found guarded documentation for stateless replay"
+    )
 
 
 @pytest.mark.flaky
@@ -1434,3 +1732,301 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert consent_contents[0].consent_link == "https://consent-host.example.com/authorize?code=xyz"
     assert update.role == "assistant"
     assert update.raw_representation is mock_event
+
+
+def test_client_model_not_set_from_openai_chat_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """client.model must be empty when OPENAI_CHAT_MODEL is set."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+
+    assert client.model != "gpt-4.1-from-env", "client.model must not be sourced from OPENAI_CHAT_MODEL"
+    assert not client.model, f"Expected empty/falsy model, got {client.model!r}"
+
+
+def test_agent_default_options_not_polluted_by_openai_chat_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Agent.default_options['model'] must not be the env-var value."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+    agent = Agent(client=cast(Any, client), instructions="test")
+
+    model_in_options = agent.default_options.get("model")
+    assert model_in_options != "gpt-4.1-from-env", (
+        f"default_options['model'] must not be 'gpt-4.1-from-env', got {model_in_options!r}"
+    )
+    assert not model_in_options, f"default_options['model'] must be falsy (empty or absent), got {model_in_options!r}"
+
+
+def test_client_model_not_set_from_openai_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """client.model must be empty when OPENAI_MODEL is set (no OPENAI_CHAT_MODEL)."""
+    monkeypatch.delenv("OPENAI_CHAT_MODEL", raising=False)
+    monkeypatch.setenv("OPENAI_MODEL", "generic-gpt-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+
+    assert client.model != "generic-gpt-from-env", "client.model must not be sourced from OPENAI_MODEL"
+    assert not client.model, f"Expected empty/falsy model, got {client.model!r}"
+
+
+def test_raw_foundry_agent_chat_client_rejects_model_keyword_arg() -> None:
+    """RawFoundryAgentChatClient.__init__ does not accept a 'model' parameter."""
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    cls = cast(Any, RawFoundryAgentChatClient)
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        cls(
+            project_client=mock_project,
+            agent_name="my-prompt-agent",
+            model="gpt-5.4",
+        )
+
+
+def test_explicit_model_in_agent_default_options_survives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit model in Agent(default_options=...) must survive into default_options."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+    agent = Agent(
+        client=cast(Any, client),
+        instructions="test",
+        default_options=cast(Any, {"model": "gpt-5.4"}),
+    )
+
+    assert agent.default_options.get("model") == "gpt-5.4", (
+        f"Explicit model override must survive in default_options, got {agent.default_options.get('model')!r}"
+    )
+
+
+def test_explicit_model_in_as_agent_default_options_survives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit model passed to client.as_agent(default_options=...) survives."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+    agent = client.as_agent(
+        instructions="test",
+        default_options=cast(Any, {"model": "gpt-5.4"}),
+    )
+
+    assert agent.default_options.get("model") == "gpt-5.4", (
+        f"Explicit model in as_agent default_options must survive, got {agent.default_options.get('model')!r}"
+    )
+
+
+def test_allow_preview_client_model_not_set_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """allow_preview=True clients must also not inherit OPENAI_CHAT_MODEL env var into client.model."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        allow_preview=True,
+    )
+
+    assert client.model != "gpt-4.1-from-env", (
+        "Hosted-agent client (allow_preview=True) must not inherit OPENAI_CHAT_MODEL"
+    )
+    assert not client.model, f"Expected empty/falsy model, got {client.model!r}"
+
+
+def test_allow_preview_binds_agent_name_to_get_openai_client() -> None:
+    """When allow_preview=True, agent_name is passed to get_openai_client for endpoint binding."""
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        allow_preview=True,
+    )
+
+    mock_project.get_openai_client.assert_called_once_with(agent_name="hosted-agent")
+    assert client.allow_preview is True
+
+
+async def test_allow_preview_get_response_executes_successfully_with_empty_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end get_response test on allow_preview=True with OPENAI_CHAT_MODEL set in env."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_response = MagicMock()
+    mock_response.id = "resp_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+    mock_response.parse.return_value = mock_response
+    mock_response.headers = {}
+
+    mock_openai = MagicMock()
+    mock_openai.responses.with_raw_response.create = AsyncMock(return_value=mock_response)
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="hosted-agent",
+        allow_preview=True,
+    )
+
+    assert client.model == ""
+
+    response = await client.get_response([Message(role="user", contents=["Hello hosted agent"])])
+
+    assert response.response_id == "resp_123"
+
+    create_call = mock_openai.responses.with_raw_response.create.await_args
+    assert create_call is not None
+    kwargs = create_call.kwargs
+
+    assert kwargs.get("model") != "gpt-4.1-from-env"
+    assert "extra_body" not in kwargs or "agent_reference" not in kwargs.get("extra_body", {})
+
+
+def test_azure_openai_chat_model_does_not_leak(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AZURE_OPENAI_CHAT_MODEL must not leak into client.model."""
+    monkeypatch.delenv("OPENAI_CHAT_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.setenv("AZURE_OPENAI_CHAT_MODEL", "azure-gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+
+    assert client.model != "azure-gpt-4.1-from-env", "client.model must not be sourced from AZURE_OPENAI_CHAT_MODEL"
+    assert not client.model, f"Expected empty/falsy model, got {client.model!r}"
+
+
+def test_azure_openai_model_does_not_leak(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AZURE_OPENAI_MODEL must not leak into client.model."""
+    monkeypatch.delenv("OPENAI_CHAT_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.setenv("AZURE_OPENAI_MODEL", "azure-model-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+    )
+
+    assert client.model != "azure-model-from-env", "client.model must not be sourced from AZURE_OPENAI_MODEL"
+    assert not client.model, f"Expected empty/falsy model, got {client.model!r}"
+
+
+async def test_env_model_is_stripped_from_agent_reference_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even if '' survives into default_options, it must not appear in the API payload."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+        agent_version="1.0",
+    )
+
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={
+            "model": "",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+        },
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents=["hi"])],
+            options={},
+        )
+
+    assert "model" not in result or not result.get("model"), (
+        f"Empty/falsy model must be stripped from outgoing payload, got model={result.get('model')!r}"
+    )
+
+
+async def test_continuation_turn_strips_empty_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multi-turn continuation calls with conversation_id='resp_123' must also strip empty model strings."""
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "gpt-4.1-from-env")
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock(spec=AsyncOpenAI)
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="my-prompt-agent",
+        agent_version="1.0",
+    )
+
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+        new_callable=AsyncMock,
+        return_value={
+            "model": "",
+            "previous_response_id": "resp_123",
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "hi"}]}],
+        },
+    ):
+        result = await client._prepare_options(
+            messages=[Message(role="user", contents=["hi"])],
+            options={"conversation_id": "resp_123"},
+        )
+
+    assert "model" not in result or not result.get("model"), (
+        f"Empty/falsy model must be stripped on continuation turns, got model={result.get('model')!r}"
+    )

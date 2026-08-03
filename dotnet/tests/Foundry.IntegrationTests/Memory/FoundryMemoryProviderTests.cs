@@ -15,15 +15,15 @@ using Shared.IntegrationTests;
 namespace Foundry.IntegrationTests.Memory;
 
 /// <summary>
-/// Integration tests for <see cref="FoundryMemoryProvider"/> against a configured Azure AI Foundry Memory service.
+/// Integration tests for <see cref="FoundryMemoryProvider"/> against a configured Microsoft Foundry Memory service.
 /// </summary>
 /// <remarks>
-/// These integration tests are skipped by default and require a live Azure AI Foundry Memory service.
+/// These integration tests are skipped by default and require a live Microsoft Foundry Memory service.
 /// The tests need to be updated to use the new AIAgent-based API pattern.
 /// </remarks>
 public sealed class FoundryMemoryProviderTests : IDisposable
 {
-    private const string SkipReason = "Requires an Azure AI Foundry Memory service configured"; // Set to null to enable.
+    private const string SkipReason = "Requires a Microsoft Foundry Memory service configured"; // Set to null to enable.
 
     private readonly AIProjectClient? _client;
     private readonly string? _memoryStoreName;

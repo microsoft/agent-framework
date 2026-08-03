@@ -47,14 +47,16 @@ import logging
 import os
 import secrets
 import shutil
-import subprocess  # noqa: S404  # nosec B404 - running shell commands is the whole point of this tool
+import subprocess  # ruff:ignore[suspicious-subprocess-import]  # nosec B404 - running shell commands is the whole point of this tool
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
 from agent_framework import FunctionTool, tool
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
+from .._feature_usage import FeatureIndex
 from ._policy import ShellPolicy, ShellRequest
 from ._session import ShellSession
 from ._truncate import truncate_head_tail as _truncate_bytes
@@ -134,7 +136,7 @@ def is_docker_available(binary: str = "docker") -> bool:
     if shutil.which(binary) is None:
         return False
     try:
-        out = subprocess.run(  # noqa: S603  # nosec B603 - argv is built from trusted binary name
+        out = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]  # nosec B603 - argv is built from trusted binary name
             [binary, "version", "--format", "{{.Server.Version}}"],
             capture_output=True,
             timeout=5.0,
@@ -191,7 +193,7 @@ def build_run_argv(
         "--security-opt",
         "no-new-privileges",
         "--tmpfs",
-        "/tmp:rw,nosuid,nodev,size=64m",  # noqa: S108,  # nosec B108 - tmpfs inside the container, not on the host
+        "/tmp:rw,nosuid,nodev,size=64m",  # ruff:ignore[hardcoded-temp-file]  # nosec B108 - tmpfs inside the container, not on the host
         "--workdir",
         workdir,
     ]
@@ -445,6 +447,7 @@ class DockerShellTool:
                 caller does not need to wrap the call in
                 :func:`asyncio.wait_for`.
         """
+        mark_feature_used(FeatureIndex.TOOLS_SHELL)
         request = ShellRequest(command=command, workdir=self._workdir)
         decision = self._policy.evaluate(request)
         if decision.decision == "deny":
@@ -491,7 +494,7 @@ class DockerShellTool:
             "--security-opt",
             "no-new-privileges",
             "--tmpfs",
-            "/tmp:rw,nosuid,nodev,size=64m",  # noqa: S108,  # nosec B108 - tmpfs inside the container, not on the host
+            "/tmp:rw,nosuid,nodev,size=64m",  # ruff:ignore[hardcoded-temp-file]  # nosec B108 - tmpfs inside the container, not on the host
             "--workdir",
             self._workdir,
         ]
@@ -680,7 +683,23 @@ class DockerShellTool:
         name: str = "run_shell",
         description: str | None = None,
     ) -> FunctionTool:
-        """Return a :class:`~agent_framework.FunctionTool` bound to this instance."""
+        """Return a :class:`~agent_framework.FunctionTool` bound to this instance.
+
+        Args:
+            name: Function name surfaced to the model. Defaults to ``run_shell``.
+
+                .. warning::
+                    **Security — avoid tool-name collisions.** This applies only
+                    when the shell tool requires approval (constructed with
+                    ``approval_mode="always_require"``, the default). Auto-approval
+                    rules may match tool calls by name, so setting ``name`` to a
+                    value approved by an auto-approval rule for another feature
+                    may cause this shell tool to also be auto-approved, bypassing
+                    the human approval boundary. Choose a unique name that no
+                    other registered tool uses.
+            description: Optional description surfaced to the model. When
+                ``None`` a mode-appropriate default is used.
+        """
 
         async def _run_shell(command: str) -> str:
             try:

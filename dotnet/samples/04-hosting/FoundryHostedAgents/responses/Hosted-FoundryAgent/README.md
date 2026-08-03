@@ -145,3 +145,17 @@ If you are consuming the Agent Framework as a NuGet package (not building from s
 | **Model/instructions** | Set in `Program.cs` | Set in Foundry UI/CLI/API |
 | **Tools** | Defined in code | Configured in the platform |
 | **Use case** | Full control over agent behavior | Platform-managed agent with centralized config |
+
+## Troubleshooting
+
+**`azd ai agent invoke` fails with `404 not_found: Conversation '<id>' not found`**
+
+`azd` saves the session and conversation per agent and reuses them on the next invoke. Once the
+agent is redeployed, deleted, or restarted, that saved conversation no longer exists on the server,
+so every following invoke fails even though the agent itself is healthy. Start a fresh one:
+
+```
+azd ai agent invoke --new-conversation "Hello!"
+```
+
+Add `--new-session` as well if the failure persists.

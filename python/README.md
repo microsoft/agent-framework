@@ -24,13 +24,13 @@ If you only need specific integrations, you can install at a more granular level
 # also includes workflows and orchestrations
 pip install agent-framework-core
 
-# Core + Azure AI Foundry integration
+# Core + Microsoft Foundry integration
 pip install agent-framework-foundry
 
 # Core + Microsoft Copilot Studio integration (preview package)
 pip install agent-framework-copilotstudio --pre
 
-# Core + both Microsoft Copilot Studio and Azure AI Foundry integration
+# Core + both Microsoft Copilot Studio and Microsoft Foundry integration
 pip install --pre agent-framework-copilotstudio agent-framework-foundry
 ```
 

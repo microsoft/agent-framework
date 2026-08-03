@@ -1,87 +1,146 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import inspect
+import json
 import os
+from collections.abc import Sequence
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch, sentinel
+from typing import Any
 
+import httpx
 import pytest
 from agent_framework import Embedding, GeneratedEmbeddings
+from agent_framework.exceptions import (
+    IntegrationException,
+    IntegrationInvalidAuthException,
+    IntegrationInvalidRequestException,
+    IntegrationInvalidResponseException,
+)
 
 from agent_framework_mistral import MistralEmbeddingClient, MistralEmbeddingOptions
-from agent_framework_mistral._embedding_client import _load_mistral_client_class  # pyright: ignore[reportPrivateUsage]
 
 # region: Unit Tests
+
+
+def make_embeddings_payload(
+    vectors: Sequence[Sequence[float]],
+    model: str = "mistral-embed",
+    usage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "object": "list",
+        "model": model,
+        "data": [{"object": "embedding", "index": i, "embedding": list(vector)} for i, vector in enumerate(vectors)],
+        "usage": usage if usage is not None else {"prompt_tokens": 10, "total_tokens": 10},
+    }
+
+
+class MockMistral:
+    def __init__(self, responses: Sequence[httpx.Response]) -> None:
+        self._responses = list(responses)
+        self.requests: list[dict[str, Any]] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(json.loads(request.content))
+        return self._responses.pop(0)
+
+    @property
+    def last_request(self) -> dict[str, Any]:
+        return self.requests[-1]
+
+
+def make_client(*responses: httpx.Response) -> tuple[MistralEmbeddingClient, MockMistral]:
+    server = MockMistral(responses)
+    http_client = httpx.AsyncClient(
+        base_url="https://api.mistral.ai",
+        transport=httpx.MockTransport(server.handler),
+    )
+    client = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
+    return client, server
 
 
 def test_mistral_embedding_construction(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test construction with environment variables."""
     monkeypatch.setenv("MISTRAL_EMBEDDING_MODEL", "mistral-embed")
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
-        mock_cls.return_value = MagicMock()
-        client = MistralEmbeddingClient()
-        assert client.model == "mistral-embed"
+    client = MistralEmbeddingClient()
+    assert client.model == "mistral-embed"
 
 
 def test_mistral_embedding_construction_with_params() -> None:
     """Test construction with explicit parameters."""
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
-        mock_cls.return_value = MagicMock()
-        client = MistralEmbeddingClient(
-            model="mistral-embed",
-            api_key="test-key",
-        )
-        assert client.model == "mistral-embed"
-        mock_cls.assert_called_once_with(api_key="test-key")
+    client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
+    assert client.model == "mistral-embed"
+    assert client.client.headers["Authorization"] == "Bearer test-key"
 
 
 def test_mistral_embedding_construction_with_server_url() -> None:
     """Test construction with custom server URL."""
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
-        mock_cls.return_value = MagicMock()
-        client = MistralEmbeddingClient(
-            model="mistral-embed",
-            api_key="test-key",
-            server_url="https://custom.mistral.ai",
-        )
-        assert client.model == "mistral-embed"
-        assert client.server_url == "https://custom.mistral.ai"
-        mock_cls.assert_called_once_with(
-            api_key="test-key",
-            server_url="https://custom.mistral.ai",
-        )
+    client = MistralEmbeddingClient(
+        model="mistral-embed",
+        api_key="test-key",
+        server_url="https://custom.mistral.ai",
+    )
+    assert client.model == "mistral-embed"
+    assert client.server_url == "https://custom.mistral.ai"
+    assert str(client.client.base_url) == "https://custom.mistral.ai"
 
 
-def test_mistral_embedding_construction_with_client() -> None:
+def test_mistral_embedding_construction_with_http_client() -> None:
     """Test construction with a pre-configured client."""
-    mock_client = MagicMock()
-    with patch("agent_framework_mistral._embedding_client.Mistral"):
-        client = MistralEmbeddingClient(
+    http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
+    client = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
+    assert client.client is http_client
+
+
+def test_mistral_embedding_deprecated_client_param_accepts_httpx() -> None:
+    http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
+    with pytest.deprecated_call():
+        client = MistralEmbeddingClient(model="mistral-embed", client=http_client)
+    assert client.client is http_client
+
+
+class FakeMistralSDK:
+    """Duck-typed stand-in for a mistralai.Mistral client."""
+
+    def __init__(self, vectors: Sequence[Sequence[float]] = ((0.1, 0.2),)) -> None:
+        self.requests: list[dict[str, Any]] = []
+        self._vectors = vectors
+        self.embeddings = SimpleNamespace(create_async=self._create_async)
+
+    async def _create_async(self, **kwargs: Any) -> Any:
+        self.requests.append(kwargs)
+        return SimpleNamespace(
             model="mistral-embed",
-            api_key="test-key",
-            client=mock_client,
+            data=[SimpleNamespace(index=i, embedding=list(v)) for i, v in enumerate(self._vectors)],
+            usage=SimpleNamespace(prompt_tokens=3, total_tokens=3),
         )
-        assert client.client is mock_client
 
 
-def test_mistral_client_import_falls_back_when_client_module_is_missing() -> None:
-    """Test Mistral 1.x layouts that expose the client only from the package root."""
+async def test_mistral_embedding_deprecated_client_param_accepts_sdk_client() -> None:
+    """An injected mistralai.Mistral keeps working through the legacy SDK path."""
+    sdk = FakeMistralSDK()
+    with pytest.deprecated_call():
+        client = MistralEmbeddingClient(model="mistral-embed", client=sdk)
 
-    def import_mistral_module(name: str) -> object:
-        if name == "mistralai.client":
-            raise ModuleNotFoundError(name="mistralai.client")
-        return SimpleNamespace(Mistral=sentinel.mistral_class)
+    result = await client.get_embeddings(["hello"], options=MistralEmbeddingOptions(dimensions=2))
 
-    with patch("agent_framework_mistral._embedding_client.import_module", side_effect=import_mistral_module):
-        assert _load_mistral_client_class() is sentinel.mistral_class
+    assert [e.vector for e in result] == [[0.1, 0.2]]
+    assert result.usage == {"input_token_count": 3, "total_token_count": 3}
+    assert sdk.requests == [{"model": "mistral-embed", "inputs": ["hello"], "output_dimension": 2}]
 
 
-def test_mistral_sdk_supports_output_dimension() -> None:
-    """Test that the supported SDK range includes the dimensions parameter."""
-    client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
+def test_mistral_embedding_deprecated_client_param_rejects_unknown_client() -> None:
+    class NotAClient:
+        pass
 
-    assert "output_dimension" in inspect.signature(client.client.embeddings.create_async).parameters
+    with pytest.deprecated_call(), pytest.raises(TypeError, match="httpx.AsyncClient"):
+        MistralEmbeddingClient(model="mistral-embed", client=NotAClient())
+
+
+def test_mistral_embedding_client_and_http_client_conflict() -> None:
+    http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
+    with pytest.deprecated_call(), pytest.raises(ValueError, match="not both"):
+        MistralEmbeddingClient(model="mistral-embed", http_client=http_client, client=http_client)
 
 
 def test_mistral_embedding_construction_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -106,159 +165,173 @@ def test_mistral_embedding_construction_missing_api_key_raises(monkeypatch: pyte
 
 def test_mistral_embedding_service_url() -> None:
     """Test service_url returns the correct URL."""
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
-        mock_cls.return_value = MagicMock()
-        client = MistralEmbeddingClient(
-            model="mistral-embed",
-            api_key="test-key",
-        )
-        assert client.service_url() == "https://api.mistral.ai"
+    client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
+    assert client.service_url() == "https://api.mistral.ai"
 
 
 def test_mistral_embedding_service_url_custom() -> None:
     """Test service_url returns custom URL when set."""
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
-        mock_cls.return_value = MagicMock()
-        client = MistralEmbeddingClient(
-            model="mistral-embed",
-            api_key="test-key",
-            server_url="https://custom.mistral.ai",
-        )
-        assert client.service_url() == "https://custom.mistral.ai"
+    client = MistralEmbeddingClient(
+        model="mistral-embed",
+        api_key="test-key",
+        server_url="https://custom.mistral.ai",
+    )
+    assert client.service_url() == "https://custom.mistral.ai"
+
+
+async def test_mistral_embedding_close_only_closes_owned_client() -> None:
+    owned = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
+    await owned.close()
+    assert owned.client.is_closed
+
+    http_client = httpx.AsyncClient(base_url="https://custom.mistral.ai")
+    injected = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
+    assert injected.service_url() == "https://custom.mistral.ai"
+
+    await injected.close()
+
+    assert not http_client.is_closed
+    await http_client.aclose()
+
+
+async def test_mistral_embedding_marks_feature_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock
+
+    import agent_framework_mistral._embedding_client as embedding_client_module
+    from agent_framework_mistral._feature_usage import FeatureIndex
+
+    mark = MagicMock()
+    monkeypatch.setattr(embedding_client_module, "mark_feature_used", mark)
+    client, _ = make_client(httpx.Response(200, json=make_embeddings_payload([[0.1, 0.2]])))
+
+    await client.get_embeddings(["hello"])
+
+    mark.assert_called_once_with(FeatureIndex.MISTRAL)
 
 
 async def test_mistral_embedding_get_embeddings() -> None:
     """Test generating embeddings via the Mistral API."""
-    mock_response = MagicMock()
-    mock_response.data = [
-        MagicMock(embedding=[0.1, 0.2, 0.3], index=0, object="embedding"),
-        MagicMock(embedding=[0.4, 0.5, 0.6], index=1, object="embedding"),
-    ]
-    mock_response.model = "mistral-embed"
-    mock_response.usage = MagicMock(prompt_tokens=10, total_tokens=10)
+    client, server = make_client(httpx.Response(200, json=make_embeddings_payload([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])))
 
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
-        mock_client = MagicMock()
-        mock_client.embeddings = MagicMock()
-        mock_client.embeddings.create_async = AsyncMock(return_value=mock_response)
-        mock_cls.return_value = mock_client
+    result = await client.get_embeddings(["hello", "world"])
 
-        client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
-        result = await client.get_embeddings(["hello", "world"])
-
-        assert isinstance(result, GeneratedEmbeddings)
-        assert len(result) == 2
-        assert result[0].vector == [0.1, 0.2, 0.3]
-        assert result[1].vector == [0.4, 0.5, 0.6]
-        assert result[0].model == "mistral-embed"
-        assert result.usage == {"input_token_count": 10, "total_token_count": 10}
-
-        mock_client.embeddings.create_async.assert_called_once_with(
-            model="mistral-embed",
-            inputs=["hello", "world"],
-        )
+    assert isinstance(result, GeneratedEmbeddings)
+    assert len(result) == 2
+    assert result[0].vector == [0.1, 0.2, 0.3]
+    assert result[1].vector == [0.4, 0.5, 0.6]
+    assert result[0].model == "mistral-embed"
+    assert result.usage == {"input_token_count": 10, "total_token_count": 10}
+    assert server.last_request == {"model": "mistral-embed", "input": ["hello", "world"]}
 
 
 async def test_mistral_embedding_get_embeddings_empty_input() -> None:
     """Test generating embeddings with empty input."""
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
-        mock_client = MagicMock()
-        mock_cls.return_value = mock_client
+    client, server = make_client()
 
-        client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
-        result = await client.get_embeddings([])
+    result = await client.get_embeddings([])
 
-        assert isinstance(result, GeneratedEmbeddings)
-        assert len(result) == 0
+    assert isinstance(result, GeneratedEmbeddings)
+    assert len(result) == 0
+    assert server.requests == []
 
 
 async def test_mistral_embedding_get_embeddings_with_dimensions() -> None:
     """Test generating embeddings with custom dimensions option."""
-    mock_response = MagicMock()
-    mock_response.data = [
-        MagicMock(embedding=[0.1, 0.2], index=0, object="embedding"),
-    ]
-    mock_response.model = "mistral-embed"
-    mock_response.usage = MagicMock(prompt_tokens=5, total_tokens=5)
+    client, server = make_client(
+        httpx.Response(200, json=make_embeddings_payload([[0.1, 0.2]], usage={"prompt_tokens": 5, "total_tokens": 5}))
+    )
 
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
-        mock_client = MagicMock()
-        mock_client.embeddings = MagicMock()
-        mock_client.embeddings.create_async = AsyncMock(return_value=mock_response)
-        mock_cls.return_value = mock_client
+    options: MistralEmbeddingOptions = {"dimensions": 512}
+    result = await client.get_embeddings(["hello"], options=options)
 
-        client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
-        options: MistralEmbeddingOptions = {"dimensions": 512}
-        result = await client.get_embeddings(["hello"], options=options)
-
-        assert len(result) == 1
-        mock_client.embeddings.create_async.assert_called_once_with(
-            model="mistral-embed",
-            inputs=["hello"],
-            output_dimension=512,
-        )
+    assert len(result) == 1
+    assert server.last_request == {"model": "mistral-embed", "input": ["hello"], "output_dimension": 512}
 
 
 async def test_mistral_embedding_get_embeddings_no_model_raises() -> None:
     """Test that missing model at call time raises ValueError."""
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
-        mock_client = MagicMock()
-        mock_cls.return_value = mock_client
+    client, _ = make_client()
+    client.model = None  # type: ignore[assignment] # ty: ignore[invalid-assignment]
 
-        client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
-        client.model = None  # type: ignore[assignment] # ty: ignore[invalid-assignment]
-
-        with pytest.raises(ValueError, match="model is required"):
-            await client.get_embeddings(["hello"])
+    with pytest.raises(ValueError, match="model is required"):
+        await client.get_embeddings(["hello"])
 
 
 async def test_mistral_embedding_get_embeddings_model_override() -> None:
     """Test that model can be overridden via options."""
-    mock_response = MagicMock()
-    mock_response.data = [
-        MagicMock(embedding=[0.1, 0.2, 0.3], index=0, object="embedding"),
-    ]
-    mock_response.model = "custom-embed"
-    mock_response.usage = MagicMock(prompt_tokens=5, total_tokens=5)
-
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
-        mock_client = MagicMock()
-        mock_client.embeddings = MagicMock()
-        mock_client.embeddings.create_async = AsyncMock(return_value=mock_response)
-        mock_cls.return_value = mock_client
-
-        client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
-        options: MistralEmbeddingOptions = {"model": "custom-embed"}
-        result = await client.get_embeddings(["hello"], options=options)
-
-        assert len(result) == 1
-        assert result[0].model == "custom-embed"
-        mock_client.embeddings.create_async.assert_called_once_with(
-            model="custom-embed",
-            inputs=["hello"],
+    client, server = make_client(
+        httpx.Response(
+            200,
+            json=make_embeddings_payload(
+                [[0.1, 0.2, 0.3]], model="custom-embed", usage={"prompt_tokens": 5, "total_tokens": 5}
+            ),
         )
+    )
+
+    options: MistralEmbeddingOptions = {"model": "custom-embed"}
+    result = await client.get_embeddings(["hello"], options=options)
+
+    assert len(result) == 1
+    assert result[0].model == "custom-embed"
+    assert server.last_request == {"model": "custom-embed", "input": ["hello"]}
 
 
 async def test_mistral_embedding_get_embeddings_no_usage() -> None:
     """Test handling response without usage information."""
-    mock_response = MagicMock()
-    mock_response.data = [
-        MagicMock(embedding=[0.1, 0.2, 0.3], index=0, object="embedding"),
-    ]
-    mock_response.model = "mistral-embed"
-    mock_response.usage = None
+    client, _ = make_client(httpx.Response(200, json=make_embeddings_payload([[0.1, 0.2, 0.3]], usage={})))
 
-    with patch("agent_framework_mistral._embedding_client.Mistral") as mock_cls:
-        mock_client = MagicMock()
-        mock_client.embeddings = MagicMock()
-        mock_client.embeddings.create_async = AsyncMock(return_value=mock_response)
-        mock_cls.return_value = mock_client
+    result = await client.get_embeddings(["hello"])
 
-        client = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
-        result = await client.get_embeddings(["hello"])
+    assert len(result) == 1
+    assert result.usage is None
 
-        assert len(result) == 1
-        assert result.usage is None
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_exception"),
+    [
+        (401, IntegrationInvalidAuthException),
+        (400, IntegrationInvalidRequestException),
+        (500, IntegrationException),
+    ],
+)
+async def test_mistral_embedding_http_error_wrapped(
+    status_code: int,
+    expected_exception: type[IntegrationException],
+) -> None:
+    """Test that HTTP errors surface with the appropriate integration exception."""
+    client, _ = make_client(httpx.Response(status_code, json={"message": "request failed"}))
+
+    with pytest.raises(expected_exception, match=f"status {status_code}"):
+        await client.get_embeddings(["hello"])
+
+
+async def test_mistral_embedding_network_error_wrapped() -> None:
+    def raise_connect_error(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("offline", request=request)
+
+    http_client = httpx.AsyncClient(
+        base_url="https://api.mistral.ai",
+        transport=httpx.MockTransport(raise_connect_error),
+    )
+    client = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
+
+    with pytest.raises(IntegrationException, match="Mistral embeddings request failed"):
+        await client.get_embeddings(["hello"])
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    [
+        (httpx.Response(200, content=b"{"), "response was invalid"),
+        (httpx.Response(200, json=[]), "must be a JSON object"),
+        (httpx.Response(200, json={"data": ["not-an-object"]}), "response was invalid"),
+    ],
+)
+async def test_mistral_embedding_invalid_payload_wrapped(response: httpx.Response, message: str) -> None:
+    client, _ = make_client(response)
+
+    with pytest.raises(IntegrationInvalidResponseException, match=message):
+        await client.get_embeddings(["hello"])
 
 
 # region: Integration Tests
@@ -275,15 +348,18 @@ skip_if_mistral_embedding_integration_tests_disabled = pytest.mark.skipif(
 async def test_mistral_embedding_integration() -> None:
     """Integration test for Mistral AI embedding client."""
     client = MistralEmbeddingClient()
-    result = await client.get_embeddings(["Hello, world!", "How are you?"])
+    try:
+        result = await client.get_embeddings(["Hello, world!", "How are you?"])
 
-    assert isinstance(result, GeneratedEmbeddings)
-    assert len(result) == 2
-    for embedding in result:
-        assert isinstance(embedding, Embedding)
-        assert isinstance(embedding.vector, list)
-        assert len(embedding.vector) > 0
-        assert all(isinstance(v, float) for v in embedding.vector)
-    assert result.usage is not None
-    assert result.usage["input_token_count"] is not None
-    assert result.usage["input_token_count"] > 0
+        assert isinstance(result, GeneratedEmbeddings)
+        assert len(result) == 2
+        for embedding in result:
+            assert isinstance(embedding, Embedding)
+            assert isinstance(embedding.vector, list)
+            assert len(embedding.vector) > 0
+            assert all(isinstance(v, float) for v in embedding.vector)
+        assert result.usage is not None
+        assert result.usage["input_token_count"] is not None
+        assert result.usage["input_token_count"] > 0
+    finally:
+        await client.close()

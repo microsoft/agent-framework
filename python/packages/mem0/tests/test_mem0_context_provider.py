@@ -11,6 +11,7 @@ from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 
 from agent_framework_mem0._context_provider import Mem0ContextProvider
+from agent_framework_mem0._feature_usage import FeatureIndex
 
 
 @pytest.fixture
@@ -600,11 +601,13 @@ class TestBuildSearchKwargs:
 
         mock_mem0_client.search = AsyncMock(return_value=[{"id": "m1", "memory": "System configuration template"}])
 
-        await provider.before_run(
-            agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
-        )
+        with patch("agent_framework_mem0._context_provider.mark_feature_used") as mark_feature_used:
+            await provider.before_run(
+                agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
+            )
 
         # Verify that an application-scoped search task executed successfully
+        mark_feature_used.assert_called_once_with(FeatureIndex.MEM0)
         mock_mem0_client.search.assert_awaited_once_with(
             query="Retrieve systemic fallback memory traces",
             filters={"app_id": "app_fallback_test"},

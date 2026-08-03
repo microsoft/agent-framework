@@ -44,7 +44,7 @@ Demonstrate:
 - Multi-round group chat with tool approval interruption and resumption.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Basic familiarity with GroupChatBuilder and streaming workflow events.
 """

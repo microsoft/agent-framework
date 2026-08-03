@@ -13,6 +13,7 @@ model is involved.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Mapping
 from typing import Any, Literal, overload
@@ -56,6 +57,7 @@ class _StubAgent:
     def __init__(self) -> None:
         self.session_ids_seen: list[str | None] = []
         self.turn_counts: dict[str | None, int] = {}
+        self.session_turn_counts_seen: list[int] = []
 
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         return AgentSession(session_id=session_id)
@@ -97,7 +99,11 @@ class _StubAgent:
         session_id = session.session_id if session is not None else None
         self.session_ids_seen.append(session_id)
         self.turn_counts[session_id] = self.turn_counts.get(session_id, 0) + 1
-        text = f"turn {self.turn_counts[session_id]} for session {session_id}"
+        session_turn = int(session.state.get("turn_count", 0)) + 1 if session is not None else 1
+        if session is not None:
+            session.state["turn_count"] = session_turn
+        self.session_turn_counts_seen.append(session_turn)
+        text = f"turn {session_turn} for session {session_id}"
 
         if stream:
 
@@ -123,7 +129,8 @@ def _build_app(agent: _StubAgent) -> FastAPI:
             run = responses_to_run(body)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        session_id = responses_session_id(body)
+        session_id, is_conversation_id = responses_session_id(body)
+        conversation_id = session_id if is_conversation_id else None
         response_id = create_response_id()
 
         target = await state.get_target()
@@ -139,10 +146,13 @@ def _build_app(agent: _StubAgent) -> FastAPI:
                 async for event in responses_from_streaming_run(
                     stream,
                     response_id=response_id,
-                    session_id=session_id,
+                    conversation_id=conversation_id,
                 ):
                     yield event
-                await state.set_session(response_id, session)
+                if conversation_id is not None:
+                    await state.set_session(conversation_id, session)
+                else:
+                    await state.set_session(response_id, session)
 
             return StreamingResponse(
                 stream_events(),
@@ -150,8 +160,11 @@ def _build_app(agent: _StubAgent) -> FastAPI:
             )
 
         result = await target.run(run["messages"], session=session)
-        await state.set_session(response_id, session)
-        return JSONResponse(responses_from_run(result, response_id=response_id, session_id=session_id))
+        if conversation_id is not None:
+            await state.set_session(conversation_id, session)
+        else:
+            await state.set_session(response_id, session)
+        return JSONResponse(responses_from_run(result, response_id=response_id, conversation_id=conversation_id))
 
     return app
 
@@ -246,6 +259,23 @@ class TestSessionContinuity:
         assert first_session_id is not None
         assert agent.session_ids_seen == [first_session_id] * 3
         assert agent.turn_counts[first_session_id] == 3
+        assert agent.session_turn_counts_seen == [1, 2, 3]
+
+    async def test_previous_response_id_supports_independent_branches(self) -> None:
+        agent = _StubAgent()
+        app = _build_app(agent)
+
+        root = await _post(app, {"input": "root"})
+        branch_one, branch_two = await asyncio.gather(
+            _post(app, {"input": "branch one", "previous_response_id": root.json()["id"]}),
+            _post(app, {"input": "branch two", "previous_response_id": root.json()["id"]}),
+        )
+        await asyncio.gather(
+            _post(app, {"input": "continue one", "previous_response_id": branch_one.json()["id"]}),
+            _post(app, {"input": "continue two", "previous_response_id": branch_two.json()["id"]}),
+        )
+
+        assert agent.session_turn_counts_seen == [1, 2, 2, 3, 3]
 
     async def test_conversation_id_preserves_session_across_turns(self) -> None:
         agent = _StubAgent()
@@ -258,6 +288,7 @@ class TestSessionContinuity:
 
         assert agent.session_ids_seen == ["conv_stable", "conv_stable"]
         assert agent.turn_counts["conv_stable"] == 2
+        assert agent.session_turn_counts_seen == [1, 2]
 
     async def test_unrelated_requests_get_independent_sessions(self) -> None:
         agent = _StubAgent()

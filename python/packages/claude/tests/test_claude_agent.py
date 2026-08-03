@@ -9,6 +9,7 @@ from agent_framework._settings import load_settings
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
+from agent_framework_claude._feature_usage import FeatureIndex
 
 # region Test ClaudeAgentSettings
 
@@ -231,9 +232,13 @@ class TestClaudeAgentRun:
         ]
         mock_client = self._create_mock_client(messages)
 
-        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework_claude._agent.mark_feature_used") as mark_feature_used,
+        ):
             agent = ClaudeAgent()
             response = await agent.run("Hello")
+            mark_feature_used.assert_called_once_with(FeatureIndex.CLAUDE)
             assert response.text == "Hello!"
 
     async def test_run_captures_session_id(self) -> None:
@@ -271,7 +276,13 @@ class TestClaudeAgentRun:
             await agent.run("Hello", session=session)
             assert session.service_session_id == "test-session-id"
 
-    async def test_run_captures_result_message_usage_and_finish_reason(self) -> None:
+    @pytest.mark.parametrize(
+        ("stop_reason", "expected_finish_reason"),
+        [("end_turn", "stop"), ("pause_turn", "pause_turn")],
+    )
+    async def test_run_captures_result_message_usage_and_finish_reason(
+        self, stop_reason: str, expected_finish_reason: str
+    ) -> None:
         """Test that ResultMessage metadata is propagated to the final AgentResponse."""
         from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
         from claude_agent_sdk.types import StreamEvent
@@ -296,7 +307,7 @@ class TestClaudeAgentRun:
                 is_error=False,
                 num_turns=1,
                 session_id="test-session-id",
-                stop_reason="end_turn",
+                stop_reason=stop_reason,
                 usage={
                     "input_tokens": 42,
                     "output_tokens": 18,
@@ -311,7 +322,7 @@ class TestClaudeAgentRun:
             agent = ClaudeAgent()
             response = await agent.run("Hello")
 
-        assert response.finish_reason == "end_turn"
+        assert response.finish_reason == expected_finish_reason
         assert response.usage_details == {
             "input_token_count": 42,
             "output_token_count": 18,
@@ -465,7 +476,7 @@ class TestClaudeAgentRunStream:
                 pass
             response = await stream.get_final_response()
 
-        assert response.finish_reason == "max_tokens"
+        assert response.finish_reason == "length"
         assert response.usage_details == {
             "input_token_count": 7,
             "output_token_count": 9,

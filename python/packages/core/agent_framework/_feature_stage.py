@@ -61,6 +61,7 @@ class ExperimentalFeature(str, Enum):
     MCP_LONG_RUNNING_TASKS = "MCP_LONG_RUNNING_TASKS"
     MCP_SKILLS = "MCP_SKILLS"
     PROGRESSIVE_TOOLS = "PROGRESSIVE_TOOLS"
+    SESSION_STORE = "SESSION_STORE"
     TO_PROMPT_AGENT = "TO_PROMPT_AGENT"
 
 
@@ -138,6 +139,15 @@ def _get_object_name(obj: Any) -> str:
 
 def _get_descriptor_callable(obj: Any) -> Callable[..., Any]:
     return cast(Callable[..., Any], obj.__func__)
+
+
+def _is_internal_framework_subclass(args: tuple[Any, ...]) -> bool:
+    """Return whether an experimental subclass is defined inside an Agent Framework package."""
+    subclass = next((arg for arg in args if isinstance(arg, type)), None)
+    if subclass is None:
+        return False
+    module = subclass.__module__
+    return module == "agent_framework" or module.startswith(("agent_framework.", "agent_framework_"))
 
 
 def _is_protocol_class(obj: Any) -> bool:
@@ -251,6 +261,45 @@ def _warn_on_feature_use(
     _WARNED_FEATURES.add(warning_key)
 
 
+def warn_experimental_feature(
+    message: str,
+    *,
+    feature_id: str | Enum,
+    category: type[Warning] = ExperimentalWarning,
+) -> bool:
+    """Emit a one-time feature-stage warning for a feature not gated by a decorator.
+
+    Some released APIs opt callers into experimental behaviour through individual
+    parameters, which Python cannot decorate on their own. Call this to warn once per
+    ``feature_id`` with a custom ``message`` (pointing at the caller's call site) and to
+    seed the shared dedup registry, so a downstream decorated provider for the same
+    ``feature_id`` does not warn a second time.
+
+    Returns ``True`` when a warning was emitted, ``False`` when it was already emitted for
+    this ``feature_id``/``category`` earlier in the process.
+    """
+    normalized_feature_id = _normalize_feature_id(feature_id)
+    warning_key = (category, normalized_feature_id)
+    if warning_key in _WARNED_FEATURES:
+        return False
+
+    user_frame = _resolve_user_frame()
+    if user_frame is None:
+        # Last-resort fallback: emit at the immediate caller of this helper.
+        warnings.warn(message, category=category, stacklevel=2)
+    else:
+        filename, lineno, module = user_frame
+        warnings.warn_explicit(
+            message,
+            category=category,
+            filename=filename,
+            lineno=lineno,
+            module=module,
+        )
+    _WARNED_FEATURES.add(warning_key)
+    return True
+
+
 def _add_runtime_warning(
     obj: FeatureStageT,
     *,
@@ -287,28 +336,30 @@ def _add_runtime_warning(
 
             @functools.wraps(original_init_subclass_func)
             def bound_init_subclass_wrapper(*args: Any, **kwargs: Any) -> Any:
-                _warn_on_feature_use(
-                    stage=stage,
-                    feature_id=feature_id,
-                    object_name=object_name,
-                    category=category,
-                )
+                if not _is_internal_framework_subclass(args):
+                    _warn_on_feature_use(
+                        stage=stage,
+                        feature_id=feature_id,
+                        object_name=object_name,
+                        category=category,
+                    )
                 return original_init_subclass_func(*args, **kwargs)
 
             experimental_class.__init_subclass__ = classmethod(bound_init_subclass_wrapper)  # type: ignore[assignment]
         else:
 
             @functools.wraps(original_init_subclass)
-            def init_subclass_wrapper(*args: Any, **kwargs: Any) -> Any:
-                _warn_on_feature_use(
-                    stage=stage,
-                    feature_id=feature_id,
-                    object_name=object_name,
-                    category=category,
-                )
+            def init_subclass_wrapper(subclass: type[Any], /, *args: Any, **kwargs: Any) -> Any:
+                if not _is_internal_framework_subclass((subclass, *args)):
+                    _warn_on_feature_use(
+                        stage=stage,
+                        feature_id=feature_id,
+                        object_name=object_name,
+                        category=category,
+                    )
                 return original_init_subclass(*args, **kwargs)
 
-            experimental_class.__init_subclass__ = init_subclass_wrapper
+            experimental_class.__init_subclass__ = classmethod(init_subclass_wrapper)  # type: ignore[assignment]
 
         return cast(FeatureStageT, experimental_class)
 

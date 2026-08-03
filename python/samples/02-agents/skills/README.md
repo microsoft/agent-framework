@@ -54,7 +54,7 @@ The `script_runner` parameter on `SkillsProvider` is only applicable to **file-b
 ## Prerequisites
 
 All samples require:
-- An [Azure AI Foundry](https://ai.azure.com/) project with a deployed model (e.g. `gpt-4o-mini`)
+- A [Microsoft Foundry](https://ai.azure.com/) project with a deployed model (e.g. `gpt-4o-mini`)
 - Azure CLI authentication (`az login`)
 - Environment variables set in a `.env` file (see `python/.env.example`)
 

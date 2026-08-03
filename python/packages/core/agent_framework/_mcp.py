@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from functools import partial
 from inspect import isawaitable
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypedDict, cast
 
 from opentelemetry import propagate
 from opentelemetry import trace as otel_trace
@@ -29,6 +29,7 @@ from ._feature_stage import (
     _warn_on_feature_use,  # pyright: ignore[reportPrivateUsage]
     experimental,
 )
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import FunctionTool
 from ._types import (
     ChatOptions,
@@ -59,6 +60,18 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    _MCPSamplingContentBlock: TypeAlias = (
+        types.TextContent
+        | types.ImageContent
+        | types.AudioContent
+        | types.EmbeddedResource
+        | types.ResourceLink
+        | types.ToolUseContent
+    )
+else:
+    _MCPSamplingContentBlock = Any
 
 
 class MCPSpecificApproval(TypedDict, total=False):
@@ -779,14 +792,21 @@ class MCPTool:
     def _prepare_content_for_mcp(
         self,
         content: Content,
-    ) -> (
-        types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None
-    ):
+    ) -> _MCPSamplingContentBlock | None:
         """Prepare an Agent Framework content type for MCP."""
         from mcp import types
 
         if content.type == "text":
             return types.TextContent(type="text", text=content.text)  # type: ignore[attr-defined]
+        if content.type == "function_call":
+            if not content.call_id or not content.name:
+                return None
+            return types.ToolUseContent(
+                type="tool_use",
+                id=content.call_id,
+                name=content.name,
+                input=content.parse_arguments() or {},
+            )
         if content.type == "data":
             if content.media_type and content.media_type.startswith("image/"):
                 return types.ImageContent(type="image", data=content.uri, mimeType=content.media_type)  # type: ignore[attr-defined]
@@ -821,13 +841,9 @@ class MCPTool:
     def _prepare_message_for_mcp(
         self,
         content: Message,
-    ) -> list[
-        types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
-    ]:
+    ) -> list[_MCPSamplingContentBlock]:
         """Prepare a Message for MCP format."""
-        messages: list[
-            types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink
-        ] = []
+        messages: list[_MCPSamplingContentBlock] = []
         for item in content.contents:
             mcp_content = self._prepare_content_for_mcp(item)
             if mcp_content:
@@ -1253,6 +1269,7 @@ class MCPTool:
         await self._run_on_lifecycle_owner("connect", reset=True, load_configured=False)
 
     async def connect(self, *, reset: bool = False) -> None:
+        mark_feature_used(FeatureIndex.CORE_MCP)
         if self._is_lifecycle_owner_task():
             await self._connect_on_owner(reset=reset)
             return
@@ -1433,7 +1450,7 @@ class MCPTool:
         self,
         context: RequestContext[ClientSession, Any],
         params: types.CreateMessageRequestParams,
-    ) -> types.CreateMessageResult | types.ErrorData:
+    ) -> types.CreateMessageResult | types.CreateMessageResultWithTools | types.ErrorData:
         """Callback function for sampling.
 
         This function is called when the MCP server sends a ``sampling/createMessage``
@@ -1460,8 +1477,8 @@ class MCPTool:
             params: The message creation request parameters.
 
         Returns:
-            Either a CreateMessageResult with the generated message or ErrorData if the request
-            is denied, rate limited, or generation fails.
+            Either a CreateMessageResult/CreateMessageResultWithTools with the generated message or ErrorData if the
+            request is denied, rate limited, or generation fails.
         """
         from mcp import types
 
@@ -1544,7 +1561,21 @@ class MCPTool:
                 code=types.INTERNAL_ERROR,
                 message="Failed to get chat message content.",
             )
-        mcp_contents = self._prepare_message_for_mcp(response.messages[0])
+        mcp_contents = [
+            mcp_content for message in response.messages for mcp_content in self._prepare_message_for_mcp(message)
+        ]
+        tool_use_contents: list[types.SamplingMessageContentBlock] = []
+        for content in mcp_contents:
+            if isinstance(content, types.ToolUseContent):
+                tool_use_contents.append(content)
+        if tool_use_contents:
+            return types.CreateMessageResultWithTools(
+                role="assistant",
+                content=tool_use_contents,
+                model=response.model or "unknown",
+                stopReason="toolUse",
+            )
+
         # grab the first content that is of type TextContent or ImageContent
         mcp_content = next(
             (content for content in mcp_contents if isinstance(content, (types.TextContent, types.ImageContent))),
@@ -2980,11 +3011,25 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``streamable_http_client`` API will create and manage a default client.
                 To configure headers, timeouts, or other HTTP client settings, create
                 and pass your own ``asyncClient`` instance.
+                Security: when you attach sensitive headers (e.g. authentication tokens)
+                via a custom ``http_client``, you are responsible for enforcing the same
+                origin-scoped header policy that the built-in ``header_provider`` hook
+                applies. The framework only injects ``header_provider`` headers on requests
+                whose origin (scheme, host, port) matches the configured ``url``, so tokens
+                are not leaked to third-party origins on cross-origin redirects. A custom
+                client that sets headers unconditionally (e.g. via ``AsyncClient(headers=...)``
+                or ``follow_redirects=True`` without an origin check) can leak those headers
+                to other origins; scope them to the target origin yourself.
             header_provider: Optional callable that receives the runtime keyword arguments
                 (from ``FunctionInvocationContext.kwargs``) and returns a ``dict[str, str]``
                 of HTTP headers to inject into every outbound request to the MCP server.
                 Use this to forward per-request context (e.g. authentication tokens set in
                 agent middleware) without creating a separate ``httpx.AsyncClient``.
+                The framework attaches these headers only to requests whose origin (scheme,
+                host, port) matches the configured ``url``, so they are not leaked to other
+                origins on cross-origin redirects. If you instead supply sensitive headers
+                through a custom ``http_client``, you must enforce this same origin-scoped
+                policy yourself.
             task_options: Options for tools that advertise
                 ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             additional_tool_argument_names: Extra argument names to forward to the MCP server in
@@ -3029,6 +3074,14 @@ class MCPStreamableHTTPTool(MCPTool):
         self.terminate_on_close = terminate_on_close
         self._httpx_client: AsyncClient | None = http_client
         self._header_provider = header_provider
+        # Headers for the in-flight call_tool invocation. The streamable HTTP transport
+        # sends requests from tasks spawned at connect time, whose contexts never observe
+        # ContextVar values set later inside call_tool, so the request hook needs this
+        # instance-level snapshot as a cross-task fallback. The lock serializes tool calls
+        # when a header_provider is set: parallel invocations on the same instance would
+        # otherwise overwrite each other's snapshot and attach the wrong per-call headers.
+        self._active_call_headers: dict[str, str] | None = None
+        self._call_headers_lock = asyncio.Lock()
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
@@ -3068,10 +3121,41 @@ class MCPStreamableHTTPTool(MCPTool):
 
             if not hasattr(self, "_inject_headers_hook"):
 
-                async def _inject_headers(request: Request) -> None:  # noqa: RUF029
+                async def _inject_headers(request: Request) -> None:  # ruff:ignore[unused-async]
                     if _url_origin(request.url) != target_origin:
                         return
-                    headers = _mcp_call_headers.get({})
+                    # The transport may send this request from a task whose context was
+                    # captured before call_tool set the ContextVar; fall back to the
+                    # instance-level snapshot of the active call's headers. Both are None
+                    # only when this is an ambient request outside call_tool; an active
+                    # call that legitimately produced no headers yields an empty dict and
+                    # must not trigger the ambient fallback below.
+                    headers = _mcp_call_headers.get(None)
+                    if headers is None:
+                        headers = self._active_call_headers
+                    if headers is None:
+                        # Ambient request made outside call_tool (the initialize handshake,
+                        # load_tools/load_prompts discovery, or background pings). Invoke the
+                        # provider with empty kwargs so static providers can authenticate these
+                        # requests too. A provider that indexes a required per-call kwarg (e.g.
+                        # kwargs["api_key"]) raises KeyError on the empty dict; that specific
+                        # case is tolerated so connect still succeeds. Any other error is a
+                        # genuine provider failure and is left to propagate, matching the
+                        # call_tool path which does not catch header_provider exceptions.
+                        if self._header_provider is None:
+                            raise RuntimeError("Header injection hook invoked without a header_provider.")
+                        try:
+                            headers = self._header_provider({})
+                        except KeyError:
+                            # A kwargs-dependent provider raises on every ambient request
+                            # (initialize, discovery, and recurring pings).
+                            logger.debug(
+                                "header_provider raised KeyError for MCP server %r on an ambient "
+                                "request (missing per-call kwargs); proceeding without headers.",
+                                self.name,
+                                exc_info=True,
+                            )
+                            headers = {}
                     for key, value in headers.items():
                         request.headers[key] = value
 
@@ -3090,7 +3174,7 @@ class MCPStreamableHTTPTool(MCPTool):
         When a ``header_provider`` was supplied at construction time, the runtime
         *kwargs* (originating from ``FunctionInvocationContext.kwargs``) are passed
         to the provider.  The returned headers are attached to every HTTP request
-        made during this tool call via a ``contextvars.ContextVar``.
+        made during this tool call via a request hook on the underlying HTTP client.
 
         Args:
             tool_name: The name of the tool to call.
@@ -3103,11 +3187,14 @@ class MCPStreamableHTTPTool(MCPTool):
         """
         if self._header_provider is not None:
             headers = self._header_provider(kwargs)
-            token = _mcp_call_headers.set(headers)
-            try:
-                return await super().call_tool(tool_name, **kwargs)
-            finally:
-                _mcp_call_headers.reset(token)
+            async with self._call_headers_lock:
+                token = _mcp_call_headers.set(headers)
+                self._active_call_headers = headers
+                try:
+                    return await super().call_tool(tool_name, **kwargs)
+                finally:
+                    self._active_call_headers = None
+                    _mcp_call_headers.reset(token)
         return await super().call_tool(tool_name, **kwargs)
 
 
