@@ -139,8 +139,8 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
 
     Only classes whose ``module:qualname`` key appears in the combined allow
     set (built-in safe types + framework types + OpenAI SDK types +
-    caller-specified extras) are permitted.  All other classes raise
-    :class:`pickle.UnpicklingError`.
+    caller-specified extras + globally registered custom types) are permitted.
+    All other classes raise :class:`pickle.UnpicklingError`.
     """
 
     def __init__(self, data: bytes, allowed_types: frozenset[str]) -> None:
