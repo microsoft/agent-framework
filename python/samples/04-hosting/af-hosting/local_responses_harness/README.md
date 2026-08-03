@@ -39,13 +39,20 @@ What the route demonstrates (identical to `local_responses/`):
   default. Your app decides the exact allowed, altered, and denied options.
 - Produces the AF messages, options, and session id that the route passes to
   `agent.run(...)`.
-- **Stores** each newly minted response id for the session it was just resolved
-  from, via `state.set_session(response_id, session)` after `agent.run(...)` has
-  updated the session. OpenAI's `previous_response_id` rotates every turn *by
-  design* — it lets a caller continue from any earlier response, not just the
-  latest one — so every response id needs to stay independently resolvable.
+- **Stores** each newly minted response id for response-keyed continuation, via
+  `state.set_session(response_id, session)` after `agent.run(...)` has updated
+  the session. OpenAI's `previous_response_id` rotates every turn *by design* —
+  it lets a caller continue from any earlier response, not just the latest one
+  — so every response id needs to stay independently resolvable.
 - Treats an unknown `conversation_id` as a request to create a new local
   session. Your app can choose a stricter policy.
+- Explicitly advances a supplied `conversation_id` after each completed run. A
+  conversation id is a mutable head, so production apps should serialize
+  writers or use optimistic concurrency; the sample stores the updated session
+  only under that stable conversation id.
+- Treats each `previous_response_id` as an immutable snapshot. Multiple callers
+  can branch from the same response concurrently because each receives a
+  session copy and stores its result under a newly minted response id.
 
 `app:app` is a module-level FastAPI ASGI app; recommended local launch is
 Hypercorn.

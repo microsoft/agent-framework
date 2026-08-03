@@ -140,11 +140,9 @@ def create_agent() -> Agent:
         # management and compaction stay enabled.
         disable_mode=True,
         disable_web_search=True,
-        # Disable the file-memory and file-access providers. In a headless HTTP
-        # sample their read/write file tools would expose unintended tools, create
-        # on-disk side effects outside storage/, and could block on tool approval.
+        # Disable file memory. File access is opt-in and no store is supplied, so
+        # the headless HTTP sample has no file read/write tools or side effects.
         disable_file_memory=True,
-        disable_file_access=True,
         # The app owns session state locally, so do not also persist server-side
         # Responses conversations.
         default_options={"store": False},
@@ -164,7 +162,8 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
         run = responses_to_run(body)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    session_id = responses_session_id(body)
+    session_id, is_conversation_id = responses_session_id(body)
+    conversation_id = session_id if is_conversation_id else None
     response_id = create_response_id()
 
     # App-specific policy: allow only the request options this route is willing
@@ -193,14 +192,16 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
             async for event in responses_from_streaming_run(
                 stream,
                 response_id=response_id,
-                session_id=session_id,
+                conversation_id=conversation_id,
             ):
                 yield event
             # `agent.run(..., stream=True)` updates the session while the stream
-            # is consumed/finalized. Store it under the newly minted response id
-            # after finalization so a later `previous_response_id` can restore
-            # this exact continuation point.
-            await state.set_session(response_id, session)
+            # is consumed/finalized. Persist the selected continuation only
+            # after finalization.
+            if conversation_id is not None:
+                await state.set_session(conversation_id, session)
+            else:
+                await state.set_session(response_id, session)
 
         return StreamingResponse(
             stream_events(),
@@ -212,15 +213,17 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
         session=session,
         options=options_for_run,
     )
-    # `agent.run(...)` updates the session. Store it under the newly minted
-    # response id after the run so `previous_response_id=response_id` continues
-    # from this exact point.
-    await state.set_session(response_id, session)
+    # `agent.run(...)` updates the session. Persist the selected continuation
+    # only after the run completes.
+    if conversation_id is not None:
+        await state.set_session(conversation_id, session)
+    else:
+        await state.set_session(response_id, session)
     return JSONResponse(
         responses_from_run(
             result,
             response_id=response_id,
-            session_id=session_id,
+            conversation_id=conversation_id,
         )
     )
 
