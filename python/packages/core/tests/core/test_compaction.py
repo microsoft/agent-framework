@@ -1316,33 +1316,41 @@ async def test_tool_result_compaction_bounds_large_summary_payload() -> None:
     assert len(summary_text) < len(large_result)
 
 
-async def test_tool_result_compaction_ignores_already_excluded_results() -> None:
-    """Summary text should not restore tool results already excluded from context."""
-    excluded_result = "excluded-start\n" + ("excluded line\n" * 1_000) + "excluded-end"
+async def test_tool_result_compaction_does_not_restore_excluded_results() -> None:
+    """A summary must use only results that remain in the included context."""
+    excluded_payload = "excluded payload " * 2_000
     messages = [
-        Message(role="user", contents=["read the files"]),
+        Message(role="user", contents=["u"]),
         Message(
             role="assistant",
             contents=[
-                Content.from_function_call(call_id="c1", name="read_file", arguments="{}"),
-                Content.from_function_call(call_id="c2", name="read_file", arguments="{}"),
+                Content.from_function_call(call_id="c1", name="get_weather", arguments="{}"),
+                Content.from_function_call(call_id="c2", name="search_docs", arguments="{}"),
             ],
         ),
-        _tool_result("c1", "included result"),
-        _tool_result("c2", excluded_result),
+        _tool_result("c1", "sunny"),
+        _tool_result("c2", excluded_payload),
         Message(role="assistant", contents=["done"]),
     ]
     strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
-    annotate_message_groups(messages)
-    messages[3].additional_properties[EXCLUDED_KEY] = True
+    tokenizer = CharacterEstimatorTokenizer()
+    annotate_message_groups(messages, tokenizer=tokenizer)
+    original_group = messages[1:4]
+    excluded_result = messages[3]
+    excluded_result.additional_properties[EXCLUDED_KEY] = True
+    original_message_ids = [message.message_id for message in original_group if message.message_id]
+    token_count_before = included_token_count(messages)
 
     await strategy(messages)
+    annotate_message_groups(messages, tokenizer=tokenizer)
 
-    summary = next(m for m in included_messages(messages) if (m.text or "").startswith("[Tool results:"))
-    summary_text = summary.text or ""
-    assert "included result" in summary_text
-    assert excluded_result not in summary_text
-    assert "excluded-start" not in summary_text
+    summary = next(
+        message for message in included_messages(messages) if (message.text or "").startswith("[Tool results:")
+    )
+    assert summary.text == "[Tool results: get_weather: sunny]"
+    assert included_token_count(messages) < token_count_before
+    assert _group_unknown_value(summary, SUMMARY_OF_MESSAGE_IDS_KEY) == original_message_ids
+    assert _group_unknown_value(excluded_result, SUMMARIZED_BY_SUMMARY_ID_KEY) == summary.message_id
 
 
 async def test_tool_result_compaction_bidirectional_tracing() -> None:

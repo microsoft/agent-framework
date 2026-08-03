@@ -1024,8 +1024,8 @@ class ToolResultCompactionStrategy:
             if group_id in keep_ids:
                 continue
             group_msgs = grouped.get(group_id, [])
+            # Build a call_id -> tool-name map from tool-call contents.
             call_id_to_name: dict[str, str] = {}
-            tool_results: list[str] = []
             for msg in group_msgs:
                 if msg.additional_properties.get(EXCLUDED_KEY, False):
                     continue
@@ -1034,7 +1034,14 @@ class ToolResultCompactionStrategy:
                         call_id_to_name[content.call_id] = content.name
                     elif content.type == "mcp_server_tool_call" and content.call_id and content.tool_name:
                         call_id_to_name[content.call_id] = content.tool_name
-                    elif content.type == "function_result":
+
+            # Collect tool results with the tool name for context.
+            tool_results: list[str] = []
+            for msg in group_msgs:
+                if msg.additional_properties.get(EXCLUDED_KEY, False):
+                    continue
+                for content in msg.contents:
+                    if content.type == "function_result":
                         result_text = content.result if isinstance(content.result, str) else str(content.result)
                         tool_name = call_id_to_name.get(content.call_id or "", "")
                         label = f"{tool_name}: {result_text}" if tool_name else result_text
