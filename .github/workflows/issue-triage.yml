@@ -68,7 +68,7 @@ jobs:
           echo "repo=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           sparse-checkout: |
             .github/actions/github-app-token
@@ -135,7 +135,7 @@ jobs:
     steps:
       # Safe checkout: base repo only.
       - name: Checkout target repo base
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -143,7 +143,7 @@ jobs:
 
       # Private DevFlow (maf-dashboard) checkout.
       - name: Checkout DevFlow
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           repository: ${{ env.DEVFLOW_REPOSITORY }}
           ref: ${{ env.DEVFLOW_REF }}

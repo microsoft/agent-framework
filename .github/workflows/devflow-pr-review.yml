@@ -85,7 +85,7 @@ jobs:
           echo "repo=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout GitHub automation
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
           sparse-checkout: |
@@ -165,7 +165,7 @@ jobs:
     steps:
       # Safe checkout: base repo only, not the untrusted PR head.
       - name: Checkout target repo base
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
           fetch-depth: 0
@@ -174,7 +174,7 @@ jobs:
 
       # Private DevFlow checkout: the PAT/token grants access to this repo's code.
       - name: Checkout DevFlow
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           repository: ${{ env.DEVFLOW_REPOSITORY }}
           ref: ${{ env.DEVFLOW_REF }}

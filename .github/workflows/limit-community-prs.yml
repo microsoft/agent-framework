@@ -27,7 +27,7 @@ jobs:
       is_team_member: ${{ steps.check.outputs.is_team_member }}
     steps:
       - name: Checkout scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           sparse-checkout: |
@@ -82,7 +82,7 @@ jobs:
     if: ${{ needs.team_check.outputs.is_team_member == 'false' }}
     steps:
       - name: Checkout scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           sparse-checkout: |
