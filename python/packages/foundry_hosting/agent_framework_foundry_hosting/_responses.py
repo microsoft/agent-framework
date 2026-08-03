@@ -317,14 +317,21 @@ def _resolve_storage_path(storage_path: str, *, is_hosted: bool) -> str:
     home = os.environ.get(_HOME_DIR_ENV_VAR, "").strip()
     if home and home != "/":
         try:
-            resolved = Path(home).resolve()
+            home_path = Path(home)
+            if not home_path.is_absolute():
+                raise ValueError(f"{_HOME_DIR_ENV_VAR} must be an absolute path: {home!r}")
+            resolved = home_path.resolve()
             # Make sure the resolved path is not the root directory, which would allow
             # writing to arbitrary locations on the host filesystem.
             if resolved.parent != resolved:
                 return str(resolved / relative_path)
         except (OSError, RuntimeError, ValueError):
-            logger.warning("Failed to resolve $HOME=%r, falling back to %s", home, _HOME_DIR_FALLBACK, exc_info=True)
-            pass
+            logger.warning(
+                "Failed to resolve $HOME=%r, falling back to %s",
+                home,
+                _HOME_DIR_FALLBACK,
+                exc_info=True,
+            )
 
     return f"{_HOME_DIR_FALLBACK}/{relative_path}"
 
