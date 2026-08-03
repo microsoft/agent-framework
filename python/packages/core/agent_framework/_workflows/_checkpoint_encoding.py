@@ -214,8 +214,8 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
             f"Checkpoint deserialization blocked for type '{type_key}'. "
             f"To allow this type, register it globally via 'agent_framework.register_checkpoint_type', "
             f"include its 'module:qualname' key in the 'allowed_types' set passed to 'decode_checkpoint_value', "
-            f"or add it to 'allowed_checkpoint_types' on your checkpoint storage "
-            f"(for example, 'FileCheckpointStorage.allowed_checkpoint_types')."
+            f"or pass 'allowed_checkpoint_types' to your checkpoint storage "
+            f"(for example, 'FileCheckpointStorage(..., allowed_checkpoint_types=[...])')."
         )
 
 
@@ -401,7 +401,11 @@ def _value_type_to_key(value: object) -> str:
 
 
 def register_checkpoint_type(cls_or_key: type[Any] | str) -> None:
-    """Register a custom type to be allowed during checkpoint deserialization.
+    """Register a custom type globally to be allowed during checkpoint deserialization.
+
+    .. warning::
+        Registration modifies a process-wide allowlist used during restricted unpickling.
+        Only register trusted application-defined types.
 
     Each registered type should be either a type class (e.g., custom models or
     dataclasses) or a ``"module:qualname"`` string.
