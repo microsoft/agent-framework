@@ -375,16 +375,17 @@ class TestResponsesHostServerInit:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
+        monkeypatch.setenv("HOME", str(tmp_path))
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
 
-        with patch.object(Path, "home", return_value=tmp_path):
-            server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
+        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
 
         session_store = server._session_store  # pyright: ignore[reportPrivateUsage]
         assert isinstance(session_store, FoundrySessionStore)
         assert session_store.storage_path == tmp_path / ".sessions"
+        assert server._session_storage_path == str(tmp_path / ".sessions")  # pyright: ignore[reportPrivateUsage]
         assert server.SESSION_STORAGE_PATH == "/.sessions"
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
@@ -5187,6 +5188,56 @@ class TestCheckpointStoragePath:
 
         assert server._checkpoint_storage_path == "/home/session/.checkpoints"
         assert server._checkpoint_storage_path != "/.checkpoints"
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+class TestHostedFileStoragePath:
+    def test_hosted_paths_use_home(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        server = ResponsesHostServer(MagicMock(context_providers=[]), store=InMemoryResponseProvider())
+
+        expected_session_path = tmp_path / ".sessions"
+        expected_approval_path = tmp_path / ".function_approvals" / "approval_requests.json"
+        assert server._session_storage_path == str(expected_session_path)  # pyright: ignore[reportPrivateUsage]
+        assert server._approval_storage_path == str(expected_approval_path)  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(server._session_store, FoundrySessionStore)  # pyright: ignore[reportPrivateUsage]
+        assert server._session_store.storage_path == expected_session_path  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(server._approval_storage, FileBasedFunctionApprovalStorage)  # pyright: ignore[reportPrivateUsage]
+        assert server._approval_storage._storage_path == str(expected_approval_path)  # pyright: ignore[reportPrivateUsage]
+
+        with _request_context(user_id="user-A"):
+            user_storage = server._approval_storage_for_request()  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(user_storage, FileBasedFunctionApprovalStorage)
+        assert user_storage._storage_path == str(  # pyright: ignore[reportPrivateUsage]
+            tmp_path / ".function_approvals" / "user-A" / "approval_requests.json"
+        )
+
+    @pytest.mark.parametrize("home", [None, "/", "", "   "])
+    def test_hosted_paths_fall_back_to_default_session_directory(
+        self, monkeypatch: pytest.MonkeyPatch, home: str | None
+    ) -> None:
+        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
+        if home is None:
+            monkeypatch.delenv("HOME", raising=False)
+        else:
+            monkeypatch.setenv("HOME", home)
+
+        server = ResponsesHostServer(MagicMock(context_providers=[]), store=InMemoryResponseProvider())
+
+        assert server._session_storage_path == "/home/session/.sessions"  # pyright: ignore[reportPrivateUsage]
+        assert (  # pyright: ignore[reportPrivateUsage]
+            server._approval_storage_path == "/home/session/.function_approvals/approval_requests.json"
+        )
+
+    def test_local_paths_use_current_working_directory(self) -> None:
+        server = _make_server(MagicMock(context_providers=[]))
+
+        assert server._session_storage_path == os.path.join(os.getcwd(), ".sessions")  # pyright: ignore[reportPrivateUsage]
+        assert server._approval_storage_path == os.path.join(  # pyright: ignore[reportPrivateUsage]
+            os.getcwd(), ".function_approvals", "approval_requests.json"
+        )
 
 
 # endregion

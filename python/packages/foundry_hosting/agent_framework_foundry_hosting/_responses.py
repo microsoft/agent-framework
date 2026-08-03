@@ -133,7 +133,7 @@ _AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__q
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
 
 
-# region Approval Storage
+# region Storage
 class ApprovalStorage(Protocol):
     """Storage for saving function approval requests."""
 
@@ -300,7 +300,36 @@ def _approval_storage_path_for_user(base_path: str, user_id: str) -> str:
     return str(user_dir / filename)
 
 
-# endregion Approval Storage
+_HOME_DIR_ENV_VAR = "HOME"
+_HOME_DIR_FALLBACK = "/home/session"
+
+
+def _resolve_storage_path(storage_path: str, *, is_hosted: bool) -> str:
+    """Resolve file storage beneath the durable home directory when hosted.
+
+    Hosted paths use ``$HOME`` or fall back to ``/home/session``. Local paths
+    use the current working directory.
+    """
+    relative_path = storage_path.lstrip("/")
+    if not is_hosted:
+        return str(Path.cwd() / relative_path)
+
+    home = os.environ.get(_HOME_DIR_ENV_VAR, "").strip()
+    if home and home != "/":
+        try:
+            resolved = Path(home).resolve()
+            # Make sure the resolved path is not the root directory, which would allow
+            # writing to arbitrary locations on the host filesystem.
+            if resolved.parent != resolved:
+                return str(resolved / relative_path)
+        except (OSError, RuntimeError, ValueError):
+            logger.warning("Failed to resolve $HOME=%r, falling back to %s", home, _HOME_DIR_FALLBACK, exc_info=True)
+            pass
+
+    return f"{_HOME_DIR_FALLBACK}/{relative_path}"
+
+
+# endregion Storage
 
 # Foundry Toolbox Auth integration
 # Consent-URL error code returned by the Foundry MCP gateway when calling `/list`
@@ -386,27 +415,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     FUNCTION_APPROVAL_STORAGE_PATH = "/.function_approvals/approval_requests.json"
     SESSION_STORAGE_PATH = "/.sessions"
 
-    @staticmethod
-    def _resolve_checkpoint_root(is_hosted: bool) -> str:
-        """Resolve checkpoint storage path.
-
-        Hosted: $HOME/.checkpoints (or /home/session/.checkpoints).
-        Local: {cwd}/.checkpoints.
-        """
-        if not is_hosted:
-            return os.path.join(os.getcwd(), ".checkpoints")
-
-        home = os.environ.get("HOME", "").strip()
-        if home and home != "/":
-            try:
-                resolved = Path(home).resolve()
-                if str(resolved) != str(resolved.root):
-                    return str(resolved / ".checkpoints")
-            except (OSError, ValueError):
-                pass
-
-        return "/home/session/.checkpoints"
-
     def __init__(
         self,
         agent: SupportsAgentRun,
@@ -457,7 +465,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "There should not be a checkpoint storage already present in the workflow agent. "
                     "The hosting infrastructure will manage checkpoints instead."
                 )
-            self._checkpoint_storage_path = self._resolve_checkpoint_root(self.config.is_hosted)
+            self._checkpoint_storage_path = _resolve_storage_path(
+                self.CHECKPOINT_STORAGE_PATH, is_hosted=self.config.is_hosted
+            )
             self._is_workflow_agent = True
 
         self._uses_hosted_responses_history = False
@@ -479,21 +489,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
 
         self._agent: SupportsAgentRun = agent
+        self._session_storage_path = _resolve_storage_path(self.SESSION_STORAGE_PATH, is_hosted=self.config.is_hosted)
         self._session_store: SessionStore | None = (
-            (
-                FoundrySessionStore(Path.home() / self.SESSION_STORAGE_PATH.lstrip("/"))
-                if self.config.is_hosted
-                else SessionStore()
-            )
+            (FoundrySessionStore(self._session_storage_path) if self.config.is_hosted else SessionStore())
             if not self._is_workflow_agent
             else None
         )
+
+        self._approval_storage_path = _resolve_storage_path(
+            self.FUNCTION_APPROVAL_STORAGE_PATH, is_hosted=self.config.is_hosted
+        )
         self._approval_storage: ApprovalStorage = (
-            FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH)
+            FileBasedFunctionApprovalStorage(self._approval_storage_path)
             if self.config.is_hosted
             else InMemoryFunctionApprovalStorage()
         )
         self._approval_storages_by_user: dict[str, ApprovalStorage] = {}
+
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
         # failures during MCP connect can be surfaced to the client as an
@@ -540,7 +552,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         storage = self._approval_storages_by_user.get(user_id)
         if storage is None:
             storage = FileBasedFunctionApprovalStorage(
-                _approval_storage_path_for_user(self.FUNCTION_APPROVAL_STORAGE_PATH, user_id)
+                _approval_storage_path_for_user(self._approval_storage_path, user_id)
             )
             self._approval_storages_by_user[user_id] = storage
         return storage
