@@ -10,6 +10,7 @@ These samples show how to create an agent with the Agent Framework that uses Mem
 |[Memory with Microsoft Foundry](./AgentWithMemory_Step04_MemoryUsingFoundry/)|This sample demonstrates how to create and run an agent that uses Microsoft Foundry's managed memory service to extract and retrieve individual memories.|
 |[Bounded Chat History with Overflow](./AgentWithMemory_Step05_BoundedChatHistory/)|This sample demonstrates how to create a bounded chat history provider that overflows older messages to a vector store and recalls them as memories.|
 |[Memory Using AgentMemory](./AgentWithMemory_Step06_MemoryUsingAgentMemory/)|This sample demonstrates a retail shopping assistant built with [`AgentMemory`](https://www.nuget.org/packages/AgentMemory), an unofficial .NET port of the Neo4j Labs graph-memory provider, to learn customer preferences and recommend products via graph traversal.|
+|[File Based Memory](./AgentWithMemory_Step07_FileMemoryProvider/)|This sample demonstrates how to use the `FileMemoryProvider` to give an agent tools for storing and recalling memories as files, and how to configure the folder that those memory files are written to.|
 
 > **See also**: [Memory Search with Foundry Agents](../AgentProviders/foundry/Agent_Step22_MemorySearch/) - demonstrates using the built-in Memory Search tool with Microsoft Foundry agents.
 
