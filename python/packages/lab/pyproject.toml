@@ -57,7 +57,7 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv==0.11.29",
+    "uv==0.11.32",
     "ruff==0.15.22",
     "pytest==9.1.1",
     "mypy==2.3.0",
@@ -67,7 +67,7 @@ dev = [
     "rich>=13.7.1,<15.0.0",
     "tomli==2.4.1",
     "tomli-w==1.2.0",
-    "prek==0.4.10",
+    "prek==0.4.11",
 ]
 # tau2 is an executable optional feature fetched from source because it is not available on PyPI.
 tau2 = [
