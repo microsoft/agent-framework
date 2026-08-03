@@ -14,7 +14,10 @@ from typing import Any, ClassVar
 import redis.asyncio as redis
 from agent_framework import Message
 from agent_framework._sessions import HistoryProvider
+from agent_framework._telemetry import mark_feature_used
 from redis.credentials import CredentialProvider
+
+from ._feature_usage import FeatureIndex
 
 
 class RedisHistoryProvider(HistoryProvider):
@@ -124,6 +127,7 @@ class RedisHistoryProvider(HistoryProvider):
         Returns:
             List of stored Message objects in chronological order.
         """
+        mark_feature_used(FeatureIndex.REDIS)
         key = self._redis_key(session_id)
         redis_messages: list[str] = await self._redis_client.lrange(key, 0, -1)  # type: ignore[misc]
         messages: list[Message] = []
@@ -148,6 +152,7 @@ class RedisHistoryProvider(HistoryProvider):
             state: Optional session state. Unused for Redis-backed history.
             **kwargs: Additional arguments (unused).
         """
+        mark_feature_used(FeatureIndex.REDIS)
         if not messages:
             return
 

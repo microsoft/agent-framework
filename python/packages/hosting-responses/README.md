@@ -59,5 +59,7 @@ requests may branch from it and store their results under distinct new response
 ids. `conversation_id` is a mutable head instead; only one caller should
 advance it at a time. These helpers do not provide per-conversation locking.
 
-The base execution-state helpers live in
+`AgentState` lives in
 [`agent-framework-hosting`](https://pypi.org/project/agent-framework-hosting/).
+The experimental in-memory and file-backed session stores live in core as
+`agent_framework.SessionStore` and `agent_framework.FileSessionStore`.

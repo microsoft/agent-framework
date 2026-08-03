@@ -194,11 +194,7 @@ async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_p
         source_id=DEFAULT_MEMORY_SOURCE_ID,
     )["sessions_since_consolidation"] == ["session-1"]
 
-    history_provider = FileHistoryProvider(
-        store.get_transcripts_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID),
-        dumps=lambda value: json.dumps(value, separators=(",", ":"), sort_keys=True),
-        loads=json.loads,
-    )
+    history_provider = FileHistoryProvider(store.get_transcripts_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID))
     await history_provider.save_messages(
         session.session_id,
         [

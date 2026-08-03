@@ -2676,11 +2676,19 @@ def _handle_function_call_results(
                 response.messages[0].contents.extend(new_items)
             else:
                 response.messages.append(Message(role="assistant", contents=new_items))
+        streaming_items: list[Content] = []
+        for result in execution_results:
+            if result.type == "function_call":
+                metadata_only_result = copy.copy(result)
+                metadata_only_result.arguments = None
+                streaming_items.append(metadata_only_result)
+            else:
+                streaming_items.append(result)
         return _FunctionProcessingResult(
             errors_in_a_row=errors_in_a_row,
             action="return",
             function_call_count=function_call_count,
-            streaming_updates=(ChatResponseUpdate(contents=execution_results, role="assistant"),),
+            streaming_updates=(ChatResponseUpdate(contents=streaming_items, role="assistant"),),
         )
 
     errors_in_a_row, reached_error_limit = _update_consecutive_error_count(

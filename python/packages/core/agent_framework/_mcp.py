@@ -29,6 +29,7 @@ from ._feature_stage import (
     _warn_on_feature_use,  # pyright: ignore[reportPrivateUsage]
     experimental,
 )
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import FunctionTool
 from ._types import (
     ChatOptions,
@@ -1268,6 +1269,7 @@ class MCPTool:
         await self._run_on_lifecycle_owner("connect", reset=True, load_configured=False)
 
     async def connect(self, *, reset: bool = False) -> None:
+        mark_feature_used(FeatureIndex.CORE_MCP)
         if self._is_lifecycle_owner_task():
             await self._connect_on_owner(reset=reset)
             return
@@ -3124,8 +3126,36 @@ class MCPStreamableHTTPTool(MCPTool):
                         return
                     # The transport may send this request from a task whose context was
                     # captured before call_tool set the ContextVar; fall back to the
-                    # instance-level snapshot of the active call's headers.
-                    headers = _mcp_call_headers.get({}) or self._active_call_headers or {}
+                    # instance-level snapshot of the active call's headers. Both are None
+                    # only when this is an ambient request outside call_tool; an active
+                    # call that legitimately produced no headers yields an empty dict and
+                    # must not trigger the ambient fallback below.
+                    headers = _mcp_call_headers.get(None)
+                    if headers is None:
+                        headers = self._active_call_headers
+                    if headers is None:
+                        # Ambient request made outside call_tool (the initialize handshake,
+                        # load_tools/load_prompts discovery, or background pings). Invoke the
+                        # provider with empty kwargs so static providers can authenticate these
+                        # requests too. A provider that indexes a required per-call kwarg (e.g.
+                        # kwargs["api_key"]) raises KeyError on the empty dict; that specific
+                        # case is tolerated so connect still succeeds. Any other error is a
+                        # genuine provider failure and is left to propagate, matching the
+                        # call_tool path which does not catch header_provider exceptions.
+                        if self._header_provider is None:
+                            raise RuntimeError("Header injection hook invoked without a header_provider.")
+                        try:
+                            headers = self._header_provider({})
+                        except KeyError:
+                            # A kwargs-dependent provider raises on every ambient request
+                            # (initialize, discovery, and recurring pings).
+                            logger.debug(
+                                "header_provider raised KeyError for MCP server %r on an ambient "
+                                "request (missing per-call kwargs); proceeding without headers.",
+                                self.name,
+                                exc_info=True,
+                            )
+                            headers = {}
                     for key, value in headers.items():
                         request.headers[key] = value
 

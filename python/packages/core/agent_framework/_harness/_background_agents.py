@@ -19,6 +19,7 @@ from .._agents import SupportsAgentRun
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import tool
 from .._types import AgentResponse, Message
 
@@ -320,6 +321,7 @@ class BackgroundAgentsProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject background agent tools and instructions before the model runs."""
+        mark_feature_used(FeatureIndex.CORE_BACKGROUND_AGENTS_PROVIDER)
         del agent, state
 
         provider_state = _get_provider_state(session, source_id=self.source_id)

@@ -4,7 +4,7 @@ description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,7 +22,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "agent-framework-core>=1.11.0,<2",
+  "agent-framework-core>=1.13.0,<2",
 ]
 
 [project.optional-dependencies]
@@ -87,6 +87,7 @@ packages = [
   "agent_framework_lab_gaia",
   "agent_framework_lab_lightning",
   "agent_framework_lab_tau2",
+  "agent_framework_lab_common",
   "agent_framework.lab.gaia",
   "agent_framework.lab.lightning",
   "agent_framework.lab.tau2",
@@ -96,6 +97,7 @@ packages = [
 "agent_framework_lab_gaia" = "gaia/agent_framework_lab_gaia"
 "agent_framework_lab_lightning" = "lightning/agent_framework_lab_lightning"
 "agent_framework_lab_tau2" = "tau2/agent_framework_lab_tau2"
+"agent_framework_lab_common" = "common/agent_framework_lab_common"
 "agent_framework.lab.gaia" = "namespace/agent_framework/lab/gaia"
 "agent_framework.lab.lightning" = "namespace/agent_framework/lab/lightning"
 "agent_framework.lab.tau2" = "namespace/agent_framework/lab/tau2"
@@ -125,7 +127,13 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
-include = ["gaia/agent_framework_lab_gaia", "lightning/agent_framework_lab_lightning", "tau2/agent_framework_lab_tau2"]
+include = [
+  "common/agent_framework_lab_common",
+  "gaia/agent_framework_lab_gaia",
+  "lightning/agent_framework_lab_lightning",
+  "tau2/agent_framework_lab_tau2",
+]
+extraPaths = ["common"]
 exclude = ['gaia/tests', 'lightning/tests', 'tau2/tests', 'namespace', '**/samples']
 
 [tool.bandit]
