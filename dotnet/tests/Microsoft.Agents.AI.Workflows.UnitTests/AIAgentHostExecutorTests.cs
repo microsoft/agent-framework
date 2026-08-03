@@ -64,9 +64,76 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         CheckResponseEventsAgainstTestMessages(updates, expectingResponse: executorSetting, agent.GetDescriptiveId());
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task Test_AgentHostExecutor_AssignsStableMessageIdToContentfulStreamingUpdatesAsync(string? missingMessageId)
+    {
+        // Arrange
+        TestRunContext testContext = new();
+        AIAgentHostExecutor executor =
+            new(
+                new MissingMessageIdAgent(missingMessageId),
+                new()
+                {
+                    EmitAgentUpdateEvents = true,
+                    EmitAgentResponseEvents = true,
+                });
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        AgentResponseUpdateEvent[] updateEvents = testContext.Events.OfType<AgentResponseUpdateEvent>().ToArray();
+        updateEvents.Should().HaveCount(3);
+        updateEvents[0].Update.MessageId.Should().BeEmpty();
+
+        string? messageId = updateEvents[1].Update.MessageId;
+        messageId.Should().NotBeNullOrEmpty();
+        updateEvents.Skip(1).Should().OnlyContain(updateEvent => updateEvent.Update.MessageId == messageId);
+
+        AgentResponseEvent responseEvent = testContext.Events.OfType<AgentResponseEvent>().Should().ContainSingle().Subject;
+        ChatMessage responseMessage = responseEvent.Response.Messages.Should().ContainSingle().Subject;
+        responseMessage.MessageId.Should().Be(messageId);
+        responseMessage.Text.Should().Be("hello world");
+    }
+
     private static ChatMessage UserMessage => new(ChatRole.User, "Hello from User!") { AuthorName = "User" };
     private static ChatMessage AssistantMessage => new(ChatRole.Assistant, "Hello from Assistant!") { AuthorName = "User" };
     private static ChatMessage TestAgentMessage => new(ChatRole.Assistant, $"Hello from {TestAgentName}!") { AuthorName = TestAgentName };
+
+    private sealed class MissingMessageIdAgent(string? messageId) : TestReplayAgent
+    {
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return new AgentResponseUpdate(
+                new ChatResponseUpdate
+                {
+                    MessageId = "",
+                    ResponseId = "response-id",
+                });
+            yield return new AgentResponseUpdate(
+                new ChatResponseUpdate(ChatRole.Assistant, "hello ")
+                {
+                    MessageId = messageId,
+                    ResponseId = "response-id",
+                });
+            yield return new AgentResponseUpdate(ChatRole.Assistant, "world")
+            {
+                MessageId = messageId,
+                ResponseId = "response-id",
+                Role = null,
+                RawRepresentation = new object(),
+            };
+            await Task.CompletedTask;
+        }
+    }
 
     [Theory]
     [InlineData(true, true, false, false)]

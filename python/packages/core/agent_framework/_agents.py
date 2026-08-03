@@ -37,6 +37,7 @@ from ._sessions import (
     SessionContext,
     is_local_history_conversation_id,
 )
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -631,10 +632,22 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
+            session = ctx.session if propagate_session else None
+
+            # Create a child session that shares the parent's state dict but has
+            # an isolated service_session_id. This avoids mutating the parent
+            # session in-place, which would race under concurrent asyncio.gather
+            # tool invocations sharing the same session.
+            if session is not None:
+                child_session = AgentSession(session_id=session.session_id)
+                child_session.state = session.state  # shared by reference
+                child_session.service_session_id = None
+                session = child_session
+
             stream = self.run(
                 str(kwargs.get(arg_name, "")),
                 stream=True,
-                session=ctx.session if propagate_session else None,
+                session=session,
                 function_invocation_kwargs=dict(ctx.kwargs),
             )
             if stream_callback is not None:
@@ -1761,6 +1774,7 @@ class Agent(
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent."""
+        mark_feature_used(FeatureIndex.CORE_AGENT)
         super_run = cast(
             "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
             super().run,

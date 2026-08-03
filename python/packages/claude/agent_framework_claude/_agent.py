@@ -28,6 +28,7 @@ from agent_framework import (
     normalize_messages,
     normalize_tools,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentException
 from agent_framework.observability import AgentTelemetryLayer
 from claude_agent_sdk import (
@@ -41,6 +42,8 @@ from claude_agent_sdk import (
     ClaudeAgentOptions as SDKOptions,
 )
 from claude_agent_sdk.types import StreamEvent, TextBlock
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -67,6 +70,14 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger("agent_framework.claude")
+
+FINISH_REASON_MAP: dict[str, str] = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "tool_use": "tool_calls",
+    "refusal": "content_filter",
+}
 
 
 # Name of the in-process MCP server that hosts Agent Framework tools.
@@ -771,6 +782,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         session_id: str | None = None
         structured_output: Any = None
 
+        mark_feature_used(FeatureIndex.CLAUDE)
         await self._client.query(prompt)
         async for message in self._client.receive_response():
             if isinstance(message, StreamEvent):
@@ -843,7 +855,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                     }.items()
                     if isinstance(value, int)
                 })
-                finish_reason = message.stop_reason
+                finish_reason = (
+                    FINISH_REASON_MAP.get(message.stop_reason, message.stop_reason) if message.stop_reason else None
+                )
                 if usage_details or finish_reason:
                     yield AgentResponseUpdate(
                         contents=[Content.from_usage(usage_details, raw_representation=message)]

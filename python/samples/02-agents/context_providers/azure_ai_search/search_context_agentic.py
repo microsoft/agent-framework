@@ -27,13 +27,13 @@ For simple queries where speed is critical, use semantic mode instead (see azure
 
 Prerequisites:
 1. An Azure AI Search service
-2. An Azure AI Foundry project with a model deployment
+2. A Microsoft Foundry project with a model deployment
 3. Either an existing Knowledge Base OR a search index (to auto-create a KB)
 
 Environment variables:
    - AZURE_SEARCH_ENDPOINT: Your Azure AI Search endpoint
    - AZURE_SEARCH_API_KEY: (Optional) API key - if not provided, uses AzureCliCredential
-   - FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
+   - FOUNDRY_PROJECT_ENDPOINT: Your Microsoft Foundry project endpoint
    - FOUNDRY_MODEL: Your model deployment name (e.g., "gpt-4o")
 
 For using an existing Knowledge Base (recommended):

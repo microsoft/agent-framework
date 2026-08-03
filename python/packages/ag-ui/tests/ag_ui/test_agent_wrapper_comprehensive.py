@@ -1087,6 +1087,95 @@ async def test_approval_replay_is_blocked(streaming_chat_client_stub):
     assert call_count == 0, "Replay of consumed approval should not execute the tool"
 
 
+@pytest.mark.parametrize(
+    "resume_thread_id",
+    [
+        pytest.param("client-thread", id="client-thread"),
+        pytest.param("provider-conversation", id="provider-conversation"),
+    ],
+)
+async def test_approval_resolves_with_client_or_provider_thread_id(
+    streaming_chat_client_stub: Any,
+    resume_thread_id: str,
+) -> None:
+    """A stateful provider approval remains resolvable by either advertised thread identity."""
+    from agent_framework import tool
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    execution_count = 0
+
+    @tool(
+        name="sensitive_action",
+        description="A sensitive action requiring approval",
+        approval_mode="always_require",
+    )
+    def sensitive_action() -> str:
+        nonlocal execution_count
+        execution_count += 1
+        return "executed"
+
+    async def approval_stream(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    name="sensitive_action",
+                    call_id="call_sensitive",
+                    arguments="{}",
+                )
+            ],
+            conversation_id="provider-conversation",
+        )
+
+    wrapper = AgentFrameworkAgent(
+        agent=Agent(
+            client=streaming_chat_client_stub(approval_stream),
+            name="test_agent",
+            instructions="Test",
+            tools=[sensitive_action],
+        )
+    )
+
+    async for _ in wrapper.run({"thread_id": "client-thread", "messages": [{"role": "user", "content": "do it"}]}):
+        pass
+
+    assert ("client-thread", "call_sensitive") in wrapper._pending_approvals
+    assert ("provider-conversation", "call_sensitive") in wrapper._pending_approvals
+
+    async def completion_stream(
+        messages: MutableSequence[Message], options: ChatOptions, **kwargs: Any
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done")])
+
+    wrapper.agent = Agent(
+        client=streaming_chat_client_stub(completion_stream),
+        name="test_agent",
+        instructions="Test",
+        tools=[sensitive_action],
+    )
+
+    def approval_input(thread_id: str) -> dict[str, Any]:
+        return {
+            "thread_id": thread_id,
+            "messages": [],
+            "resume": [{"interruptId": "call_sensitive", "status": "resolved", "payload": {"accepted": True}}],
+        }
+
+    async for _ in wrapper.run(approval_input(resume_thread_id)):
+        pass
+
+    assert execution_count == 1
+    assert ("client-thread", "call_sensitive") not in wrapper._pending_approvals
+    assert ("provider-conversation", "call_sensitive") not in wrapper._pending_approvals
+
+    replay_thread_id = "provider-conversation" if resume_thread_id == "client-thread" else "client-thread"
+    async for _ in wrapper.run(approval_input(replay_thread_id)):
+        pass
+
+    assert execution_count == 1
+
+
 async def test_approval_function_name_mismatch_is_blocked(streaming_chat_client_stub):
     """Test that an approval response with a mismatched function name is rejected."""
     from agent_framework import tool

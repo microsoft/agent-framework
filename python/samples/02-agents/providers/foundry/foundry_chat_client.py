@@ -19,7 +19,7 @@ Foundry Chat Client with Project Endpoint Example
 This sample demonstrates how to create a FoundryChatClient using a
 Foundry project endpoint. Instead of providing a service endpoint
 directly, you provide a Foundry project endpoint and the client is created via
-the Azure AI Foundry project SDK.
+the Microsoft Foundry project SDK.
 
 This requires:
 - The `FOUNDRY_PROJECT_ENDPOINT` environment variable set to your Foundry project endpoint.

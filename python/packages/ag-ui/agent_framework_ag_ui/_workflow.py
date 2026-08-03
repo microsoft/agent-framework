@@ -25,7 +25,9 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import Workflow
+from agent_framework._telemetry import mark_feature_used
 
+from ._feature_usage import FeatureIndex
 from ._message_adapters import agui_messages_to_snapshot_format
 from ._run_common import (
     _build_run_finished_event,
@@ -248,8 +250,9 @@ class AgentFrameworkWorkflow:
         self.workflow = workflow
         self._workflow_factory = workflow_factory
         # Cache keyed by (snapshot_scope, thread_id): the Snapshot Scope is the
-        # authorization boundary, so the same thread id under different scopes
-        # must never share an in-memory workflow instance.
+        # authorization boundary for both snapshots and in-memory workflow_factory
+        # instances, so the same thread id under different scopes must never share
+        # mutable workflow state.
         self._workflow_by_thread: dict[tuple[str | None, str], Workflow] = {}
         self.name = name if name is not None else getattr(workflow, "name", "workflow")
         self.description = description if description is not None else getattr(workflow, "description", "")
@@ -297,6 +300,7 @@ class AgentFrameworkWorkflow:
 
         Subclasses may override this to provide custom AG-UI streams.
         """
+        mark_feature_used(FeatureIndex.AG_UI)
         thread_id = self._thread_id_from_input(input_data)
         run_id = str(input_data.get("run_id") or input_data.get("runId") or uuid.uuid4())
         snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))

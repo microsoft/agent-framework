@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample evaluates a pre-existing Azure AI Foundry agent against a rubric evaluator
+// This sample evaluates a pre-existing Microsoft Foundry agent against a rubric evaluator
 // that was authored in the Foundry portal.
 //
 // Rubric evaluators are LLM-as-judge evaluators with custom scoring dimensions you define
@@ -9,7 +9,7 @@
 // here by name and version.
 //
 // Prerequisites:
-//   - An Azure AI Foundry project with a deployed model.
+//   - A Microsoft Foundry project with a deployed model.
 //   - A registered Foundry agent in that project (the rubric was created against this agent).
 //   - A rubric evaluator already created in the Foundry portal.
 //   - .env (or environment) populated with the FOUNDRY_* variables below.

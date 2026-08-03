@@ -26,6 +26,10 @@ public class Workflow
     internal Dictionary<string, HashSet<Edge>> Edges { get; init; } = [];
     internal Dictionary<string, HashSet<OutputTag>> OutputExecutors { get; init; } = new(StringComparer.Ordinal);
 
+    internal bool IsTerminalOutput(string executorId)
+        => this.OutputExecutors.TryGetValue(executorId, out HashSet<OutputTag>? tags)
+            && !tags.Contains(OutputTag.Intermediate);
+
     /// <summary>
     /// Gets the collection of edges grouped by their source node identifier.
     /// </summary>

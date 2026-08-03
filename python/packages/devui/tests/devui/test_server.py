@@ -4,6 +4,7 @@
 
 import asyncio
 import inspect
+import logging
 import sys
 import tempfile
 from pathlib import Path
@@ -79,9 +80,7 @@ async def test_server_execution_sync(test_entities_dir):
     )
 
     response = await executor.execute_sync(request)
-    assert (
-        response.model == "devui"
-    )  # Response model defaults to 'devui' when not specified
+    assert response.model == "devui"  # Response model defaults to 'devui' when not specified
     assert len(response.output) > 0
 
 
@@ -111,9 +110,7 @@ async def test_server_execution_streaming(test_entities_dir):
 
 def test_configuration():
     """Test basic configuration."""
-    server = DevServer(
-        entities_dir="test", port=9000, host="localhost", auth_enabled=False
-    )
+    server = DevServer(entities_dir="test", port=9000, host="localhost", auth_enabled=False)
     assert server.port == 9000
     assert server.host == "localhost"
     assert server.entities_dir == "test"
@@ -314,9 +311,7 @@ async def test_credential_cleanup() -> None:
     await server._cleanup_entities()
 
     # Verify credential.close() was called
-    assert (
-        mock_credential.close.called
-    ), "Async credential close should have been called"
+    assert mock_credential.close.called, "Async credential close should have been called"
     assert mock_credential.close.call_count == 1
 
 
@@ -525,9 +520,7 @@ async def test_checkpoint_api_endpoints(test_entities_dir):
     executor = await server._ensure_executor()
 
     # Create a conversation
-    conversation = executor.conversation_store.create_conversation(
-        metadata={"name": "Test Session"}
-    )
+    conversation = executor.conversation_store.create_conversation(metadata={"name": "Test Session"})
     conv_id = conversation.id
 
     # Get checkpoint storage and add a checkpoint
@@ -590,9 +583,9 @@ def test_streaming_response_does_not_hardcode_acao_header():
             headers={"Authorization": "Bearer s3cret"},
         )
 
-        assert "access-control-allow-origin" not in {
-            k.lower() for k in response.headers
-        }, "Streaming response sets ACAO directly, bypassing CORSMiddleware"
+        assert "access-control-allow-origin" not in {k.lower() for k in response.headers}, (
+            "Streaming response sets ACAO directly, bypassing CORSMiddleware"
+        )
 
 
 def test_cors_default_does_not_allow_arbitrary_origin_even_on_localhost():
@@ -661,6 +654,33 @@ def test_devserver_auth_can_be_explicitly_disabled(monkeypatch):
     assert response.status_code == 200
 
 
+def test_responses_endpoint_does_not_log_request_content(caplog):
+    """Request input and metadata must not be written to server logs."""
+    server = _server_with_mock_agent(host="127.0.0.1", auth_enabled=False)
+    app = server.get_app()
+    input_marker = "private-input-marker"
+    metadata_marker = "private-metadata-marker"
+    caplog.set_level(logging.DEBUG, logger="agent_framework_devui._server")
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.post(
+            "/v1/responses",
+            json={
+                "input": input_marker,
+                "metadata": {"entity_id": "mock", "private_value": metadata_marker},
+                "stream": False,
+            },
+        )
+
+    assert response.status_code == 404
+    assert any(
+        record.name == "agent_framework_devui._server" and record.getMessage() == "Extracted entity_id: mock"
+        for record in caplog.records
+    )
+    assert input_marker not in caplog.text
+    assert metadata_marker not in caplog.text
+
+
 def test_devserver_rejects_non_loopback_no_auth(monkeypatch):
     """Non-loopback binds must not be network-reachable without authentication."""
     monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
@@ -725,9 +745,7 @@ def test_serve_rejects_non_loopback_no_auth(monkeypatch):
     monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
 
     with pytest.raises(ValueError, match="authentication cannot be disabled"):
-        agent_framework_devui.serve(
-            entities=[], host="0.0.0.0", auth_enabled=False, ui_enabled=False
-        )
+        agent_framework_devui.serve(entities=[], host="0.0.0.0", auth_enabled=False, ui_enabled=False)
 
 
 def test_serve_rejects_non_loopback_without_explicit_token(monkeypatch):
@@ -771,9 +789,7 @@ def test_devserver_accepts_request_with_valid_bearer_token(monkeypatch):
     app = server.get_app()
 
     with TestClient(app, base_url="http://127.0.0.1") as client:
-        response = client.get(
-            "/v1/entities", headers={"Authorization": "Bearer s3cret"}
-        )
+        response = client.get("/v1/entities", headers={"Authorization": "Bearer s3cret"})
 
     assert response.status_code == 200
 
@@ -823,9 +839,9 @@ def test_loopback_bind_rejects_non_allowlisted_host_header(monkeypatch):
 def test_serve_defaults_to_auth_enabled():
     """`serve()`'s public signature must default to auth_enabled=True."""
     sig = inspect.signature(agent_framework_devui.serve)
-    assert (
-        sig.parameters["auth_enabled"].default is True
-    ), "serve() must default to auth_enabled=True so `devui ./agents` is secure out of the box"
+    assert sig.parameters["auth_enabled"].default is True, (
+        "serve() must default to auth_enabled=True so `devui ./agents` is secure out of the box"
+    )
 
 
 def test_cli_enables_auth_by_default_and_supports_loopback_no_auth_optout():
@@ -845,9 +861,7 @@ def test_cli_enables_auth_by_default_and_supports_loopback_no_auth_optout():
     assert "Non-loopback hosts require auth" in help_text
 
 
-def _run_cli_with_fake_uvicorn(
-    monkeypatch, tmp_path: Path, *args: str
-) -> dict[str, Any]:
+def _run_cli_with_fake_uvicorn(monkeypatch, tmp_path: Path, *args: str) -> dict[str, Any]:
     """Run the DevUI CLI without binding a socket."""
     import uvicorn
 
@@ -860,9 +874,7 @@ def _run_cli_with_fake_uvicorn(
         run_args["port"] = port
 
     monkeypatch.setattr(uvicorn, "run", fake_run)
-    monkeypatch.setattr(
-        sys, "argv", ["devui", str(tmp_path), "--no-open", "--headless", *args]
-    )
+    monkeypatch.setattr(sys, "argv", ["devui", str(tmp_path), "--no-open", "--headless", *args])
 
     _cli.main()
 
@@ -878,24 +890,18 @@ def test_cli_allows_loopback_no_auth_without_binding_socket(monkeypatch, tmp_pat
     assert run_args == {"host": "127.0.0.1", "port": 8080}
 
 
-def test_cli_rejects_non_loopback_no_auth_before_binding_socket(
-    monkeypatch, tmp_path, capsys
-):
+def test_cli_rejects_non_loopback_no_auth_before_binding_socket(monkeypatch, tmp_path, capsys):
     """`devui --host 0.0.0.0 --no-auth` must fail through shared server validation."""
     monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
 
     with pytest.raises(SystemExit) as exc_info:
-        _run_cli_with_fake_uvicorn(
-            monkeypatch, tmp_path, "--host", "0.0.0.0", "--no-auth"
-        )
+        _run_cli_with_fake_uvicorn(monkeypatch, tmp_path, "--host", "0.0.0.0", "--no-auth")
 
     assert exc_info.value.code == 1
     assert "authentication cannot be disabled" in capsys.readouterr().err
 
 
-def test_cli_rejects_non_loopback_without_explicit_token_before_binding_socket(
-    monkeypatch, tmp_path, capsys
-):
+def test_cli_rejects_non_loopback_without_explicit_token_before_binding_socket(monkeypatch, tmp_path, capsys):
     """`devui --host 0.0.0.0` must fail when neither --auth-token nor DEVUI_AUTH_TOKEN is set."""
     monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
 
@@ -906,22 +912,16 @@ def test_cli_rejects_non_loopback_without_explicit_token_before_binding_socket(
     assert "DEVUI_AUTH_TOKEN or auth_token" in capsys.readouterr().err
 
 
-def test_cli_allows_non_loopback_with_auth_token_without_binding_socket(
-    monkeypatch, tmp_path
-):
+def test_cli_allows_non_loopback_with_auth_token_without_binding_socket(monkeypatch, tmp_path):
     """`devui --host 0.0.0.0 --auth-token ...` starts with token auth enabled."""
     monkeypatch.delenv("DEVUI_AUTH_TOKEN", raising=False)
 
-    run_args = _run_cli_with_fake_uvicorn(
-        monkeypatch, tmp_path, "--host", "0.0.0.0", "--auth-token", "s3cret"
-    )
+    run_args = _run_cli_with_fake_uvicorn(monkeypatch, tmp_path, "--host", "0.0.0.0", "--auth-token", "s3cret")
 
     assert run_args == {"host": "0.0.0.0", "port": 8080}
 
 
-def test_cli_allows_non_loopback_with_env_token_without_binding_socket(
-    monkeypatch, tmp_path
-):
+def test_cli_allows_non_loopback_with_env_token_without_binding_socket(monkeypatch, tmp_path):
     """`DEVUI_AUTH_TOKEN=... devui --host 0.0.0.0` starts with token auth enabled."""
     monkeypatch.setenv("DEVUI_AUTH_TOKEN", "env-s3cret")
 

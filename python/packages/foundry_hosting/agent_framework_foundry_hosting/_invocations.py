@@ -1,10 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework import AgentSession, BaseAgent, SupportsAgentRun
+from agent_framework import AgentSession, SupportsAgentRun
+from agent_framework._telemetry import mark_feature_used
+from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.invocations import InvocationAgentServerHost
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response, StreamingResponse
+from starlette.responses import Response, StreamingResponse
 from typing_extensions import Any, AsyncGenerator
+
+from ._feature_usage import FeatureIndex
+from ._request_context import validate_foundry_request_context
 
 
 class InvocationsHostServer(InvocationAgentServerHost):
@@ -12,7 +17,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
     def __init__(
         self,
-        agent: BaseAgent,
+        agent: SupportsAgentRun,
         *,
         openapi_spec: dict[str, Any] | None = None,
         **kwargs: Any,
@@ -30,17 +35,51 @@ class InvocationsHostServer(InvocationAgentServerHost):
         """
         super().__init__(openapi_spec=openapi_spec, **kwargs)
 
-        if not isinstance(agent, SupportsAgentRun):
-            raise TypeError("Agent must support the SupportsAgentRun interface")
-
         self._agent = agent
         self._sessions: dict[str, AgentSession] = {}
         self.invoke_handler(self._handle_invoke)
+        mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
+
+    def _partition_key(self) -> str:
+        """Get the partition key for the current request.
+
+        A partition key is made up of the session ID and user ID. If the request is not
+        from a hosted environment, the partition key will be just the session ID. In the
+        Foundry hosted environment, the partition key is used to maintain isolation between
+        different sessions and users, such that one user cannot access another user's sessions.
+
+        Returns:
+            The partition key for the current request.
+
+        Exceptions:
+            RuntimeError: If the context doesn't contain the expected IDs.
+        """
+        context = get_request_context()
+        validate_foundry_request_context(context, is_hosted=self.config.is_hosted)
+
+        if self.config.is_hosted:
+            if not context.session_id or not context.user_id:
+                raise RuntimeError(
+                    "The hosted environment is missing session_id or user_id in the request context. "
+                    "Please ensure that the request is coming from a valid Foundry platform service."
+                )
+            return f"{context.session_id}:{context.user_id}"
+
+        if not context.session_id:
+            raise RuntimeError(
+                "The request context is missing session_id. Please ensure that the request is a valid request."
+            )
+
+        return context.session_id
 
     async def _handle_invoke(self, request: Request) -> Response:
         """Invoke the agent with the given request."""
+        try:
+            session_id = self._partition_key()
+        except Exception as e:
+            return Response(content=str(e), status_code=500)
+
         data = await request.json()
-        session_id: str = request.state.session_id
 
         stream = data.get("stream", False)
         user_message = data.get("message", None)
@@ -65,8 +104,5 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
             )
 
-        response = await self._agent.run([user_message], session=session, stream=stream)
-        return JSONResponse({
-            "response": response.text,
-            "session_id": session_id,
-        })
+        response = await self._agent.run([user_message], session=session)
+        return Response(content=response.text)

@@ -8,6 +8,7 @@ from typing import Any, cast
 from agent_framework._workflows._checkpoint_encoding import (
     _PICKLE_MARKER,  # pyright: ignore[reportPrivateUsage]
     _TYPE_MARKER,  # pyright: ignore[reportPrivateUsage]
+    decode_checkpoint_value,
     encode_checkpoint_value,
 )
 
@@ -303,13 +304,33 @@ def test_encode_complex_mixed_structure() -> None:
     assert _PICKLE_MARKER in result["dataclass_value"]
 
 
-def test_encode_preserves_dict_with_pickle_marker_key() -> None:
-    """Test that regular dicts containing _PICKLE_MARKER key are recursively encoded."""
+def test_encode_round_trips_dict_with_pickle_marker_key() -> None:
+    """Test that regular dicts containing reserved marker keys remain user data."""
     data = {
         _PICKLE_MARKER: "some_value",
+        _TYPE_MARKER: "some_type",
         "other_key": "test",
     }
     result = encode_checkpoint_value(data)
+    assert isinstance(result, dict)
     assert _PICKLE_MARKER in result
-    assert result[_PICKLE_MARKER] == "some_value"
-    assert result["other_key"] == "test"
+    assert decode_checkpoint_value(result, allowed_types=frozenset()) == data
+
+
+def test_encode_round_trips_nested_dict_with_pickle_marker_key() -> None:
+    """Test that nested marker-shaped dictionaries remain user data."""
+    data = {
+        "items": [
+            {
+                _PICKLE_MARKER: "some_value",
+                _TYPE_MARKER: "some_type",
+            }
+        ]
+    }
+    assert decode_checkpoint_value(encode_checkpoint_value(data), allowed_types=frozenset()) == data
+
+
+def test_decode_preserves_user_dict_matching_old_escape_shape() -> None:
+    """Test that user data shaped like an old escape envelope remains unchanged."""
+    data = {"__agent_framework_checkpoint_dict__": True, "value": {"safe": "data"}}
+    assert decode_checkpoint_value(data) == data

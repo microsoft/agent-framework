@@ -6,8 +6,8 @@ This sample demonstrates the helper-first hosting shape:
 
 1. ``agent-framework-hosting-responses`` converts Responses request/response
    payloads to and from Agent Framework run values.
-2. ``agent-framework-hosting`` owns shared execution state via
-   ``AgentState`` and ``SessionStore``.
+2. ``agent-framework-hosting`` owns ``AgentState``; core provides its
+   ``SessionStore``.
 3. FastAPI owns the route, request parsing, policy decisions, and response
    object.
 
@@ -55,7 +55,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated, Any, cast
 
-from agent_framework import Agent, FileHistoryProvider, ResponseStream, tool
+from agent_framework import Agent, FileHistoryProvider, FileSessionStore, ResponseStream, tool
 from agent_framework_foundry import FoundryChatClient
 from agent_framework_hosting import AgentState
 from agent_framework_hosting_responses import (
@@ -105,7 +105,10 @@ def create_agent() -> Agent:
 
 
 app = FastAPI()
-state = AgentState(create_agent)
+state = AgentState(
+    create_agent,
+    session_store=FileSessionStore(SESSIONS_DIR / "snapshots"),
+)
 
 ALLOWED_REQUEST_OPTIONS = frozenset({"max_tokens", "reasoning"})
 
@@ -117,7 +120,8 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
         run = responses_to_run(body)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    session_id = responses_session_id(body)
+    session_id, is_conversation_id = responses_session_id(body)
+    conversation_id = session_id if is_conversation_id else None
     response_id = create_response_id()
 
     # App-specific policy: allow only the request options this route is willing
@@ -147,14 +151,19 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
             async for event in responses_from_streaming_run(
                 stream,
                 response_id=response_id,
-                session_id=session_id,
+                conversation_id=conversation_id,
             ):
                 yield event
             # `agent.run(..., stream=True)` updates the session while the stream
-            # is consumed/finalized. Store it under the newly minted response id
-            # after finalization so a later `previous_response_id` can restore
-            # this exact continuation point.
-            await state.set_session(response_id, session)
+            # is consumed/finalized. Persist the selected continuation only
+            # after finalization.
+            if conversation_id is not None:
+                # A stable conversation id is a mutable head. Apps must ensure
+                # only one caller advances it at a time; AgentState does not
+                # serialize concurrent runs for the same id.
+                await state.set_session(conversation_id, session)
+            else:
+                await state.set_session(response_id, session)
 
         return StreamingResponse(
             stream_events(),
@@ -166,15 +175,19 @@ async def responses(body: dict[str, Any] = Body(...)) -> JSONResponse | Streamin
         session=session,
         options=options_for_run,
     )
-    # `agent.run(...)` updates the session. Store it under the newly minted
-    # response id after the run so `previous_response_id=response_id` continues
-    # from this exact point.
-    await state.set_session(response_id, session)
+    # `agent.run(...)` updates the session. Persist the selected continuation
+    # only after the run completes.
+    if conversation_id is not None:
+        # Preserve sequential conversation continuity. Production apps must
+        # provide their own per-conversation single-writer coordination.
+        await state.set_session(conversation_id, session)
+    else:
+        await state.set_session(response_id, session)
     return JSONResponse(
         responses_from_run(
             result,
             response_id=response_id,
-            session_id=session_id,
+            conversation_id=conversation_id,
         )
     )
 

@@ -24,6 +24,11 @@ agent_framework_openai/
 
 All clients follow the Raw + Full-Featured pattern (e.g., `RawOpenAIChatClient` + `OpenAIChatClient`).
 
+For Responses API continuation with service-side storage, a prior `function_approval_request` is server-issued and
+must not be replayed inline, while the new `function_approval_response` is always serialized as
+`mcp_approval_response` so the user's approved or rejected decision reaches the service. Applications that manually
+replay message history must not send that same approval response again on later turns.
+
 The generic OpenAI clients support both OpenAI and Azure OpenAI routing. Precedence is:
 explicit Azure inputs (`credential`, `azure_endpoint`, `api_version`) → OpenAI API key
 (`OPENAI_API_KEY`) → Azure environment fallback (`AZURE_OPENAI_*`).

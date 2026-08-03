@@ -43,7 +43,7 @@ public sealed class ModeCommandHandler : CommandHandler
         string[] parts = input.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length < 2)
         {
-            string current = this._modeProvider.GetMode(session);
+            string current = await this._modeProvider.GetModeAsync(session).ConfigureAwait(false);
             await ux.WriteInfoLineAsync($"Current mode: {current}").ConfigureAwait(false);
             return true;
         }
@@ -52,7 +52,7 @@ public sealed class ModeCommandHandler : CommandHandler
 
         try
         {
-            this._modeProvider.SetMode(session, newMode);
+            await this._modeProvider.SetModeAsync(session, newMode).ConfigureAwait(false);
             ux.CurrentMode = newMode;
             await ux.WriteInfoLineAsync($"Switched to {newMode} mode.", ModeColors.Get(newMode, this._modeColors)).ConfigureAwait(false);
         }

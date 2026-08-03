@@ -29,7 +29,7 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import IS_TELEMETRY_ENABLED, get_user_agent
 from agent_framework.observability import AgentTelemetryLayer, ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -38,6 +38,11 @@ from azure.core.credentials_async import AsyncTokenCredential
 
 from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 
+from ._feature_usage import (
+    FeatureIndex,
+    create_feature_usage_policy,
+    create_foundry_feature_usage_http_client,
+)
 from ._tools import _sanitize_foundry_response_tool  # pyright: ignore[reportPrivateUsage]
 
 if sys.version_info >= (3, 13):
@@ -94,7 +99,7 @@ class FoundryAgentOptions(OpenAIChatOptions, total=False):
     Keyword Args:
         extra_body: Additional request body values sent to the Responses API.
         isolation_key: Isolation key used when lazily creating a hosted-agent
-            session through ``project_client.beta.agents.create_session(...)``.
+            session through the project's agent operations.
     """
 
     extra_body: dict[str, Any]
@@ -174,6 +179,7 @@ class RawFoundryAgentChatClient(
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.FOUNDRY_AGENT
 
     def __init__(
         self,
@@ -251,8 +257,10 @@ class RawFoundryAgentChatClient(
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": resolved_endpoint,
                 "credential": credential,
-                "user_agent": get_user_agent(),
+                "per_retry_policies": [create_feature_usage_policy()],
             }
+            if IS_TELEMETRY_ENABLED:
+                project_client_kwargs["user_agent"] = get_user_agent()
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             self.project_client = AIProjectClient(**project_client_kwargs)
@@ -261,6 +269,8 @@ class RawFoundryAgentChatClient(
         openai_client_kwargs: dict[str, Any] = {}
         if default_headers:
             openai_client_kwargs["default_headers"] = dict(default_headers)
+        if self._should_close_client:
+            openai_client_kwargs["http_client"] = create_foundry_feature_usage_http_client()
         if allow_preview:
             openai_client_kwargs["agent_name"] = self.agent_name
         openai_client = self.project_client.get_openai_client(**openai_client_kwargs)
@@ -274,6 +284,7 @@ class RawFoundryAgentChatClient(
             tokenizer=tokenizer,
             additional_properties=additional_properties,
         )
+        self.model = ""  # Foundry agents resolve model server-side; ignore env vars (issue #7272).
 
     @override
     def as_agent(
@@ -330,6 +341,8 @@ class RawFoundryAgentChatClient(
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Prepare options for the Responses API and validate client-side tools."""
+        caller_requested_encrypted_reasoning = "reasoning.encrypted_content" in (options.get("include") or [])
+
         # Validate tools — only FunctionTool allowed
         tools = options.get("tools", [])
         if tools:
@@ -346,6 +359,16 @@ class RawFoundryAgentChatClient(
 
         # Call parent prepare_options (OpenAI Responses API format)
         run_options = await super()._prepare_options(prepared_messages, options, **kwargs)
+
+        # Foundry Agent deployments can reject the OpenAI client's automatic encrypted-reasoning
+        # opt-in even when the configured model otherwise supports reasoning. Preserve an explicit
+        # caller request, but do not add this provider capability implicitly.
+        if not caller_requested_encrypted_reasoning and isinstance(run_options.get("include"), list):
+            include = [item for item in run_options["include"] if item != "reasoning.encrypted_content"]
+            if include:
+                run_options["include"] = include
+            else:
+                run_options.pop("include")
 
         # Apply Azure AI schema transforms
         if "input" in run_options and isinstance(run_options["input"], list):
@@ -366,7 +389,7 @@ class RawFoundryAgentChatClient(
         if not self.allow_preview:
             extra_body.setdefault("agent_reference", _build_agent_reference(self.agent_name, self.agent_version))
             should_strip_model = _uses_foundry_agent_session(conversation_id) or (
-                conversation_id is None and options.get("model") is None
+                conversation_id is None and not options.get("model")
             )
             if should_strip_model:
                 run_options.pop("model", None)
@@ -758,7 +781,13 @@ class RawFoundryAgent(
 
             create_session_kwargs["version_indicator"] = VersionRefIndicator(agent_version=version)
 
-        service_session = await self.client.project_client.beta.agents.create_session(**create_session_kwargs)
+        session_agents = cast(Any, self.client.project_client.agents)
+        create_session = getattr(session_agents, "create_session", None)
+        if create_session is None:
+            session_agents = cast(Any, self.client.project_client.beta.agents)
+            create_session = session_agents.create_session
+
+        service_session = await create_session(**create_session_kwargs)
         agent_session_id = getattr(service_session, "agent_session_id", None)
         if not isinstance(agent_session_id, str) or not agent_session_id:
             raise ValueError("Hosted Foundry session creation did not return a non-empty agent_session_id.")
@@ -780,7 +809,7 @@ class RawFoundryAgent(
             Foundry conversation ID.
         """
         client = cast(RawFoundryAgentChatClient, self.client)
-        conversation = await client.project_client.get_openai_client().conversations.create()
+        conversation = await client.client.conversations.create()
         return self.get_session(service_session_id=conversation.id, session_id=session_id)
 
     @override

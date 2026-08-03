@@ -87,7 +87,7 @@ class OpenAIFileSearchBackend(_OpenAICompatBackend):
 
 
 class FoundryFileSearchBackend(_OpenAICompatBackend):
-    """File search backend for Azure AI Foundry.
+    """File search backend for Microsoft Foundry.
 
     Use with ``FoundryChatClient``. Requires the OpenAI-compatible client
     obtained from ``FoundryChatClient.client`` (i.e.,

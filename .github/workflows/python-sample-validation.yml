@@ -8,9 +8,6 @@ on:
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
-  # GitHub Copilot configuration
-  GITHUB_COPILOT_MODEL: claude-opus-4.6
-  COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
 
 permissions:
   contents: read
@@ -238,6 +235,13 @@ jobs:
     name: Validate 02-agents/providers/github_copilot
     runs-on: ubuntu-latest
     environment: integration
+    permissions:
+      copilot-requests: write
+      contents: read
+      id-token: write
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_COPILOT_MODEL: claude-opus-4.6
     defaults:
       run:
         working-directory: python
@@ -701,7 +705,7 @@ jobs:
 
       - name: Restore validation history
         id: cache-restore
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: validation-history/
           key: validation-history-${{ github.run_id }}
@@ -719,7 +723,7 @@ jobs:
         run: cat trend-report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save validation history
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: validation-history/
           key: validation-history-${{ github.run_id }}

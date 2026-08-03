@@ -108,7 +108,6 @@ from ._harness._mode import DEFAULT_MODE_SOURCE_ID, AgentModeProvider, get_agent
 from ._harness._todo import (
     DEFAULT_TODO_SOURCE_ID,
     TodoFileStore,
-    TodoInput,
     TodoItem,
     TodoProvider,
     TodoSessionStore,
@@ -155,11 +154,13 @@ from ._sessions import (
     AgentSession,
     ContextProvider,
     FileHistoryProvider,
+    FileSessionStore,
     HistoryProvider,
     InMemoryHistoryProvider,
     MessageInjectionMiddleware,
     ServiceSessionId,
     SessionContext,
+    SessionStore,
     enqueue_messages,
     register_state_type,
 )
@@ -256,7 +257,7 @@ from ._workflows._checkpoint import (
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
 )
-from ._workflows._const import DEFAULT_MAX_ITERATIONS
+from ._workflows._const import DEFAULT_MAX_ITERATIONS, INTERNAL_SOURCE_ID
 from ._workflows._edge import (
     Case,
     Default,
@@ -337,6 +338,7 @@ __all__ = [
     "GROUP_INDEX_KEY",
     "GROUP_KIND_KEY",
     "GROUP_TOKEN_COUNT_KEY",
+    "INTERNAL_SOURCE_ID",
     "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
     "SKIP_PARSING",
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
@@ -419,6 +421,7 @@ __all__ = [
     "FileMemoryProvider",
     "FileSearchMatch",
     "FileSearchResult",
+    "FileSessionStore",
     "FileSkill",
     "FileSkillScript",
     "FileSkillsSource",
@@ -484,6 +487,7 @@ __all__ = [
     "SelectiveToolCallCompactionStrategy",
     "ServiceSessionId",
     "SessionContext",
+    "SessionStore",
     "SingleEdgeGroup",
     "Skill",
     "SkillFrontmatter",
@@ -513,7 +517,6 @@ __all__ = [
     "SwitchCaseEdgeGroupDefault",
     "TextSpanRegion",
     "TodoFileStore",
-    "TodoInput",
     "TodoItem",
     "TodoProvider",
     "TodoSessionStore",

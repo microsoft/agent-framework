@@ -7,7 +7,7 @@
 
 ```
 python/samples/
-├── 01-get-started/          # Progressive tutorial (steps 01–06)
+├── 01-get-started/          # Progressive tutorial (steps 01–07)
 ├── 02-agents/               # Deep-dive concept samples
 │   ├── tools/               # Tool patterns (function, approval, schema, etc.)
 │   ├── middleware/           # One file per middleware concept
@@ -36,8 +36,8 @@ python/samples/
 │   └── visualization/       # Workflow visualization
 ├── 04-hosting/              # Deployment & hosting
 │   ├── a2a/                 # Agent-to-Agent protocol
-│   ├── azure-functions/     # Azure Functions samples
-│   └── durabletask/         # Durable task framework
+│   ├── af-hosting/          # Native Responses and Telegram hosting
+│   └── foundry-hosted-agents/ # Foundry hosted agents
 ├── 05-end-to-end/           # Complete applications
 │   ├── chatkit-integration/
 │   ├── evaluation/
@@ -50,10 +50,12 @@ python/samples/
 └── _to_delete/              # Old samples awaiting review
 ```
 
+Durable Task and Azure Functions samples are maintained in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
+
 ## Design principles
 
 1. **Progressive complexity**: Sections 01→05 build from "hello world" to
-   production. Within 01-get-started, files are numbered 01–06 and each step
+   production. Within 01-get-started, files are numbered 01–07 and each step
    adds exactly one concept.
 
 2. **One concept per file** in 01-get-started and flat files in 02-agents/.
@@ -64,10 +66,15 @@ python/samples/
 4. **Single-file for 01-03**: Only 04-hosting and 05-end-to-end use multi-file
    projects with their own README.
 
+5. **Self-contained alternatives**: When a sample offers alternative entry
+   points (for example polling and webhook hosting), keep each entry point
+   self-contained. Do not extract a shared helper module solely to remove
+   duplication between sample variants.
+
 ## Default provider
 
-All canonical samples (01-get-started) use **Azure AI Foundry project-backed chat** via `FoundryChatClient`
-with an Azure AI Foundry project endpoint:
+All canonical samples (01-get-started) use **Microsoft Foundry project-backed chat** via `FoundryChatClient`
+with a Microsoft Foundry project endpoint:
 
 ```python
 import os
@@ -85,7 +92,7 @@ agent = Agent(client=client, name="...", instructions="...")
 ```
 
 Environment variables:
-- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Microsoft Foundry project endpoint
 - `FOUNDRY_MODEL` — Model deployment name (e.g. gpt-4o)
 
 For authentication, run `az login` before running samples.
@@ -103,10 +110,16 @@ code here
 ## Package install
 
 ```bash
-pip install agent-framework
+pip install agent-framework-foundry
 ```
 
-`agent-framework` is released, so `--pre` is not required here. `openai` is a core dependency.
+Install only the specific Agent Framework distributions a sample uses; do not recommend the
+`agent-framework` meta-package. Include `--pre` when any required distribution is prerelease.
+For example, a Monty agent backed by Foundry uses:
+
+```bash
+pip install agent-framework-monty agent-framework-foundry --pre
+```
 
 ## File structure
 
@@ -122,6 +135,9 @@ Every sample file follows this order:
 
 Use PEP 723 inline script metadata for external sample-only dependencies; do not add sample-only dependencies to
 the root `pyproject.toml` dev group.
+PEP 723 dependencies must list the minimal specific Agent Framework distributions used by the script (for example,
+`agent-framework-core`, `agent-framework-foundry`, or `agent-framework-openai`), never the `agent-framework`
+meta-package.
 
 ## Syntax checking
 

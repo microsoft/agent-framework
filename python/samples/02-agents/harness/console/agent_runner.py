@@ -16,7 +16,8 @@ import asyncio
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent_framework import Agent, AgentSession
+    from agent_framework import Agent, AgentSession, MessageInjectionMiddleware
+    from agent_framework import Message as FrameworkMessage
 
     from .app_state import FollowUpAction
     from .observers.base import ConsoleObserver
@@ -29,8 +30,10 @@ class HarnessAgentRunner:
     The component invokes the runner's input handlers (run_turn) directly;
     the runner mutates UI state through the supplied IUXStateDriver.
 
-    This is a minimal implementation focusing on the core agent loop without
-    command handling or complex message injection (those can be added later).
+    When the underlying agent has a ``MessageInjectionMiddleware`` wired in
+    (as ``create_harness_agent`` does by default), the runner supports message
+    injection: input submitted while a turn is streaming is enqueued via
+    ``on_streaming_input`` and drained into the ongoing run by the middleware.
     """
 
     def __init__(
@@ -57,6 +60,19 @@ class HarnessAgentRunner:
         self._max_context_window_tokens = max_context_window_tokens
         self._max_output_tokens = max_output_tokens
         self._input_gate = asyncio.Semaphore(1)  # Single turn at a time
+
+        # Resolve the message-injection middleware (if any) so streaming-time
+        # input can be enqueued into the ongoing run. Absent => injection no-ops.
+        from agent_framework import MessageInjectionMiddleware
+
+        self._message_injector: MessageInjectionMiddleware | None = next(
+            (m for m in (agent.middleware or []) if isinstance(m, MessageInjectionMiddleware)),
+            None,
+        )
+        # Snapshot of pending injected messages, used to detect consumption
+        # during streaming. Safe as instance state because _input_gate
+        # serialises turns.
+        self._last_pending_messages: list[FrameworkMessage] = []
 
     async def run_turn(
         self,
@@ -99,6 +115,62 @@ class HarnessAgentRunner:
                 return
             await self._run_agent_loop(messages, session)
 
+    def on_streaming_input(
+        self,
+        text: str,
+        session: AgentSession | None = None,
+    ) -> None:
+        """Handle user input submitted while an agent turn is streaming.
+
+        The text is enqueued via the ``MessageInjectionMiddleware`` so the agent
+        can pick it up on its next opportunity within the ongoing run. No-op if
+        the agent has no injection middleware or there is no active session.
+
+        Args:
+            text: The user's input text.
+            session: The active agent session.
+        """
+        if self._message_injector is None or session is None:
+            return
+
+        text = text.strip()
+        if not text:
+            return
+
+        from agent_framework import Message
+
+        self._message_injector.enqueue_messages(session, Message(role="user", contents=[text]))
+        pending = self._message_injector.get_pending_messages(session)
+        self._ux.set_queued_messages([m.text for m in pending])
+
+    def _sync_queued_message_display(self, session: AgentSession | None) -> None:
+        """Sync the queued-items display with the injector's pending messages.
+
+        Messages that have been consumed (drained by the middleware) since the
+        last sync are echoed to the output area as regular user-input entries.
+        No-op if there is no injection middleware or active session.
+
+        Args:
+            session: The active agent session.
+        """
+        if self._message_injector is None or session is None:
+            return
+
+        pending = self._message_injector.get_pending_messages(session)
+
+        # The injection middleware drains the whole queue at once, so a message
+        # is consumed when it is no longer present in the pending list. Compare
+        # by object identity (snapshots share the same Message objects until the
+        # queue is cleared) so consumed messages are echoed correctly even if a
+        # drain is followed by a new enqueue before the next sync.
+        current_ids = {id(m) for m in pending}
+        for msg in self._last_pending_messages:
+            if id(msg) not in current_ids:
+                self._ux.write_user_input_echo(msg.text or "")
+
+        self._last_pending_messages = pending
+        self._ux.set_queued_messages([m.text for m in pending])
+
     async def _run_agent_loop(
         self,
         messages: list,
@@ -118,6 +190,14 @@ class HarnessAgentRunner:
         """
         next_messages = messages
 
+        # Seed the pending-message snapshot so consumed injected messages can be
+        # detected and echoed during streaming.
+        self._last_pending_messages = (
+            self._message_injector.get_pending_messages(session)
+            if self._message_injector is not None and session is not None
+            else []
+        )
+
         while next_messages:
             # Configure run options
             options = self._configure_run_options(session)
@@ -134,6 +214,9 @@ class HarnessAgentRunner:
                     f"❌ Stream error: {ex.__class__.__name__}:\n{ex}",
                     color="red",
                 )
+
+            # Final sync after streaming (echo any messages consumed on the last update).
+            self._sync_queued_message_display(session)
 
             # Stop spinner and end streaming output
             self._ux.set_show_spinner(False)
@@ -295,6 +378,9 @@ class HarnessAgentRunner:
         if hasattr(update, "text") and update.text:
             for observer in self._observers:
                 await observer.on_text(self._ux, update.text, self._agent, session)
+
+        # Echo any injected messages consumed by the agent on this update.
+        self._sync_queued_message_display(session)
 
     async def _collect_follow_up_actions(
         self,
