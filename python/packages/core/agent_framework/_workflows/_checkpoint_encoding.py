@@ -212,9 +212,9 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
 
         raise pickle.UnpicklingError(
             f"Checkpoint deserialization blocked for type '{type_key}'. "
-            f"To allow this type, either include its 'module:qualname' key in the "
-            f"'allowed_types' set passed to 'decode_checkpoint_value', or add it to "
-            f"'allowed_checkpoint_types' on your checkpoint storage "
+            f"To allow this type, register it globally via 'agent_framework.register_checkpoint_type', "
+            f"include its 'module:qualname' key in the 'allowed_types' set passed to 'decode_checkpoint_value', "
+            f"or add it to 'allowed_checkpoint_types' on your checkpoint storage "
             f"(for example, 'FileCheckpointStorage.allowed_checkpoint_types')."
         )
 
