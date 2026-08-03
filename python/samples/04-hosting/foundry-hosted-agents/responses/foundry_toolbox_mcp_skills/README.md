@@ -11,7 +11,7 @@ The `FoundryToolbox` is attached to the agent and its skills are exposed through
 1. **Advertise** — each skill's name and description are injected into the system prompt so the model knows what is available (~100 tokens per skill).
 2. **Load** — when the model decides a skill is relevant, it retrieves the full `SKILL.md` body on demand via `resources/read`.
 
-> The Agent Skills spec defines a third stage — **read resources** — where a skill fetches supplementary files (reference documents, assets) on demand. That stage requires a skill to bundle sibling resources, which Foundry serves as a `type: archive` (ZIP) skill. To keep this sample focused on the advertise + load flow, both skills are single-file `SKILL.md` skills (no bundled resources). 
+> The Agent Skills spec defines a third stage — **read resources** — where a skill fetches supplementary files (reference documents, assets) on demand. That stage requires a skill to bundle sibling resources, which Foundry serves as a `type: archive` (ZIP) skill. To keep this sample focused on the advertise + load flow, both skills are single-file `SKILL.md` skills (no bundled resources).
 
 ## Toolbox MCP skills
 
