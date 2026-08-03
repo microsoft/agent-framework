@@ -593,3 +593,6 @@ def test_register_checkpoint_type_validation():
 
     with pytest.raises(ValueError, match="Type key must be in the format"):
         register_checkpoint_type(":")
+
+    with pytest.raises(ValueError, match="Type key must be in the format"):
+        register_checkpoint_type("module:qualname:extra")
