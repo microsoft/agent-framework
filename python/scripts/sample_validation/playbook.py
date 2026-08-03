@@ -56,7 +56,7 @@ class Playbook:
     sample_hash: str
     script: str
     timeout: int = 120
-    env: dict[str, str] = field(default_factory=dict) # type: ignore
+    env: dict[str, str] = field(default_factory=dict)  # type: ignore
     expected_status: str = RunStatus.SUCCESS.value
     generated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
@@ -203,7 +203,7 @@ def _terminate_process_tree(proc: "asyncio.subprocess.Process", pgid: int | None
         logger.debug(f"Could not terminate replay process tree {proc.pid}: {ex}")
 
 
-async def replay_playbook(playbook: Playbook, python_root: Path) -> RunResult:
+async def replay_playbook(playbook: Playbook, python_root: Path, samples_dir: Path) -> RunResult:
     """Deterministically replay a playbook and return a ``RunResult``.
 
     Writes the recorded Python script to a temporary file and runs it with the
@@ -217,7 +217,7 @@ async def replay_playbook(playbook: Playbook, python_root: Path) -> RunResult:
     starts is always torn down afterwards, even if the script fails to clean up.
     """
     sample_path = playbook.sample
-    sample_info = SampleInfo(path=python_root / sample_path, relative_path=sample_path)
+    sample_info = SampleInfo(path=samples_dir / sample_path, relative_path=sample_path)
 
     if not playbook.script.strip():
         return RunResult(
@@ -236,7 +236,7 @@ async def replay_playbook(playbook: Playbook, python_root: Path) -> RunResult:
         except OSError:
             pass
 
-    script_file = tempfile.NamedTemporaryFile(  # noqa: SIM115 - closed explicitly below
+    script_file = tempfile.NamedTemporaryFile(  # ruff:ignore[open-file-with-context-handler] - closed explicitly below
         prefix="playbook_", suffix=".py", delete=False
     )
     script_path = Path(script_file.name)

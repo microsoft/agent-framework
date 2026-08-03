@@ -6,7 +6,6 @@ import asyncio
 import logging
 
 from agent_framework import Executor, WorkflowContext, handler
-
 from sample_validation.models import (
     DiscoveryResult,
     ReplayResult,
@@ -15,7 +14,7 @@ from sample_validation.models import (
     SampleInfo,
     ValidationConfig,
 )
-from sample_validation.playbook import PlaybookStore, replay_playbook
+from sample_validation.playbook import Playbook, PlaybookStore, replay_playbook
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ class ReplayCachedPlaybooksExecutor(Executor):
             return
 
         store = self._store
-        candidates: list[tuple[SampleInfo, object]] = []
+        candidates: list[tuple[SampleInfo, Playbook]] = []
         remaining: list[SampleInfo] = []
 
         for sample in samples:
@@ -64,9 +63,13 @@ class ReplayCachedPlaybooksExecutor(Executor):
         if candidates:
             semaphore = asyncio.Semaphore(max(1, self.config.max_parallel_workers))
 
-            async def _run(sample: SampleInfo, playbook: object) -> tuple[SampleInfo, RunResult]:
+            async def _run(sample: SampleInfo, playbook: Playbook) -> tuple[SampleInfo, RunResult]:
                 async with semaphore:
-                    result = await replay_playbook(playbook, self.config.python_root)  # type: ignore[arg-type]
+                    result = await replay_playbook(
+                        playbook,
+                        self.config.python_root,
+                        self.config.samples_dir,
+                    )
                 return sample, result
 
             for coro in asyncio.as_completed([_run(s, pb) for s, pb in candidates]):
