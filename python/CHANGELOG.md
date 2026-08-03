@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **agent-framework-azurefunctions**, **agent-framework-durabletask**: The Durable Task and Azure Functions integrations (package sources and samples) have moved to the [Durable Agent Framework extension repository](https://github.com/microsoft/agent-framework-durable-extension) and are now developed and published from there. **agent-framework-core** continues to re-export their public symbols via `agent_framework.azure` and to include both packages in its `all` extra (installed from PyPI), so existing imports and `pip install agent-framework[all]` are unaffected.
+
 ## [1.13.0] - 2026-07-30
 
 ### Added

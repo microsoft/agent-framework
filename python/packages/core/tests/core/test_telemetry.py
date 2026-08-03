@@ -3,6 +3,7 @@
 import ast
 import concurrent.futures
 import importlib.metadata
+import importlib.util
 import os
 import re
 from pathlib import Path
@@ -203,6 +204,19 @@ def test_declared_feature_indexes_match_registry() -> None:
         repository_root / "python" / "packages" / "core" / "agent_framework" / "_telemetry.py",
         *repository_root.glob("python/packages/**/_feature_usage.py"),
     ]
+    external_package_roots: dict[Path, Path] = {}
+    # Their stable registry rows stay in this repository, but their declarations moved to the durable extension.
+    for package_name in ("agent_framework_durabletask", "agent_framework_azurefunctions"):
+        package_spec = importlib.util.find_spec(package_name)
+        assert package_spec is not None and package_spec.submodule_search_locations is not None, (
+            f"{package_name} must be installed to validate its feature indexes."
+        )
+        package_root = Path(next(iter(package_spec.submodule_search_locations)))
+        declaration_file = package_root / "_feature_usage.py"
+        assert declaration_file.exists(), f"{package_name} does not declare feature indexes."
+        declaration_files.append(declaration_file)
+        external_package_roots[declaration_file] = package_root
+
     declarations_by_index: dict[int, str] = {}
     declaration_pairs: set[tuple[int, str]] = set()
     declaration_owners: dict[tuple[int, str], tuple[Path, Path]] = {}
@@ -220,7 +234,14 @@ def test_declared_feature_indexes_match_registry() -> None:
                 index = member.value.value
                 if not isinstance(index, int):
                     continue
-                declaration = f"{declaration_file.relative_to(repository_root)}:{target.id}"
+                external_package_root = external_package_roots.get(declaration_file)
+                if external_package_root is not None:
+                    package_root = external_package_root
+                    declaration_path = declaration_file.relative_to(external_package_root.parent)
+                else:
+                    declaration_path = declaration_file.relative_to(repository_root)
+                    package_root = repository_root.joinpath(*declaration_path.parts[:3])
+                declaration = f"{declaration_path}:{target.id}"
                 assert 0 <= index < 128, f"Feature index {index} is out of range in {declaration}."
                 assert index not in declarations_by_index, (
                     f"Feature index {index} overlaps between {declarations_by_index[index]} and {declaration}."
@@ -228,7 +249,6 @@ def test_declared_feature_indexes_match_registry() -> None:
                 declarations_by_index[index] = declaration
                 pair = (index, target.id)
                 declaration_pairs.add(pair)
-                package_root = repository_root.joinpath(*declaration_file.relative_to(repository_root).parts[:3])
                 declaration_owners[pair] = (package_root, declaration_file)
 
     assert declaration_pairs == registry_pairs

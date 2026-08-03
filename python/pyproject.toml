@@ -78,14 +78,12 @@ agent-framework-ag-ui = { workspace = true }
 agent-framework-azure-ai-search = { workspace = true }
 agent-framework-azure-cosmos = { workspace = true }
 agent-framework-anthropic = { workspace = true }
-agent-framework-azurefunctions = { workspace = true }
 agent-framework-bedrock = { workspace = true }
 agent-framework-chatkit = { workspace = true }
 agent-framework-claude = { workspace = true }
 agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
-agent-framework-durabletask = { workspace = true }
 agent-framework-foundry = { workspace = true }
 agent-framework-foundry-hosting = { workspace = true }
 agent-framework-foundry-local = { workspace = true }
