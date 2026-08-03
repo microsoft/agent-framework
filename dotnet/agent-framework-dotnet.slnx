@@ -15,7 +15,6 @@
     <Project Path="samples/01-get-started/03_multi_turn/03_multi_turn.csproj" />
     <Project Path="samples/01-get-started/04_memory/04_memory.csproj" />
     <Project Path="samples/01-get-started/05_first_workflow/05_first_workflow.csproj" />
-    <Project Path="samples/01-get-started/06_host_your_agent/06_host_your_agent.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/">
     <File Path="samples/02-agents/README.md" />
@@ -72,24 +71,6 @@
   </Folder>
   <Folder Name="/Samples/02-agents/DeclarativeAgents/">
     <Project Path="samples/02-agents/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
-  </Folder>
-  <Folder Name="/Samples/04-hosting/DurableWorkflows/" />
-  <Folder Name="/Samples/04-hosting/DurableWorkflows/ConsoleApps/">
-    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/03_ConditionalEdges/03_ConditionalEdges.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/04_WorkflowAndAgents/04_WorkflowAndAgents.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/05_WorkflowEvents/05_WorkflowEvents.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/06_WorkflowSharedState/06_WorkflowSharedState.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/07_SubWorkflows/07_SubWorkflows.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/08_WorkflowHITL/08_WorkflowHITL.csproj" />
-  </Folder>
-  <Folder Name="/Samples/04-hosting/DurableWorkflows/AzureFunctions/">
-    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/03_WorkflowHITL/03_WorkflowHITL.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/04_WorkflowMcpTool/04_WorkflowMcpTool.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/05_WorkflowAndAgents/05_WorkflowAndAgents.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />
@@ -401,29 +382,6 @@
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-AgentSkills/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-AgentSkills/HostedAgentSkills.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/DurableAgents/" />
-  <Folder Name="/Samples/04-hosting/DurableAgents/AzureFunctions/">
-    <File Path="samples/04-hosting/DurableAgents/AzureFunctions/.editorconfig" />
-    <File Path="samples/04-hosting/DurableAgents/AzureFunctions/README.md" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/01_SingleAgent/01_SingleAgent.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/02_AgentOrchestration_Chaining/02_AgentOrchestration_Chaining.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/03_AgentOrchestration_Concurrency/03_AgentOrchestration_Concurrency.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/04_AgentOrchestration_Conditionals/04_AgentOrchestration_Conditionals.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/05_AgentOrchestration_HITL/05_AgentOrchestration_HITL.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/06_LongRunningTools/06_LongRunningTools.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/07_AgentAsMcpTool/07_AgentAsMcpTool.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/AzureFunctions/08_ReliableStreaming/08_ReliableStreaming.csproj" />
-  </Folder>
-  <Folder Name="/Samples/04-hosting/DurableAgents/ConsoleApps/">
-    <File Path="samples/04-hosting/DurableAgents/ConsoleApps/README.md" />
-    <Project Path="samples/04-hosting/DurableAgents/ConsoleApps/01_SingleAgent/01_SingleAgent.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/ConsoleApps/02_AgentOrchestration_Chaining/02_AgentOrchestration_Chaining.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/ConsoleApps/03_AgentOrchestration_Concurrency/03_AgentOrchestration_Concurrency.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/ConsoleApps/04_AgentOrchestration_Conditionals/04_AgentOrchestration_Conditionals.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/ConsoleApps/05_AgentOrchestration_HITL/05_AgentOrchestration_HITL.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/ConsoleApps/06_LongRunningTools/06_LongRunningTools.csproj" />
-    <Project Path="samples/04-hosting/DurableAgents/ConsoleApps/07_ReliableStreaming/07_ReliableStreaming.csproj" />
-  </Folder>
   <Folder Name="/Samples/02-agents/A2A/">
     <File Path="samples/02-agents/A2A/README.md" />
     <Project Path="samples/02-agents/A2A/A2AAgent_AsFunctionTools/A2AAgent_AsFunctionTools.csproj" />
@@ -633,7 +591,6 @@
     <Project Path="src/Microsoft.Agents.AI.CosmosNoSql/Microsoft.Agents.AI.CosmosNoSql.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Declarative/Microsoft.Agents.AI.Declarative.csproj" />
     <Project Path="src/Microsoft.Agents.AI.DevUI/Microsoft.Agents.AI.DevUI.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.DurableTask/Microsoft.Agents.AI.DurableTask.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Foundry.Hosting/Microsoft.Agents.AI.Foundry.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Foundry/Microsoft.Agents.AI.Foundry.csproj" />
     <Project Path="src/Microsoft.Agents.AI.GitHub.Copilot/Microsoft.Agents.AI.GitHub.Copilot.csproj" />
@@ -642,7 +599,6 @@
     <Project Path="src/Microsoft.Agents.AI.Hosting.A2A/Microsoft.Agents.AI.Hosting.A2A.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.AspNetCore/Microsoft.Agents.AI.Hosting.AspNetCore.csproj" />
-    <Project Path="src/Microsoft.Agents.AI.Hosting.AzureFunctions/Microsoft.Agents.AI.Hosting.AzureFunctions.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting.OpenAI/Microsoft.Agents.AI.Hosting.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hosting/Microsoft.Agents.AI.Hosting.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Hyperlight/Microsoft.Agents.AI.Hyperlight.csproj" />
@@ -671,10 +627,8 @@
     <Project Path="tests/Foundry.Hosting.IntegrationTests.TestContainer/Foundry.Hosting.IntegrationTests.TestContainer.csproj" />
     <Project Path="tests/Foundry.Hosting.IntegrationTests/Foundry.Hosting.IntegrationTests.csproj" />
     <Project Path="tests/Foundry.IntegrationTests/Foundry.IntegrationTests.csproj" />
-    <Project Path="tests/Microsoft.Agents.AI.DurableTask.IntegrationTests/Microsoft.Agents.AI.DurableTask.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.GitHub.Copilot.IntegrationTests/Microsoft.Agents.AI.GitHub.Copilot.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.csproj" />
-    <Project Path="tests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests/Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hyperlight.IntegrationTests/Microsoft.Agents.AI.Hyperlight.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Mem0.IntegrationTests/Microsoft.Agents.AI.Mem0.IntegrationTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Tools.Shell.IntegrationTests/Microsoft.Agents.AI.Tools.Shell.IntegrationTests.csproj" />
@@ -692,14 +646,12 @@
     <Project Path="tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/Microsoft.Agents.AI.CosmosNoSql.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Declarative.UnitTests/Microsoft.Agents.AI.Declarative.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.DevUI.UnitTests/Microsoft.Agents.AI.DevUI.UnitTests.csproj" />
-    <Project Path="tests/Microsoft.Agents.AI.DurableTask.UnitTests/Microsoft.Agents.AI.DurableTask.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Foundry.Hosting.UnitTests/Microsoft.Agents.AI.Foundry.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Foundry.UnitTests/Microsoft.Agents.AI.Foundry.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.GitHub.Copilot.UnitTests/Microsoft.Agents.AI.GitHub.Copilot.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Harness.UnitTests/Microsoft.Agents.AI.Harness.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.A2A.UnitTests/Microsoft.Agents.AI.Hosting.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests.csproj" />
-    <Project Path="tests/Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests/Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests/Microsoft.Agents.AI.Hosting.OpenAI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hosting.UnitTests/Microsoft.Agents.AI.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Hyperlight.UnitTests/Microsoft.Agents.AI.Hyperlight.UnitTests.csproj" />
@@ -717,5 +669,4 @@
     <Project Path="tests/Microsoft.Agents.AI.Workflows.UnitTests/Microsoft.Agents.AI.Workflows.UnitTests.csproj" />
   </Folder>
 </Solution>
-
 

@@ -83,10 +83,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Set up Durable Task and Azure Functions Integration Test Emulators
-        if: matrix.os == 'ubuntu-latest'
-        uses: ./.github/actions/azure-functions-integration-setup
-
       - name: Run Integration Tests
         shell: bash
         run: |

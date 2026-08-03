@@ -1022,6 +1022,8 @@ class ToolResultCompactionStrategy:
             # Build a call_id → function_name map from function_call contents.
             call_id_to_name: dict[str, str] = {}
             for msg in group_msgs:
+                if msg.additional_properties.get(EXCLUDED_KEY, False):
+                    continue
                 for content in msg.contents:
                     if content.type == "function_call" and content.call_id and content.name:
                         call_id_to_name[content.call_id] = content.name
@@ -1030,6 +1032,8 @@ class ToolResultCompactionStrategy:
             # Collect tool results with the function name for context.
             tool_results: list[str] = []
             for msg in group_msgs:
+                if msg.additional_properties.get(EXCLUDED_KEY, False):
+                    continue
                 for content in msg.contents:
                     if content.type == "function_result":
                         result_text = content.result if isinstance(content.result, str) else str(content.result)
