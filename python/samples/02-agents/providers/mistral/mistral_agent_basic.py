@@ -1,14 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-# /// script
-# requires-python = ">=3.10"
-# dependencies = ["agent-framework-mistral"]
-# ///
-
-"""Demonstrates a Mistral AI agent with basic tool usage.
-
-Requires ``MISTRAL_API_KEY`` and ``MISTRAL_CHAT_MODEL`` environment variables
-(e.g. MISTRAL_CHAT_MODEL=mistral-small-latest).
-"""
 
 import asyncio
 from datetime import datetime
@@ -20,6 +10,12 @@ from dotenv import load_dotenv
 
 # Load environment variables from the local .env file.
 load_dotenv()
+
+"""Demonstrates a Mistral AI agent with basic tool usage.
+
+Requires ``MISTRAL_API_KEY`` and ``MISTRAL_CHAT_MODEL`` environment variables
+(e.g. MISTRAL_CHAT_MODEL=mistral-small-latest).
+"""
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
