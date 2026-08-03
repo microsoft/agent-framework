@@ -938,7 +938,7 @@ def test_extract_approved_state_updates_no_handler():
 def test_extract_approved_state_updates_no_approval():
     """Test _extract_approved_state_updates returns empty when no approval content."""
     from agent_framework_ag_ui._agent_run import _extract_approved_state_updates
-    from agent_framework_ag_ui._orchestration._predictive_state import PredictiveStateHandler
+    from agent_framework_ag_ui._predictive_state import PredictiveStateHandler
 
     handler = PredictiveStateHandler(predict_state_config={"doc": {"tool": "write", "tool_argument": "content"}})
     messages = [Message(role="user", contents=[Content.from_text("Hello")])]

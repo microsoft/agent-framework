@@ -1,3 +1,0 @@
-### Start the single-agent orchestration
-POST http://localhost:7071/api/singleagent/run
-

@@ -161,19 +161,19 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 
 ### Python
 
-- [Getting Started](./python/samples/01-get-started): progressive tutorial from hello-world to hosting
+- [Getting Started](./python/samples/01-get-started): progressive tutorial from hello-world to workflows
 - [Agent Concepts](./python/samples/02-agents): deep-dive samples by topic (tools, middleware, providers, etc.)
 - [Workflows](./python/samples/03-workflows): workflow creation and integration with agents
-- [Hosting](./python/samples/04-hosting): A2A, Azure Functions, Durable Task hosting
+- [Hosting](./python/samples/04-hosting): A2A, self-hosted protocol helpers, and Foundry hosted agents. Durable Task and Azure Functions samples are in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
 - [End-to-End](./python/samples/05-end-to-end): full applications, evaluation, and demos
 
 ### .NET
 
-- [Getting Started](./dotnet/samples/01-get-started): progressive tutorial from hello agent to hosting
+- [Getting Started](./dotnet/samples/01-get-started): progressive tutorial from hello agent to workflows
 - [Agent Concepts](./dotnet/samples/02-agents/Agents): basic agent creation and tool usage
 - [Agent Providers](./dotnet/samples/02-agents/AgentProviders): samples showing different agent providers
 - [Workflows](./dotnet/samples/03-workflows): advanced multi-agent patterns and workflow orchestration
-- [Hosting](./dotnet/samples/04-hosting): A2A, Durable Agents, Durable Workflows
+- [Hosting](./dotnet/samples/04-hosting): A2A and Foundry hosted agents. Durable agent and workflow samples are in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/dotnet/samples).
 - [End-to-End](./dotnet/samples/05-end-to-end): full applications and demos
 
 ## Community & Feedback
@@ -199,6 +199,7 @@ For environment variable configuration specific to each sample, refer to the REA
 ## Contributor Resources
 
 - [Contributing Guide](./CONTRIBUTING.md)
+- [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Python Development Guide](./python/DEV_SETUP.md)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)
