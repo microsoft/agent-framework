@@ -1265,6 +1265,34 @@ class TestStreaming:
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
 
+    async def test_declaration_only_metadata_does_not_duplicate_streamed_function_call(self) -> None:
+        metadata = Content.from_function_call("call_1", "search", arguments=None)
+        metadata.id = "call_1"
+        metadata.user_input_request = True
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "search", arguments='{"q": "hello"}')],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(contents=[Content.from_text("Waiting for the result")], role="assistant"),
+                AgentResponseUpdate(contents=[metadata], role="assistant"),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        function_items = [
+            event
+            for event in events
+            if event["event"] == "response.output_item.added" and event["data"]["item"]["type"] == "function_call"
+        ]
+        assert len(function_items) == 1
+        assert function_items[0]["data"]["item"]["call_id"] == "call_1"
+
     async def test_function_call_streaming_serializes_dataclass_arguments(self) -> None:
         @dataclass
         class HandoffLikeRequest:
