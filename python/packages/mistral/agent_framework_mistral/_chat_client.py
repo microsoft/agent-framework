@@ -206,6 +206,95 @@ def _tool_call_id_of(tool_call: Mapping[str, Any]) -> str:
     return ""
 
 
+def _function_call_content(tool_call: Mapping[str, Any]) -> Content:
+    function: Mapping[str, Any] = tool_call.get("function") or {}
+    arguments = function.get("arguments")
+    if isinstance(arguments, str):
+        normalized_arguments: str | dict[str, Any] = arguments
+    elif isinstance(arguments, dict):
+        normalized_arguments = cast("dict[str, Any]", arguments)
+    else:
+        normalized_arguments = str(cast(object, arguments))
+    return Content.from_function_call(
+        call_id=_tool_call_id_of(tool_call),
+        name=function.get("name") or "",
+        arguments=normalized_arguments,
+        raw_representation=tool_call,
+    )
+
+
+class _StreamedToolCalls:
+    """Correlates streamed tool-call fragments by ``(choice index, tool-call index)``.
+
+    Mistral may interleave fragments of parallel calls and omit ``id`` on
+    continuations, so a call is only emitted once it is complete: when its
+    choice finishes, when its index is reused by a new call, or at stream end.
+    """
+
+    def __init__(self) -> None:
+        self._pending: dict[tuple[int, int | str], dict[str, Any]] = {}
+        self._auto_key_count = 0
+
+    def add(self, choice_index: int, fragment: Mapping[str, Any]) -> list[Content]:
+        """Fold a fragment into its pending call; returns calls completed by an index reuse."""
+        flushed: list[Content] = []
+        key = self._key_for(choice_index, fragment)
+        pending = self._pending.get(key)
+        if pending is not None:
+            fragment_id = _tool_call_id_of(fragment)
+            if fragment_id and (pending_id := _tool_call_id_of(pending)) and pending_id != fragment_id:
+                flushed.append(_function_call_content(self._pending.pop(key)))
+                pending = None
+        if pending is None:
+            self._pending[key] = {**fragment, "function": dict(fragment.get("function") or {})}
+        else:
+            self._merge(pending, fragment)
+        return flushed
+
+    def flush_choice(self, choice_index: int) -> list[Content]:
+        keys = [key for key in self._pending if key[0] == choice_index]
+        return [_function_call_content(self._pending.pop(key)) for key in keys]
+
+    def flush_all(self) -> list[Content]:
+        contents = [_function_call_content(pending) for pending in self._pending.values()]
+        self._pending.clear()
+        return contents
+
+    def _key_for(self, choice_index: int, fragment: Mapping[str, Any]) -> tuple[int, int | str]:
+        index = fragment.get("index")
+        if isinstance(index, int):
+            return (choice_index, index)
+        if fragment_id := _tool_call_id_of(fragment):
+            for key, pending in self._pending.items():
+                if key[0] == choice_index and _tool_call_id_of(pending) == fragment_id:
+                    return key
+        else:
+            for key in reversed(self._pending):
+                if key[0] == choice_index:
+                    return key
+        self._auto_key_count += 1
+        return (choice_index, f"auto-{self._auto_key_count}")
+
+    @staticmethod
+    def _merge(pending: dict[str, Any], fragment: Mapping[str, Any]) -> None:
+        if fragment_id := _tool_call_id_of(fragment):
+            pending["id"] = fragment_id
+        function: Mapping[str, Any] = fragment.get("function") or {}
+        pending_function: dict[str, Any] = pending["function"]
+        if (name := function.get("name")) and not pending_function.get("name"):
+            pending_function["name"] = name
+        new_arguments = function.get("arguments")
+        old_arguments = pending_function.get("arguments")
+        if new_arguments is None:
+            return
+        if isinstance(old_arguments, str) and isinstance(new_arguments, str):
+            pending_function["arguments"] = old_arguments + new_arguments
+        elif isinstance(old_arguments, dict) and isinstance(new_arguments, dict):
+            cast("dict[str, Any]", old_arguments).update(cast("dict[str, Any]", new_arguments))
+        else:
+            pending_function["arguments"] = new_arguments
+
+
 class RawMistralChatClient(
     BaseChatClient[MistralChatOptionsT],
     Generic[MistralChatOptionsT],
@@ -309,13 +398,16 @@ class RawMistralChatClient(
                 request = self._prepare_request(messages, validated, **kwargs)
                 request["stream"] = True
                 mark_feature_used(FeatureIndex.MISTRAL)
+                tool_calls = _StreamedToolCalls()
                 try:
                     async with self.client.stream("POST", _CHAT_COMPLETIONS_PATH, json=request) as response:
                         await self._raise_for_status(response)
                         async for line in response.aiter_lines():
                             chunk = self._parse_sse_line(line)
                             if chunk is not None:
-                                yield self._parse_chunk(chunk)
+                                yield self._parse_chunk(chunk, tool_calls)
+                    if remaining := tool_calls.flush_all():
+                        yield ChatResponseUpdate(contents=remaining, role="assistant")
                 except ChatClientException:
                     raise
                 except Exception as ex:
@@ -676,20 +768,25 @@ class RawMistralChatClient(
             raw_representation=response,
         )
 
-    def _parse_chunk(self, chunk: Mapping[str, Any]) -> ChatResponseUpdate:
+    def _parse_chunk(self, chunk: Mapping[str, Any], tool_calls: _StreamedToolCalls) -> ChatResponseUpdate:
         """Convert a Mistral streaming completion chunk to a framework ChatResponseUpdate.
 
-        Continuation fragments of a streamed tool call carry an empty ``call_id``; the
-        framework merges them into the preceding call when building the final response.
+        Tool-call fragments are folded into ``tool_calls`` keyed by (choice, index) and
+        emitted as complete calls when their choice finishes.
         """
         contents: list[Content] = []
         finish_reason: FinishReasonLiteral | None = None
         choices = cast("Sequence[Mapping[str, Any]]", chunk.get("choices") or ())
         for choice in choices:
+            choice_index = index if isinstance(index := choice.get("index"), int) else 0
             delta: Mapping[str, Any] = choice.get("delta") or {}
-            contents.extend(self._parse_message_contents(delta))
-            if (reason := choice.get("finish_reason")) and finish_reason is None:
-                finish_reason = _FINISH_REASON_MAP.get(str(reason))
+            contents.extend(self._parse_content_chunks(delta))
+            for fragment in cast("Sequence[Mapping[str, Any]]", delta.get("tool_calls") or ()):
+                contents.extend(tool_calls.add(choice_index, fragment))
+            if reason := choice.get("finish_reason"):
+                contents.extend(tool_calls.flush_choice(choice_index))
+                if finish_reason is None:
+                    finish_reason = _FINISH_REASON_MAP.get(str(reason))
         if usage := self._parse_usage(chunk.get("usage")):
             contents.append(Content.from_usage(usage_details=usage, raw_representation=chunk))
         return ChatResponseUpdate(
@@ -705,23 +802,7 @@ class RawMistralChatClient(
     def _parse_message_contents(self, message: Mapping[str, Any]) -> list[Content]:
         contents = self._parse_content_chunks(message)
         tool_calls = cast("Sequence[Mapping[str, Any]]", message.get("tool_calls") or ())
-        for tool_call in tool_calls:
-            function: Mapping[str, Any] = tool_call.get("function") or {}
-            arguments = function.get("arguments")
-            if isinstance(arguments, str):
-                normalized_arguments: str | dict[str, Any] = arguments
-            elif isinstance(arguments, dict):
-                normalized_arguments = cast("dict[str, Any]", arguments)
-            else:
-                normalized_arguments = str(cast(object, arguments))
-            contents.append(
-                Content.from_function_call(
-                    call_id=_tool_call_id_of(tool_call),
-                    name=function.get("name") or "",
-                    arguments=normalized_arguments,
-                    raw_representation=tool_call,
-                )
-            )
+        contents.extend(_function_call_content(tool_call) for tool_call in tool_calls)
         return contents
 
     def _parse_content_chunks(self, message: Mapping[str, Any]) -> list[Content]:

@@ -748,6 +748,40 @@ async def test_streaming_fragmented_tool_call_coalesces() -> None:
     assert calls[0].parse_arguments() == {"location": "Paris"}
 
 
+async def test_streaming_interleaved_parallel_tool_calls() -> None:
+    """Continuation fragments without IDs must merge into the call with the same index, not the preceding one."""
+    client, _ = make_client(
+        stream_response(
+            make_chunk_payload(
+                tool_calls=[tool_call_payload("get_weather", '{"loc', call_id="abc123XYZ", index=0)],
+            ),
+            make_chunk_payload(
+                tool_calls=[tool_call_payload("get_time", '{"tz', call_id="def456UVW", index=1)],
+            ),
+            make_chunk_payload(
+                tool_calls=[tool_call_payload("", 'ation": "Paris"}', index=0)],
+            ),
+            make_chunk_payload(
+                tool_calls=[tool_call_payload("", '": "CET"}', index=1)],
+                finish_reason="tool_calls",
+            ),
+        )
+    )
+
+    stream = client.get_response([Message("user", ["hi"])], stream=True)
+    async for _ in stream:
+        pass
+    response = await stream.get_final_response()
+
+    calls = [c for c in response.messages[0].contents if c.type == "function_call"]
+    assert len(calls) == 2
+    by_id = {c.call_id: c for c in calls}
+    assert by_id["abc123XYZ"].name == "get_weather"
+    assert by_id["abc123XYZ"].parse_arguments() == {"location": "Paris"}
+    assert by_id["def456UVW"].name == "get_time"
+    assert by_id["def456UVW"].parse_arguments() == {"tz": "CET"}
+
+
 async def test_streaming_parallel_calls_without_indexes() -> None:
     client, _ = make_client(
         stream_response(
