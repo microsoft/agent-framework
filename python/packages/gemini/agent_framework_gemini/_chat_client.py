@@ -78,8 +78,8 @@ class ThinkingConfig(TypedDict, total=False):
     Attributes:
         include_thoughts: Whether to include thought summaries in the response. Thought summaries
             are condensed representations of the model's internal reasoning and appear as response
-            parts where ``part.thought`` is ``True``. Note: the framework currently excludes
-            thought parts from ``ChatResponse.contents`` and does not surface them as output.
+            parts where ``part.thought`` is ``True``. When set, the framework surfaces these parts
+            as ``text_reasoning`` content in ``ChatResponse.contents``.
         thinking_budget: Token budget for Gemini 2.5 models. Set to ``0`` to disable
             thinking or ``-1`` to enable a dynamic budget.
         thinking_level: Thinking level for Gemini 2.5 models and later. One of
@@ -1120,17 +1120,20 @@ class RawGeminiChatClient(
         )
 
     def _parse_parts(self, parts: Sequence[types.Part]) -> list[Content]:
-        """Convert Gemini response parts to framework Content objects, skipping thought/reasoning parts.
+        """Convert Gemini response parts to framework Content objects.
 
         Args:
             parts: Sequence of ``types.Part`` objects from a Gemini response candidate.
 
         Returns:
-            A list of framework ``Content`` objects (text, function_call, or function_result).
+            A list of framework ``Content`` objects (text_reasoning, text, function_call, or
+            function_result).
         """
         contents: list[Content] = []
         for part in parts:
             if part.thought:
+                if part.text:
+                    contents.append(Content.from_text_reasoning(text=part.text, raw_representation=part))
                 continue
             if part.text is not None:
                 contents.append(Content.from_text(text=part.text, raw_representation=part))
