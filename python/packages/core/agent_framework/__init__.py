@@ -41,6 +41,7 @@ from .exceptions import (
 )
 
 _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
+    "._agent_hooks": ("agent_hooks_middleware",),
     "._agents": ("Agent", "BaseAgent", "RawAgent", "SupportsAgentRun"),
     "._clients": (
         "BaseChatClient",
@@ -593,6 +594,7 @@ __all__ = [
     "WorkflowViz",
     "__version__",
     "add_usage_details",
+    "agent_hooks_middleware",
     "agent_middleware",
     "annotate_message_groups",
     "apply_compaction",

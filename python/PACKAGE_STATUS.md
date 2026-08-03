@@ -64,6 +64,13 @@ listed below.
 
 ### Experimental features
 
+#### `AGENT_HOOKS`
+
+- `agent-framework-core`: `agent_hooks_middleware` from `agent_framework/_agent_hooks.py`,
+  the AGENT-HOOKS-0.1 enforcement middleware trio. Requires the opt-in
+  `agent-framework-core[agent-hooks]` extra (`agent-hooks-sdk`), which is deliberately
+  not part of `agent-framework-core[all]`.
+
 #### `DECLARATIVE_AGENTS`
 
 - `agent-framework-declarative`: declarative agent loading APIs from

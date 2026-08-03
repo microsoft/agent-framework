@@ -4,6 +4,7 @@ from typing import Final
 
 __version__: Final[str]
 
+from ._agent_hooks import agent_hooks_middleware
 from ._agents import Agent, BaseAgent, RawAgent, SupportsAgentRun
 from ._clients import (
     BaseChatClient,
@@ -557,6 +558,7 @@ __all__ = [
     "WorkflowViz",
     "__version__",
     "add_usage_details",
+    "agent_hooks_middleware",
     "agent_middleware",
     "annotate_message_groups",
     "apply_compaction",
