@@ -1068,8 +1068,11 @@ class TestStreaming:
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
 
-    async def test_declaration_only_metadata_does_not_duplicate_streamed_function_call(self) -> None:
-        metadata = Content.from_function_call("call_1", "search", arguments=None)
+    @pytest.mark.parametrize("arguments", [None, ""])
+    async def test_declaration_only_metadata_does_not_duplicate_streamed_function_call(
+        self, arguments: str | None
+    ) -> None:
+        metadata = Content.from_function_call("call_1", "search", arguments=arguments)
         metadata.id = "call_1"
         metadata.user_input_request = True
         agent = _make_agent(
