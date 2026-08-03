@@ -3,6 +3,7 @@
 import json
 import os
 from collections.abc import Sequence
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -53,7 +54,7 @@ def make_client(*responses: httpx.Response) -> tuple[MistralEmbeddingClient, Moc
         base_url="https://api.mistral.ai",
         transport=httpx.MockTransport(server.handler),
     )
-    client = MistralEmbeddingClient(model="mistral-embed", client=http_client)
+    client = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
     return client, server
 
 
@@ -84,11 +85,62 @@ def test_mistral_embedding_construction_with_server_url() -> None:
     assert str(client.client.base_url) == "https://custom.mistral.ai"
 
 
-def test_mistral_embedding_construction_with_client() -> None:
+def test_mistral_embedding_construction_with_http_client() -> None:
     """Test construction with a pre-configured client."""
     http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
-    client = MistralEmbeddingClient(model="mistral-embed", client=http_client)
+    client = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
     assert client.client is http_client
+
+
+def test_mistral_embedding_deprecated_client_param_accepts_httpx() -> None:
+    http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
+    with pytest.deprecated_call():
+        client = MistralEmbeddingClient(model="mistral-embed", client=http_client)
+    assert client.client is http_client
+
+
+class FakeMistralSDK:
+    """Duck-typed stand-in for a mistralai.Mistral client."""
+
+    def __init__(self, vectors: Sequence[Sequence[float]] = ((0.1, 0.2),)) -> None:
+        self.requests: list[dict[str, Any]] = []
+        self._vectors = vectors
+        self.embeddings = SimpleNamespace(create_async=self._create_async)
+
+    async def _create_async(self, **kwargs: Any) -> Any:
+        self.requests.append(kwargs)
+        return SimpleNamespace(
+            model="mistral-embed",
+            data=[SimpleNamespace(index=i, embedding=list(v)) for i, v in enumerate(self._vectors)],
+            usage=SimpleNamespace(prompt_tokens=3, total_tokens=3),
+        )
+
+
+async def test_mistral_embedding_deprecated_client_param_accepts_sdk_client() -> None:
+    """An injected mistralai.Mistral keeps working through the legacy SDK path."""
+    sdk = FakeMistralSDK()
+    with pytest.deprecated_call():
+        client = MistralEmbeddingClient(model="mistral-embed", client=sdk)
+
+    result = await client.get_embeddings(["hello"], options=MistralEmbeddingOptions(dimensions=2))
+
+    assert [e.vector for e in result] == [[0.1, 0.2]]
+    assert result.usage == {"input_token_count": 3, "total_token_count": 3}
+    assert sdk.requests == [{"model": "mistral-embed", "inputs": ["hello"], "output_dimension": 2}]
+
+
+def test_mistral_embedding_deprecated_client_param_rejects_unknown_client() -> None:
+    class NotAClient:
+        pass
+
+    with pytest.deprecated_call(), pytest.raises(TypeError, match="httpx.AsyncClient"):
+        MistralEmbeddingClient(model="mistral-embed", client=NotAClient())
+
+
+def test_mistral_embedding_client_and_http_client_conflict() -> None:
+    http_client = httpx.AsyncClient(base_url="https://api.mistral.ai")
+    with pytest.deprecated_call(), pytest.raises(ValueError, match="not both"):
+        MistralEmbeddingClient(model="mistral-embed", http_client=http_client, client=http_client)
 
 
 def test_mistral_embedding_construction_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,7 +185,7 @@ async def test_mistral_embedding_close_only_closes_owned_client() -> None:
     assert owned.client.is_closed
 
     http_client = httpx.AsyncClient(base_url="https://custom.mistral.ai")
-    injected = MistralEmbeddingClient(model="mistral-embed", client=http_client)
+    injected = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
     assert injected.service_url() == "https://custom.mistral.ai"
 
     await injected.close()
@@ -261,7 +313,7 @@ async def test_mistral_embedding_network_error_wrapped() -> None:
         base_url="https://api.mistral.ai",
         transport=httpx.MockTransport(raise_connect_error),
     )
-    client = MistralEmbeddingClient(model="mistral-embed", client=http_client)
+    client = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)
 
     with pytest.raises(IntegrationException, match="Mistral embeddings request failed"):
         await client.get_embeddings(["hello"])

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, Generic, TypedDict, cast
 
@@ -39,6 +40,35 @@ logger = logging.getLogger("agent_framework.mistral")
 _MISTRAL_API_BASE_URL = "https://api.mistral.ai"
 _EMBEDDINGS_PATH = "/v1/embeddings"
 _DEFAULT_TIMEOUT_SECONDS = 60.0
+
+
+def _resolve_injected_clients(
+    http_client: httpx.AsyncClient | None,
+    client: Any | None,
+) -> tuple[httpx.AsyncClient | None, Any | None]:
+    """Split the deprecated ``client`` parameter into REST and legacy-SDK forms.
+
+    Returns ``(http_client, sdk_client)``; at most one is set. The SDK form is
+    duck-typed on ``.embeddings`` so the ``mistralai`` dependency stays optional.
+    """
+    if client is None:
+        return http_client, None
+    warnings.warn(
+        "The 'client' parameter is deprecated; pass an httpx.AsyncClient as 'http_client' instead. "
+        "Support for injected mistralai.Mistral clients will be removed in the next major release.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    if http_client is not None:
+        raise ValueError("Provide either 'http_client' or the deprecated 'client' parameter, not both.")
+    if isinstance(client, httpx.AsyncClient):
+        return client, None
+    if hasattr(client, "embeddings"):
+        return None, client
+    raise TypeError(
+        "The 'client' parameter accepts an httpx.AsyncClient or a mistralai.Mistral instance; "
+        f"got {type(client).__name__}."
+    )
 
 
 class MistralEmbeddingOptions(EmbeddingGenerationOptions, total=False):
@@ -94,14 +124,17 @@ class RawMistralEmbeddingClient(
         api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
         server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
             environment variable, or the Mistral default.
-        client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key is
+        http_client: Optional pre-configured ``httpx.AsyncClient``. When provided, api_key is
             not required and the client is expected to carry its own auth headers and base URL.
+        client: Deprecated. Accepts an ``httpx.AsyncClient`` (treated as ``http_client``) or a
+            ``mistralai.Mistral`` instance, which keeps working through the legacy SDK path
+            until the next major release.
         additional_properties: Additional properties stored on the client instance.
         env_file_path: Path to ``.env`` file for settings.
         env_file_encoding: Encoding for ``.env`` file.
     """
 
-    INJECTABLE: ClassVar[set[str]] = {"client"}
+    INJECTABLE: ClassVar[set[str]] = {"http_client", "client"}
 
     def __init__(
         self,
@@ -109,13 +142,16 @@ class RawMistralEmbeddingClient(
         model: str | None = None,
         api_key: str | SecretString | None = None,
         server_url: str | None = None,
-        client: httpx.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
+        client: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
         """Initialize a raw Mistral AI embedding client."""
-        required_fields = ["embedding_model"] if client is not None else ["embedding_model", "api_key"]
+        http_client, sdk_client = _resolve_injected_clients(http_client, client)
+        injected = http_client is not None or sdk_client is not None
+        required_fields = ["embedding_model"] if injected else ["embedding_model", "api_key"]
         mistral_settings = load_settings(
             MistralEmbeddingSettings,
             env_prefix="MISTRAL_",
@@ -129,12 +165,16 @@ class RawMistralEmbeddingClient(
 
         self.model: str = mistral_settings["embedding_model"]  # type: ignore[assignment]
         self.server_url = mistral_settings.get("server_url")
-        self._owns_client = client is None
+        self._owns_client = not injected
+        self._sdk_client = sdk_client
+        self.client: Any
 
-        if client is not None:
-            self.client = client
+        if sdk_client is not None:
+            self.client = sdk_client
+        elif http_client is not None:
+            self.client = http_client
             if self.server_url is None:
-                client_base_url = str(client.base_url).rstrip("/")
+                client_base_url = str(http_client.base_url).rstrip("/")
                 self.server_url = client_base_url or None
         else:
             resolved_api_key: str = mistral_settings["api_key"]  # type: ignore[assignment]
@@ -189,11 +229,14 @@ class RawMistralEmbeddingClient(
         if not model:
             raise ValueError("model is required")
 
+        mark_feature_used(FeatureIndex.MISTRAL)
+        if self._sdk_client is not None:
+            return await self._get_embeddings_sdk(self._sdk_client, model, values, opts, options)
+
         request: dict[str, Any] = {"model": model, "input": list(values)}
         if "dimensions" in opts:
             request["output_dimension"] = opts["dimensions"]
 
-        mark_feature_used(FeatureIndex.MISTRAL)
         try:
             response = await self.client.post(_EMBEDDINGS_PATH, json=request)
             if response.status_code >= 400:
@@ -245,6 +288,43 @@ class RawMistralEmbeddingClient(
                 inner_exception=ex,
             ) from ex
 
+    async def _get_embeddings_sdk(
+        self,
+        sdk_client: Any,
+        model: str,
+        values: Sequence[str],
+        opts: Mapping[str, Any],
+        options: MistralEmbeddingOptionsT | None,
+    ) -> GeneratedEmbeddings[list[float], MistralEmbeddingOptionsT]:
+        """Legacy path for injected mistralai.Mistral clients; removed in the next major release."""
+        kwargs: dict[str, Any] = {"model": model, "inputs": list(values)}
+        if "dimensions" in opts:
+            kwargs["output_dimension"] = opts["dimensions"]
+
+        response = await sdk_client.embeddings.create_async(**kwargs)
+
+        embeddings: list[Embedding[list[float]]] = []
+        if response and response.data:
+            items = sorted(response.data, key=lambda d: d.index if d.index is not None else 0)
+            for item in items:
+                vector = list(item.embedding) if item.embedding else []
+                embeddings.append(
+                    Embedding(
+                        vector=vector,
+                        dimensions=len(vector),
+                        model=response.model or model,
+                    )
+                )
+
+        usage_dict: UsageDetails | None = None
+        if response and response.usage:
+            usage_dict = {
+                "input_token_count": response.usage.prompt_tokens,
+                "total_token_count": response.usage.total_tokens,
+            }
+
+        return GeneratedEmbeddings(embeddings, options=options, usage=usage_dict)
+
 
 class MistralEmbeddingClient(
     EmbeddingTelemetryLayer[str, list[float], MistralEmbeddingOptionsT],
@@ -259,7 +339,8 @@ class MistralEmbeddingClient(
         api_key: Mistral API key. Defaults to ``MISTRAL_API_KEY`` environment variable.
         server_url: Optional server URL override. Defaults to ``MISTRAL_SERVER_URL``
             environment variable, or the Mistral default.
-        client: Optional pre-configured ``httpx.AsyncClient``.
+        http_client: Optional pre-configured ``httpx.AsyncClient``.
+        client: Deprecated. Accepts an ``httpx.AsyncClient`` or a ``mistralai.Mistral`` instance.
         otel_provider_name: Optional telemetry provider name override.
         env_file_path: Path to ``.env`` file for settings.
         env_file_encoding: Encoding for ``.env`` file.
@@ -294,7 +375,8 @@ class MistralEmbeddingClient(
         model: str | None = None,
         api_key: str | SecretString | None = None,
         server_url: str | None = None,
-        client: httpx.AsyncClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
+        client: Any | None = None,
         otel_provider_name: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
@@ -305,6 +387,7 @@ class MistralEmbeddingClient(
             model=model,
             api_key=api_key,
             server_url=server_url,
+            http_client=http_client,
             client=client,
             additional_properties=additional_properties,
             otel_provider_name=otel_provider_name,
