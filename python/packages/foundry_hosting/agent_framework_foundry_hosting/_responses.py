@@ -996,11 +996,7 @@ class _OutputItemTracker:
                     yield self._summary_part.emit_text_delta(content.text)
 
         elif content.type == "function_call" and content.call_id is not None:
-            if (
-                content.user_input_request
-                and content.arguments is None
-                and content.call_id in self._seen_function_call_ids
-            ):
+            if content.user_input_request and not content.arguments and content.call_id in self._seen_function_call_ids:
                 return
             if self._active_type != "function_call" or self._active_id != content.call_id:
                 yield from self._close()
