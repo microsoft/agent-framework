@@ -1569,12 +1569,10 @@ def test_collect_approval_responses_order_independent_result_first() -> None:
 
 
 def test_collect_approval_responses_follow_up_does_not_suppress_response() -> None:
-    """Follow-up requests do NOT suppress approval responses in the current turn payload.
+    """An unrelated user-input request without a call_id does not resolve approval responses.
 
-    _collect_approval_responses gathers responses to send to the API now.
-    A follow-up request means the conversation continues, but the approval
-    decision still needs to be visible to the model alongside the follow-up.
-    Only a terminal function_result marks the response as fully resolved.
+    `_collect_approval_responses` only treats an approval response as resolved when a terminal
+    `function_result` or a follow-up `user_input_request` with the same `call_id` exists.
     """
     call = Content.from_function_call(call_id="c2", name="t", arguments="{}")
     req = Content.from_function_approval_request(id="a2", function_call=call)

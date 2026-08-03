@@ -3805,6 +3805,7 @@ def test_function_approval_response_with_mcp_tool_call() -> None:
     result = client._prepare_content_for_openai("assistant", approval_response)
 
     assert result["type"] == "mcp_approval_response"
+    assert result["approval_request_id"] == "approval_mcp_001"
     assert result["approve"] is False
 
 
@@ -7856,11 +7857,13 @@ def test_prepare_messages_strips_approval_request_but_keeps_response_under_stora
         Message(role="user", contents=[approval_response]),
     ]
 
-    # Storage ON: both suppressed
+    # Storage ON: request suppressed, response kept
     storage_on = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=True)
     storage_on_types = [item.get("type") for item in storage_on]
     assert "mcp_approval_request" not in storage_on_types
-    assert "mcp_approval_response" not in storage_on_types
+    assert storage_on_types == ["mcp_approval_response"]
+    assert storage_on[0]["approval_request_id"] == "approval_req_1"
+    assert storage_on[0]["approve"] is approved
 
     # Storage OFF: hosted approvals are serialized normally
     storage_off = client._prepare_messages_for_openai(messages, request_uses_service_side_storage=False)
@@ -8122,10 +8125,10 @@ def test_prepare_content_serializes_hosted_approval_response() -> None:
     assert result["approve"] is True
 
 
-def test_prepare_messages_stores_suppresses_both_request_and_response() -> None:
-    """Under service-side storage, BOTH approval request and response are suppressed.
+def test_prepare_messages_stores_suppresses_request_but_keeps_response() -> None:
+    """Under service-side storage, approval request is suppressed but response is kept.
 
-    the response arm lost its storage guard, causing orphaned
+    The response must reach the service so the decision is recorded.
     mcp_approval_response 400 from API.
     """
     client = RawOpenAIChatClient("gpt-4o-mini", api_key="sk-test")
@@ -8147,7 +8150,7 @@ def test_prepare_messages_stores_suppresses_both_request_and_response() -> None:
     prepared_messages: list[dict] = []
     for message in messages:
         for content in message.contents:
-            if content.type in {"function_approval_request", "function_approval_response"}:
+            if content.type == "function_approval_request":
                 continue
             prepared = client._prepare_content_for_openai(message.role, content)
             if prepared:
@@ -8155,7 +8158,7 @@ def test_prepare_messages_stores_suppresses_both_request_and_response() -> None:
 
     approval_types = {m.get("type") for m in prepared_messages}
     assert "mcp_approval_request" not in approval_types
-    assert "mcp_approval_response" not in approval_types
+    assert "mcp_approval_response" in approval_types
 
 
 # endregion

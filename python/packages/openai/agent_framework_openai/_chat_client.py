@@ -1713,8 +1713,6 @@ class RawOpenAIChatClient(
                     if prepared:
                         all_messages.append(prepared)
                 case "function_approval_response":
-                    if request_uses_service_side_storage:
-                        continue
                     prepared = self._prepare_content_for_openai(
                         message.role,
                         content,
