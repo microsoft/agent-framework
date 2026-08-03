@@ -22,6 +22,7 @@ from agent_framework import (
     ContextProvider,
     Executor,
     FunctionTool,
+    InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
     Message,
     SessionContext,
@@ -148,6 +149,59 @@ async def test_add_endpoint_with_workflow_protocol():
     assert "RUN_STARTED" in event_types
     assert "TEXT_MESSAGE_CONTENT" in event_types
     assert "RUN_FINISHED" in event_types
+
+
+async def test_add_endpoint_workflow_checkpointing_over_the_wire():
+    """Endpoint checkpoint_storage creates checkpoints, and forwardedProps.checkpoint_id resumes."""
+
+    @executor(id="start")
+    async def start(message: Any, ctx: WorkflowContext[str]) -> None:
+        del message
+        await ctx.send_message("hello", target_id="finish")
+
+    @executor(id="finish")
+    async def finish(message: str, ctx: WorkflowContext[Any, str]) -> None:
+        await ctx.yield_output(f"{message}-done")
+
+    def event_types_of(response: Any) -> list[str]:
+        lines = [line for line in response.content.decode("utf-8").split("\n") if line.startswith("data: ")]
+        return [json.loads(line[6:]).get("type") for line in lines]
+
+    app = FastAPI()
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=start).add_edge(start, finish).build()
+
+    add_agent_framework_fastapi_endpoint(app, workflow, path="/workflow", checkpoint_storage=storage)
+
+    client = TestClient(app)
+    response = client.post(
+        "/workflow",
+        json={"threadId": "thread-cp", "messages": [{"role": "user", "content": "go"}]},
+    )
+    assert response.status_code == 200
+    assert "RUN_ERROR" not in event_types_of(response)
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the run to create at least one checkpoint"
+
+    resume_response = client.post(
+        "/workflow",
+        json={
+            "threadId": "thread-cp",
+            "messages": [],
+            "forwardedProps": {"checkpoint_id": checkpoints[0].checkpoint_id},
+        },
+    )
+    assert resume_response.status_code == 200
+    resumed_types = event_types_of(resume_response)
+    assert "RUN_FINISHED" in resumed_types
+    assert "RUN_ERROR" not in resumed_types
+    # The restored run must replay the remaining superstep and re-produce the final
+    # output; a run that silently ignored the checkpoint id would finish with no text.
+    assert "TEXT_MESSAGE_CONTENT" in resumed_types
 
 
 async def test_add_endpoint_accepts_keepalive_option_for_supported_runners(build_chat_client):
@@ -3375,8 +3429,8 @@ async def test_endpoint_streaming_error_emits_run_error_event():
     """Streaming exceptions should emit RUN_ERROR instead of terminating silently."""
 
     class FailingStreamWorkflow(AgentFrameworkWorkflow):
-        async def run(self, input_data: dict[str, Any], **kwargs: Any):
-            del input_data, kwargs
+        async def run(self, input_data: dict[str, Any]):
+            del input_data
             yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
             raise RuntimeError("stream exploded")
 
@@ -4147,8 +4201,8 @@ async def test_endpoint_encoding_failure_emits_run_error():
     from unittest.mock import patch
 
     class SimpleWorkflow(AgentFrameworkWorkflow):
-        async def run(self, input_data: dict[str, Any], **kwargs: Any):
-            del input_data, kwargs
+        async def run(self, input_data: dict[str, Any]):
+            del input_data
             yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
 
     app = FastAPI()
@@ -4170,8 +4224,8 @@ async def test_endpoint_double_encoding_failure_terminates():
     from unittest.mock import patch
 
     class SimpleWorkflow(AgentFrameworkWorkflow):
-        async def run(self, input_data: dict[str, Any], **kwargs: Any):
-            del input_data, kwargs
+        async def run(self, input_data: dict[str, Any]):
+            del input_data
             yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
 
     app = FastAPI()
@@ -4780,8 +4834,8 @@ async def test_workflow_resume_preserves_persisted_history(monkeypatch):
         ),
     )
 
-    async def fake_run_workflow_stream(input_data: Any, workflow: Any):
-        del input_data, workflow
+    async def fake_run_workflow_stream(input_data: Any, workflow: Any, **kwargs: Any):
+        del input_data, workflow, kwargs
         yield RunStartedEvent(run_id="run-2", thread_id="workflow-thread")
         yield TextMessageStartEvent(message_id="resume-msg", role="assistant")
         yield TextMessageContentEvent(message_id="resume-msg", delta="Resumed reply")

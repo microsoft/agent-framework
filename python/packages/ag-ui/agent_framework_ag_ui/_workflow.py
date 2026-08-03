@@ -49,12 +49,16 @@ logger = logging.getLogger(__name__)
 
 WorkflowFactory = Callable[[str], Workflow]
 
-# Input-payload keys used to surface workflow checkpointing through ``run(input_data)``
-# without changing the positional call convention used by the FastAPI endpoint. The
-# corresponding ``run()`` keyword arguments take precedence over these when both are
-# supplied.
-_CHECKPOINT_ID_INPUT_KEY = "__ag_ui_checkpoint_id"
-_CHECKPOINT_STORAGE_INPUT_KEY = "__ag_ui_checkpoint_storage"
+
+def _checkpoint_id_from_input(input_data: dict[str, Any]) -> str | None:
+    """Read an optional checkpoint id to resume from out of the AG-UI forwarded props."""
+    forwarded_props = input_data.get("forwarded_props") or input_data.get("forwardedProps")
+    if not isinstance(forwarded_props, dict):
+        return None
+    checkpoint_id = forwarded_props.get("checkpoint_id") or forwarded_props.get("checkpointId")
+    if checkpoint_id is None:
+        return None
+    return str(checkpoint_id)
 
 
 def _cancelled_resume_interrupt_ids(resume_payload: Any) -> set[str]:
@@ -240,6 +244,7 @@ class AgentFrameworkWorkflow:
         name: str | None = None,
         description: str | None = None,
         snapshot_store: AGUIThreadSnapshotStore | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
     ) -> None:
         """Initialize the AG-UI workflow wrapper.
 
@@ -250,6 +255,11 @@ class AgentFrameworkWorkflow:
             description: Optional workflow description.
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
                 endpoint setup also provides an explicit Snapshot Scope resolver.
+            checkpoint_storage: Optional workflow checkpoint storage. When provided, each run
+                creates a checkpoint at the end of every superstep (matching
+                ``agent_framework.Workflow.run(checkpoint_storage=...)``), and a run may resume
+                from a persisted checkpoint by supplying its id in the AG-UI forwarded props
+                (``forwarded_props: {"checkpoint_id": ...}``). Required for checkpoint resume.
         """
         if workflow is not None and workflow_factory is not None:
             raise ValueError("Pass either workflow= or workflow_factory=, not both.")
@@ -264,6 +274,7 @@ class AgentFrameworkWorkflow:
         self.name = name if name is not None else getattr(workflow, "name", "workflow")
         self.description = description if description is not None else getattr(workflow, "description", "")
         self.snapshot_store = snapshot_store
+        self.checkpoint_storage = checkpoint_storage
 
     @staticmethod
     def _thread_id_from_input(input_data: dict[str, Any]) -> str:
@@ -302,31 +313,16 @@ class AgentFrameworkWorkflow:
         """Drop all cached thread workflow instances."""
         self._workflow_by_thread.clear()
 
-    async def run(
-        self,
-        input_data: dict[str, Any],
-        *,
-        checkpoint_storage: CheckpointStorage | None = None,
-        checkpoint_id: str | None = None,
-    ) -> AsyncGenerator[BaseEvent]:
+    async def run(self, input_data: dict[str, Any]) -> AsyncGenerator[BaseEvent]:
         """Run the wrapped workflow and yield AG-UI events.
 
-        Args:
-            input_data: The AG-UI request payload (a ``RunAgentInput`` dump).
-            checkpoint_storage: Optional checkpoint storage to enable workflow
-                checkpointing for this run. When provided, the underlying core
-                workflow creates a checkpoint at the end of each superstep, matching
-                ``agent_framework.Workflow.run(checkpoint_storage=...)``. May also be
-                supplied via the ``input_data`` key ``__ag_ui_checkpoint_storage``;
-                the keyword argument takes precedence.
-            checkpoint_id: Optional checkpoint id to resume the workflow from. When
-                provided, execution restores the persisted workflow state instead of
-                starting a fresh turn, matching
-                ``agent_framework.Workflow.run(checkpoint_id=...)``. May also be
-                supplied via the ``input_data`` key ``__ag_ui_checkpoint_id``; the
-                keyword argument takes precedence.
-
         Subclasses may override this to provide custom AG-UI streams.
+
+        When ``checkpoint_storage`` is configured on this wrapper, the underlying core
+        workflow creates a checkpoint at the end of each superstep, and a run may resume
+        from a persisted checkpoint by supplying its id in the AG-UI forwarded props
+        (``forwarded_props: {"checkpoint_id": ...}``), which restores the persisted
+        workflow state instead of starting a fresh turn.
 
         Note:
             Checkpointing (the ``agent_framework`` workflow checkpoint mechanism) is
@@ -343,13 +339,13 @@ class AgentFrameworkWorkflow:
         resume_payload = _extract_resume_payload(input_data)
         snapshot_store = self.snapshot_store
 
-        # Explicit keyword arguments win over values smuggled through input_data so the
-        # FastAPI endpoint (which calls ``run(input_data)`` positionally) can still opt
-        # into checkpointing without changing its call site.
-        if checkpoint_id is None:
-            checkpoint_id = cast(str | None, input_data.get(_CHECKPOINT_ID_INPUT_KEY))
-        if checkpoint_storage is None:
-            checkpoint_storage = cast(CheckpointStorage | None, input_data.get(_CHECKPOINT_STORAGE_INPUT_KEY))
+        checkpoint_storage = self.checkpoint_storage
+        checkpoint_id = _checkpoint_id_from_input(input_data)
+        if checkpoint_id is not None and checkpoint_storage is None:
+            raise ValueError(
+                "Resuming from a checkpoint requires checkpoint_storage to be configured on "
+                "AgentFrameworkWorkflow (or the AG-UI endpoint)."
+            )
 
         # A checkpoint resume legitimately carries no new messages; it must reach the
         # core workflow's restore path rather than replaying a stored thread snapshot.
@@ -424,17 +420,10 @@ class AgentFrameworkWorkflow:
             state_snapshot = make_json_safe(effective_state)
             if isinstance(state_snapshot, dict):
                 snapshot_builder.state = cast(dict[str, Any], state_snapshot)
-        # Only forward checkpoint kwargs when checkpointing is requested so the
-        # non-checkpoint path keeps calling ``run_workflow_stream(input_data, workflow)``
-        # exactly as before (preserves the established two-argument call convention).
-        stream_kwargs: dict[str, Any] = {}
-        if checkpoint_storage is not None:
-            stream_kwargs["checkpoint_storage"] = checkpoint_storage
-        if checkpoint_id is not None:
-            stream_kwargs["checkpoint_id"] = checkpoint_id
-
         run_error_emitted = False
-        async for event in run_workflow_stream(input_data, workflow, **stream_kwargs):
+        async for event in run_workflow_stream(
+            input_data, workflow, checkpoint_storage=checkpoint_storage, checkpoint_id=checkpoint_id
+        ):
             if snapshot_builder is not None:
                 snapshot_builder.observe(event)
             if isinstance(event, RunErrorEvent):
