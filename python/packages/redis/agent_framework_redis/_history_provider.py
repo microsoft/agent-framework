@@ -14,7 +14,7 @@ from typing import Any, ClassVar
 
 import redis.asyncio as redis
 from agent_framework import Message
-from agent_framework._sessions import HistoryProvider, MessageIdentity, get_message_identity
+from agent_framework._sessions import HistoryProvider, filter_new_messages
 from agent_framework._telemetry import mark_feature_used
 from redis.credentials import CredentialProvider
 
@@ -158,25 +158,9 @@ class RedisHistoryProvider(HistoryProvider):
             return
 
         key = self._redis_key(session_id)
-        seen_key = f"{key}:seen"
 
-        existing_message = await self.get_messages(session_id, state=state, **kwargs)
-        existing_identities: set[MessageIdentity] = {get_message_identity(m) for m in existing_message}
-
-        seen_members = await self._redis_client.smembers(seen_key)
-        seen_identities: set[MessageIdentity] = set()
-        for raw in seen_members:
-            try:
-                seen_identities.add(tuple(json.loads(raw)))
-            except Exception:
-                continue
-
-        new_messages: list[Message] = []
-        for msg in messages:
-            identity = get_message_identity(msg)
-            if identity not in existing_identities and identity not in seen_identities:
-                existing_identities.add(identity)
-                new_messages.append(msg)
+        existing_messages = await self.get_messages(session_id, state=state, **kwargs)
+        new_messages = filter_new_messages(existing_messages, messages)
 
         if not new_messages:
             return
@@ -186,9 +170,6 @@ class RedisHistoryProvider(HistoryProvider):
         async with self._redis_client.pipeline(transaction=True) as pipe:
             for serialized in serialized_messages:
                 await pipe.rpush(key, serialized)  # type: ignore[misc]
-            for msg in new_messages:
-                identity = get_message_identity(msg)
-                await pipe.sadd(seen_key, json.dumps(list(identity)))  # type: ignore[misc]
             await pipe.execute()
 
         if self.max_messages is not None:
@@ -212,8 +193,7 @@ class RedisHistoryProvider(HistoryProvider):
         Args:
             session_id: The session ID to clear messages for.
         """
-        key = self._redis_key(session_id)
-        await self._redis_client.delete(key, f"{key}:seen")
+        await self._redis_client.delete(self._redis_key(session_id))
 
     async def aclose(self) -> None:
         """Close the Redis connection."""
