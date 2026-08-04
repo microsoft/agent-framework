@@ -63,7 +63,8 @@ class RedisHistoryProvider(HistoryProvider):
             max_messages: Maximum number of messages to retain per session.
                 When exceeded, oldest messages are automatically trimmed.
                 None means unlimited storage; 0 retains nothing, and no message
-                payload is written to Redis at all.
+                payload is written to Redis at all. Stored history is left as it
+                is - use ``clear`` to remove it.
             load_messages: Whether to load messages before invocation.
             store_outputs: Whether to store response messages.
             store_inputs: Whether to store input messages.
@@ -160,16 +161,15 @@ class RedisHistoryProvider(HistoryProvider):
         if not messages:
             return
 
-        key = self._redis_key(session_id)
-
         if self.max_messages == 0:
             # Retention is disabled. Trimming cannot express this - LTRIM key 0 -1 keeps
-            # the whole list - and writing first would put the payload in Redis, and in any
-            # AOF or replica stream, before deleting it. Drop any existing history and
-            # never write the messages at all.
-            await self._redis_client.delete(key)  # type: ignore[misc]
+            # the whole list - so return before serializing: no payload reaches Redis, an
+            # AOF or a replica. Stored history is deliberately left alone. _redis_key omits
+            # source_id, so the list can belong to a co-located provider, and removing
+            # stored history is what clear() is for.
             return
 
+        key = self._redis_key(session_id)
         serialized_messages = [self._serialize_json(msg) for msg in messages]
 
         async with self._redis_client.pipeline(transaction=True) as pipe:
