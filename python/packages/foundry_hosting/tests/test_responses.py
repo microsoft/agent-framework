@@ -1265,9 +1265,9 @@ class TestStreaming:
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
 
-    @pytest.mark.parametrize("arguments", [None, ""])
-    async def test_declaration_only_metadata_does_not_duplicate_streamed_function_call(
-        self, arguments: str | None
+    @pytest.mark.parametrize(("arguments", "expected_count"), [(None, 1), ("", 2)])
+    async def test_declaration_only_metadata_replay_requires_none_arguments(
+        self, arguments: str | None, expected_count: int
     ) -> None:
         metadata = Content.from_function_call("call_1", "search", arguments=arguments)
         metadata.id = "call_1"
@@ -1293,8 +1293,37 @@ class TestStreaming:
             for event in events
             if event["event"] == "response.output_item.added" and event["data"]["item"]["type"] == "function_call"
         ]
-        assert len(function_items) == 1
-        assert function_items[0]["data"]["item"]["call_id"] == "call_1"
+        assert len(function_items) == expected_count
+
+    async def test_function_call_id_can_be_reused_after_terminal_result(self) -> None:
+        reused_call = Content.from_function_call("call_1", "search", arguments=None)
+        reused_call.id = "call_1"
+        reused_call.user_input_request = True
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "search", arguments='{"q": "first"}')],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_1", result="first result")],
+                    role="tool",
+                ),
+                AgentResponseUpdate(contents=[reused_call], role="assistant"),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        function_items = [
+            event
+            for event in events
+            if event["event"] == "response.output_item.added" and event["data"]["item"]["type"] == "function_call"
+        ]
+        assert [event["data"]["item"]["call_id"] for event in function_items] == ["call_1", "call_1"]
 
     async def test_function_call_streaming_serializes_dataclass_arguments(self) -> None:
         @dataclass
