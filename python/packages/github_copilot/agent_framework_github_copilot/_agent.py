@@ -140,6 +140,15 @@ def _deny_all_permissions(
     return PermissionDecisionUserNotAvailable()
 
 
+# Session options that let the working directory's checked-in configuration influence what
+# the CLI does on the host. The agent leaves them off so a session behaves the same way in
+# every checkout; callers that want the checkout-driven behavior can turn each one back on
+# through ``default_options`` or per-run options.
+_WORKSPACE_CONFIG_DEFAULTS: dict[str, bool] = {
+    "enable_file_hooks": False,
+}
+
+
 class GitHubCopilotSettings(TypedDict, total=False):
     """GitHub Copilot model settings.
 
@@ -238,6 +247,14 @@ class GitHubCopilotOptions(TypedDict, total=False):
 
     base_directory: str
     """Directory where the CLI stores session state, configuration, and other persistent data."""
+
+    enable_file_hooks: bool
+    """Whether the CLI loads file hooks from the working directory's ``.github/hooks/``.
+
+    Defaults to ``False``: hook definitions checked into the working directory are ignored
+    unless you opt in, so a session behaves the same way regardless of which checkout it
+    runs in. Unrelated to the SDK callback hooks configured through ``on_pre_tool_use``.
+    """
 
     on_pre_tool_use: PreToolUseHandler
     """Pre-tool-use hook handler for the Copilot SDK.
@@ -1200,8 +1217,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         ``runtime_options`` which override them. Every key is forwarded verbatim to
         the Copilot SDK, so any ``create_session`` parameter is supported without a
         dedicated mapping here (an unknown name surfaces as a ``TypeError`` from the
-        SDK). A few keys are handled specially because they need a secure default
-        (``on_permission_request`` defaults to denying all requests) or transforming:
+        SDK). A few keys are handled specially because they need a specific default
+        (``on_permission_request`` defaults to denying all requests, and the options in
+        ``_WORKSPACE_CONFIG_DEFAULTS`` default to off) or transforming:
         ``tools`` are merged with the agent's tools and converted to SDK tools, and
         approval callbacks are turned into ``hooks``.
 
@@ -1230,6 +1248,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         kwargs["on_permission_request"] = (
             opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
         )
+        # Workspace-driven session options stay off unless the caller opts in (either layer).
+        for option, value in _WORKSPACE_CONFIG_DEFAULTS.items():
+            if kwargs.get(option) is None:
+                kwargs[option] = value
         kwargs["hooks"] = self._build_session_hooks(all_tools, kwargs)
 
         # Strip agent-internal and client-level keys that are consumed here or in the
