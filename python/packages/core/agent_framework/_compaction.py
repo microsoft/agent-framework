@@ -980,6 +980,11 @@ class ToolResultCompactionStrategy:
     untouched; older ones are collapsed.
     """
 
+    _SUMMARY_PREFIX = "[Tool results: "
+    _SUMMARY_SUFFIX = "]"
+    _SUMMARY_MAX_CHARS = 4096
+    _SUMMARY_TRUNCATION_MARKER = "... [truncated]"
+
     def __init__(self, *, keep_last_tool_call_groups: int = 1) -> None:
         """Create a tool-result compaction strategy.
 
@@ -1019,7 +1024,7 @@ class ToolResultCompactionStrategy:
             if group_id in keep_ids:
                 continue
             group_msgs = grouped.get(group_id, [])
-            # Build a call_id → function_name map from function_call contents.
+            # Build a call_id -> tool-name map from tool-call contents.
             call_id_to_name: dict[str, str] = {}
             for msg in group_msgs:
                 if msg.additional_properties.get(EXCLUDED_KEY, False):
@@ -1029,7 +1034,8 @@ class ToolResultCompactionStrategy:
                         call_id_to_name[content.call_id] = content.name
                     elif content.type == "mcp_server_tool_call" and content.call_id and content.tool_name:
                         call_id_to_name[content.call_id] = content.tool_name
-            # Collect tool results with the function name for context.
+
+            # Collect tool results with the tool name for context.
             tool_results: list[str] = []
             for msg in group_msgs:
                 if msg.additional_properties.get(EXCLUDED_KEY, False):
@@ -1037,16 +1043,15 @@ class ToolResultCompactionStrategy:
                 for content in msg.contents:
                     if content.type == "function_result":
                         result_text = content.result if isinstance(content.result, str) else str(content.result)
-                        func_name = call_id_to_name.get(content.call_id or "", "")
-                        label = f"{func_name}: {result_text}" if func_name else result_text
+                        tool_name = call_id_to_name.get(content.call_id or "", "")
+                        label = f"{tool_name}: {result_text}" if tool_name else result_text
                         tool_results.append(label.strip())
                     elif content.type == "mcp_server_tool_result":
                         result_text = _tool_result_text(content.output)
                         tool_name = call_id_to_name.get(content.call_id or "", "")
                         label = f"{tool_name}: {result_text}" if tool_name else result_text
                         tool_results.append(label.strip())
-            summary_label = "; ".join(tool_results) if tool_results else "no results"
-            summary_text = f"[Tool results: {summary_label}]"
+            summary_text = self._summary_text(tool_results)
 
             summary_id = f"tool_summary_{group_id}"
             original_message_ids = [msg.message_id for msg in group_msgs if msg.message_id]
@@ -1076,6 +1081,24 @@ class ToolResultCompactionStrategy:
             grouped = _group_messages_by_id(messages)
 
         return changed
+
+    @classmethod
+    def _summary_text(cls, tool_results: list[str]) -> str:
+        summary_label = "; ".join(tool_results) if tool_results else "no results"
+        summary_text = f"{cls._SUMMARY_PREFIX}{summary_label}{cls._SUMMARY_SUFFIX}"
+        if len(summary_text) <= cls._SUMMARY_MAX_CHARS:
+            return summary_text
+
+        allowed_label_chars = (
+            cls._SUMMARY_MAX_CHARS
+            - len(cls._SUMMARY_PREFIX)
+            - len(cls._SUMMARY_TRUNCATION_MARKER)
+            - len(cls._SUMMARY_SUFFIX)
+        )
+        if allowed_label_chars <= 0:
+            return f"{cls._SUMMARY_PREFIX}{cls._SUMMARY_TRUNCATION_MARKER}{cls._SUMMARY_SUFFIX}"
+        truncated_label = summary_label[:allowed_label_chars].rstrip()
+        return f"{cls._SUMMARY_PREFIX}{truncated_label}{cls._SUMMARY_TRUNCATION_MARKER}{cls._SUMMARY_SUFFIX}"
 
 
 def _tool_result_text(value: Any) -> str:
