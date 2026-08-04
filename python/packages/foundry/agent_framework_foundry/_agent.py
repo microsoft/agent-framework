@@ -138,6 +138,16 @@ def _uses_foundry_agent_session(conversation_id: Any) -> bool:
     )
 
 
+def _get_foundry_agent_session_id(response: Any) -> str | None:
+    """Return a hosted agent session id from a Foundry response payload."""
+    agent_session_id = getattr(response, "agent_session_id", None)
+    if isinstance(agent_session_id, str) and agent_session_id:
+        return agent_session_id
+
+    session_id = getattr(getattr(response, "session", None), "id", None)
+    return session_id if isinstance(session_id, str) and session_id else None
+
+
 def _build_agent_reference(agent_name: str, agent_version: str | None) -> dict[str, str]:
     """Build the Responses API ``agent_reference`` payload for non-preview Foundry agent calls.
 
@@ -428,6 +438,8 @@ class RawFoundryAgentChatClient(
         parsed_response = super()._parse_response_from_openai(response, options)
         if _uses_foundry_agent_session(options.get("conversation_id")):
             parsed_response.conversation_id = None
+        elif agent_session_id := _get_foundry_agent_session_id(response):
+            parsed_response.conversation_id = agent_session_id
         return parsed_response
 
     @override
@@ -449,6 +461,8 @@ class RawFoundryAgentChatClient(
             )
         if _uses_foundry_agent_session(options.get("conversation_id")):
             update.conversation_id = None
+        elif agent_session_id := _get_foundry_agent_session_id(getattr(event, "response", None)):
+            update.conversation_id = agent_session_id
         return update
 
     @override

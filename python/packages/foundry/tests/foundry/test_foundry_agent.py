@@ -804,6 +804,34 @@ def test_raw_foundry_agent_chat_client_parse_response_suppresses_conversation_id
     assert result.conversation_id is None
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        SimpleNamespace(agent_session_id="agent-session-123"),
+        SimpleNamespace(session=SimpleNamespace(id="agent-session-123")),
+    ],
+)
+def test_raw_foundry_agent_chat_client_parse_response_uses_hosted_agent_session_id(response: Any) -> None:
+    """Test that first-turn hosted agent responses persist the service session id."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    parsed = ChatResponse(conversation_id="resp_123")
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._parse_response_from_openai",
+        return_value=parsed,
+    ):
+        result = client._parse_response_from_openai(response=response, options={})
+
+    assert result.conversation_id == "agent-session-123"
+
+
 def test_raw_foundry_agent_chat_client_parse_chunk_suppresses_conversation_id_for_agent_sessions() -> None:
     """Test that agent-session stream updates do not overwrite session.service_session_id."""
 
@@ -827,6 +855,33 @@ def test_raw_foundry_agent_chat_client_parse_chunk_suppresses_conversation_id_fo
         )
 
     assert result.conversation_id is None
+
+
+def test_raw_foundry_agent_chat_client_parse_chunk_uses_hosted_agent_session_id() -> None:
+    """Test that first-turn hosted agent stream updates persist the service session id."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    event = MagicMock(type="response.created")
+    event.response = SimpleNamespace(agent_session_id="agent-session-123")
+    parsed = ChatResponseUpdate(conversation_id="resp_123")
+    with patch(
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._parse_chunk_from_openai",
+        return_value=parsed,
+    ):
+        result = client._parse_chunk_from_openai(
+            event=event,
+            options={},
+            function_call_ids={},
+        )
+
+    assert result.conversation_id == "agent-session-123"
 
 
 def test_raw_foundry_agent_chat_client_check_model_presence_is_noop() -> None:
