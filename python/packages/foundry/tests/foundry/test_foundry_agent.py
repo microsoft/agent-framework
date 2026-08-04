@@ -809,6 +809,7 @@ def test_raw_foundry_agent_chat_client_parse_response_suppresses_conversation_id
     [
         SimpleNamespace(agent_session_id="agent-session-123"),
         SimpleNamespace(session=SimpleNamespace(id="agent-session-123")),
+        SimpleNamespace(agent_session_id="agent-session-123", session=SimpleNamespace(id="session-id-should-not-win")),
     ],
 )
 def test_raw_foundry_agent_chat_client_parse_response_uses_hosted_agent_session_id(response: Any) -> None:
@@ -886,6 +887,7 @@ def test_raw_foundry_agent_chat_client_parse_chunk_suppresses_conversation_id_fo
     [
         SimpleNamespace(agent_session_id="agent-session-123"),
         SimpleNamespace(session=SimpleNamespace(id="agent-session-123")),
+        SimpleNamespace(agent_session_id="agent-session-123", session=SimpleNamespace(id="session-id-should-not-win")),
     ],
 )
 def test_raw_foundry_agent_chat_client_parse_chunk_uses_hosted_agent_session_id(response: Any) -> None:
