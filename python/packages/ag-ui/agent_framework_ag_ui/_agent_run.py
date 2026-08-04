@@ -1952,7 +1952,7 @@ def _append_segmented_snapshot_messages(flow: FlowState, all_messages: list[dict
             ]
             if not calls:
                 continue
-            message_id = tool_open_id or generate_event_id()
+            message_id = segment.get("id") or tool_open_id or generate_event_id()
             tool_open_id = None
             all_messages.append({"id": message_id, "role": "assistant", "tool_calls": [call.copy() for call in calls]})
             # Only mark the calls we actually emitted; a stale segment id that

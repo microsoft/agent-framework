@@ -17,6 +17,7 @@ from ag_ui.core import (
     TextMessageEndEvent,
     TextMessageStartEvent,
     ToolCallArgsEvent,
+    ToolCallStartEvent,
 )
 from agent_framework import AgentResponseUpdate, Content, Message, ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
@@ -659,6 +660,24 @@ def test_snapshot_preserves_stream_order_around_tool_results():
     assert kinds[2][1].get("toolCallId", kinds[2][1].get("tool_call_id")) == "call_1"
     assert kinds[3][1]["content"] == "And the summary."
     assert kinds[3][1]["id"] != kinds[0][1]["id"]
+
+
+def test_snapshot_reuses_streamed_tool_message_id_after_text():
+    """Tool-call snapshots reuse the stream ID used by the reference client merge."""
+    flow = FlowState()
+    _emit_text(Content.from_text("First, the plan."), flow)
+    tool_events = _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+    tool_start = next(event for event in tool_events if isinstance(event, ToolCallStartEvent))
+    _emit_tool_result(Content.from_function_result(call_id="call_1", result="done"), flow)
+    _emit_text(Content.from_text("And the summary."), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls", "result", "text"]
+    assert tool_start.parent_message_id is not None
+    assert kinds[1][1]["id"] == tool_start.parent_message_id
+    assert kinds[1][1]["id"] != kinds[0][1]["id"]
 
 
 def test_snapshot_tool_only_message_reuses_stream_message_id():
