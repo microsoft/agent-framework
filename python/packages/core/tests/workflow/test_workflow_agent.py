@@ -1,9 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 import uuid
 from collections.abc import Awaitable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal, overload
+from types import MappingProxyType
+from typing import Any, Literal, cast, overload
 
 import pytest
 from typing_extensions import Never
@@ -37,9 +40,8 @@ from agent_framework._workflows._typing_utils import deserialize_type
 class HandoffRequest:
     """Module-level dataclass used by request_info tests.
 
-    Defined at module scope (not nested inside a test method) so
-    ``serialize_type``/``deserialize_type`` can round-trip the request_type via
-    the importable qualified name ``tests.workflow.test_workflow_agent.HandoffRequest``.
+    Its stable qualified name is recorded by ``serialize_type`` for same-process
+    compatibility round trips.
     """
 
     target_agent: str
@@ -159,6 +161,16 @@ class ConversationHistoryCapturingExecutor(Executor):
         await ctx.send_message([response_message])
 
 
+async def _create_pending_request_info_call() -> tuple[WorkflowAgent, Content]:
+    workflow = WorkflowBuilder(start_executor=RequestingExecutor(id="requester")).build()
+    agent = WorkflowAgent(workflow=workflow, name="Request Test Agent")
+    response = await agent.run("Start request")
+    function_call = next(
+        content for message in response.messages for content in message.contents if content.type == "function_call"
+    )
+    return agent, function_call
+
+
 class TestWorkflowAgent:
     """Test cases for WorkflowAgent end-to-end functionality."""
 
@@ -274,17 +286,12 @@ class TestWorkflowAgent:
         assert request_event.get("type") == "request_info"
         assert deserialize_type(request_event.get("response_type")) is str
 
-        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(request_function_call.arguments)  # ty: ignore[invalid-argument-type]
-        assert deserialized_args.request_id == request_function_call.call_id
-        assert isinstance(deserialized_args.request_event, WorkflowEvent)
-        assert deserialized_args.request_event.type == "request_info"
-        assert deserialized_args.request_event.data == "Mock request data"
-        assert deserialized_args.request_event.response_type is str
-
-        # Verify the request is tracked in pending_requests
-        pending_requests = await workflow._runner_context.get_pending_request_info_events()
-        assert len(pending_requests) == 1
-        assert request_function_call.call_id in pending_requests
+        resolved_event = await agent.resolve_request_info(request_function_call)
+        assert resolved_event is await workflow.get_pending_request_info(request_function_call.call_id)
+        assert await agent.resolve_request_info(request_function_call) is resolved_event
+        assert resolved_event.type == "request_info"
+        assert resolved_event.data == "Mock request data"
+        assert resolved_event.response_type is str
 
         # Now provide a function result response with updated arguments to test continuation
         function_result = Content.from_function_result(
@@ -301,8 +308,183 @@ class TestWorkflowAgent:
         assert isinstance(continuation_result, AgentResponse)
 
         # Verify cleanup - pending requests should be cleared after function response handling
-        pending_requests = await workflow._runner_context.get_pending_request_info_events()
-        assert len(pending_requests) == 0
+        with pytest.raises(ValueError, match="No pending request-info event found"):
+            await workflow.get_pending_request_info(request_function_call.call_id)
+        for _ in range(2):
+            with pytest.raises(ValueError, match="No pending request-info event found") as exc_info:
+                await agent.resolve_request_info(request_function_call)
+            assert "Mock request data" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        ("tampered_field", "expected_error"),
+        [
+            ("type", "content type"),
+            ("name", "field 'name'"),
+            ("arguments", "field 'arguments'"),
+            ("request_event", "field 'request_event'"),
+        ],
+    )
+    async def test_resolve_request_info_rejects_invalid_function_call_content(
+        self,
+        tampered_field: str,
+        expected_error: str,
+    ) -> None:
+        agent, function_call = await _create_pending_request_info_call()
+        tampered_content = deepcopy(function_call)
+
+        if tampered_field == "type":
+            tampered_content.type = "text"
+        elif tampered_field == "name":
+            tampered_content.name = "other_function"
+        elif tampered_field == "arguments":
+            tampered_content.arguments = None
+        else:
+            arguments = tampered_content.arguments
+            assert isinstance(arguments, dict)
+            cast(dict[str, Any], arguments)["request_event"] = "copied event"
+
+        with pytest.raises(ValueError, match=expected_error):
+            await agent.resolve_request_info(tampered_content)
+
+    async def test_resolve_request_info_rejects_non_content_value(self) -> None:
+        """The resolver distinguishes an invalid object from invalid Content metadata."""
+        agent, _ = await _create_pending_request_info_call()
+
+        with pytest.raises(ValueError, match="must be a Content instance"):
+            await agent.resolve_request_info(cast(Any, {}))
+
+    async def test_resolve_request_info_accepts_json_string_arguments(self) -> None:
+        """The resolver accepts a request-info call restored from JSON transport."""
+        agent, function_call = await _create_pending_request_info_call()
+        function_call.arguments = json.dumps(function_call.arguments)
+
+        resolved_event = await agent.resolve_request_info(function_call)
+
+        assert resolved_event.data == "Mock request data"
+
+    async def test_resolve_request_info_accepts_mapping_arguments(self) -> None:
+        """The resolver accepts read-only mappings restored by a transport adapter."""
+        agent, function_call = await _create_pending_request_info_call()
+        arguments = cast(dict[str, Any], function_call.arguments)
+        request_event = cast(dict[str, Any], arguments["request_event"])
+        function_call.arguments = MappingProxyType({
+            **arguments,
+            "request_event": MappingProxyType(request_event),
+        })
+
+        resolved_event = await agent.resolve_request_info(function_call)
+
+        assert resolved_event.data == "Mock request data"
+
+    @pytest.mark.parametrize("arguments", ["not-json", '["not", "an", "object"]'])
+    async def test_resolve_request_info_rejects_non_object_json_arguments(self, arguments: str) -> None:
+        """Malformed and non-object JSON fail at the transport argument boundary."""
+        agent, function_call = await _create_pending_request_info_call()
+        function_call.arguments = arguments
+
+        with pytest.raises(ValueError, match="field 'arguments' must be a JSON object"):
+            await agent.resolve_request_info(function_call)
+
+    @pytest.mark.parametrize(
+        ("tampering", "expected_error"),
+        [
+            ("missing_call_id", "field 'call_id'.*non-empty string"),
+            ("missing_outer_request_id", "field 'arguments.request_id'.*non-empty string"),
+            ("empty_nested_request_id", "field 'request_event.request_id'.*non-empty string"),
+            ("mismatched_call_id", "correlation IDs.*must match"),
+            ("mismatched_outer_request_id", "correlation IDs.*must match"),
+            ("mismatched_nested_request_id", "correlation IDs.*must match"),
+        ],
+    )
+    async def test_resolve_request_info_rejects_invalid_correlation_ids(
+        self,
+        tampering: str,
+        expected_error: str,
+    ) -> None:
+        agent, function_call = await _create_pending_request_info_call()
+        tampered_content = deepcopy(function_call)
+        arguments = tampered_content.arguments
+        assert isinstance(arguments, dict)
+        arguments_dict = cast(dict[str, Any], arguments)
+        request_event = arguments_dict["request_event"]
+        assert isinstance(request_event, dict)
+
+        if tampering == "missing_call_id":
+            tampered_content.call_id = None
+        elif tampering == "missing_outer_request_id":
+            del arguments_dict["request_id"]
+        elif tampering == "empty_nested_request_id":
+            request_event["request_id"] = ""
+        elif tampering == "mismatched_call_id":
+            tampered_content.call_id = "forged-call-id"
+        elif tampering == "mismatched_outer_request_id":
+            arguments_dict["request_id"] = "forged-outer-id"
+        else:
+            request_event["request_id"] = "forged-nested-id"
+
+        with pytest.raises(ValueError, match=expected_error) as exc_info:
+            await agent.resolve_request_info(tampered_content)
+        assert "Mock request data" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "metadata_field",
+        [
+            "type",
+            "source_executor_id",
+            "request_type",
+            "response_type",
+        ],
+    )
+    async def test_resolve_request_info_rejects_mismatched_event_metadata(self, metadata_field: str) -> None:
+        agent, function_call = await _create_pending_request_info_call()
+        tampered_content = deepcopy(function_call)
+        arguments = tampered_content.arguments
+        assert isinstance(arguments, dict)
+        request_event = cast(dict[str, Any], arguments)["request_event"]
+        assert isinstance(request_event, dict)
+        request_event[metadata_field] = "forged.metadata"
+
+        with pytest.raises(ValueError, match=rf"request_event\.{metadata_field}") as exc_info:
+            await agent.resolve_request_info(tampered_content)
+        assert "Mock request data" not in str(exc_info.value)
+
+    async def test_resolve_request_info_ignores_copied_request_data(self) -> None:
+        class UntrustedCopiedRequestData:
+            def __eq__(self, other: object) -> bool:
+                raise AssertionError("copied request data must not be compared")
+
+        agent, function_call = await _create_pending_request_info_call()
+        tampered_content = deepcopy(function_call)
+        arguments = tampered_content.arguments
+        assert isinstance(arguments, dict)
+        request_event = cast(dict[str, Any], arguments)["request_event"]
+        assert isinstance(request_event, dict)
+        forged_data = UntrustedCopiedRequestData()
+        request_event["data"] = forged_data
+
+        resolved_event = await agent.resolve_request_info(tampered_content)
+
+        assert resolved_event.data == "Mock request data"
+        assert resolved_event.data is not forged_data
+
+    async def test_resolve_request_info_rejects_unknown_request_through_workflow_lookup(self) -> None:
+        agent, function_call = await _create_pending_request_info_call()
+        tampered_content = deepcopy(function_call)
+        tampered_content.call_id = "unknown-request"
+        arguments = tampered_content.arguments
+        assert isinstance(arguments, dict)
+        arguments_dict = cast(dict[str, Any], arguments)
+        arguments_dict["request_id"] = "unknown-request"
+        request_event = arguments_dict["request_event"]
+        assert isinstance(request_event, dict)
+        request_event["request_id"] = "unknown-request"
+
+        with pytest.raises(
+            ValueError,
+            match="No pending request-info event found for request ID 'unknown-request'",
+        ) as exc_info:
+            await agent.resolve_request_info(tampered_content)
+        assert "Mock request data" not in str(exc_info.value)
 
     def test_request_info_dataclass_arguments_are_serialized_when_content_is_created(self) -> None:
         """Test WorkflowAgent prepares request_info arguments before observability captures messages."""
@@ -328,12 +510,106 @@ class TestWorkflowAgent:
         assert deserialize_type(request_event.get("response_type")) is str
         assert request_event.get("data") == HandoffRequest(target_agent="helper", reason="overflow")
 
-        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(request_function_call.arguments)  # ty: ignore[invalid-argument-type]
-        assert deserialized_args.request_id == "request_123"
-        assert isinstance(deserialized_args.request_event, WorkflowEvent)
-        assert deserialized_args.request_event.type == "request_info"
-        assert deserialized_args.request_event.data == HandoffRequest(target_agent="helper", reason="overflow")
-        assert deserialized_args.request_event.response_type is str
+    def test_request_info_generic_response_type_serializes_for_workflow_agent(self) -> None:
+        """WorkflowAgent preserves request-info calls with parameterized generic response types."""
+        executor = SimpleExecutor(id="executor1", response_text="Response")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        agent = WorkflowAgent(workflow=workflow, name="Request Test Agent")
+        event = WorkflowEvent.request_info(
+            request_id="request_123",
+            source_executor_id="executor1",
+            request_data=HandoffRequest(target_agent="helper", reason="overflow"),
+            response_type=list[Message],
+        )
+
+        request_function_call = agent._process_request_info_event(event)  # pyright: ignore[reportPrivateUsage]
+
+        assert isinstance(request_function_call.arguments, dict)
+        request_event = request_function_call.arguments["request_event"]
+        assert isinstance(request_event, dict)
+        assert request_event["response_type"] == "builtins.list"
+
+    def test_request_info_function_args_rehydrate_accepts_custom_types(self) -> None:
+        """Transport rehydration reconstructs the complete request-info argument envelope."""
+
+        @dataclass
+        class ExplicitRequest:
+            prompt: str
+
+        serialized_name = f"{ExplicitRequest.__module__}.{ExplicitRequest.__qualname__}"
+        args = WorkflowAgent.RequestInfoFunctionArgs.rehydrate(
+            {
+                "request_id": "request-123",
+                "request_event": {
+                    "type": "request_info",
+                    "data": ExplicitRequest(prompt="Approve?"),
+                    "request_id": "request-123",
+                    "source_executor_id": "review_gateway",
+                    "request_type": serialized_name,
+                    "response_type": "builtins.bool",
+                },
+            },
+            allowed_types={serialized_name: ExplicitRequest},
+        )
+
+        assert args.request_id == "request-123"
+        assert type(args.request_event.data) is ExplicitRequest
+        assert args.request_event.request_type is ExplicitRequest
+        assert args.request_event.response_type is bool
+
+    @pytest.mark.parametrize(
+        ("payload", "expected_error"),
+        [
+            ("request_id request_event", "request-info arguments payload must be a mapping"),
+            (
+                {"request_id": "request-123", "request_event": "data request_id source_executor_id request_type"},
+                "request_event'.*must be a mapping",
+            ),
+        ],
+    )
+    def test_request_info_function_args_rehydrate_rejects_non_mapping_payloads(
+        self,
+        payload: object,
+        expected_error: str,
+    ) -> None:
+        """Transport rehydration rejects malformed envelope containers at the interface."""
+        with pytest.raises(ValueError, match=expected_error):
+            WorkflowAgent.RequestInfoFunctionArgs.rehydrate(cast(Any, payload))
+
+    def test_legacy_request_info_function_args_parser_warns_once_and_accepts_custom_types(self) -> None:
+        """Legacy argument parsing warns once and forwards caller-supplied trusted custom types."""
+
+        @dataclass
+        class ExplicitRequest:
+            prompt: str
+
+        serialized_name = f"{ExplicitRequest.__module__}.{ExplicitRequest.__qualname__}"
+        with pytest.warns(
+            DeprecationWarning,
+            match=r"RequestInfoFunctionArgs\.from_dict.*will be removed in a future version"
+            r".*RequestInfoFunctionArgs\.rehydrate",
+        ) as recorded_warnings:
+            args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(
+                {
+                    "request_id": "request-123",
+                    "request_event": {
+                        "type": "request_info",
+                        "data": ExplicitRequest(prompt="Approve?"),
+                        "request_id": "request-123",
+                        "source_executor_id": "review_gateway",
+                        "request_type": serialized_name,
+                        "response_type": "builtins.bool",
+                    },
+                },
+                allowed_types={serialized_name: ExplicitRequest},
+            )
+
+        assert len(recorded_warnings) == 1
+        assert recorded_warnings[0].filename == __file__
+        assert args.request_id == "request-123"
+        assert type(args.request_event.data) is ExplicitRequest
+        assert args.request_event.request_type is ExplicitRequest
+        assert args.request_event.response_type is bool
 
     def test_process_request_info_event_passes_through_function_approval_request(self) -> None:
         """If the event data is already a function approval request, it is forwarded unchanged.
@@ -506,8 +782,8 @@ class TestWorkflowAgent:
         )
         assert forwarded is approval_request, "Approval request must surface unchanged"
 
-        pending = await workflow._runner_context.get_pending_request_info_events()
-        assert approval_id in pending
+        pending_event = await workflow.get_pending_request_info(approval_id)
+        assert pending_event.data is approval_request
 
         # Respond with approved=True.
         approval_response = approval_request.to_function_approval_response(approved=True)  # type: ignore[attr-defined]
@@ -517,8 +793,8 @@ class TestWorkflowAgent:
         final_text = " ".join(m.text or "" for m in final.messages)
         assert "delete_file approved=True" in final_text
 
-        pending = await workflow._runner_context.get_pending_request_info_events()
-        assert approval_id not in pending
+        with pytest.raises(ValueError, match="No pending request-info event found"):
+            await workflow.get_pending_request_info(approval_id)
 
     async def test_function_approval_request_flows_end_to_end_denied(self) -> None:
         """End-to-end denied path: ``approved=False`` is delivered to the executor's
@@ -586,8 +862,8 @@ class TestWorkflowAgent:
         final_text = " ".join(m.text or "" for m in final.messages)
         assert "send_email approved=False" in final_text
 
-        pending = await workflow._runner_context.get_pending_request_info_events()
-        assert approval_id not in pending
+        with pytest.raises(ValueError, match="No pending request-info event found"):
+            await workflow.get_pending_request_info(approval_id)
 
     async def test_request_info_non_approval_flows_end_to_end(self) -> None:
         """End-to-end: when request data is not a function approval content, the
@@ -652,15 +928,11 @@ class TestWorkflowAgent:
         assert request_payload.get("type") == "request_info"
         assert request_payload.get("data") == HandoffRequest(target_agent="helper", reason="overflow")
 
-        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(function_call.arguments)  # ty: ignore[invalid-argument-type]
-        assert deserialized_args.request_id == request_id
-        assert isinstance(deserialized_args.request_event, WorkflowEvent)
-        assert deserialized_args.request_event.type == "request_info"
-        assert deserialized_args.request_event.data == HandoffRequest(target_agent="helper", reason="overflow")
-        assert deserialized_args.request_event.response_type is str
-
-        pending = await workflow._runner_context.get_pending_request_info_events()
-        assert request_id in pending
+        resolved_event = await agent.resolve_request_info(function_call)
+        assert resolved_event is await workflow.get_pending_request_info(request_id)
+        assert resolved_event.type == "request_info"
+        assert resolved_event.data == HandoffRequest(target_agent="helper", reason="overflow")
+        assert resolved_event.response_type is str
 
         # Respond with a function_result keyed by the call_id.
         function_result = Content.from_function_result(call_id=request_id, result="ok-do-it")
@@ -675,8 +947,8 @@ class TestWorkflowAgent:
         assert captured["original"].target_agent == "helper"
         assert captured["response"] == "ok-do-it"
 
-        pending = await workflow._runner_context.get_pending_request_info_events()
-        assert request_id not in pending
+        with pytest.raises(ValueError, match="No pending request-info event found"):
+            await agent.resolve_request_info(function_call)
 
     def test_workflow_as_agent_method(self) -> None:
         """Test that Workflow.as_agent() creates a properly configured WorkflowAgent."""
@@ -2180,8 +2452,8 @@ class TestWorkflowAgentToolApproval:
         assert function_call.arguments == {"path": "/tmp/secret.txt"}
 
         # The agent must be paused awaiting the approval response.
-        pending = await workflow._runner_context.get_pending_request_info_events()
-        assert approval_id in pending
+        pending_event = await workflow.get_pending_request_info(approval_id)
+        assert pending_event.data is approval
 
     async def test_tool_approval_request_forwarded_unchanged_streaming(self) -> None:
         """Streaming variant: the approval request is forwarded as-is in updates."""
@@ -2262,8 +2534,8 @@ class TestWorkflowAgentToolApproval:
         assert approvals_seen[0].approved is True  # type: ignore[attr-defined]
 
         # The pending approval should now be cleared.
-        pending = await workflow._runner_context.get_pending_request_info_events()
-        assert approval_id not in pending
+        with pytest.raises(ValueError, match="No pending request-info event found"):
+            await workflow.get_pending_request_info(approval_id)
 
         # The final assistant message reflects the resumption.
         final_text = " ".join(m.text or "" for m in final_result.messages)
@@ -2317,8 +2589,8 @@ class TestWorkflowAgentToolApproval:
         assert approvals_seen[0].approved is False  # type: ignore[attr-defined]
 
         # Pending approval cleared regardless of approve/reject.
-        pending = await workflow._runner_context.get_pending_request_info_events()
-        assert approval_id not in pending
+        with pytest.raises(ValueError, match="No pending request-info event found"):
+            await workflow.get_pending_request_info(approval_id)
 
         # The final assistant message reflects the rejection.
         final_text = " ".join(m.text or "" for m in final_result.messages)
@@ -2348,6 +2620,6 @@ class TestWorkflowAgentToolApproval:
 
         await agent.run("go")
 
-        pending = await workflow._runner_context.get_pending_request_info_events()
+        pending_event = await workflow.get_pending_request_info(approval_id)
         # The agent's approval id is used as the workflow's pending request id.
-        assert list(pending.keys()) == [approval_id]
+        assert pending_event.request_id == approval_id

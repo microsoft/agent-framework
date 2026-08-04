@@ -6,7 +6,7 @@ import builtins
 import sys
 import traceback as _traceback
 import warnings
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -426,23 +426,71 @@ class WorkflowEvent(Generic[DataT]):
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> WorkflowEvent[Any]:
-        """Create a REQUEST_INFO event from a dictionary."""
+    def rehydrate_request_info(
+        cls,
+        data: Mapping[str, Any],
+        *,
+        allowed_types: Mapping[str, object] | None = None,
+    ) -> WorkflowEvent[Any]:
+        """Rehydrate a request-info event from trusted transport data.
+
+        Args:
+            data: Serialized request-info event fields.
+            allowed_types: Optional mapping of serialized names to trusted custom types or typing annotations.
+                Use this for nested, function-local, lazily exported, or parameterized annotations that cannot be
+                resolved as top-level types from an already-loaded module namespace.
+
+        Returns:
+            The rehydrated request-info event.
+
+        Raises:
+            ValueError: If the request-info event data is not a mapping.
+            KeyError: If a required request-info field is missing.
+            TypeError: If the request data type does not match its serialized metadata.
+            ModuleNotFoundError: If a response type's module is not already loaded.
+            AttributeError: If a loaded response-type module does not contain the serialized top-level type.
+        """
+        if not isinstance(data, Mapping):
+            raise ValueError("Serialized request-info event data must be a mapping.")
+
         for prop in ["data", "request_id", "source_executor_id", "request_type", "response_type"]:
             if prop not in data:
                 raise KeyError(f"Missing '{prop}' field in WorkflowEvent dictionary.")
-
         request_data = data["data"]
-        request_type = deserialize_type(data["request_type"])
-
-        if request_type is not type(request_data):
-            raise TypeError(
-                "Mismatch between deserialized request_data type and request_type field in WorkflowEvent dictionary."
-            )
+        request_type = cast(builtins.type[Any], type(request_data))
+        if serialize_type(request_type) != data["request_type"]:
+            raise TypeError("Mismatch between request_data type and request_type field in WorkflowEvent dictionary.")
 
         return cls.request_info(
             request_id=data["request_id"],
             source_executor_id=data["source_executor_id"],
             request_data=cast(Any, request_data),  # type: ignore
-            response_type=deserialize_type(data["response_type"]),
+            response_type=deserialize_type(data["response_type"], allowed_types=allowed_types),
         )
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        allowed_types: Mapping[str, object] | None = None,
+    ) -> WorkflowEvent[Any]:
+        """Create a REQUEST_INFO event from a dictionary.
+
+        Deprecated:
+            Use :meth:`rehydrate_request_info` for transport decoding or
+            ``Workflow.get_pending_request_info`` for authoritative lookup.
+
+        Args:
+            data: Serialized request-info event fields.
+            allowed_types: Optional mapping of serialized names to trusted custom types or typing annotations.
+        """
+        warnings.warn(
+            "`WorkflowEvent.from_dict` is deprecated and will be removed in a future version; "
+            "use `WorkflowEvent.rehydrate_request_info` for transport decoding or "
+            "`Workflow.get_pending_request_info` (`await workflow.get_pending_request_info(request_id)`) "
+            "for authoritative lookup instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return cls.rehydrate_request_info(data, allowed_types=allowed_types)
