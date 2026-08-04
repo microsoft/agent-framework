@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import pathlib
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -64,20 +65,17 @@ from mcp import McpError
 from mcp.types import ErrorData
 from typing_extensions import Any
 
-
 from agent_framework_foundry_hosting import (
     FoundrySessionStore,
     ResponsesHostServer,
 )
-
 from agent_framework_foundry_hosting._responses import (
-    FileBasedFunctionApprovalStorage,
-    _approval_storage_path_for_user,
     _AZURE_RESPONSES_MESSAGE_ROLE_TYPE,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     ConsentError,
     FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
+    _approval_storage_path_for_user,
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
@@ -5209,10 +5207,13 @@ class TestApprovalStoragePath:
         expected = os.path.join(os.getcwd(), ".function_approvals", "approval_requests.json")
         assert server._approval_storage_path == expected
 
-    def test_hosted_approval_path_uses_home(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_hosted_approval_path_uses_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
         """In hosted mode with valid HOME, approvals must be under $HOME/.function_approvals/."""
         monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
         monkeypatch.setenv("HOME", "/home/testuser")
+
+        monkeypatch.setattr(pathlib.Path, "home", lambda *args, **kwargs: tmp_path)
+
         server = ResponsesHostServer(MagicMock(context_providers=[]), store=InMemoryResponseProvider())
         actual_normalized = server._approval_storage_path.replace("\\", "/")
         assert actual_normalized.endswith("/home/testuser/.function_approvals/approval_requests.json")
@@ -5224,21 +5225,30 @@ class TestApprovalStoragePath:
         user_normalized = str(user_path).replace("\\", "/")
         assert user_normalized.endswith("/home/testuser/.function_approvals/test-user/approval_requests.json")
 
-    def test_hosted_without_home_env_uses_default_session_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_hosted_without_home_env_uses_default_session_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    ) -> None:
         """When HOME is unset in hosted mode, fall back to /home/session/.function_approvals/."""
         monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
         monkeypatch.delenv("HOME", raising=False)
+
+        monkeypatch.setattr(pathlib.Path, "home", lambda *args, **kwargs: tmp_path)
+
         server = ResponsesHostServer(MagicMock(), store=InMemoryResponseProvider())
         expected = "/home/session/.function_approvals/approval_requests.json"
         assert server._approval_storage_path == expected
 
     @pytest.mark.parametrize("bad_home", ["/", "", "   "])
     def test_hosted_with_unusable_home_falls_back_to_default(
-        self, monkeypatch: pytest.MonkeyPatch, bad_home: str
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, bad_home: str
     ) -> None:
         """Filesystem-root or empty HOME must NOT produce /.function_approvals/."""
         monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
         monkeypatch.setenv("HOME", bad_home)
+
+        # Patch Path.home to use a writable temp directory for SessionStore initialization
+        monkeypatch.setattr(pathlib.Path, "home", lambda *args, **kwargs: tmp_path)
+
         server = ResponsesHostServer(MagicMock(), store=InMemoryResponseProvider())
         expected = "/home/session/.function_approvals/approval_requests.json"
         assert server._approval_storage_path == expected
