@@ -2604,4 +2604,50 @@ def test_no_hooks_keeps_default_behavior(openai_unit_test_env: dict[str, str]) -
     assert reasoning[0].protected_data is not None
 
 
+def test_default_parsing_skips_non_string_content(openai_unit_test_env: dict[str, str]) -> None:
+    """Structured list `content` is skipped by default parsing (no malformed text Content)."""
+    client = OpenAIChatCompletionClient()
+    chunked = [
+        {"type": "thinking", "thinking": [{"type": "text", "text": "reasoning"}]},
+        {"type": "text", "text": "answer"},
+    ]
+    message = ChatCompletionMessage.model_construct(role="assistant", content=cast(Any, chunked))
+
+    parsed = client._parse_response_from_openai(_make_chat_completion(message, model="mistral-medium-latest"), {})
+
+    # The list is not wrapped as a text Content; nothing is emitted for it.
+    assert not any(c.type == "text" for c in parsed.messages[0].contents)
+
+
+def test_response_parser_can_expand_chunked_content(openai_unit_test_env: dict[str, str]) -> None:
+    """A response_parser receives the raw choice and can expand structured list content."""
+
+    def chunk_parser(choice: Any, contents: list[Content]) -> list[Content]:
+        message = choice.message if hasattr(choice, "message") else choice.delta
+        if not isinstance(message.content, list):
+            return contents
+        expanded = list(contents)
+        for chunk in message.content:
+            if chunk.get("type") == "thinking":
+                text = "".join(part.get("text", "") for part in chunk.get("thinking", []))
+                expanded.append(Content.from_text_reasoning(text=text))
+            elif chunk.get("type") == "text":
+                expanded.append(Content.from_text(text=chunk["text"]))
+        return expanded
+
+    client = OpenAIChatCompletionClient(response_parser=chunk_parser)
+    chunked = [
+        {"type": "thinking", "thinking": [{"type": "text", "text": "reasoning"}]},
+        {"type": "text", "text": "answer"},
+    ]
+    message = ChatCompletionMessage.model_construct(role="assistant", content=cast(Any, chunked))
+
+    parsed = client._parse_response_from_openai(_make_chat_completion(message, model="mistral-medium-latest"), {})
+    contents = parsed.messages[0].contents
+
+    assert [c.type for c in contents] == ["text_reasoning", "text"]
+    assert contents[0].text == "reasoning"
+    assert contents[1].text == "answer"
+
+
 # endregion

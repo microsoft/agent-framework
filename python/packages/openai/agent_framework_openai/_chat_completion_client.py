@@ -952,6 +952,8 @@ class RawOpenAIChatCompletionClient(
         """Parse the choice into a Content object with type='text'."""
         message = choice.message if isinstance(choice, Choice) else choice.delta
         if message.content:
+            if not isinstance(message.content, str):
+                return None
             return Content.from_text(text=message.content, raw_representation=choice)
         if hasattr(message, "refusal") and message.refusal:
             return Content.from_text(text=message.refusal, raw_representation=choice)
