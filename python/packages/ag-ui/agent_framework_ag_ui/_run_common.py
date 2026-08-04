@@ -860,11 +860,12 @@ def _emit_approval_request(
 
     if require_confirmation:
         confirm_id = generate_event_id()
+        confirm_message_id = _track_tool_call_segment(flow, confirm_id)
         events.append(
             ToolCallStartEvent(
                 tool_call_id=confirm_id,
                 tool_call_name="confirm_changes",
-                parent_message_id=flow.message_id,
+                parent_message_id=confirm_message_id,
             )
         )
         args: dict[str, Any] = {
@@ -885,7 +886,6 @@ def _emit_approval_request(
         flow.pending_tool_calls.append(confirm_entry)
         flow.tool_calls_by_id[confirm_id] = confirm_entry
         flow.tool_calls_ended.add(confirm_id)
-        _track_tool_call_segment(flow, confirm_id)
 
     flow.waiting_for_approval = True
     return events
@@ -922,12 +922,13 @@ def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
     tool_name = content.tool_name or "mcp_tool"
 
     display_name = tool_name
+    tool_message_id = _track_tool_call_segment(flow, tool_call_id)
 
     events.append(
         ToolCallStartEvent(
             tool_call_id=tool_call_id,
             tool_call_name=display_name,
-            parent_message_id=flow.message_id,
+            parent_message_id=tool_message_id,
         )
     )
 
@@ -947,7 +948,6 @@ def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
     }
     flow.pending_tool_calls.append(tool_entry)
     flow.tool_calls_by_id[tool_call_id] = tool_entry
-    _track_tool_call_segment(flow, tool_call_id)
 
     return events
 

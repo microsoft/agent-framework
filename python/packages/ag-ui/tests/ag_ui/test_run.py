@@ -956,6 +956,26 @@ def test_emit_approval_request_populates_interrupt_metadata():
     }
 
 
+def test_emit_approval_request_reuses_confirmation_message_id_in_snapshot():
+    """Confirmation tool events and snapshots share the same message ID."""
+    flow = FlowState()
+    _emit_text(Content.from_text("Before approval."), flow)
+    text_message_id = flow.message_id
+    function_call = Content.from_function_call(call_id="call_123", name="write_doc", arguments={"content": "x"})
+    approval_content = Content.from_function_approval_request(id="approval_1", function_call=function_call)
+
+    events = _emit_approval_request(approval_content, flow)
+    confirm_start = next(
+        event for event in events if isinstance(event, ToolCallStartEvent) and event.tool_call_name == "confirm_changes"
+    )
+    snapshot = _build_messages_snapshot(flow, [])
+    kinds = _snapshot_kinds(snapshot)
+
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls"]
+    assert confirm_start.parent_message_id == kinds[1][1]["id"]
+    assert confirm_start.parent_message_id != text_message_id
+
+
 def test_emit_approval_request_accumulates_multiple_interrupts():
     """Multiple approval requests in the same turn should accumulate in flow.interrupts."""
     flow = FlowState(message_id="msg-1")
@@ -1602,6 +1622,8 @@ class TestEmitMcpToolCall:
     def test_produces_start_and_args_events(self):
         """MCP tool call emits ToolCallStart + ToolCallArgs events."""
         flow = FlowState()
+        _emit_text(Content.from_text("Before MCP call."), flow)
+        text_message_id = flow.message_id
         content = Content.from_mcp_server_tool_call(
             call_id="mcp_call_1",
             tool_name="search",
@@ -1618,6 +1640,12 @@ class TestEmitMcpToolCall:
         assert events[1].type == "TOOL_CALL_ARGS"
         assert events[1].tool_call_id == "mcp_call_1"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "weather" in events[1].delta  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        snapshot = _build_messages_snapshot(flow, [])
+        kinds = _snapshot_kinds(snapshot)
+        assert [kind for kind, _ in kinds] == ["text", "tool_calls"]
+        assert events[0].parent_message_id == kinds[1][1]["id"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert events[0].parent_message_id != text_message_id  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_tracks_in_flow_state(self):
         """MCP tool call is tracked in flow.pending_tool_calls and tool_calls_by_id."""
