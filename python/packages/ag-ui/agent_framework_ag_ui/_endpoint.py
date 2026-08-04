@@ -130,7 +130,7 @@ def add_agent_framework_fastapi_endpoint(
     elif isinstance(agent, AgentFrameworkAgent):
         protocol_runner = agent
     elif isinstance(agent, Workflow):
-        protocol_runner = AgentFrameworkWorkflow(workflow=agent, checkpoint_storage=checkpoint_storage)
+        protocol_runner = AgentFrameworkWorkflow(workflow=agent)
     elif isinstance(agent, SupportsAgentRun):
         protocol_runner = AgentFrameworkAgent(
             agent=agent,
@@ -144,6 +144,8 @@ def add_agent_framework_fastapi_endpoint(
     if checkpoint_storage is not None:
         if not isinstance(protocol_runner, AgentFrameworkWorkflow):
             raise ValueError("checkpoint_storage is only supported when the endpoint exposes a workflow.")
+        # A pre-wrapped runner without storage adopts the endpoint's; a runner that
+        # already carries a different storage is a configuration conflict.
         if (
             protocol_runner.checkpoint_storage is not None
             and protocol_runner.checkpoint_storage is not checkpoint_storage
