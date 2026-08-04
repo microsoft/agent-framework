@@ -2990,7 +2990,7 @@ async def test_mcp_tool_sampling_callback_returns_tool_use_results():
     assert isinstance(result, types.CreateMessageResultWithTools)
     assert result.role == "assistant"
     assert result.model == "test-model"
-    assert result.stop_reason == "tool_use"
+    assert result.stop_reason == "toolUse"
     assert isinstance(result.content, list)
     tool_use_contents = [content for content in result.content if isinstance(content, types.ToolUseContent)]
     assert tool_use_contents == result.content
@@ -6553,13 +6553,13 @@ def _make_task_snapshot(
 ) -> types.GetTaskResult:
     now = _utc_now().isoformat()
     return types.GetTaskResult(
-        taskId=task_id,
+        task_id=task_id,
         status=status,
-        statusMessage=status_message,
-        createdAt=now,
-        lastUpdatedAt=now,
+        status_message=status_message,
+        created_at=now,
+        last_updated_at=now,
         ttl=None,
-        pollInterval=poll_interval_ms,
+        poll_interval=poll_interval_ms,
     )
 
 
@@ -6567,11 +6567,11 @@ def _make_create_task_result(task_id: str = "task-1") -> types.CreateTaskResult:
     now = _utc_now().isoformat()
     return types.CreateTaskResult(
         task=types.Task(
-            taskId=task_id,
+            task_id=task_id,
             status="working",
-            statusMessage=None,
-            createdAt=now,
-            lastUpdatedAt=now,
+            status_message=None,
+            created_at=now,
+            last_updated_at=now,
             ttl=None,
         )
     )

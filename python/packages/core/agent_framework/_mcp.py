@@ -1571,7 +1571,7 @@ class MCPTool:
                 role="assistant",
                 content=tool_use_contents,
                 model=response.model or "unknown",
-                stop_reason="tool_use",
+                stop_reason="toolUse",
             )
 
         # grab the first content that is of type TextContent or ImageContent
@@ -2296,7 +2296,10 @@ class MCPTool:
         """
         from mcp import types
         from mcp.shared.exceptions import MCPError
-        from pydantic import ValidationError
+        from pydantic import ConfigDict, ValidationError
+
+        class _LenientResult(types.Result):
+            model_config = ConfigDict(extra="allow")
 
         opts = self._effective_task_options()
         ttl_ms: int | None = None
@@ -2320,7 +2323,7 @@ class MCPTool:
         try:
             lenient = await self.session.send_request(  # type: ignore[union-attr]
                 request,
-                types.Result,
+                _LenientResult,
             )
         except MCPError as ex:
             if ex.code not in (types.METHOD_NOT_FOUND, types.INVALID_PARAMS):
@@ -2333,8 +2336,9 @@ class MCPTool:
             fallback = await self.session.call_tool(tool_name, arguments=arguments, meta=meta)  # type: ignore[union-attr]
             return None, fallback
 
-        # Inspect the raw payload: a CreateTaskResult carries `task.task_id`;
+        # Inspect the raw payload: a CreateTaskResult carries `task.taskId` (alias for `task_id`);
         # a legacy CallToolResult carries `content` and/or `isError`.
+        # _LenientResult uses extra="allow", so model_dump() preserves all wire fields.
         raw: dict[str, Any] = lenient.model_dump(by_alias=True, exclude_none=True)
         raw.pop("_meta", None)
         # In MCP 2.0, Result may carry CallToolResult fields as Pydantic extras
@@ -2365,6 +2369,10 @@ class MCPTool:
         import httpx
         from mcp import types
         from mcp.shared.exceptions import MCPError
+        from pydantic import ConfigDict
+
+        class _LenientResult(types.Result):
+            model_config = ConfigDict(extra="allow")
 
         # SDK raises MCPError(code=httpx.REQUEST_TIMEOUT=408) on session read timeout.
         transient_codes: frozenset[int] = frozenset({int(httpx.codes.REQUEST_TIMEOUT)})
@@ -2372,9 +2380,11 @@ class MCPTool:
         while True:
             request = types.GetTaskRequest(params=types.GetTaskRequestParams(taskId=task_id))
             try:
-                # GetTaskResult.ttl is required-but-Optional in the SDK; coerce below.
                 lenient = await self._send_with_one_reconnect(
-                    request, types.Result, operation="tasks/get", task_id=task_id
+                    request,
+                    _LenientResult,
+                    operation="tasks/get",
+                    task_id=task_id,
                 )
             except MCPError as ex:
                 if ex.code in transient_codes:
@@ -2457,20 +2467,23 @@ class MCPTool:
         """Send ``tasks/result`` and reinterpret the open-typed payload as a CallToolResult."""
         from mcp import types
         from mcp.shared.exceptions import MCPError
-        from pydantic import ValidationError
+        from pydantic import ConfigDict, ValidationError
+
+        class _LenientPayloadResult(types.GetTaskPayloadResult):
+            model_config = ConfigDict(extra="allow")
 
         request = types.GetTaskPayloadRequest(params=types.GetTaskPayloadRequestParams(taskId=task_id))
         # Connection-loss retry only via the helper; no transient-code retry — server
         # has already completed the task, so a slow payload fetch is anomalous.
         try:
             payload = await self._send_with_one_reconnect(
-                request, types.GetTaskPayloadResult, operation="tasks/result", task_id=task_id
+                request, _LenientPayloadResult, operation="tasks/result", task_id=task_id
             )
         except MCPError as ex:
             # Server reported completed; a hard fetch error is a plain failure (no cancel).
             raise ToolExecutionException(ex.message, inner_exception=ex) from ex
 
-            # In MCP 2.0, GetTaskPayloadResult only declares `meta`; the actual
+        # In MCP 2.0, GetTaskPayloadResult only declares `meta`; the actual
         # CallToolResult fields are carried as Pydantic extra fields.
         payload_dict: dict[str, Any] = {}
         if payload.__pydantic_extra__:

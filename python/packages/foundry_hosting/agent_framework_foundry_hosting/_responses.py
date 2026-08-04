@@ -117,7 +117,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     ReasoningSummaryPartBuilder,
     TextContentBuilder,
 )
-from mcp import McpError
+from mcp.shared.exceptions import MCPError
 from typing_extensions import Any
 
 from ._feature_usage import FeatureIndex
@@ -322,8 +322,8 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     Returns:
         The consent URL(s) extracted from the error, or ``None`` if no consent error was found.
     """
-    inner_exception = next((arg for arg in exc.args if isinstance(arg, McpError)), None)
-    if inner_exception is not None and inner_exception.error.code == CONSENT_ERROR_CODE:
+    inner_exception = next((arg for arg in exc.args if isinstance(arg, MCPError)), None)
+    if inner_exception is not None and inner_exception.code == CONSENT_ERROR_CODE:
         # Parse the error message
         # The error message is structured with the following format:
         # "tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {"errors":[{"name": ..."
@@ -344,11 +344,11 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
         # ruff: enable[commented-out-code]
         try:
             consent_errors: list[ConsentError] = []
-            error_message_start = inner_exception.error.message.find("{")
+            error_message_start = inner_exception.message.find("{")
             if error_message_start == -1:
-                logger.warning("Consent error message does not contain JSON: %s", inner_exception.error.message)
+                logger.warning("Consent error message does not contain JSON: %s", inner_exception.message)
                 return None
-            consent_details_json = inner_exception.error.message[error_message_start:]
+            consent_details_json = inner_exception.message[error_message_start:]
             consent_details = json.loads(consent_details_json)
             if "errors" not in consent_details or not isinstance(consent_details["errors"], list):
                 logger.warning("Consent error message JSON does not contain 'errors' list: %s", consent_details_json)
@@ -370,7 +370,7 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
             if consent_errors:
                 return consent_errors
         except json.JSONDecodeError:
-            logger.warning("Failed to parse consent details JSON: %s", inner_exception.error.message)
+            logger.warning("Failed to parse consent details JSON: %s", inner_exception.message)
     return None
 
 
