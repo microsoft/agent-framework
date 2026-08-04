@@ -337,74 +337,15 @@ export DEVUI_AUTH_TOKEN="$(openssl rand -hex 32)"
 # Display it once so you can paste it into the browser's DEV TOKEN field.
 echo "$DEVUI_AUTH_TOKEN"
 
-# Optional: confirm it is set without displaying it.
-[[ -n "$DEVUI_AUTH_TOKEN" ]] && echo "DevUI token is set"
-
 python run_devui.py
 # → Web chat UI: http://localhost:8080
 # → OpenAI-compatible API: http://localhost:8080/v1/*
 ```
 
-Paste the value printed by `echo` into the browser's **DEV TOKEN** field. DevUI then sends it on protected requests as:
-
-```http
-Authorization: Bearer <token>
-```
-
-`DEVUI_AUTH_TOKEN` exists only in the current terminal session. If you open a new terminal, export a new token before starting DevUI. If you missed the token, stop the server with `Ctrl+C`, run the export and `echo` commands again, and restart `python run_devui.py`.
-
 ![DevUI_tools](hands-on/DevUI_tools.png)
 ![DevUI_OTel](<hands-on/Dev UI_OTel.png>)
 
-### 2.3 What DevUI is doing behind the screen
-
-DevUI is more than a static chat page. 
-It starts a local FastAPI/Uvicorn server and places an HTTP test harness around the `agent` imported from Stage 1:
-
-```mermaid
-sequenceDiagram
-  participant Browser as DevUI browser
-  participant API as Local DevUI API
-  participant Executor as Agent executor
-  participant Agent as Agent + tools
-  participant Model as Foundry model
-  participant OTel as OTel trace collector
-
-  Browser->>API: POST /v1/responses + Bearer token
-  API->>Executor: Validate entity and conversation
-  Executor->>Agent: run_stream(...)
-  Agent->>Model: Model request
-  Model-->>Agent: Text/tool-call deltas
-  Agent->>Agent: Invoke get_weather when requested
-  Agent-->>Executor: AgentResponseUpdate events
-  Agent-->>OTel: Agent/model/tool spans
-  Executor-->>API: Map to OpenAI Responses events
-  OTel-->>API: response.trace.completed events
-  API-->>Browser: SSE stream (text/event-stream)
-```
-
-The important settings are independent:
-
-| Setting | What it enables |
-| --- | --- |
-| `auth_enabled=True` | Requires `Authorization: Bearer <DEVUI_AUTH_TOKEN>` on protected local API calls. |
-| `mode="developer"` | Enables developer-only APIs such as reload and deployment, and returns detailed errors. It does **not** enable tracing by itself. |
-| `instrumentation_enabled=True` | Enables Agent Framework OpenTelemetry instrumentation, including agent, model, and tool spans. It also enables sensitive prompt/tool data for this local developer session. |
-| `auto_open=True` | Opens `http://127.0.0.1:8080` after the server starts. |
-
-#### Events vs. OpenTelemetry
-
-| | Events | OTel spans |
-| --- | --- | --- |
-| Purpose | Live text/tool/status updates | Timing, tokens, status, errors |
-| Flow | Agent → events → SSE → browser | Agent → spans → DevUI or OTLP backend |
-| Example | `response.output_text.delta` | Model call: `1.8 s`, status: `OK` |
-
-Typical span data includes agent duration, model duration, tool duration, token usage, and status. DevUI also converts completed spans to `response.trace.completed` events so the trace can appear in the browser.
-
-> `instrumentation_enabled=True` enables sensitive-data tracing in the current DevUI implementation. Use it only for development data, and do not enter secrets or production customer content. For a public service, configure exporters and sensitive-data policy explicitly instead of publishing DevUI.
-
-### 2.4 Can DevUI deploy the agent to Azure?
+### 2.3 Can DevUI deploy the agent to Azure?
 
 Yes, but there are **two different Azure deployment paths**:
 
@@ -438,7 +379,7 @@ devui ./agents --port 8080 --instrumentation
 
 ---
 
-## Stage 3 — Public Release: managed hosting reachable over the internet
+## Stage 3 — Public Release: managed Hosted Agent reachable over the internet
 
 **Goal:** deploy the agent to **Foundry Hosted Agents** so it's a managed service with an internet endpoint (and a Foundry UI to chat with it).
 
@@ -472,7 +413,6 @@ From that manifest `azd` **scaffolds a full deployable project** in the current 
 | `agent.manifest.yaml`, `agent.yaml` | Copied locally so you can tweak the model, protocol, and runtime (CPU/memory) |
 | `.env.example` | The env vars the agent expects (endpoint, deployment name, …) |
 
-- The value after `-m` can be a **local path** (`./agent.manifest.yaml`) or a **URL** (the GitHub raw/blob link above). A URL just pulls the official sample so you don't have to clone the repo.
 - After `init`, you own the files locally — edit them, then `azd provision` (create resources) and `azd deploy` (ship code). Omit `-m` to start from azd's default template instead of a specific manifest.
 
 This scaffolds a project whose agent looks like this (a `ResponsesHostServer` wraps your agent for the managed protocol). The generated stub is a bare "friendly assistant" — swap it for something with personality **and real tool calling** so the hosted agent actually *does* things:
@@ -592,13 +532,13 @@ curl -X POST http://localhost:8088/responses \
   -d '{"input": "Hello!"}'
 ```
 
-### 3.5 Deploy to the internet (the "public release")
-
+### 3.5 Deploy to the internet 
 ```bash
 azd deploy
 ```
 
-This packages the agent and deploys it to Foundry as a **managed, internet-accessible service**. The host injects `FOUNDRY_PROJECT_ENDPOINT`, `AZURE_AI_MODEL_DEPLOYMENT_NAME`, and `APPLICATIONINSIGHTS_CONNECTION_STRING` at runtime. After deploy you can **chat with the agent in the Foundry UI** and call its endpoint from anywhere.
+This packages the agent and deploys it to Foundry as a **Hosted Agent**. The host injects `FOUNDRY_PROJECT_ENDPOINT`, `AZURE_AI_MODEL_DEPLOYMENT_NAME`, and `APPLICATIONINSIGHTS_CONNECTION_STRING` at runtime. 
+After deploy you can **chat with the agent in the Foundry UI** and call its endpoint from anywhere.
 
 - Deploy guide: https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent
 - Manage deployed agents: https://learn.microsoft.com/azure/foundry/agents/how-to/manage-hosted-agent
@@ -610,11 +550,15 @@ This packages the agent and deploys it to Foundry as a **managed, internet-acces
 
 ## Stage 4 — Observation: see what your agent is doing
 
-**Goal:** turn on **observability** so you can trace every model call, tool call, and token count — locally and in the cloud.
+**Goal:** turn on **observability** so you can *see inside* a run — which model was called, which tools fired, how long each took, and how many tokens it used.
 
-Agent Framework is **natively instrumented** (OpenTelemetry, following the GenAI semantic conventions) and enabled by default. You only decide *where* the telemetry goes. A single call to `configure_otel_providers()` wires up traces, logs, and metrics.
+**you don't have to instrument anything.** Agent Framework already records this for you.
 
-### 4.1 Quickest look — console traces
+This recorder is **OpenTelemetry (OTel)** — an industry-standard way to record what software does.
+
+```python
+configure_otel_providers(...)   # decides WHERE telemetry goes
+```
 
 Add instrumentation to your Stage 1 agent — `observe.py`:
 
@@ -624,8 +568,8 @@ import asyncio
 from agent_framework.observability import configure_otel_providers, get_tracer
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
-from agent import agent           # reuse the agent from Stage 1
-
+from agent import agent           
+# reuse the agent from Stage 1
 
 async def main():
     # Print traces/logs/metrics without recording prompts, responses, or tool arguments.
@@ -645,28 +589,21 @@ python observe.py
 # → Spans for the agent run, model call, and get_weather tool call print to the console.
 ```
 
-### 4.2 Send to a real backend (OTLP)
+- **Foundry Hosted (Stage 3):** you don't configure anything. Foundry manages the exporters and injects `APPLICATIONINSIGHTS_CONNECTION_STRING`, so your deployed agent's telemetry flows into **Application Insights** automatically.
 
-Point the standard OpenTelemetry env vars at any OTLP-compatible backend (Aspire Dashboard, App Insights, Grafana/Prometheus, etc.) — no code change beyond `configure_otel_providers()`:
+![appinsights-agents-dashboard](appinsights-agents-dashboard.png)
+![appinsights-dashboard-overview](appinsights-dashboard-overview.png)
 
-```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"   # e.g. local Aspire Dashboard
-python observe.py
-```
+![Foundry GUI](foundry-monitor-appinsights-setup.png)
+![Foundry GUI](foundry-monitor-dashboard.png)
 
-> Tip: for a zero-setup local dashboard, run the **Aspire Dashboard** in Docker, or use the **AI Toolkit for VS Code** tracing view.
 
-### 4.3 Observe inside the harnesses
+> Keep `enable_sensitive_data=False` in production. Turning it on can record prompts, responses, tool arguments, and tool results. Apply access control, retention, sampling, and redaction before collecting customer content.
+---
 
-- **DevUI (Stage 2):** launch with tracing so spans appear in the UI:
+### 4.4 Going deeper  — what to monitor in production
 
-  ```bash
-  devui ./agents --port 8080 --instrumentation
-  ```
-
-- **Foundry Hosted (Stage 3):** Foundry manages the exporters and injects `APPLICATIONINSIGHTS_CONNECTION_STRING`, so deployed agent telemetry flows into **Application Insights** without exporter setup in your code.
-
-### 4.4 OTel for agents: what should you monitor?
+> You can stop here and still have working observability. This section is reference material for when you run a real service.
 
 OTel has three signals:
 
@@ -697,24 +634,6 @@ A practical production dashboard should also derive or record:
 
 Use stable attributes such as `gen_ai.agent.name`, `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.response.model`, and `gen_ai.conversation.id` to filter and correlate telemetry. Avoid high-cardinality metric dimensions such as raw user IDs, prompts, response IDs, or conversation IDs; keep those on traces/logs instead.
 
-**Send a locally run Foundry agent to Application Insights:**
-
-```bash
-uv pip install azure-monitor-opentelemetry
-```
-
-```python
-# Call once during async application startup, before agent.run(...).
-await client.configure_azure_monitor(
-  enable_sensitive_data=False,
-  enable_live_metrics=True,
-)
-```
-
-`configure_azure_monitor()` retrieves the Application Insights connection string from the Foundry project. Use this for a local Python process; Foundry Hosted Agents manage the exporter after deployment. In Azure Portal, open **Application Insights → Agents (Preview)** to inspect runs, models, tools, errors, and token usage.
-
-> Keep `enable_sensitive_data=False` in production. Turning it on can record prompts, responses, tool arguments, and tool results. Apply access control, retention, sampling, and redaction before collecting customer content. Token usage can be missing when a provider does not return it; treat missing as unavailable, not zero.
-
 **References**
 
 - [Agent Framework observability](https://learn.microsoft.com/agent-framework/agents/observability)
@@ -726,9 +645,3 @@ await client.configure_azure_monitor(
 ✅ **Checkpoint:** you can see traces, tool calls, and token usage for the same agent, from local console to cloud APM.
 
 ---
-
-## Where to go next
-- Add more **tools** and **middleware** to the agent.
-- Explore **Workflows** for multi-agent orchestration: `python/samples/03-workflows/`.
-- Turn on **observability** (OpenTelemetry) end-to-end.
-- Reference samples: `python/samples/04-hosting/foundry-hosted-agents/`.
