@@ -11,7 +11,7 @@ from typing import Any
 
 from ag_ui.core import StateDeltaEvent
 
-from .._utils import safe_json_parse
+from ._utils import safe_json_parse
 
 logger = logging.getLogger(__name__)
 

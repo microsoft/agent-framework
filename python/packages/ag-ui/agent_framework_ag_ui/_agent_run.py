@@ -51,13 +51,14 @@ from agent_framework.exceptions import AgentInvalidResponseException
 
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
 from ._message_adapters import normalize_agui_input_messages
-from ._orchestration._predictive_state import PredictiveStateHandler
-from ._orchestration._tooling import collect_server_tools, merge_tools, register_additional_client_tools
+from ._predictive_state import PredictiveStateHandler
+from ._tooling import collect_server_tools, merge_tools, register_additional_client_tools
 from ._run_common import (
     FlowState,
     _approval_interrupt_for_function_call,  # type: ignore
     _approval_steps_response_schema,  # type: ignore
     _build_run_finished_event,  # type: ignore
+    _cancelled_resume_interrupt_ids,  # type: ignore
     _close_reasoning_block,  # type: ignore
     _emit_content,  # type: ignore
     _extract_resume_payload,  # type: ignore
@@ -74,8 +75,8 @@ from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
     AGUIThreadSnapshot,
-    _clear_thread_snapshot_interrupt,
 )
+from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
 from ._utils import (
     canonical_function_arguments,
     convert_agui_tools_to_agent_framework,
@@ -773,18 +774,6 @@ def _approval_state_tool_call_ids(
     if stored_state is not None:
         call_ids.update(_content_tool_call_ids(stored_state))
     return call_ids
-
-
-def _cancelled_resume_interrupt_ids(resume_payload: Any) -> set[str]:
-    """Return cancelled canonical resume interrupt ids."""
-    interrupt_ids: set[str] = set()
-    for interrupt in _normalize_resume_interrupts(resume_payload):
-        if interrupt.get("status") != "cancelled":
-            continue
-        interrupt_id = interrupt.get("id")
-        if interrupt_id:
-            interrupt_ids.add(str(interrupt_id))
-    return interrupt_ids
 
 
 def _tool_approval_state_exists_for_cancelled_resume(
@@ -1679,14 +1668,6 @@ def _build_messages_snapshot(
     return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
 
 
-def _event_messages_to_snapshot_dicts(messages: list[Any]) -> list[dict[str, Any]]:
-    """Convert AG-UI message event models back to plain snapshot dictionaries."""
-    safe_messages = make_json_safe(messages)
-    if not isinstance(safe_messages, list):
-        return []
-    return [cast(dict[str, Any], message) for message in safe_messages if isinstance(message, dict)]
-
-
 def _text_events_to_snapshot_messages(events: list[BaseEvent]) -> list[dict[str, Any]]:
     """Convert streamed text-message events into snapshot message dictionaries."""
     messages: list[dict[str, Any]] = []
@@ -1701,67 +1682,6 @@ def _text_events_to_snapshot_messages(events: list[BaseEvent]) -> list[dict[str,
             if open_message is not None:
                 open_message["content"] = f"{open_message['content']}{event.delta}"
     return [message for message in messages if message.get("content")]
-
-
-async def _hydrate_thread_snapshot(
-    *,
-    config: AgentConfig,
-    scope: str,
-    thread_id: str,
-    run_id: str,
-) -> AsyncGenerator[BaseEvent]:
-    """Replay the latest stored AG-UI Thread Snapshot without invoking the agent."""
-    yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-    if config.snapshot_store is None:
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
-        return
-
-    snapshot = await config.snapshot_store.get(scope=scope, thread_id=thread_id)
-    if snapshot is None:
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
-        return
-
-    if snapshot.state is not None:
-        yield StateSnapshotEvent(snapshot=snapshot.state)
-    if snapshot.messages:
-        yield MessagesSnapshotEvent(messages=snapshot.messages)  # type: ignore[arg-type]
-    yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=snapshot.interrupt)
-
-
-async def _save_thread_snapshot(
-    *,
-    config: AgentConfig,
-    scope: str | None,
-    thread_id: str,
-    messages: list[dict[str, Any]],
-    state: dict[str, Any] | None,
-    interrupt: list[dict[str, Any]] | None,
-    session_state: dict[str, Any] | None,
-) -> None:
-    """Save the latest AG-UI Thread Snapshot when persistence is configured."""
-    if config.snapshot_store is None or scope is None:
-        return
-
-    try:
-        await config.snapshot_store.save(
-            scope=scope,
-            thread_id=thread_id,
-            snapshot=AGUIThreadSnapshot(
-                messages=messages,
-                state=state,
-                interrupt=interrupt,
-                session_state=session_state,
-            ),
-        )
-    except Exception:
-        # The run itself already streamed successfully; a transient store failure
-        # must not surface as RUN_ERROR for a completed run. The previous snapshot
-        # stays available for hydration.
-        logger.exception(
-            "Failed to save AG-UI Thread Snapshot for scope=%s thread_id=%s; keeping previous snapshot.",
-            scope,
-            thread_id,
-        )
 
 
 def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThreadSnapshot | None) -> None:
@@ -1888,50 +1808,38 @@ async def run_agent_stream(
     available_interrupts = input_data.get("available_interrupts") or input_data.get("availableInterrupts")
     raw_messages: list[dict[str, Any]] = input_data.get("messages", []) or []
     resume_payload = _extract_resume_payload(input_data)
-    if config.snapshot_store is not None and snapshot_scope is not None and not raw_messages and resume_payload is None:
-        async for event in _hydrate_thread_snapshot(
-            config=config,
-            scope=snapshot_scope,
-            thread_id=thread_id,
-            run_id=run_id,
-        ):
+    snapshot_session = await ThreadSnapshotSession.open(
+        store=config.snapshot_store,
+        scope=snapshot_scope,
+        thread_id=thread_id,
+    )
+    if snapshot_session.enabled and not raw_messages and resume_payload is None:
+        async for event in snapshot_session.hydrate_events(run_id=run_id):
             yield event
         return
 
-    stored_snapshot: AGUIThreadSnapshot | None = None
+    stored_snapshot = snapshot_session.stored
     stored_pending_approval_interrupt_ids: set[str] = set()
     seeded_resume_from_snapshot = False
-    if config.snapshot_store is not None and snapshot_scope is not None:
-        stored_snapshot = await config.snapshot_store.get(scope=snapshot_scope, thread_id=thread_id)
-        if stored_snapshot is not None:
-            stored_pending_approval_interrupt_ids = _stored_pending_approval_interrupt_ids(stored_snapshot.interrupt)
-        if stored_snapshot is not None and resume_payload is not None and stored_pending_approval_interrupt_ids:
-            raw_messages = [copy.deepcopy(message) for message in stored_snapshot.messages] + raw_messages
+    if stored_snapshot is not None:
+        stored_pending_approval_interrupt_ids = _stored_pending_approval_interrupt_ids(stored_snapshot.interrupt)
+        if resume_payload is not None and stored_pending_approval_interrupt_ids:
+            raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
             seeded_resume_from_snapshot = True
-        elif stored_snapshot is not None:
+        else:
             raw_messages = _reconstruct_messages_from_thread_snapshot(
                 stored_messages=stored_snapshot.messages,
                 incoming_messages=raw_messages,
                 stored_interrupt=stored_snapshot.interrupt,
             )
 
-    # Initialize flow state with stored state plus request-provided overrides.
+    # Initialize flow state with stored state plus request-provided overrides;
+    # endpoint-deferred defaults apply only to keys missing from both.
     flow = FlowState()
-    request_state = input_data.get("state")
-    if stored_snapshot is not None and stored_snapshot.state is not None:
-        flow.current_state = dict(stored_snapshot.state)
-        if isinstance(request_state, dict):
-            flow.current_state.update(request_state)
-    elif isinstance(request_state, dict):
-        flow.current_state = dict(request_state)
-
-    # Apply endpoint-deferred defaults only for keys missing from both the stored
-    # snapshot state and the request state, so defaults never reset persisted state.
-    deferred_default_state = cast(dict[str, Any] | None, input_data.get(_DEFAULT_STATE_INPUT_KEY))
-    if deferred_default_state:
-        for key, value in deferred_default_state.items():
-            if key not in flow.current_state:
-                flow.current_state[key] = copy.deepcopy(value)
+    flow.current_state = snapshot_session.effective_state(
+        request_state=input_data.get("state"),
+        deferred_defaults=cast(dict[str, Any] | None, input_data.get(_DEFAULT_STATE_INPUT_KEY)),
+    )
 
     # Apply schema defaults for missing state keys
     if state_schema:
@@ -1971,13 +1879,7 @@ async def run_agent_stream(
         if should_clear_tool_approval_state:
             _clear_tool_approval_state(approval_state_store, approval_thread_id)
         if resume_error_code == "APPROVAL_RESUME_CANCELLED":
-            if config.snapshot_store is not None and snapshot_scope is not None:
-                await _clear_thread_snapshot_interrupt(
-                    snapshot_store=config.snapshot_store,
-                    scope=snapshot_scope,
-                    thread_id=thread_id,
-                    interrupt_ids=cancelled_resume_ids or None,
-                )
+            await snapshot_session.clear_interrupts(interrupt_ids=cancelled_resume_ids or None)
         yield resume_error
         return
     resume_messages = _resume_to_tool_messages(resume_payload, exclude_interrupt_ids=handled_resume_ids)
@@ -2094,14 +1996,11 @@ async def run_agent_stream(
         # Persist the completed confirmation turn with interrupt=None so hydration
         # does not replay the stale pending interrupt after the user responded.
         persisted_messages = snapshot_messages + _text_events_to_snapshot_messages(confirmation_events)
-        if resume_payload is not None and stored_snapshot is not None and not seeded_resume_from_snapshot:
+        if resume_payload is not None and not seeded_resume_from_snapshot:
             # Generic resume requests carry only the synthesized response, so prepend
             # stored history unless this run already seeded raw messages from it.
-            persisted_messages = [copy.deepcopy(message) for message in stored_snapshot.messages] + persisted_messages
-        await _save_thread_snapshot(
-            config=config,
-            scope=snapshot_scope,
-            thread_id=thread_id,
+            persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
+        await snapshot_session.save(
             messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
             interrupt=None,
@@ -2397,14 +2296,11 @@ async def run_agent_stream(
     # Always emit RunFinished - confirm_changes tool call is complete (Start -> Args -> End)
     # The UI will show confirmation dialog and send a new request when user responds
     persisted_messages = latest_messages_snapshot
-    if resume_payload is not None and stored_snapshot is not None and not seeded_resume_from_snapshot:
+    if resume_payload is not None and not seeded_resume_from_snapshot:
         # Generic resume requests carry only the synthesized response, so prepend
         # stored history unless this run already seeded raw messages from it.
-        persisted_messages = [copy.deepcopy(message) for message in stored_snapshot.messages] + persisted_messages
-    await _save_thread_snapshot(
-        config=config,
-        scope=snapshot_scope,
-        thread_id=thread_id,
+        persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
+    await snapshot_session.save(
         messages=persisted_messages,
         state=latest_state_snapshot,
         interrupt=flow.interrupts or None,
