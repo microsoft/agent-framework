@@ -132,6 +132,66 @@ public sealed class CompactionProviderTests
     }
 
     [Fact]
+    public async Task InvokingAsyncDoesNotSkipCompactionForLocalHistorySentinelAsync()
+    {
+        // Arrange
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
+        CompactionProvider provider = new(strategy);
+
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        ChatClientAgentSession session = new()
+        {
+            ConversationId = PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId,
+        };
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ];
+
+        AIContextProvider.InvokingContext context = new(
+            mockAgent.Object,
+            session,
+            new AIContext { Messages = messages });
+
+        // Act
+        AIContext result = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.NotNull(result.Messages);
+        Assert.Single(result.Messages);
+    }
+
+    [Fact]
+    public async Task InvokingAsyncSkipsCompactionForRealServiceConversationIdAsync()
+    {
+        // Arrange
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
+        CompactionProvider provider = new(strategy);
+
+        Mock<AIAgent> mockAgent = new() { CallBase = true };
+        ChatClientAgentSession session = new() { ConversationId = "service-conversation-id" };
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ];
+
+        AIContextProvider.InvokingContext context = new(
+            mockAgent.Object,
+            session,
+            new AIContext { Messages = messages });
+
+        // Act
+        AIContext result = await provider.InvokingAsync(context);
+
+        // Assert
+        Assert.Same(messages, result.Messages);
+    }
+
+    [Fact]
     public async Task InvokingAsyncNoCompactionNeededReturnsOriginalMessagesAsync()
     {
         // Arrange — trigger never fires → no compaction
