@@ -828,7 +828,7 @@ class FunctionShortCircuit(FunctionMiddleware):
         raise MiddlewareTermination("cached tool result")
 
 
-def _cached_agent_stream(text: str) -> "ResponseStream[AgentResponseUpdate, AgentResponse[Any]]":
+def _cached_agent_stream(text: str) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
     async def _updates() -> AsyncIterable[AgentResponseUpdate]:
         yield AgentResponseUpdate(contents=[Content.from_text(text)], role="assistant")
 
