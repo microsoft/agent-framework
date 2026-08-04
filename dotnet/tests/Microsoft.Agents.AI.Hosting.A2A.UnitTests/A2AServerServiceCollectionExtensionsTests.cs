@@ -124,7 +124,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
         mockTaskStore
             .Setup(s => s.GetTaskAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentTask { Id = TaskId, ContextId = $"{IsolationKey}::ctx-1", Status = new global::A2A.TaskStatus { State = TaskState.Completed } });
-        services.AddKeyedSingleton<ITaskStore>(AgentName, mockTaskStore.Object);
+        services.AddKeyedSingleton(AgentName, mockTaskStore.Object);
 
         var mockKeyProvider = new Mock<SessionIsolationKeyProvider>();
         mockKeyProvider
