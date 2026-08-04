@@ -20,6 +20,7 @@ from agent_framework.exceptions import ChatClientException, ChatClientInvalidReq
 from ollama import AsyncClient
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
+from ollama._types import ResponseError
 from openai import AsyncStream
 from pydantic import BaseModel
 from pytest import fixture
@@ -810,3 +811,200 @@ class TestParallelToolCallUniqueness:
         assert formatted[0].tool_name == "search:advanced", (
             f"Expected bare name 'search:advanced', got '{formatted[0].tool_name}'"
         )
+
+
+@patch("agent_framework_ollama._chat_client.asyncio.sleep", new_callable=AsyncMock)
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_retries_transient_5xx_errors(
+    mock_chat: AsyncMock,
+    mock_sleep: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_response: OllamaChatResponse,
+) -> None:
+    """Transient 5xx errors should be retried up to max_retries."""
+    error = ResponseError("Bad Gateway", 502)
+    mock_chat.side_effect = [error, mock_chat_completion_response]
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(max_retries=2)
+    result = await ollama_client.get_response(messages=chat_history)
+
+    assert result.text == "test"
+    assert mock_chat.await_count == 2
+    assert mock_sleep.await_count == 1
+
+
+@patch("agent_framework_ollama._chat_client.asyncio.sleep", new_callable=AsyncMock)
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_does_not_retry_4xx_errors(
+    mock_chat: AsyncMock,
+    mock_sleep: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    """Non-transient 4xx errors (like 400 Bad Request) should fail immediately."""
+    error = ResponseError("Bad Request", 400)
+    mock_chat.side_effect = error
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(max_retries=2)
+
+    with pytest.raises(ChatClientException) as exc_info:
+        await ollama_client.get_response(messages=chat_history)
+
+    assert "Ollama chat request failed" in str(exc_info.value)
+    assert mock_chat.await_count == 1
+    assert mock_sleep.await_count == 0
+
+
+@patch("agent_framework_ollama._chat_client.asyncio.sleep", new_callable=AsyncMock)
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_does_not_retry_mid_stream_errors(
+    mock_chat: AsyncMock,
+    mock_sleep: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    """If a stream starts successfully but fails mid-stream, it should NOT be retried."""
+
+    async def failing_stream():
+        yield OllamaChatResponse(message=OllamaMessage(content="hello", role="assistant"), model="test")
+        raise ResponseError("Server crashed mid-stream", 502)
+
+    mock_chat.return_value = failing_stream()
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(max_retries=2)
+
+    with pytest.raises(ChatClientException) as exc_info:
+        async for _ in ollama_client.get_response(messages=chat_history, stream=True):
+            pass
+
+    assert "mid-stream" in str(exc_info.value).lower()
+    assert mock_chat.await_count == 1
+    assert mock_sleep.await_count == 0
+
+
+@patch("agent_framework_ollama._chat_client.asyncio.sleep", new_callable=AsyncMock)
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_retries_httpx_connect_error(
+    mock_chat: AsyncMock,
+    mock_sleep: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_response: OllamaChatResponse,
+) -> None:
+    """httpx connection errors should be retried."""
+    import httpx
+
+    error = httpx.ConnectError("Connection refused")
+    mock_chat.side_effect = [error, mock_chat_completion_response]
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(max_retries=2)
+    result = await ollama_client.get_response(messages=chat_history)
+
+    assert result.text == "test"
+    assert mock_chat.await_count == 2
+    assert mock_sleep.await_count == 1
+
+
+@patch("agent_framework_ollama._chat_client.asyncio.sleep", new_callable=AsyncMock)
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_retries_goaway_string_error(
+    mock_chat: AsyncMock,
+    mock_sleep: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_response: OllamaChatResponse,
+) -> None:
+    """Transport-level GOAWAY string errors should be retried."""
+    error = Exception("http2: server sent GOAWAY and closed the connection")
+    mock_chat.side_effect = [error, mock_chat_completion_response]
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(max_retries=2)
+    result = await ollama_client.get_response(messages=chat_history)
+
+    assert result.text == "test"
+    assert mock_chat.await_count == 2
+    assert mock_sleep.await_count == 1
+
+
+@patch("agent_framework_ollama._chat_client.asyncio.sleep", new_callable=AsyncMock)
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_max_retries_zero(
+    mock_chat: AsyncMock,
+    mock_sleep: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    """max_retries=0 should fail immediately without retrying."""
+    error = ResponseError("Bad Gateway", 502)
+    mock_chat.side_effect = error
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(max_retries=0)
+
+    with pytest.raises(ChatClientException):
+        await ollama_client.get_response(messages=chat_history)
+
+    assert mock_chat.await_count == 1
+    assert mock_sleep.await_count == 0
+
+
+@patch("agent_framework_ollama._chat_client.asyncio.sleep", new_callable=AsyncMock)
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_all_retries_exhausted(
+    mock_chat: AsyncMock,
+    mock_sleep: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    """If all retries are exhausted, the final error should be wrapped in ChatClientException."""
+    error = ResponseError("Service Unavailable", 503)
+    mock_chat.side_effect = error
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(max_retries=2)
+
+    with pytest.raises(ChatClientException) as exc_info:
+        await ollama_client.get_response(messages=chat_history)
+
+    assert "Ollama chat request failed" in str(exc_info.value)
+    assert mock_chat.await_count == 3
+    assert mock_sleep.await_count == 2
+
+
+@patch("agent_framework_ollama._chat_client.asyncio.sleep", new_callable=AsyncMock)
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_streaming_retries_pre_stream_success(
+    mock_chat: AsyncMock,
+    mock_sleep: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_response: OllamaChatResponse,
+) -> None:
+    """If a stream fails pre-stream but succeeds on retry, output should be yielded correctly."""
+
+    async def successful_stream():
+        yield OllamaChatResponse(message=OllamaMessage(content="hello", role="assistant"), model="test")
+
+    error = ResponseError("Bad Gateway", 502)
+    mock_chat.side_effect = [error, successful_stream()]
+    chat_history.append(Message(contents=["hello world"], role="user"))
+
+    ollama_client = OllamaChatClient(max_retries=2)
+
+    chunks = []
+    async for update in ollama_client.get_response(messages=chat_history, stream=True):
+        chunks.append(update)
+
+    assert len(chunks) > 0
+    assert chunks[0].text == "hello"
+    assert mock_chat.await_count == 2
+    assert mock_sleep.await_count == 1
+
+
+# endregion

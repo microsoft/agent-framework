@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 import sys
 import uuid
 from collections.abc import (
@@ -16,6 +18,7 @@ from collections.abc import (
 from itertools import chain
 from typing import Any, ClassVar, Generic, TypedDict
 
+import httpx
 from agent_framework import (
     BaseChatClient,
     ChatAndFunctionMiddlewareTypes,
@@ -44,6 +47,7 @@ from ollama import AsyncClient
 # Rename imported types to avoid naming conflicts with Agent Framework types
 from ollama._types import ChatResponse as OllamaChatResponse
 from ollama._types import Message as OllamaMessage
+from ollama._types import ResponseError
 from pydantic import BaseModel
 
 from ._feature_usage import FeatureIndex
@@ -310,6 +314,7 @@ class OllamaChatClient(
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        max_retries: int = 2,
     ) -> None:
         """Initialize an Ollama Chat client.
 
@@ -339,6 +344,7 @@ class OllamaChatClient(
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
         # Save Host URL for serialization with to_dict()
         self.host = str(self.client._client.base_url)  # type: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
+        self.max_retries = max_retries
 
         super().__init__(
             additional_properties=additional_properties,
@@ -359,20 +365,42 @@ class OllamaChatClient(
         if stream:
             # Streaming mode
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                """
+                Streaming response handler.
+                If a stream starts successfully but fails mid-stream (i.e., tokens have
+                already been yielded), it will NOT be retried. Retrying mid-stream would
+                re-emit a divergent token sequence to the consumer.
+                """
                 validated_options = await self._validate_options(options)
                 options_dict = self._prepare_options(messages, validated_options)
                 mark_feature_used(FeatureIndex.OLLAMA)
-                try:
-                    response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
-                        stream=True,
-                        **options_dict,
-                        **kwargs,
-                    )
-                except Exception as ex:
-                    raise ChatClientException(f"Ollama streaming chat request failed : {ex}", ex) from ex
 
-                async for part in response_object:
-                    yield self._parse_streaming_response_from_ollama(part)
+                for attempt in range(self.max_retries + 1):
+                    first_chunk_received = False
+                    try:
+                        response_object: AsyncIterable[OllamaChatResponse] = await self.client.chat(  # type: ignore[misc]
+                            stream=True, **options_dict, **kwargs
+                        )
+                        async for part in response_object:
+                            first_chunk_received = True
+                            yield self._parse_streaming_response_from_ollama(part)
+                        return
+
+                    except Exception as ex:
+                        if first_chunk_received:
+                            raise ChatClientException(
+                                f"Ollama streaming chat request failed mid-stream: {ex}", ex
+                            ) from ex
+
+                        if attempt == self.max_retries or not self._is_transient_error(ex):
+                            raise ChatClientException(f"Ollama streaming chat request failed: {ex}", ex) from ex
+
+                        backoff = self._get_retry_delay(attempt, ex)
+                        logger.warning(
+                            f"Transient error before streaming. Retrying in {backoff:.2f}s "
+                            f"({attempt + 1}/{self.max_retries}). Error: {ex}"
+                        )
+                        await asyncio.sleep(backoff)
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
@@ -381,19 +409,25 @@ class OllamaChatClient(
             validated_options = await self._validate_options(options)
             options_dict = self._prepare_options(messages, validated_options)
             mark_feature_used(FeatureIndex.OLLAMA)
-            try:
-                response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
-                    stream=False,
-                    **options_dict,
-                    **kwargs,
-                )
-            except Exception as ex:
-                raise ChatClientException(f"Ollama chat request failed : {ex}", ex) from ex
 
-            return self._parse_response_from_ollama(
-                response,
-                response_format=validated_options.get("response_format"),
-            )
+            for attempt in range(self.max_retries + 1):
+                try:
+                    response: OllamaChatResponse = await self.client.chat(  # type: ignore[misc]
+                        stream=False, **options_dict, **kwargs
+                    )
+                    return self._parse_response_from_ollama(
+                        response,
+                        response_format=validated_options.get("response_format"),
+                    )
+                except Exception as ex:
+                    if attempt == self.max_retries or not self._is_transient_error(ex):
+                        raise ChatClientException(f"Ollama chat request failed: {ex}", ex) from ex
+
+                    backoff = self._get_retry_delay(attempt, ex)
+                    logger.warning(
+                        f"Transient error. Retrying in {backoff:.2f}s ({attempt + 1}/{self.max_retries}). Error: {ex}"
+                    )
+                    await asyncio.sleep(backoff)
 
         return _get_response()
 
@@ -648,3 +682,51 @@ class OllamaChatClient(
                 # Pass through all other tools unchanged
                 chat_tools.append(tool)
         return chat_tools
+
+    def _is_transient_error(self, ex: Exception) -> bool:
+        """Determine if an exception is a transient error that should be retried."""
+        if isinstance(ex, ResponseError):
+            status_code = getattr(ex, "status_code", None)
+            if status_code is not None:
+                if status_code >= 500 or status_code in (408, 409, 429):
+                    return True
+
+        if isinstance(
+            ex,
+            (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.WriteTimeout,
+                httpx.PoolTimeout,
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                httpx.ReadError,
+                httpx.WriteError,
+                httpx.RemoteProtocolError,
+            ),
+        ):
+            return True
+
+        ex_str = str(ex).lower()
+        if "goaway" in ex_str or "connection reset" in ex_str or "eof occurred" in ex_str:
+            return True
+
+        return False
+
+    def _get_retry_delay(self, attempt: int, ex: Exception) -> float:
+        """Calculate retry delay. Respects Retry-After header if present, else uses exponential backoff."""
+        if isinstance(ex, ResponseError):
+            response = getattr(ex, "response", None)
+            if response is not None and hasattr(response, "headers"):
+                retry_after = response.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        return float(retry_after)
+                    except ValueError:
+                        pass
+
+        base_delay = 0.5
+        max_delay = 10.0
+        backoff = min(base_delay * (2**attempt) + random.uniform(0, 0.5), max_delay)
+        return backoff
