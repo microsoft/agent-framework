@@ -55,7 +55,7 @@ from agent_framework.observability import (
     _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
 )
 
-from ._a2ui._state import build_ag_ui_context_slice, read_inject_a2ui_flag, stamp_context_slice
+from ._a2ui._state import build_ag_ui_context_slice, read_inject_a2ui_flag
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
 from ._message_adapters import normalize_agui_input_messages
 from ._predictive_state import PredictiveStateHandler
@@ -2070,6 +2070,25 @@ def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThr
     session.state.update(restored.state)
 
 
+def _a2ui_existing_tool_names(agent: SupportsAgentRun, tools: list[Any] | None) -> list[str]:
+    """Tool names already visible for this run, for the A2UI no-double-injection check.
+
+    Combines the merged runtime ``tools`` with the agent's own default tools
+    (``agent.default_options["tools"]``). Without the latter, an agent constructed with
+    its own ``generate_a2ui`` but called with no runtime tools would look empty, so
+    auto-injection would add a second declaration and the core tool merge would raise
+    ``Duplicate tool name`` before the provider call.
+    """
+    names: set[str] = {name for name in (getattr(t, "name", None) for t in (tools or [])) if name}
+    default_options = getattr(agent, "default_options", None)
+    if isinstance(default_options, dict):
+        for tool in default_options.get("tools") or []:
+            name = getattr(tool, "name", None)
+            if name:
+                names.add(name)
+    return list(names)
+
+
 def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
     """Return session-state namespaces that client Shared State cannot own."""
     context_providers = cast(list[Any], getattr(agent, "context_providers", []))
@@ -2287,39 +2306,50 @@ async def run_agent_stream(
     tools = merge_tools(server_tools, client_tools)
 
     # A2UI auto-injection: CopilotKit's runtime composes forwardedProps; the AG-UI
-    # a2ui-middleware sets injectA2UITool there. When set, auto-wrap the agent with A2UI
-    # surface generation (inferring the render sub-agent from the planner's chat client)
-    # and strip the middleware-injected render tool from the planner's list. When unset,
-    # the developer wires A2UI themselves. A backend config["inject_a2ui_tool"] opt-in
-    # enables A2UI without the runtime flag (nullish fallback: an explicit runtime false
-    # still wins). plan_a2ui_injection is imported lazily so this hosting path stays
+    # a2ui-middleware sets injectA2UITool there. When set (or a backend
+    # config["inject_a2ui_tool"] opt-in is — nullish fallback, so an explicit runtime
+    # false still wins), the run is driven through an A2UI runner that adds surface
+    # generation and strips the middleware-injected render tool from the planner's list.
+    #
+    # The runner wraps the agent ONLY for the stream call below; ``agent`` itself is NOT
+    # rebound, so protected-state-key computation, approval resolution, and continuation
+    # serialization keep reading the real agent's context_providers and client. The
+    # forwarded AG-UI context is handed to the runner directly (not stamped onto run
+    # option additional_properties), so a non-A2UI run that supplies context is never
+    # affected. plan_a2ui_injection is imported lazily so this hosting path stays
     # importable without the optional ag-ui-a2ui-toolkit.
     _forwarded = input_data.get("forwarded_props") or input_data.get("forwardedProps")
     _a2ui_config = getattr(config, "a2ui_config", None)
     _a2ui_flag = read_inject_a2ui_flag(_forwarded)
     if _a2ui_flag is None and _a2ui_config:
         _a2ui_flag = _a2ui_config.get("inject_a2ui_tool")
+    a2ui_runner: Any | None = None
+    a2ui_active = False
     if _a2ui_flag:
         try:
             from ._a2ui import plan_a2ui_injection
-
-            existing_tool_names = [name for name in (getattr(t, "name", None) for t in (tools or [])) if name]
-            plan = plan_a2ui_injection(
-                agent=agent,
-                forwarded_props=_forwarded,
-                existing_tool_names=existing_tool_names,
-                config=_a2ui_config,
-            )
-            if plan is not None:
-                agent = plan["agent"]
-                drop = set(plan["drop_tool_names"])
-                if tools:
-                    tools = [t for t in tools if getattr(t, "name", None) not in drop]
         except ImportError as exc:
-            logger.warning(
-                "injectA2UITool is set but A2UI support is unavailable (install the [a2ui] extra): %s",
-                exc,
-            )
+            # A2UI was explicitly requested; failing loud beats limping on with the
+            # render tool advertised but no executor (which strands an unanswered tool
+            # call). Tell the caller exactly how to fix it.
+            raise RuntimeError(
+                "A2UI was requested (injectA2UITool / a2ui_config) but the A2UI support "
+                "package is not installed. Install the optional extra: "
+                "pip install 'agent-framework-ag-ui[a2ui]'."
+            ) from exc
+        plan = plan_a2ui_injection(
+            agent=agent,
+            forwarded_props=_forwarded,
+            existing_tool_names=_a2ui_existing_tool_names(agent, tools),
+            config=_a2ui_config,
+            context_slice=build_ag_ui_context_slice(input_data.get("context")),
+        )
+        if plan is not None:
+            a2ui_runner = plan["runner"]
+            a2ui_active = True
+            drop = set(plan["drop_tool_names"])
+            if tools:
+                tools = [t for t in tools if getattr(t, "name", None) not in drop]
 
     # Create session (with service session support)
     if config.use_service_session:
@@ -2364,16 +2394,11 @@ async def run_agent_stream(
     if safe_metadata:
         run_kwargs["options"] = {"metadata": safe_metadata, "store": True}
 
-    # Forward the AG-UI context (A2UI component catalog + guidelines) onto the run
-    # options' additional_properties. MAF otherwise drops input_data["context"]; A2UI
-    # wrapper agents read this slice back via ag_ui_a2ui_toolkit-free helpers (no
-    # toolkit import here). Mirrors .NET MapAGUI stamping ag_ui_context onto
-    # ChatOptions.AdditionalProperties. Only stamped when there is A2UI context, so
-    # non-A2UI runs are unaffected. The auto-inject ENABLEMENT flag is sourced
-    # separately from forwardedProps at injection-decision time (not here).
-    a2ui_context_slice = build_ag_ui_context_slice(input_data.get("context"))
-    if a2ui_context_slice:
-        run_kwargs["options"] = stamp_context_slice(run_kwargs.get("options"), a2ui_context_slice)
+    # NOTE: the forwarded AG-UI context (A2UI component catalog + guidelines) is no
+    # longer stamped onto run-option additional_properties. It is handed to the A2UI
+    # runner directly (see the gate above / _a2ui.plan_a2ui_injection). Stamping it here
+    # leaked the slice to the provider SDK as an unknown request option on any run that
+    # supplied AG-UI context, including non-A2UI runs where no wrapper stripped it back.
 
     # Resolve approval responses (execute approved tools, replace approvals with results)
     # This must happen before running the agent so it sees the tool results
@@ -2450,10 +2475,12 @@ async def run_agent_stream(
     )
     # Agent middleware can defer the inner run until streaming begins, so the
     # telemetry override must cover construction, stream resolution, and every pull.
+    # Drive the A2UI runner when one is active (see the gate above); the original agent
+    # stays bound for all other reads.
     telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
     telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
     with telemetry_context():
-        response_stream = agent.run(messages, stream=True, **run_kwargs)
+        response_stream = (a2ui_runner or agent).run(messages, stream=True, **run_kwargs)
         stream = await _normalize_response_stream(response_stream)
 
     async for update in _iterate_with_context(stream, telemetry_context):
@@ -2730,12 +2757,12 @@ async def run_agent_stream(
         # the reconciled message list, which drops that order — the injected
         # generate_a2ui tool card re-positions BELOW the surface and text. Other AG-UI
         # frameworks emit no terminal snapshot here, so skip it for A2UI runs; the next
-        # turn's history is still reconstructable from the streamed events.
-        tool_names = {(tc.get("function") or {}).get("name") for tc in flow.tool_calls_by_id.values()}
-        a2ui_run = "generate_a2ui" in tool_names or "render_a2ui" in tool_names
-        if a2ui_run:
+        # turn's history is still reconstructable from the streamed events. Keyed off
+        # whether A2UI actually drove this run (a2ui_active), NOT the literal tool names,
+        # so an unrelated user tool named "generate_a2ui" keeps its snapshot.
+        if a2ui_active:
             logger.info("Suppressing terminal MessagesSnapshotEvent for A2UI run to preserve streamed message order.")
-        if not a2ui_run and not _should_suppress_intermediate_snapshot(
+        if not a2ui_active and not _should_suppress_intermediate_snapshot(
             last_tool_name, predict_state_config, config.require_confirmation
         ):
             yield snapshot_event

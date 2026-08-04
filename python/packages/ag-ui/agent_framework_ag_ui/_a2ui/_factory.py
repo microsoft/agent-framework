@@ -33,6 +33,7 @@ def enable_a2ui(
     inner_agent: Any,
     subagent_chat_client: Any,
     params: A2UIToolParams | None = None,
+    context_slice: dict[str, Any] | None = None,
 ) -> AGUIContextAgent:
     """Wrap ``inner_agent`` with full A2UI support.
 
@@ -48,11 +49,18 @@ def enable_a2ui(
             Chat-Completions client (``OpenAIChatCompletionClient``) so the balancing
             ``render_a2ui`` tool result replays cleanly on the next turn.
         params: Optional A2UI behaviour knobs (guidelines, recovery, catalog, ...).
+        context_slice: Forwarded AG-UI context (component catalog + guidelines) for the
+            run, handed to the wrappers directly instead of via run-option
+            ``additional_properties``. The wrappers read it and never forward it to the
+            provider SDK.
 
     Returns:
         The wrapped agent.
     """
-    return AGUIContextAgent(A2UIAgent(inner_agent, subagent_chat_client, params))
+    return AGUIContextAgent(
+        A2UIAgent(inner_agent, subagent_chat_client, params, context_slice),
+        context_slice,
+    )
 
 
 def plan_a2ui_injection(
@@ -61,6 +69,7 @@ def plan_a2ui_injection(
     forwarded_props: Any,
     existing_tool_names: list[str],
     config: dict[str, Any] | None = None,
+    context_slice: dict[str, Any] | None = None,
     log: logging.Logger | None = None,
 ) -> dict[str, Any] | None:
     """Decide whether to auto-inject A2UI for this run (Strands-parity contract).
@@ -78,8 +87,11 @@ def plan_a2ui_injection(
     3. The render sub-agent client is inferred from the planner agent's ``.client``; if
        none can be inferred, warn and skip (wire ``enable_a2ui`` explicitly instead).
 
-    Returns ``{"agent", "drop_tool_names"}`` (the wrapped agent + the middleware-injected
-    render tool to strip from the planner's tool list) or ``None`` when no injection.
+    Returns ``{"runner", "drop_tool_names"}`` (the A2UI runner to drive the stream call +
+    the middleware-injected render tool to strip from the planner's tool list) or
+    ``None`` when no injection. The caller uses ``runner`` ONLY for the stream call and
+    keeps the original agent bound for protected-state, approval, and serialization
+    reads, so those reads still see the real agent's ``context_providers`` and ``client``.
     """
     log = log or logger
     config = config or {}
@@ -113,6 +125,6 @@ def plan_a2ui_injection(
         "default_surface_id": config.get("default_surface_id"),
     }
     return {
-        "agent": enable_a2ui(agent, subagent_client, params),
+        "runner": enable_a2ui(agent, subagent_client, params, context_slice),
         "drop_tool_names": [render_tool_name],
     }

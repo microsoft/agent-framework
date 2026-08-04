@@ -15,12 +15,9 @@ from typing import TYPE_CHECKING, Any
 
 # Toolkit-free helpers — safe to import eagerly (no ag_ui_a2ui_toolkit dependency).
 from ._state import (
-    A2UI_CONTEXT_KEY,
     A2UI_SCHEMA_CONTEXT_DESCRIPTION,
     build_ag_ui_context_slice,
-    read_agent_state,
     read_inject_a2ui_flag,
-    stamp_context_slice,
 )
 
 if TYPE_CHECKING:
@@ -29,16 +26,13 @@ if TYPE_CHECKING:
     from ._factory import enable_a2ui, plan_a2ui_injection
 
 __all__ = [
-    "A2UI_CONTEXT_KEY",
     "A2UI_SCHEMA_CONTEXT_DESCRIPTION",
     "A2UIAgent",
     "AGUIContextAgent",
     "build_ag_ui_context_slice",
     "enable_a2ui",
     "plan_a2ui_injection",
-    "read_agent_state",
     "read_inject_a2ui_flag",
-    "stamp_context_slice",
 ]
 
 # Lazy (toolkit-dependent) exports: module -> symbols defined there.

@@ -25,6 +25,7 @@ Two paths mirror the .NET adapter:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -47,7 +48,7 @@ from ag_ui_a2ui_toolkit import (
 )
 from agent_framework import Content, FunctionTool, Message
 
-from ._state import read_agent_state, strip_context_slice, to_history_messages
+from ._state import to_history_messages
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,24 @@ def _as_tool_list(tools: Any) -> list[Any]:
 def _string_arg(args: dict[str, Any], name: str) -> str | None:
     value = args.get(name)
     return value if isinstance(value, str) else None
+
+
+def _tool_call_index(content: Any) -> int | None:
+    """The provider's streaming tool-call index for a function_call fragment, if known.
+
+    OpenAI-compatible chat completions tag each parallel tool call with a stable
+    ``index`` and send continuation deltas (empty id + name) that share it. The core
+    chat client surfaces it on ``content.additional_properties["tool_call_index"]`` when
+    available; return it so nameless deltas can be attributed to the right call even when
+    parallel calls interleave. Returns ``None`` when the client does not expose it (the
+    caller then falls back to most-recently-opened-call attribution).
+    """
+    ap = getattr(content, "additional_properties", None)
+    if isinstance(ap, dict):
+        idx = ap.get("tool_call_index")
+        if isinstance(idx, int):
+            return idx
+    return None
 
 
 def _normalize_catalog(catalog: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -293,10 +312,14 @@ class A2UIAgent:
         inner_agent: Any,
         subagent_chat_client: Any,
         params: A2UIToolParams | None = None,
+        context_slice: dict[str, Any] | None = None,
     ) -> None:
         self.inner_agent = inner_agent
         self.subagent_chat_client = subagent_chat_client
         self.params = resolve_a2ui_tool_params(params or {})
+        # Forwarded AG-UI context slice for the run (catalog + guidelines), handed in
+        # directly rather than read back from run-option additional_properties.
+        self._context_slice = context_slice or {}
         self.id = getattr(inner_agent, "id", None)
         self.name = getattr(inner_agent, "name", None)
         self.description = getattr(inner_agent, "description", None)
@@ -320,19 +343,14 @@ class A2UIAgent:
         from agent_framework import normalize_messages
 
         normalized = _sanitize_unanswered_tool_calls(normalize_messages(messages))
-        options = kwargs.get("options")
         tools = _as_tool_list(kwargs.pop("tools", None))
-        generate_tool = self._build_generate_tool(normalized, options)
+        generate_tool = self._build_generate_tool(normalized)
         merged = [*[t for t in tools if getattr(t, "name", None) != self.params["tool_name"]], generate_tool]
-        # Strip the adapter-private ag-ui context slice from options before it reaches
-        # the planner's chat client (additional_properties is forwarded to the provider
-        # SDK, which rejects the unknown key). The slice was already read above.
-        kwargs["options"] = strip_context_slice(options)
         return await self.inner_agent.run(normalized, stream=False, tools=merged, **kwargs)
 
-    def _build_generate_tool(self, conversation: list[Any], options: Any) -> FunctionTool:
+    def _build_generate_tool(self, conversation: list[Any]) -> FunctionTool:
         """Build an EXECUTABLE generate_a2ui tool whose body runs the recovery loop."""
-        state = {"ag-ui": read_agent_state(options)}
+        state = {"ag-ui": self._context_slice}
         history = to_history_messages(conversation)
         catalog = _resolve_catalog(state, self.params["catalog"])
 
@@ -417,6 +435,32 @@ class A2UIAgent:
             input_model=_generate_tool_schema(),
         )
 
+    async def _invoke_incoming_tool(self, tool: Any, name: str, args: dict[str, Any]) -> str:
+        """Execute an ordinary developer tool called alongside generate_a2ui.
+
+        The declaration-only generate_a2ui tool poisons the inner agent's batch function
+        invocation, so a tool called in the same turn is not run by the inner agent. Run
+        it here and return its result as a string to balance the tool call. Returns an
+        error envelope string on failure rather than raising, so one bad developer tool
+        does not abort the surface generation.
+        """
+        if tool is None or getattr(tool, "func", None) is None:
+            return json.dumps({"error": f"tool '{name}' is not executable server-side"})
+        try:
+            out: Any = tool.invoke(arguments=args)
+            if inspect.isawaitable(out):
+                out = await out
+        except Exception as exc:  # noqa: BLE001 — surface as a tool result, never abort the run
+            logger.warning("A2UI: developer tool %r failed during a mixed generate turn: %s", name, exc)
+            return json.dumps({"error": str(exc)})
+        if isinstance(out, list):
+            for content in out:
+                if getattr(content, "type", None) == "function_result":
+                    result = getattr(content, "result", None)
+                    return result if isinstance(result, str) else json.dumps(result, default=str)
+            return json.dumps(out, default=str)
+        return out if isinstance(out, str) else json.dumps(out, default=str)
+
     async def _invoke_render_subagent(self, prompt: str, conversation: list[Any]) -> dict[str, Any] | None:
         """Run the render sub-agent (forced render_a2ui) and return its args, or None."""
         response = await self.subagent_chat_client.get_response(
@@ -433,17 +477,10 @@ class A2UIAgent:
 
         history = _sanitize_unanswered_tool_calls(normalize_messages(messages))
         session = kwargs.pop("session", None)
-        options = kwargs.get("options")
         incoming_tools = [
             t for t in _as_tool_list(kwargs.pop("tools", None)) if getattr(t, "name", None) != self.params["tool_name"]
         ]
-        state = {"ag-ui": read_agent_state(options)}
-        # Strip the adapter-private ag-ui context slice from options before it reaches
-        # the planner's chat client on any round (or the closing turn): the slice was
-        # read into `state` above, and additional_properties is forwarded to the
-        # provider SDK, which rejects the unknown key. All inner_agent.run calls below
-        # pass **kwargs, so cleaning it once here covers every planner turn.
-        kwargs["options"] = strip_context_slice(options)
+        state = {"ag-ui": self._context_slice}
         generate_decl = FunctionTool(
             name=self.params["tool_name"],
             description=self.params["tool_description"],
@@ -455,20 +492,26 @@ class A2UIAgent:
         pending_session = session
         for _round in range(1, MAX_PLANNER_ROUNDS + 1):
             text_contents: list[Content] = []
-            # Coalesce the planner's generate_a2ui call(s) by call id. A single call is
-            # streamed as MANY function_call fragments: an opening fragment carries
-            # id + name, argument-delta fragments carry name=""/call_id="", and MAF adds
-            # a final coalesced fragment repeating id + name + the FULL args. Treating
-            # each fragment as its own call would run the sub-agent repeatedly and emit
-            # duplicate tool results for one call id (an unbalanced assistant/tool
-            # sequence the provider rejects on the next turn). For each call we keep BOTH
-            # the name-bearing concat (opening + coalesced) and the all-fragment concat
-            # (name-bearing + deltas), then pick the first that parses — robust whether or
-            # not the provider emits a coalesced fragment, without doubling the args.
-            gen_order: list[str] = []
-            gen_named: dict[str, str] = {}
-            gen_all: dict[str, str] = {}
-            active_gen: str | None = None  # call id whose name="" deltas we attribute
+            # Coalesce every streamed function_call fragment by call id — generate_a2ui
+            # AND any ordinary tool the planner calls in the same turn. A single call is
+            # streamed as MANY fragments: an opening fragment carries id (+name),
+            # argument-delta fragments carry name=""/call_id="", and MAF adds a final
+            # coalesced fragment repeating id + name + the FULL args. Treating each
+            # fragment as its own call would run tools repeatedly and emit duplicate
+            # results for one call id (an unbalanced assistant/tool sequence the provider
+            # rejects). For each call we keep BOTH the name-bearing concat (opening +
+            # coalesced) and the all-fragment concat (name-bearing + deltas), then pick
+            # the first that parses — robust whether or not a coalesced fragment arrives,
+            # without doubling the args. Nameless continuation deltas are attributed by
+            # the provider tool-call index when the chat client exposes it, else by the
+            # most recently opened call, so interleaved parallel calls do not cross-
+            # contaminate.
+            call_order: list[str] = []
+            name_by_cid: dict[str, str] = {}
+            named_concat: dict[str, str] = {}
+            all_concat: dict[str, str] = {}
+            cid_by_index: dict[int, str] = {}
+            active_cid: str | None = None
             async for update in self.inner_agent.run(
                 pending,
                 stream=True,
@@ -487,56 +530,77 @@ class A2UIAgent:
                     cid = getattr(content, "call_id", None)
                     raw = getattr(content, "arguments", None)
                     frag = raw if isinstance(raw, str) else (json.dumps(raw) if isinstance(raw, dict) else "")
-                    if name == self.params["tool_name"]:
-                        # Opening or coalesced fragment of a generate_a2ui call.
-                        if cid:
-                            if cid not in gen_named:
-                                gen_order.append(cid)
-                                gen_named[cid] = ""
-                                gen_all[cid] = ""
-                            active_gen = cid
-                        target = cid or active_gen
-                        if target is not None:
-                            gen_named[target] += frag
-                            gen_all[target] += frag
-                    elif name in ("", None) and cid in ("", None):
-                        # Continuation delta — belongs to the active generate call (if any).
-                        # A named non-generate tool call clears active_gen below, so dev-tool
-                        # deltas are never misattributed to generate.
-                        if active_gen is not None:
-                            gen_all[active_gen] += frag
+                    idx = _tool_call_index(content)
+                    if cid:
+                        # Opening or coalesced fragment of some call.
+                        if cid not in all_concat:
+                            call_order.append(cid)
+                            named_concat[cid] = ""
+                            all_concat[cid] = ""
+                        if name:
+                            name_by_cid[cid] = name
+                            named_concat[cid] += frag
+                        if idx is not None:
+                            cid_by_index[idx] = cid
+                        active_cid = cid
+                        all_concat[cid] += frag
                     else:
-                        # A different named tool call opened — generate is no longer active.
-                        active_gen = None
+                        # Nameless continuation delta: attribute by index if known, else
+                        # to the most recently opened call.
+                        target = cid_by_index.get(idx) if idx is not None else None
+                        target = target or active_cid
+                        if target is not None:
+                            all_concat[target] += frag
                 yield update
 
-            if not gen_order:
+            # Split coalesced calls into generate_a2ui vs ordinary developer tools.
+            generate_calls: list[Content] = []
+            ordinary_calls: list[tuple[str, str, dict[str, Any]]] = []
+            for cid in call_order:
+                nm = name_by_cid.get(cid, "")
+                obj = _first_parsable_object(named_concat[cid], all_concat[cid])
+                if nm == self.params["tool_name"]:
+                    args_str = json.dumps(obj) if obj is not None else ""
+                    generate_calls.append(Content.from_function_call(call_id=cid, name=nm, arguments=args_str))
+                elif nm:
+                    ordinary_calls.append((cid, nm, obj if isinstance(obj, dict) else {}))
+
+            if not generate_calls:
+                # No surface requested this round. Any ordinary calls in a batch WITHOUT a
+                # declaration-only tool are not poisoned, so the inner agent's own function
+                # invocation already executed them and looped; nothing more to do here.
                 return
 
-            # One coalesced function_call per distinct generate_a2ui call id, selecting
-            # the first parsable of (name-bearing concat, all-fragment concat).
-            generate_calls = []
-            for cid in gen_order:
-                obj = _first_parsable_object(gen_named[cid], gen_all[cid])
-                args_str = json.dumps(obj) if obj is not None else ""
-                generate_calls.append(
-                    Content.from_function_call(call_id=cid, name=self.params["tool_name"], arguments=args_str)
+            # The declaration-only generate_a2ui poisons the inner agent's batch function
+            # invocation, so ordinary tools called alongside it are NOT executed by the
+            # inner agent. Execute them here so a "look up data and render it" turn does
+            # not silently skip the backend tool, and feed their results back to the planner.
+            ordinary_call_contents: list[Content] = []
+            ordinary_results: list[Content] = []
+            for cid, nm, args_obj in ordinary_calls:
+                ordinary_call_contents.append(
+                    Content.from_function_call(call_id=cid, name=nm, arguments=json.dumps(args_obj))
                 )
-            assistant_contents = [*text_contents, *generate_calls]
+                tool = next((t for t in incoming_tools if getattr(t, "name", None) == nm), None)
+                result_val = await self._invoke_incoming_tool(tool, nm, args_obj)
+                ordinary_results.append(Content.from_function_result(call_id=cid, result=result_val))
 
-            results: list[Content] = []
+            assistant_contents = [*text_contents, *ordinary_call_contents, *generate_calls]
+
+            generate_results: list[Content] = []
             for call in generate_calls:
                 box: list[Any] = [None]
                 async for update in self._run_generate_streaming(call, history, state, box):
                     yield update
-                results.append(Content.from_function_result(call_id=call.call_id or "", result=box[0]))
+                generate_results.append(Content.from_function_result(call_id=call.call_id or "", result=box[0]))
 
-            # Surface the generate_a2ui tool results on the wire and feed back.
-            yield AgentResponseUpdate(role="tool", contents=results)
+            all_results = [*ordinary_results, *generate_results]
+            # Surface tool results on the wire and feed back.
+            yield AgentResponseUpdate(role="tool", contents=all_results)
             history = [
                 *history,
                 Message(role="assistant", contents=assistant_contents),
-                Message(role="tool", contents=results),
+                Message(role="tool", contents=all_results),
             ]
             pending = history
             pending_session = None

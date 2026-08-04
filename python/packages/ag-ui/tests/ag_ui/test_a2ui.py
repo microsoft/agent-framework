@@ -26,9 +26,7 @@ from agent_framework_ag_ui._a2ui import (  # noqa: E402
     build_ag_ui_context_slice,
     enable_a2ui,
     plan_a2ui_injection,
-    read_agent_state,
     read_inject_a2ui_flag,
-    stamp_context_slice,
 )
 from agent_framework_ag_ui._a2ui._state import to_history_messages  # noqa: E402
 
@@ -94,10 +92,16 @@ class _RenderSub:
         return gen()
 
 
-async def _drive(agent, options=None):
-    """Run a streaming A2UIAgent and classify the yielded content."""
+async def _drive(agent, tools=None):
+    """Run a streaming A2UIAgent and classify the yielded content.
+
+    The forwarded AG-UI context (when any) is a constructor arg of ``A2UIAgent`` now,
+    not a run option, so this helper passes no options. ``tools`` supplies developer
+    tools for the mixed-batch (ordinary tool + generate_a2ui) path.
+    """
     kinds = []
-    async for update in agent.run("make a card", stream=True, options=options):
+    run_kwargs = {"tools": tools} if tools is not None else {}
+    async for update in agent.run("make a card", stream=True, **run_kwargs):
         for c in update.contents:
             t = getattr(c, "type", None)
             if t == "function_call":
@@ -142,17 +146,6 @@ def test_inject_flag_sourced_from_forwarded_props_only():
     assert read_inject_a2ui_flag({"context": [{"description": "x", "value": "y"}]}) is None
 
 
-def test_stamp_and_read_round_trip():
-    slice_ = {"a2ui_schema": "CAT"}
-    opts = stamp_context_slice({"metadata": {"x": "y"}, "store": True}, slice_)
-    assert opts["metadata"] == {"x": "y"} and opts["store"] is True
-    assert read_agent_state(opts) == slice_
-    # object-attr form
-    obj = type("O", (), {"additional_properties": {"ag_ui_context": slice_}})()
-    assert read_agent_state(obj) == slice_
-    assert read_agent_state(None) == {}
-
-
 def test_no_a2ui_context_yields_empty_slice():
     assert build_ag_ui_context_slice(None) == {}
     assert build_ag_ui_context_slice([{"description": "x", "value": "y"}]) == {
@@ -181,7 +174,6 @@ def test_context_agent_prepends_catalog_system_message():
     slice_ = build_ag_ui_context_slice(
         [{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": '{"components":{"Card":{}}}'}]
     )
-    opts = stamp_context_slice(None, slice_)
 
     class Inner:
         id = name = description = "x"
@@ -189,7 +181,7 @@ def test_context_agent_prepends_catalog_system_message():
         def run(self, messages, *, stream=False, **kwargs):
             return (stream, messages)
 
-    stream, msgs = AGUIContextAgent(Inner()).run("hi", stream=True, options=opts)
+    stream, msgs = AGUIContextAgent(Inner(), slice_).run("hi", stream=True)
     assert stream is True
     assert _role(msgs[0]) == "system"
     assert "Available Components" in msgs[0].text and "Card" in msgs[0].text
@@ -203,7 +195,7 @@ def test_context_agent_passthrough_without_context():
         def run(self, messages, *, stream=False, **kwargs):
             return messages
 
-    msgs = AGUIContextAgent(Inner()).run("hi", stream=False, options=None)
+    msgs = AGUIContextAgent(Inner()).run("hi", stream=False)
     assert [_role(m) for m in msgs] == ["user"]
 
 
@@ -311,12 +303,9 @@ def test_streaming_retry_then_success():
 def test_forwarded_schema_drives_validation_catalog():
     # Card requires "text"; render omits it -> invalid via the forwarded catalog.
     catalog = {"components": {"Card": {"required": ["text"]}}}
-    opts = stamp_context_slice(
-        None,
-        build_ag_ui_context_slice([{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": json.dumps(catalog)}]),
-    )
+    slice_ = build_ag_ui_context_slice([{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": json.dumps(catalog)}])
     sub = _RenderSub(components=[{"id": "root", "component": "Card"}])
-    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), sub), options=opts)))
+    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), sub, context_slice=slice_))))
     assert env["code"] == "a2ui_recovery_exhausted"
     errors = [e for attempt in env["attempts"] for e in attempt["errors"]]
     assert any(e["code"] == "missing_required_prop" for e in errors)
@@ -395,7 +384,7 @@ def test_non_streaming_tool_body_runs_recovery():
     agent = A2UIAgent(
         inner_agent=type("I", (), {"id": "i", "name": "n", "description": "d"})(), subagent_chat_client=NonStreamSub()
     )
-    tool = agent._build_generate_tool([Message(role="user", contents=[Content.from_text(text="card")])], None)
+    tool = agent._build_generate_tool([Message(role="user", contents=[Content.from_text(text="card")])])
     assert tool.func is not None  # executable on the non-streaming path
     env = json.loads(asyncio.run(tool.func(intent="create")))
     assert "a2ui_operations" in env
@@ -434,7 +423,7 @@ def test_plan_injection_wraps_and_drops_render_tool():
         existing_tool_names=["some_other_tool"],
     )
     assert plan is not None
-    assert type(plan["agent"]).__name__ == "AGUIContextAgent"
+    assert type(plan["runner"]).__name__ == "AGUIContextAgent"
     assert plan["drop_tool_names"] == ["render_a2ui"]
 
 
@@ -649,11 +638,9 @@ def test_forwarded_list_catalog_normalized_not_crash():
     # The A2UI middleware forwards components as an ARRAY; the validator wants a
     # name->schema mapping. _resolve_catalog must normalize instead of crashing.
     schema = json.dumps({"catalogId": "cat", "components": [{"name": "Card"}]})
-    opts = stamp_context_slice(
-        None, build_ag_ui_context_slice([{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": schema}])
-    )
+    slice_ = build_ag_ui_context_slice([{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": schema}])
     sub = _RenderSub(components=[{"id": "root", "component": "Card"}])
-    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), sub), options=opts)))
+    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), sub, context_slice=slice_))))
     assert env is not None  # did not raise AttributeError on the list-shaped catalog
 
 
@@ -661,34 +648,17 @@ def test_forwarded_catalog_id_binds_surface_when_unconfigured():
     # Zero-config (advanced): no backend default_catalog_id -> bind the surface to the
     # catalog id the client forwarded, not the basic fallback.
     schema = json.dumps({"catalogId": "https://x/custom_catalog.json", "components": [{"name": "Card"}]})
-    opts = stamp_context_slice(
-        None, build_ag_ui_context_slice([{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": schema}])
-    )
+    slice_ = build_ag_ui_context_slice([{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": schema}])
     sub = _RenderSub(components=[{"id": "root", "component": "Card"}])
-    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), sub), options=opts)))
+    env = _generate_envelope(asyncio.run(_drive(A2UIAgent(_GenerateOnceInner(), sub, context_slice=slice_))))
     assert env["a2ui_operations"][0]["createSurface"]["catalogId"] == "https://x/custom_catalog.json"
 
 
-def test_strip_context_slice_removes_key_and_prunes_empty():
-    from agent_framework_ag_ui._a2ui._state import A2UI_CONTEXT_KEY, strip_context_slice
-
-    opts = {"additional_properties": {A2UI_CONTEXT_KEY: {"a2ui_schema": "x"}, "keep": 1}, "metadata": {}}
-    out = strip_context_slice(opts)
-    assert A2UI_CONTEXT_KEY not in out["additional_properties"]
-    assert out["additional_properties"]["keep"] == 1
-    # When removing the slice empties additional_properties, drop the key entirely.
-    out2 = strip_context_slice({"additional_properties": {A2UI_CONTEXT_KEY: {}}})
-    assert "additional_properties" not in out2
-    assert strip_context_slice(None) is None
-
-
-def test_planner_options_do_not_leak_context_slice():
-    # additional_properties is forwarded to the provider SDK, which rejects the
-    # adapter-private ag-ui context slice; A2UIAgent must strip it before the planner.
-    from agent_framework_ag_ui._a2ui._state import A2UI_CONTEXT_KEY
-
-    opts = stamp_context_slice(None, {"a2ui_schema": "x"})
-
+def test_planner_options_do_not_carry_context_slice():
+    # The forwarded context slice must never reach the planner's chat client as a run
+    # option: additional_properties is sent to the provider SDK, which rejects unknown
+    # keys. The slice rides in as a system message (AGUIContextAgent) instead, and the
+    # A2UIAgent passes the caller's options through untouched.
     class _RecordInner:
         id = name = description = "planner"
 
@@ -704,10 +674,13 @@ def test_planner_options_do_not_leak_context_slice():
             return gen()
 
     inner = _RecordInner()
-    asyncio.run(_drive(A2UIAgent(inner, _RenderSub()), options=opts))
+    slice_ = build_ag_ui_context_slice(
+        [{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": '{"components":{"Card":{}}}'}]
+    )
+    asyncio.run(_drive(A2UIAgent(inner, _RenderSub(), context_slice=slice_)))
     seen = inner.seen[0]
     ap = seen.get("additional_properties", {}) if isinstance(seen, dict) else {}
-    assert A2UI_CONTEXT_KEY not in ap
+    assert "ag_ui_context" not in ap
 
 
 # Robustness to a DELTAS-ONLY provider (no coalesced-final fragment): the all-fragment
@@ -850,3 +823,131 @@ def test_sanitize_unanswered_tool_calls_strips_dangling_a2ui_calls():
     assert "e1" in call_ids  # balanced log_a2ui_event kept
     texts = [c.text for m in out for c in (getattr(m, "contents", None) or []) if getattr(c, "type", None) == "text"]
     assert "Here is your UI." in texts  # assistant narration preserved
+
+
+# --------------------------------------------------------------------------- #
+# Mixed batch: ordinary tool called alongside generate_a2ui
+# --------------------------------------------------------------------------- #
+
+
+class _SearchThenGenerateInner:
+    """Planner that calls an ordinary tool AND generate_a2ui in the SAME turn."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+        self.calls += 1
+        n = self.calls
+
+        async def gen():
+            if n == 1:
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="s1", name="search", arguments=json.dumps({"query": "hotels"})
+                        ),
+                        Content.from_function_call(
+                            call_id="g1", name="generate_a2ui", arguments=json.dumps({"intent": "create"})
+                        ),
+                    ],
+                )
+            else:
+                yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Done.")])
+
+        return gen()
+
+
+def test_streaming_executes_ordinary_tool_called_with_generate():
+    # The declaration-only generate_a2ui poisons the inner agent's batch invocation, so
+    # a "look up data then render it" turn (search + generate_a2ui together) would skip
+    # the backend search unless A2UIAgent executes it. Assert search runs, its result is
+    # surfaced and fed back, and the surface still renders.
+    from agent_framework import FunctionTool
+
+    executed: list[str] = []
+
+    def search(query: str = "") -> str:
+        executed.append(query)
+        return json.dumps({"results": ["Ritz", "Plaza"]})
+
+    search_tool = FunctionTool(name="search", description="search", func=search)
+    kinds = asyncio.run(_drive(A2UIAgent(_SearchThenGenerateInner(), _RenderSub()), tools=[search_tool]))
+
+    assert executed == ["hotels"]  # ordinary tool actually ran
+    search_results = [k for k in kinds if k[0] == "result" and k[1] == "s1"]
+    assert len(search_results) == 1 and "Ritz" in search_results[0][2]  # surfaced + fed back
+    assert _generate_envelope(kinds) is not None  # surface still rendered
+
+
+# --------------------------------------------------------------------------- #
+# Interleaved parallel generate calls: attribute nameless deltas by index
+# --------------------------------------------------------------------------- #
+
+
+class _InterleavedGenerateInner:
+    """Two parallel generate_a2ui calls whose nameless argument deltas interleave.
+
+    Each fragment carries the provider tool-call index on additional_properties, as the
+    core chat client now preserves it.
+    """
+
+    def __init__(self):
+        self.calls = 0
+
+    @staticmethod
+    def _frag(cid, name, args, idx):
+        c = Content.from_function_call(call_id=cid, name=name, arguments=args)
+        c.additional_properties["tool_call_index"] = idx
+        return c
+
+    def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+        self.calls += 1
+        n = self.calls
+        a1 = json.dumps({"intent": "create", "target_surface_id": "A"})
+        a2 = json.dumps({"intent": "create", "target_surface_id": "B"})
+
+        async def gen():
+            if n == 1:
+                # Open both calls, then interleave their argument deltas by index.
+                yield AgentResponseUpdate(role="assistant", contents=[self._frag("g1", "generate_a2ui", "", 0)])
+                yield AgentResponseUpdate(role="assistant", contents=[self._frag("g2", "generate_a2ui", "", 1)])
+                yield AgentResponseUpdate(role="assistant", contents=[self._frag("", "", a1[: len(a1) // 2], 0)])
+                yield AgentResponseUpdate(role="assistant", contents=[self._frag("", "", a2[: len(a2) // 2], 1)])
+                yield AgentResponseUpdate(role="assistant", contents=[self._frag("", "", a1[len(a1) // 2 :], 0)])
+                yield AgentResponseUpdate(role="assistant", contents=[self._frag("", "", a2[len(a2) // 2 :], 1)])
+            else:
+                yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Done.")])
+
+        return gen()
+
+
+def test_streaming_attributes_interleaved_fragments_by_index():
+    captured: list[str] = []
+
+    class _CapturingAgent(A2UIAgent):
+        def _run_generate_streaming(self, call, conversation, state, box):
+            captured.append(call.arguments)
+            return super()._run_generate_streaming(call, conversation, state, box)
+
+    asyncio.run(_drive(_CapturingAgent(_InterleavedGenerateInner(), _RenderSub())))
+    # Each call's args reassembled from ITS OWN index-tagged fragments — not the
+    # cross-contaminated concatenation a single global "last opened" pointer would give.
+    assert [json.loads(a) for a in captured] == [
+        {"intent": "create", "target_surface_id": "A"},
+        {"intent": "create", "target_surface_id": "B"},
+    ]
+
+
+def test_a2ui_existing_tool_names_includes_agent_default_tools():
+    # The no-double-injection check must see the agent's OWN default tools, not just the
+    # runtime tools, or an agent already wired with generate_a2ui would get a second
+    # declaration and the core tool merge would raise Duplicate tool name.
+    from agent_framework import Agent, FunctionTool
+
+    from agent_framework_ag_ui._agent_run import _a2ui_existing_tool_names
+
+    tool = FunctionTool(name="generate_a2ui", description="d", func=lambda: None)
+    agent = Agent(name="a", instructions="i", client=None, tools=[tool])
+    assert "generate_a2ui" in _a2ui_existing_tool_names(agent, None)  # no runtime tools
