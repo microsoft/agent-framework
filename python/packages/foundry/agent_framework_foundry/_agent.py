@@ -438,7 +438,7 @@ class RawFoundryAgentChatClient(
         parsed_response = super()._parse_response_from_openai(response, options)
         if _uses_foundry_agent_session(options.get("conversation_id")):
             parsed_response.conversation_id = None
-        elif agent_session_id := _get_foundry_agent_session_id(response):
+        elif options.get("store") is not False and (agent_session_id := _get_foundry_agent_session_id(response)):
             parsed_response.conversation_id = agent_session_id
         return parsed_response
 
@@ -461,7 +461,9 @@ class RawFoundryAgentChatClient(
             )
         if _uses_foundry_agent_session(options.get("conversation_id")):
             update.conversation_id = None
-        elif agent_session_id := _get_foundry_agent_session_id(getattr(event, "response", None)):
+        elif options.get("store") is not False and (
+            agent_session_id := _get_foundry_agent_session_id(getattr(event, "response", None))
+        ):
             update.conversation_id = agent_session_id
         return update
 
