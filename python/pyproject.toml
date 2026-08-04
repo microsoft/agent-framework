@@ -28,9 +28,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "uv==0.11.29",
+    "uv==0.11.32",
     "flit==3.12.0",
-    "ruff==0.15.22",
+    "ruff==0.16.0",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
@@ -40,14 +40,14 @@ dev = [
     "mypy==2.3.0",
     "pyright==1.1.411",
     "pyrefly==1.1.1",
-    "ty==0.0.60",
+    "ty==0.0.64",
     "zuban==0.9.0",
     "opentelemetry-sdk",
     #tasks
     "poethepoet==0.48.0",
     "rich>=13.7.1,<16.0.0",
     "tomli==2.4.1",
-    "prek==0.4.10",
+    "prek==0.4.11",
 ]
 test = [
     "azure-monitor-opentelemetry",

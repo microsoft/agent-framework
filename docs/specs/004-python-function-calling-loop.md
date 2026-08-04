@@ -353,6 +353,12 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - `function_approval_request` and `function_approval_response` are control-plane contents, not durable model
   transcript items.
 - A current hosted approval response must be sent once on the immediate resume request.
+- AG-UI removes a local approval response from its request and snapshot replay when a terminal result belongs to an
+  already-consumed occurrence, including result-before-response replay. A client-authored result in the occurrence
+  that is still registered as pending does not prove completion: AG-UI removes that result, keeps the validated
+  response for local execution, and leaves hosted approval responses as provider protocol data.
+- Hosted AG-UI approval interrupts expose an accept/reject decision only; argument edits are rejected because the
+  hosted provider executes the server-owned request rather than client-edited arguments.
 - A server-issued approval request must not be replayed inline during service-side continuation.
 - History providers may retain approval control contents in their backing store for audit, but base history replay
   filters them before later model calls.
@@ -364,7 +370,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - Model-bound history contains one function call/result pair per completed logical occurrence.
 - Append-only history must not replay stale approval request/response wrappers to the model.
 - Framework-managed and service-managed continuation must preserve the same logical call/result transcript.
-- A terminal result consumes the corresponding approval authority in explicit stateless replay.
+- A trusted terminal result consumes the corresponding approval authority in explicit stateless replay; a result in a
+  server-registered pending occurrence cannot consume that authority before local execution.
 
 ## Scenario-to-test matrix
 
@@ -439,6 +446,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Hosted server boundary | Standing approval does not cross `server_label`. | `test_tool_approval_middleware_standing_rules_include_hosted_server_boundary` |
 | Argument-scoped rule | Exact arguments are required; empty arguments are not tool-wide. | `test_tool_approval_middleware_always_approve_tool_with_arguments_rule`, `test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide` |
 | Provider-injected approval tool | A tool added during `before_run` defers to in-run resolution, executes once, and emits one result. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_deferred_provider_tool_executes` |
+| AG-UI provider boundary | Completed local approval controls from AG-UI request and snapshot replay are absent from raw chat-client input while deferred and hosted approvals keep their respective in-run/provider paths. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_does_not_forward_resolved_local_approval_control_to_chat_client`, `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_deferred_provider_tool_executes`, `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_canonical_resume_preserves_hosted_approval_for_provider`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_removes_duplicate_completed_controls`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_occurrence`, `packages/ag-ui/tests/ag_ui/test_run.py::test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending` |
 
 ### Errors, control flow, and limits
 
@@ -465,8 +473,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Pending hosted history replay | Stateless hosted approval requests remain replayable until a response is recorded, then both controls become inert. | `packages/openai/tests/openai/test_openai_chat_client.py::test_stateless_history_preserves_pending_hosted_approval_request_until_response` |
 | Non-history provider plus session | Local history is still auto-injected for approval resume. | `packages/core/tests/core/test_agents.py::test_non_history_context_provider_still_injects_inmemory` |
 | Hosted per-service-call persistence | A host-managed transcript remains available throughout a local function-call loop without being persisted into the framework session and replayed on the next hosted request. | `packages/foundry_hosting/tests/test_responses.py::TestAgentSessionPersistence::test_per_service_call_persistence_preserves_function_loop_history` |
-| Service-side approval decision | Stored request is skipped; current approved or rejected response is sent. | `packages/openai/tests/openai/test_openai_chat_client.py::test_prepare_messages_strips_approval_request_but_keeps_response_under_storage` |
-| OpenAI approval serialization | Approval id and decision serialize to `mcp_approval_response`. | `test_prepare_message_for_openai_with_function_approval_response`, `test_prepare_content_for_opentool_approval_response`, `test_function_approval_response_with_mcp_tool_call` |
+| Service-side approval decision | Stored hosted request is skipped; the current approved or rejected hosted response is sent, while local approval controls are omitted from provider input. | `packages/openai/tests/openai/test_openai_chat_client.py::test_prepare_messages_strips_approval_request_but_keeps_response_under_storage`, `test_prepare_messages_drops_local_approval_controls` |
+| OpenAI approval serialization | Hosted approval id and decision serialize to `mcp_approval_response`; local approvals remain in-process. | `test_prepare_message_for_openai_with_function_approval_response`, `test_prepare_content_for_opentool_approval_response`, `test_function_approval_response_with_mcp_tool_call` |
 | OpenAI end-to-end hosted approval | Hosted request parses, response sends, and continuation completes. | `test_end_to_end_mcp_approval_flow` |
 | Stored function call/result | Service-side storage drops server-issued calls but keeps new outputs. | `test_prepare_options_with_conversation_id_strips_server_issued_items`, `test_prepare_messages_for_openai_full_conversation_with_reasoning` |
 | Stateless reasoning replay | Replay reconstructs reasoning, call, and result together; missing required reasoning fails before the request. | `test_tool_loop_store_false_replays_encrypted_reasoning_group`, `test_stateless_request_rejects_non_replayable_reasoning_bound_mcp_output`, `test_prepare_messages_for_openai_full_conversation_with_reasoning` |
