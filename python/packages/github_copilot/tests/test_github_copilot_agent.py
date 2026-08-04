@@ -1125,6 +1125,7 @@ class TestGitHubCopilotAgentSessionManagement:
             model=unittest.mock.ANY,
             on_permission_request=unittest.mock.ANY,
             hooks=unittest.mock.ANY,
+            enable_file_hooks=unittest.mock.ANY,
         )
 
     async def test_session_config_includes_model(
@@ -1903,6 +1904,35 @@ class TestGitHubCopilotAgentOptionsPassthrough:
             assert leaked not in config
         # on_pre_tool_use is still honored via the hooks parameter.
         assert config["hooks"]["on_pre_tool_use"] is runtime_hook
+
+    async def test_enable_file_hooks_defaults_to_false(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """Sessions must not depend on the cwd: file hooks default to off."""
+        agent = GitHubCopilotAgent(client=mock_client)
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is False
+
+    async def test_enable_file_hooks_opt_in_wins(
+        self,
+        mock_client: MagicMock,
+    ) -> None:
+        """A caller who wants checkout-driven hooks can turn them back on."""
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=cast(Any, {"enable_file_hooks": True}),
+        )
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        config = mock_client.create_session.call_args.kwargs
+        assert config["enable_file_hooks"] is True
 
 
 class TestGitHubCopilotAgentToolConversion:
@@ -3667,3 +3697,4 @@ async def test_integration_run_with_shell_permissions_executes_command() -> None
 
         if isinstance(session.service_session_id, str) and agent._client:
             await agent._client.delete_session(session.service_session_id)
+

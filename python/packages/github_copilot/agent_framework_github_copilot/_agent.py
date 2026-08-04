@@ -196,6 +196,11 @@ class GitHubCopilotOptions(TypedDict, total=False):
     timeout: float
     """Request timeout in seconds. Defaults to GITHUB_COPILOT_TIMEOUT environment variable or 60 seconds."""
 
+    enable_file_hooks: bool
+    """Whether the session reads checkout-local ``.github/hooks/`` files. Defaults to
+    False so behavior does not depend on the working directory the agent runs in;
+    set True (via default_options or per-run options) to opt into checkout-driven hooks."""
+
     log_level: str
     """CLI log level. Defaults to GITHUB_COPILOT_LOG_LEVEL environment variable."""
 
@@ -1231,6 +1236,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
         )
         kwargs["hooks"] = self._build_session_hooks(all_tools, kwargs)
+
+        # The SDK's default reads `.github/hooks/` from the process working
+        # directory, so identical agents would behave differently depending on
+        # where they were started. Pin it off unless the caller opts in.
+        kwargs.setdefault("enable_file_hooks", False)
 
         # Strip agent-internal and client-level keys that are consumed here or in the
         # run methods (and settings) but are NOT valid create_session parameters, so
