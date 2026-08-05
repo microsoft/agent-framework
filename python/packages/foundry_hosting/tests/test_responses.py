@@ -501,6 +501,22 @@ class TestResponsesHostServerInit:
         error = getattr(failed_response, "error", None)
         assert "Session storage is required" in getattr(error, "message", "")
 
+    async def test_previous_response_rejected_with_conversation(self) -> None:
+        agent = _make_agent()
+        server = _make_server(agent)
+        response = await _post(
+            server,
+            previous_response_id="caresp_aaaaaaaaaaaaaaaa00" + "1" * 32,
+            conversation_id="conversation-1",
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "failed"
+        assert body["error"]["message"] == ("Previous response ID cannot be used in conjunction with conversation ID.")
+        agent.run.assert_not_called()
+        agent.create_session.assert_not_called()
+
     async def test_previous_response_requires_existing_snapshot(self, tmp_path: Path) -> None:
         agent = _make_agent()
         server = _make_server(agent, session_store=FoundrySessionStore(tmp_path))

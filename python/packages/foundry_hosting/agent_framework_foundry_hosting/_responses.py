@@ -593,6 +593,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         try:
             approval_storage = self._approval_storage_for_request()
+            if request.previous_response_id is not None and context.conversation_id is not None:
+                raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
             read_session_id = context.conversation_id or request.previous_response_id
             if self._session_store is None:
                 if read_session_id is not None:
