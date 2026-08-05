@@ -22,15 +22,14 @@ from ._state import (
 
 if TYPE_CHECKING:
     from ._agent import A2UIAgent
-    from ._context_agent import AGUIContextAgent
-    from ._factory import enable_a2ui, plan_a2ui_injection
+    from ._factory import enable_a2ui, is_a2ui_runner, plan_a2ui_injection
 
 __all__ = [
     "A2UI_SCHEMA_CONTEXT_DESCRIPTION",
     "A2UIAgent",
-    "AGUIContextAgent",
     "build_ag_ui_context_slice",
     "enable_a2ui",
+    "is_a2ui_runner",
     "plan_a2ui_injection",
     "read_inject_a2ui_flag",
 ]
@@ -38,8 +37,7 @@ __all__ = [
 # Lazy (toolkit-dependent) exports: module -> symbols defined there.
 _LAZY: dict[str, tuple[str, ...]] = {
     "_agent": ("A2UIAgent",),
-    "_context_agent": ("AGUIContextAgent",),
-    "_factory": ("enable_a2ui", "plan_a2ui_injection"),
+    "_factory": ("enable_a2ui", "is_a2ui_runner", "plan_a2ui_injection"),
 }
 
 

@@ -2,9 +2,9 @@
 
 """Tests for A2UI (agent-generated UI) support in the AG-UI adapter.
 
-Covers the context plumbing (_state), the AGUIContextAgent wrapper, and the
-A2UIAgent streaming/non-streaming loop including recovery, catalog-driven
-validation, error classification, and mid-stream render-call balancing.
+Covers the context plumbing (_state) and the A2UIAgent streaming/non-streaming loop
+including context prepend, recovery, catalog-driven validation, error classification,
+and mid-stream render-call balancing.
 
 Skipped wholesale when ag-ui-a2ui-toolkit is not installed (A2UI is an optional
 extra; the base package does not require it).
@@ -22,9 +22,9 @@ from agent_framework import AgentResponseUpdate, ChatResponse, ChatResponseUpdat
 from agent_framework_ag_ui._a2ui import (  # noqa: E402
     A2UI_SCHEMA_CONTEXT_DESCRIPTION,
     A2UIAgent,
-    AGUIContextAgent,
     build_ag_ui_context_slice,
     enable_a2ui,
+    is_a2ui_runner,
     plan_a2ui_injection,
     read_inject_a2ui_flag,
 )
@@ -166,36 +166,24 @@ def test_to_history_messages_extracts_tool_result_payload():
 
 
 # --------------------------------------------------------------------------- #
-# AGUIContextAgent
+# A2UIAgent context prepend (folded in, no separate wrapper)
 # --------------------------------------------------------------------------- #
 
 
-def test_context_agent_prepends_catalog_system_message():
+def test_a2ui_agent_prepends_catalog_system_message():
     slice_ = build_ag_ui_context_slice(
         [{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": '{"components":{"Card":{}}}'}]
     )
-
-    class Inner:
-        id = name = description = "x"
-
-        def run(self, messages, *, stream=False, **kwargs):
-            return (stream, messages)
-
-    stream, msgs = AGUIContextAgent(Inner(), slice_).run("hi", stream=True)
-    assert stream is True
+    agent = A2UIAgent(_GenerateOnceInner(), _RenderSub(), context_slice=slice_)
+    msgs = agent._with_context_prompt("hi")
     assert _role(msgs[0]) == "system"
     assert "Available Components" in msgs[0].text and "Card" in msgs[0].text
     assert _role(msgs[-1]) == "user"
 
 
-def test_context_agent_passthrough_without_context():
-    class Inner:
-        id = name = description = "x"
-
-        def run(self, messages, *, stream=False, **kwargs):
-            return messages
-
-    msgs = AGUIContextAgent(Inner()).run("hi", stream=False)
+def test_a2ui_agent_passthrough_without_context():
+    agent = A2UIAgent(_GenerateOnceInner(), _RenderSub())
+    msgs = agent._with_context_prompt("hi")
     assert [_role(m) for m in msgs] == ["user"]
 
 
@@ -390,11 +378,12 @@ def test_non_streaming_tool_body_runs_recovery():
     assert "a2ui_operations" in env
 
 
-def test_enable_a2ui_composition_order():
+def test_enable_a2ui_returns_runner_wrapping_inner():
     inner = type("I", (), {"id": "i", "name": "n", "description": "d"})()
-    wrapped = enable_a2ui(inner, object())
-    assert type(wrapped).__name__ == "AGUIContextAgent"
-    assert type(wrapped.inner_agent).__name__ == "A2UIAgent"
+    runner = enable_a2ui(inner, object())
+    assert isinstance(runner, A2UIAgent) and is_a2ui_runner(runner)
+    assert runner.inner_agent is inner
+    assert runner.drop_tool_names == []  # manual path injects nothing to drop
 
 
 # --------------------------------------------------------------------------- #
@@ -423,8 +412,8 @@ def test_plan_injection_wraps_and_drops_render_tool():
         existing_tool_names=["some_other_tool"],
     )
     assert plan is not None
-    assert type(plan["runner"]).__name__ == "AGUIContextAgent"
-    assert plan["drop_tool_names"] == ["render_a2ui"]
+    assert is_a2ui_runner(plan)
+    assert plan.drop_tool_names == ["render_a2ui"]
 
 
 def test_plan_injection_string_flag_names_render_tool_to_drop():
@@ -433,7 +422,7 @@ def test_plan_injection_string_flag_names_render_tool_to_drop():
         forwarded_props={"injectA2UITool": "render_custom"},
         existing_tool_names=[],
     )
-    assert plan is not None and plan["drop_tool_names"] == ["render_custom"]
+    assert plan is not None and plan.drop_tool_names == ["render_custom"]
 
 
 def test_plan_injection_user_prevails_when_generate_already_wired():
@@ -657,7 +646,7 @@ def test_forwarded_catalog_id_binds_surface_when_unconfigured():
 def test_planner_options_do_not_carry_context_slice():
     # The forwarded context slice must never reach the planner's chat client as a run
     # option: additional_properties is sent to the provider SDK, which rejects unknown
-    # keys. The slice rides in as a system message (AGUIContextAgent) instead, and the
+    # keys. The slice rides in as a system message (A2UIAgent context prepend), and the
     # A2UIAgent passes the caller's options through untouched.
     class _RecordInner:
         id = name = description = "planner"

@@ -22,10 +22,19 @@ from typing import Any
 from ag_ui_a2ui_toolkit import GENERATE_A2UI_TOOL_NAME, A2UIToolParams
 
 from ._agent import RENDER_A2UI_TOOL_NAME, A2UIAgent
-from ._context_agent import AGUIContextAgent
 from ._state import read_inject_a2ui_flag
 
 logger = logging.getLogger(__name__)
+
+
+def is_a2ui_runner(agent: Any) -> bool:
+    """True when ``agent`` is an A2UI runner (an :class:`A2UIAgent`).
+
+    Lets the AG-UI host treat a manually ``enable_a2ui()``-wrapped agent the same as an
+    auto-injected one (e.g. for terminal-snapshot suppression), so A2UI wiring lives in
+    one place instead of the host re-deriving it.
+    """
+    return isinstance(agent, A2UIAgent)
 
 
 def enable_a2ui(
@@ -33,13 +42,13 @@ def enable_a2ui(
     subagent_chat_client: Any,
     params: A2UIToolParams | None = None,
     context_slice: dict[str, Any] | None = None,
-) -> AGUIContextAgent:
+    drop_tool_names: list[str] | None = None,
+) -> A2UIAgent:
     """Wrap ``inner_agent`` with full A2UI support.
 
-    Composes an :class:`A2UIAgent` (the ``generate_a2ui`` streaming loop) wrapped by an
-    :class:`AGUIContextAgent` (which replays the forwarded component catalog into the
-    prompt). The result is a drop-in
-    ``SupportsAgentRun`` to hand to ``AgentFrameworkAgent`` /
+    Returns an :class:`A2UIAgent` — the ``generate_a2ui`` streaming loop, which also
+    prepends the forwarded component catalog + guidelines as a system message. The result
+    is a drop-in ``SupportsAgentRun`` to hand to ``AgentFrameworkAgent`` /
     ``add_agent_framework_fastapi_endpoint``.
 
     Args:
@@ -49,17 +58,14 @@ def enable_a2ui(
             ``render_a2ui`` tool result replays cleanly on the next turn.
         params: Optional A2UI behaviour knobs (guidelines, recovery, catalog, ...).
         context_slice: Forwarded AG-UI context (component catalog + guidelines) for the
-            run, handed to the wrappers directly instead of via run-option
-            ``additional_properties``. The wrappers read it and never forward it to the
-            provider SDK.
+            run, handed in directly instead of via run-option ``additional_properties``.
+        drop_tool_names: Render tool name(s) to strip from the planner's tools (set by
+            auto-injection; empty for a manual call).
 
     Returns:
-        The wrapped agent.
+        The A2UI runner.
     """
-    return AGUIContextAgent(
-        A2UIAgent(inner_agent, subagent_chat_client, params, context_slice),
-        context_slice,
-    )
+    return A2UIAgent(inner_agent, subagent_chat_client, params, context_slice, drop_tool_names)
 
 
 def plan_a2ui_injection(
@@ -70,7 +76,7 @@ def plan_a2ui_injection(
     config: dict[str, Any] | None = None,
     context_slice: dict[str, Any] | None = None,
     log: logging.Logger | None = None,
-) -> dict[str, Any] | None:
+) -> A2UIAgent | None:
     """Decide whether to auto-inject A2UI for this run (Strands-parity contract).
 
     CopilotKit's runtime composes ``forwardedProps``; the AG-UI a2ui-middleware sets
@@ -86,11 +92,11 @@ def plan_a2ui_injection(
     3. The render sub-agent client is inferred from the planner agent's ``.client``; if
        none can be inferred, warn and skip (wire ``enable_a2ui`` explicitly instead).
 
-    Returns ``{"runner", "drop_tool_names"}`` (the A2UI runner to drive the stream call +
-    the middleware-injected render tool to strip from the planner's tool list) or
-    ``None`` when no injection. The caller uses ``runner`` ONLY for the stream call and
-    keeps the original agent bound for protected-state, approval, and serialization
-    reads, so those reads still see the real agent's ``context_providers`` and ``client``.
+    Returns the :class:`A2UIAgent` runner (which carries the render tool(s) to strip on
+    :attr:`~._agent.A2UIAgent.drop_tool_names`) or ``None`` when no injection. The caller
+    uses the runner ONLY for the stream call and keeps the original agent bound for
+    protected-state, approval, and serialization reads, so those reads still see the real
+    agent's ``context_providers`` and ``client``.
     """
     log = log or logger
     config = config or {}
@@ -104,7 +110,7 @@ def plan_a2ui_injection(
     # USER PREVAILS: explicit dev wiring or an already-wrapped agent wins.
     if GENERATE_A2UI_TOOL_NAME in existing_tool_names:
         return None
-    if isinstance(agent, (A2UIAgent, AGUIContextAgent)):
+    if is_a2ui_runner(agent):
         return None
 
     subagent_client = getattr(agent, "client", None)
@@ -123,7 +129,4 @@ def plan_a2ui_injection(
         "default_catalog_id": config.get("default_catalog_id"),
         "default_surface_id": config.get("default_surface_id"),
     }
-    return {
-        "runner": enable_a2ui(agent, subagent_client, params, context_slice),
-        "drop_tool_names": [render_tool_name],
-    }
+    return enable_a2ui(agent, subagent_client, params, context_slice, [render_tool_name])

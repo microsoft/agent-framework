@@ -2071,17 +2071,17 @@ def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThr
 
 
 def _is_a2ui_runner(agent: Any) -> bool:
-    """True when ``agent`` is already an A2UI runner (manual ``enable_a2ui()`` path).
+    """True when ``agent`` is an A2UI runner (auto-injected or hand-wired).
 
-    Lets the terminal-snapshot suppression treat a hand-wired A2UI agent the same as an
-    auto-injected one. Imported lazily so this module stays importable without the
-    optional ag-ui-a2ui-toolkit.
+    Thin wrapper over the A2UI module's ``is_a2ui_runner`` that lets the terminal-snapshot
+    suppression recognize A2UI runs. Imported lazily so this module stays importable
+    without the optional ag-ui-a2ui-toolkit.
     """
     try:
-        from ._a2ui import A2UIAgent, AGUIContextAgent
+        from ._a2ui import is_a2ui_runner
     except ImportError:
         return False
-    return isinstance(agent, (A2UIAgent, AGUIContextAgent))
+    return is_a2ui_runner(agent)
 
 
 def _a2ui_existing_tool_names(agent: SupportsAgentRun, tools: list[Any] | None) -> list[str]:
@@ -2338,7 +2338,6 @@ async def run_agent_stream(
     if _a2ui_flag is None and _a2ui_config:
         _a2ui_flag = _a2ui_config.get("inject_a2ui_tool")
     a2ui_runner: Any | None = None
-    a2ui_active = False
     if _a2ui_flag:
         try:
             from ._a2ui import plan_a2ui_injection
@@ -2351,26 +2350,21 @@ async def run_agent_stream(
                 "package is not installed. Install the optional extra: "
                 "pip install 'agent-framework-ag-ui[a2ui]'."
             ) from exc
-        plan = plan_a2ui_injection(
+        a2ui_runner = plan_a2ui_injection(
             agent=agent,
             forwarded_props=_forwarded,
             existing_tool_names=_a2ui_existing_tool_names(agent, tools),
             config=_a2ui_config,
             context_slice=build_ag_ui_context_slice(input_data.get("context")),
         )
-        if plan is not None:
-            a2ui_runner = plan["runner"]
-            a2ui_active = True
-            drop = set(plan["drop_tool_names"])
-            if tools:
-                tools = [t for t in tools if getattr(t, "name", None) not in drop]
+        if a2ui_runner is not None and tools:
+            drop = set(a2ui_runner.drop_tool_names)
+            tools = [t for t in tools if getattr(t, "name", None) not in drop]
 
-    # The manually-wired enable_a2ui() path hands us an already-wrapped A2UI agent
-    # (plan_a2ui_injection returns None for it), so recognize that here too — otherwise
-    # a2ui_active stays false and the terminal MessagesSnapshotEvent re-renders the
-    # streamed surface/text out of order.
-    if not a2ui_active and _is_a2ui_runner(agent):
-        a2ui_active = True
+    # A2UI drove this run when it auto-injected a runner OR the developer hand-wired one
+    # via enable_a2ui(). Recognizing both keeps the terminal-snapshot suppression correct
+    # for the manual path too. The A2UI module owns this check (is_a2ui_runner).
+    a2ui_active = _is_a2ui_runner(a2ui_runner or agent)
 
     # Create session (with service session support)
     if config.use_service_session:

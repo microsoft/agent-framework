@@ -37,6 +37,7 @@ from ag_ui_a2ui_toolkit import (
     A2UIToolParams,
     augment_prompt_with_validation_errors,
     build_a2ui_envelope,
+    build_context_prompt,
     prepare_a2ui_request,
     resolve_a2ui_catalog,
     resolve_a2ui_tool_params,
@@ -44,7 +45,7 @@ from ag_ui_a2ui_toolkit import (
     validate_a2ui_components,
     wrap_error_envelope,
 )
-from agent_framework import Content, FunctionTool, Message
+from agent_framework import Content, FunctionTool, Message, normalize_messages
 
 from ._state import to_history_messages
 
@@ -295,6 +296,12 @@ def _is_recoverable_error(exc: BaseException) -> bool:
 class A2UIAgent:
     """Wraps an agent so each run can generate A2UI surfaces.
 
+    Also the single A2UI runner interface the AG-UI host uses: it carries the render
+    tool(s) to strip from the planner's list (:attr:`drop_tool_names`), prepends the
+    forwarded component catalog + guidelines as a system message, and is recognized by
+    :func:`._factory.is_a2ui_runner` so the host can suppress the terminal message
+    snapshot for both the auto-injected and the manual ``enable_a2ui()`` paths.
+
     Args:
         inner_agent: The agent to wrap (any ``SupportsAgentRun``).
         subagent_chat_client: A raw chat client (NO automatic function invocation)
@@ -302,6 +309,12 @@ class A2UIAgent:
             ``render_a2ui`` call's arguments directly.
         params: Behavior knobs (model is not needed here — the sub-agent client is
             supplied directly); defaults are filled per the shared toolkit rules.
+        context_slice: Forwarded AG-UI context (component catalog + guidelines) for the
+            run, prepended to the prompt as a system message. Handed in directly rather
+            than read back from run-option ``additional_properties``.
+        drop_tool_names: Render tool name(s) the runtime injected into the planner's
+            tools that should be stripped before the planner call (auto-inject path).
+            Empty for the manual ``enable_a2ui()`` path.
     """
 
     def __init__(
@@ -310,13 +323,13 @@ class A2UIAgent:
         subagent_chat_client: Any,
         params: A2UIToolParams | None = None,
         context_slice: dict[str, Any] | None = None,
+        drop_tool_names: list[str] | None = None,
     ) -> None:
         self.inner_agent = inner_agent
         self.subagent_chat_client = subagent_chat_client
         self.params = resolve_a2ui_tool_params(params or {})
-        # Forwarded AG-UI context slice for the run (catalog + guidelines), handed in
-        # directly rather than read back from run-option additional_properties.
         self._context_slice = context_slice or {}
+        self.drop_tool_names: list[str] = list(drop_tool_names or [])
         self.id = getattr(inner_agent, "id", None)
         self.name = getattr(inner_agent, "name", None)
         self.description = getattr(inner_agent, "description", None)
@@ -326,19 +339,29 @@ class A2UIAgent:
     def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
         """Run the wrapped agent with A2UI support.
 
-        Returns an async iterator (stream) or an awaitable (non-stream), matching
-        the inner agent's protocol.
+        Prepends the forwarded AG-UI context as a system message, then dispatches to the
+        streaming or non-streaming path. Returns an async iterator (stream) or an
+        awaitable (non-stream), matching the inner agent's protocol.
         """
+        messages = self._with_context_prompt(messages)
         if stream:
             return self._run_streaming(messages, **kwargs)
         return self._run_non_streaming(messages, **kwargs)
+
+    def _with_context_prompt(self, messages: Any) -> list[Message]:
+        """Prepend the forwarded component catalog + guidelines as a system message."""
+        normalized = normalize_messages(messages)
+        if not self._context_slice:
+            return normalized
+        prompt = build_context_prompt({"ag-ui": self._context_slice})
+        if not prompt:
+            return normalized
+        return [Message(role="system", contents=[Content.from_text(text=prompt)]), *normalized]
 
     # -- non-streaming ----------------------------------------------------
 
     async def _run_non_streaming(self, messages: Any = None, **kwargs: Any) -> Any:
         """Advertise a real generate_a2ui tool and let auto-invocation run it."""
-        from agent_framework import normalize_messages
-
         normalized = _sanitize_unanswered_tool_calls(normalize_messages(messages))
         tools = _as_tool_list(kwargs.pop("tools", None))
         generate_tool = self._build_generate_tool(normalized)
@@ -499,7 +522,7 @@ class A2UIAgent:
     # -- streaming --------------------------------------------------------
 
     async def _run_streaming(self, messages: Any = None, **kwargs: Any) -> Any:
-        from agent_framework import AgentResponseUpdate, normalize_messages
+        from agent_framework import AgentResponseUpdate
 
         history = _sanitize_unanswered_tool_calls(normalize_messages(messages))
         session = kwargs.pop("session", None)
