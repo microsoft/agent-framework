@@ -29,6 +29,9 @@ namespace Microsoft.Agents.AI;
 /// first is returned to the caller while the rest are queued. On subsequent calls, queued items are re-evaluated
 /// against rules (which may have been updated by the caller's "always approve" response) and presented one at a time.
 /// Once all queued requests are resolved, the collected responses are injected and the inner agent is called again.
+/// This one-at-a-time behavior no longer applies once the auto-approval cap
+/// (<see cref="ToolApprovalAgentOptions.MaxAutoApprovalIterations"/>) is reached: the final inner turn is returned
+/// as-is, so more than one approval request may be surfaced to the caller at once.
 /// </item>
 /// <item>
 /// <b>Inbound (caller to agent):</b> When the caller sends an <see cref="AlwaysApproveToolApprovalResponseContent"/>,
