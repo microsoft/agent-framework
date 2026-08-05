@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import logging
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
@@ -23,6 +24,8 @@ from ._types import (
     normalize_messages,
 )
 from .exceptions import MiddlewareException
+
+logger = logging.getLogger(__name__)
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -668,6 +671,75 @@ ChatAndFunctionMiddlewareTypes: TypeAlias = (
     FunctionMiddleware | FunctionMiddlewareCallable | ChatMiddleware | ChatMiddlewareCallable
 )
 
+
+class MiddlewareBundle:
+    """An indivisible group of middleware that forms one coherent feature.
+
+    Some features (for example the agent-hooks enforcement middleware) consist of
+    several middleware objects that only uphold their contract when installed
+    together. A bundle carries those objects as one opaque unit: pass the bundle
+    itself anywhere middleware is accepted, and :func:`categorize_middleware`
+    splits its members into their agent/function/chat categories while the bundle
+    guarantees the members cannot be installed partially — it is deliberately not
+    a sequence, so it cannot be unpacked or sliced.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Agent
+
+            bundle = create_some_feature_middleware(...)
+            agent = Agent(client=client, middleware=[bundle, my_other_middleware])
+    """
+
+    def __init__(
+        self,
+        middleware: Sequence[
+            AgentMiddleware
+            | AgentMiddlewareCallable
+            | FunctionMiddleware
+            | FunctionMiddlewareCallable
+            | ChatMiddleware
+            | ChatMiddlewareCallable
+        ],
+    ) -> None:
+        """Initialize the bundle.
+
+        Args:
+            middleware: The middleware objects that belong together. Order is
+                preserved when the bundle is expanded into the run's pipelines.
+                Every member must be categorizable by the framework's own rules
+                (an agent/function/chat middleware instance, or a callable with a
+                recognizable middleware signature); nested bundles are rejected.
+
+        Raises:
+            MiddlewareException: If a member is a nested bundle or cannot be
+                categorized as agent, function, or chat middleware.
+        """
+        members = tuple(middleware)
+        for member in members:
+            if isinstance(member, MiddlewareBundle):
+                raise MiddlewareException(
+                    "MiddlewareBundle members must be middleware objects; nesting a "
+                    "MiddlewareBundle inside another bundle is not supported."
+                )
+            if isinstance(member, (AgentMiddleware, FunctionMiddleware, ChatMiddleware)):
+                continue
+            if callable(member):
+                # Raises MiddlewareException when the callable's category cannot be
+                # determined — the same validation categorize_middleware applies.
+                _determine_middleware_type(member)
+                continue
+            raise MiddlewareException(
+                f"MiddlewareBundle members must be agent, function, or chat middleware; got {type(member).__name__}."
+            )
+        self._middleware = members
+
+    def __repr__(self) -> str:
+        members = ", ".join(type(middleware).__name__ for middleware in self._middleware)
+        return f"{type(self).__name__}({members})"
+
+
 # Type alias for all middleware types
 MiddlewareTypes: TypeAlias = (
     AgentMiddleware
@@ -676,6 +748,7 @@ MiddlewareTypes: TypeAlias = (
     | FunctionMiddlewareCallable
     | ChatMiddleware
     | ChatMiddlewareCallable
+    | MiddlewareBundle
 )
 
 
@@ -842,6 +915,16 @@ class BaseMiddlewarePipeline(ABC):
             self._middleware.append(middleware)
         elif callable(middleware):
             self._middleware.append(MiddlewareWrapper(middleware))  # type: ignore[arg-type]
+        else:
+            # Preserve the long-standing lenient behavior (do not fail the run), but
+            # never skip silently: an unrecognized object here means middleware the
+            # caller supplied will not execute.
+            logger.warning(
+                "Ignoring unrecognized middleware of type %s: it is neither a %s nor a callable "
+                "and will not be executed.",
+                type(middleware).__name__,
+                expected_type.__name__,
+            )
 
 
 class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
@@ -1353,11 +1436,18 @@ class AgentMiddlewareLayer:
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """MiddlewareTypes-enabled unified run method."""
-        # Re-categorize self.middleware at runtime to support dynamic changes
+        # Re-categorize self.middleware at runtime to support dynamic changes. A bare
+        # single source (one middleware object or a MiddlewareBundle assigned directly
+        # to the attribute) is treated as a one-element list, mirroring how
+        # categorize_middleware handles non-sequence sources — never silently dropped.
         base_middleware_attr = getattr(self, "middleware", None)
-        base_middleware: Sequence[MiddlewareTypes] = (
-            cast(Sequence[MiddlewareTypes], base_middleware_attr) if isinstance(base_middleware_attr, Sequence) else []
-        )
+        base_middleware: Sequence[MiddlewareTypes]
+        if isinstance(base_middleware_attr, Sequence) and not isinstance(base_middleware_attr, (str, bytes)):
+            base_middleware = cast(Sequence[MiddlewareTypes], base_middleware_attr)
+        elif base_middleware_attr is not None:
+            base_middleware = [cast(MiddlewareTypes, base_middleware_attr)]
+        else:
+            base_middleware = []
         base_middleware_list = categorize_middleware(base_middleware)
         run_middleware_list = categorize_middleware(middleware)
         pipeline = self._get_agent_middleware_pipeline([*base_middleware_list["agent"], *run_middleware_list["agent"]])
@@ -1542,6 +1632,17 @@ def categorize_middleware(
                 all_middleware.extend(source)  # type: ignore
             else:
                 all_middleware.append(source)
+
+    # Expand bundles first: a bundle's members are categorized individually (in
+    # order) but travel as one unit, so a feature spanning several categories can
+    # never be partially installed.
+    expanded_middleware: list[Any] = []
+    for middleware in all_middleware:
+        if isinstance(middleware, MiddlewareBundle):
+            expanded_middleware.extend(middleware._middleware)  # pyright: ignore[reportPrivateUsage]
+        else:
+            expanded_middleware.append(middleware)
+    all_middleware = expanded_middleware
 
     # Categorize each middleware item
     for middleware in all_middleware:

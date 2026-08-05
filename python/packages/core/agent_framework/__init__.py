@@ -41,7 +41,7 @@ from .exceptions import (
 )
 
 _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
-    "._agent_hooks": ("agent_hooks_middleware",),
+    "._agent_hooks": ("create_agent_hooks_middleware", "create_agent_hooks_middleware_from_emitter"),
     "._agents": ("Agent", "BaseAgent", "RawAgent", "SupportsAgentRun"),
     "._clients": (
         "BaseChatClient",
@@ -184,6 +184,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "FunctionInvocationContext",
         "FunctionMiddleware",
         "FunctionMiddlewareTypes",
+        "MiddlewareBundle",
         "MiddlewareTermination",
         "MiddlewareType",
         "MiddlewareTypes",
@@ -504,6 +505,7 @@ __all__ = [
     "MemoryTopicRecord",
     "Message",
     "MessageInjectionMiddleware",
+    "MiddlewareBundle",
     "MiddlewareException",
     "MiddlewareTermination",
     "MiddlewareType",
@@ -594,13 +596,14 @@ __all__ = [
     "WorkflowViz",
     "__version__",
     "add_usage_details",
-    "agent_hooks_middleware",
     "agent_middleware",
     "annotate_message_groups",
     "apply_compaction",
     "background_tasks_running",
     "background_tasks_running_message",
     "chat_middleware",
+    "create_agent_hooks_middleware",
+    "create_agent_hooks_middleware_from_emitter",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
     "create_edge_runner",

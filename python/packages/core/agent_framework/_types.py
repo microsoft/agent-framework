@@ -10,6 +10,7 @@ import re
 import sys
 from asyncio import iscoroutine
 from collections.abc import (
+    AsyncGenerator,
     AsyncIterable,
     AsyncIterator,
     Awaitable,
@@ -3223,6 +3224,49 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         stream._wrap_inner = True
         return stream
 
+    @classmethod
+    def buffered_and_gated(
+        cls,
+        consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+        gate: Callable[[list[UpdateT], FinalT, bool], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Create a fully buffered stream whose content is finalized by a gate.
+
+        This combinator exists for egress-gating middleware (e.g. policy enforcement)
+        that must apply a verdict to a run's *complete* content before anything is
+        released, and it states the hook-ordering contract in one place:
+
+        1. On the first pull, ``consume`` runs and produces the buffered updates and
+           the finalized result. Nothing has egressed yet.
+        2. Every transform/result/cleanup hook registered on the *returned* stream so
+           far (for example hooks attached by middleware pipelines after they unwind)
+           is applied to the buffered updates and result now — **before** the gate —
+           so the gate's verdict covers their effect. The hooks are consumed: they are
+           not applied again during replay.
+        3. ``gate`` receives the post-hook updates, the post-hook result, and whether
+           any pending transform/result hooks were applied. It returns the updates and
+           result to release (it may raise to block egress entirely). A gate that
+           issues its verdict over the final result should re-derive the released
+           updates from that result whenever hooks were applied, so streamed egress
+           cannot diverge from the verdicted content.
+        4. The stream is then sealed: the gated updates and result are replayed
+           verbatim, and registering further transform or result hooks raises
+           ``RuntimeError`` — nothing can rewrite content past the gate.
+
+        Args:
+            consume: Produces the buffered updates and finalized result. Runs inside
+                the caller's context (the caller owns any context-variable scoping).
+            gate: Receives ``(updates, final, hooks_applied)`` after pending hooks are
+                applied; returns the ``(updates, final)`` to release.
+
+        Returns:
+            A sealed, fully buffered ResponseStream.
+        """
+        return cast(
+            "ResponseStream[UpdateT, FinalT]",
+            cast(Any, _GatedResponseStream).create_buffered_and_gated(consume, gate),
+        )
+
     async def _get_stream(self) -> AsyncIterable[UpdateT]:
         if self._stream is None:
             if hasattr(self._stream_source, "__aiter__"):
@@ -3479,6 +3523,97 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     @property
     def updates(self) -> Sequence[UpdateT]:
         return self._updates
+
+
+class _GatedResponseStream(ResponseStream[UpdateT, FinalT]):
+    """ResponseStream whose content is sealed once its gate has run.
+
+    Created by :meth:`ResponseStream.buffered_and_gated`. Hooks registered before
+    the gate runs are applied to the buffered content ahead of the gate; once the
+    gate has run, registering transform or result hooks raises so nothing can
+    rewrite content past the gate. (Cleanup hooks remain allowed: they cannot
+    influence content.)
+    """
+
+    _gate_sealed: bool = False
+
+    def with_transform_hook(
+        self,
+        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a transform hook; rejected once the stream's gate has run."""
+        if self._gate_sealed:
+            raise RuntimeError(
+                "Cannot register a transform hook on a gated ResponseStream after its gate has "
+                "run: content is sealed by the gate's verdict."
+            )
+        return super().with_transform_hook(hook)
+
+    def with_result_hook(
+        self,
+        hook: Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a result hook; rejected once the stream's gate has run."""
+        if self._gate_sealed:
+            raise RuntimeError(
+                "Cannot register a result hook on a gated ResponseStream after its gate has "
+                "run: content is sealed by the gate's verdict."
+            )
+        return super().with_result_hook(hook)
+
+    @classmethod
+    def create_buffered_and_gated(
+        cls,
+        consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+        gate: Callable[[list[UpdateT], FinalT, bool], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+    ) -> _GatedResponseStream[UpdateT, FinalT]:
+        """Build the gated stream for :meth:`ResponseStream.buffered_and_gated`."""
+        holder: dict[str, Any] = {}
+
+        async def _materialize() -> AsyncGenerator[UpdateT]:
+            stream = cast(_GatedResponseStream[UpdateT, FinalT], holder["stream"])
+            updates, final = await consume()
+            # Drain the hooks registered on the gated stream so far and apply them to
+            # the buffered content before the gate (contract step 2). Draining also
+            # means _record_update applies nothing during replay.
+            transform_hooks = list(stream._transform_hooks)
+            stream._transform_hooks.clear()
+            result_hooks = list(stream._result_hooks)
+            stream._result_hooks.clear()
+            cleanup_hooks = list(stream._cleanup_hooks)
+            stream._cleanup_hooks.clear()
+            hooked_updates: list[UpdateT] = []
+            for update in updates:
+                hooked_update = update
+                for hook in transform_hooks:
+                    hooked = hook(hooked_update)
+                    if isawaitable(hooked):
+                        hooked = await hooked
+                    if hooked is not None:
+                        hooked_update = cast(UpdateT, hooked)
+                hooked_updates.append(hooked_update)
+            for result_hook in result_hooks:
+                hooked_final = result_hook(final)
+                if isawaitable(hooked_final):
+                    hooked_final = await hooked_final
+                if hooked_final is not None:
+                    final = cast(FinalT, hooked_final)
+            for cleanup_hook in cleanup_hooks:
+                cleanup_result = cleanup_hook()
+                if isawaitable(cleanup_result):
+                    await cleanup_result
+            gated_updates, gated_final = await gate(hooked_updates, final, bool(transform_hooks or result_hooks))
+            holder["final"] = gated_final
+            stream._gate_sealed = True
+            for update in gated_updates:
+                yield update
+
+        def _finalizer(_: Sequence[UpdateT]) -> FinalT:
+            return cast(FinalT, holder["final"])
+
+        stream: _GatedResponseStream[UpdateT, FinalT] = cls(_materialize(), finalizer=_finalizer)
+        holder["stream"] = stream
+        return stream
 
 
 # region ChatOptions

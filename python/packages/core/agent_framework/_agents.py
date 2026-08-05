@@ -35,6 +35,7 @@ from ._sessions import (
     PerServiceCallHistoryPersistingMiddleware,
     ServiceSessionId,
     SessionContext,
+    _defer_run_persistence,  # pyright: ignore[reportPrivateUsage]
     is_local_history_conversation_id,
 )
 from ._telemetry import FeatureIndex, mark_feature_used
@@ -439,6 +440,12 @@ class BaseAgent(SerializationMixin):
         self.name = name
         self.description = description
         self.context_providers: list[ContextProvider] = list(context_providers or [])
+        # Normalize a bare middleware source (a single middleware object or a
+        # MiddlewareBundle) into a single-element list, mirroring how
+        # categorize_middleware treats non-sequence sources, so construction-time
+        # and run-time middleware arguments behave identically.
+        if middleware is not None and not isinstance(middleware, Sequence):
+            middleware = [middleware]
         self.middleware: list[MiddlewareTypes] | None = (
             cast(list[MiddlewareTypes], middleware) if middleware is not None else None
         )
@@ -532,10 +539,18 @@ class BaseAgent(SerializationMixin):
     ) -> None:
         """Run after_run on all context providers in reverse order.
 
+        When an egress-enforcement gate is active for this run (see
+        ``_sessions._defer_run_persistence``), the provider work is deferred to the gate
+        owner so denied or transformed content never becomes durable ahead of its
+        verdict. The gate owner resets the gate before executing deferred callables, so
+        the re-entrant call below runs inline.
+
         Keyword Args:
             session: The conversation session.
             context: The invocation context with response populated.
         """
+        if _defer_run_persistence(partial(self._run_after_providers, session=session, context=context)):
+            return
         provider_session = session
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()

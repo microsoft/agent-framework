@@ -66,10 +66,14 @@ listed below.
 
 #### `AGENT_HOOKS`
 
-- `agent-framework-core`: `agent_hooks_middleware` from `agent_framework/_agent_hooks.py`,
-  the AGENT-HOOKS-0.1 enforcement middleware trio. Requires the opt-in
+- `agent-framework-core`: `create_agent_hooks_middleware` and
+  `create_agent_hooks_middleware_from_emitter` from `agent_framework/_agent_hooks.py`,
+  the AGENT-HOOKS-0.1 enforcement middleware bundle. Requires the opt-in
   `agent-framework-core[agent-hooks]` extra (`agent-hooks-sdk`), which is deliberately
-  not part of `agent-framework-core[all]`.
+  not part of `agent-framework-core[all]`. Known limitation: service-side (hosted) tool
+  execution never passes through the framework's function-invocation seam, so the
+  `pre_tool_call`/`post_tool_call` points cannot intercept it; hosted tool calls and
+  outputs are surfaced in the `post_model_call` content projection instead.
 
 #### `DECLARATIVE_AGENTS`
 

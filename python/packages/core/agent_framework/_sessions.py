@@ -30,7 +30,9 @@ from abc import abstractmethod
 from base64 import urlsafe_b64encode
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeGuard, TypeVar, cast
 
@@ -1025,6 +1027,30 @@ class HistoryProvider(ContextProvider):
             await self.save_messages(context.session_id, messages_to_store, state=state)
 
 
+# Run-scoped gate for durable persistence side effects. Egress-enforcement middleware
+# (agent-hooks) sets this to a collector list around the guarded section of a run; the
+# persistence call sites below consult it via ``_defer_run_persistence`` so that history
+# only becomes durable after the run's egress verdict permits the content. When no gate
+# is active (the default), persistence runs inline exactly as before.
+_DEFERRED_RUN_PERSISTENCE: ContextVar[list[Callable[[], Awaitable[None]]] | None] = ContextVar(
+    "agent_framework_deferred_run_persistence", default=None
+)
+
+
+def _defer_run_persistence(persist: Callable[[], Awaitable[None]]) -> bool:
+    """Queue a persistence side effect behind the active run-persistence gate, if any.
+
+    Returns True when ``persist`` was deferred to the gate owner (which MUST reset the
+    context variable before executing the collected callables, so re-entrant calls run
+    inline), and False when no gate is active and the caller must persist inline.
+    """
+    pending = _DEFERRED_RUN_PERSISTENCE.get()
+    if pending is None:
+        return False
+    pending.append(persist)
+    return True
+
+
 LOCAL_HISTORY_CONVERSATION_ID = "agent_framework_local_history_persistence"
 
 
@@ -1332,10 +1358,16 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
                 "instead."
             )
 
-        await self._persist_service_call_response(
+        # Durability is gated: when an egress-enforcement gate is active for this run,
+        # the persist is deferred until the model-call verdict permits the content
+        # (the sentinel/validation logic above stays inline — it drives control flow).
+        persist = partial(
+            self._persist_service_call_response,
             service_call_context=service_call_context,
             response=response,
         )
+        if not _defer_run_persistence(persist):
+            await persist()
         # The local sentinel only applies when the service does not store history; when it does,
         # the real conversation id already drives function-loop continuation.
         if not self._service_stores_history and _response_contains_follow_up_request(response):

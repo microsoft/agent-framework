@@ -6,7 +6,6 @@
         "agent_framework/_workflows"
     ],
     "exclude": [
-        "agent_framework/_agent_hooks.py",
         "agent_framework/_harness/_agent.py"
     ]
 }
