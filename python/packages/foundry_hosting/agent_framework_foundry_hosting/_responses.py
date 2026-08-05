@@ -569,7 +569,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
         Foundry sessions govern hosted compute and filesystem lifetime and may
         serve multiple users and Responses conversations. Conversation mode
-        reads and writes one MAF session snapshot under ``conversation_id``.
+        reads the latest MAF session snapshot under ``conversation_id`` and
+        writes each turn under both its immutable ``response_id`` and the
+        conversation ID.
         Response chaining reads the snapshot under ``previous_response_id`` and
         writes the updated session under the current ``response_id``, allowing
         branches without changing the MAF session's own identifier. The request
@@ -688,7 +690,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
             if session is not None and self._session_store is not None:
                 try:
-                    await self._session_store.set(context.conversation_id or context.response_id, session)
+                    await self._session_store.set(context.response_id, session)
+                    if context.conversation_id is not None:
+                        await self._session_store.set(context.conversation_id, session)
                 except Exception as save_error:
                     if request_interrupted:
                         logger.error(
@@ -808,15 +812,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 if latest_checkpoint is not None:
                     latest_checkpoint_id = latest_checkpoint.checkpoint_id
 
-            # Storage that will receive checkpoints written during this turn.
-            # When the caller chains with previous_response_id, the next turn
-            # will reference the current response_id as its previous_response_id,
-            # so new checkpoints must land under the current response_id (or the
-            # conversation_id when set). When conversation_id is set, this
-            # matches restore_storage; when only previous_response_id was
-            # supplied, restore_storage points at the *prior* response's
-            # directory and write_storage points at the *current* response's.
-            write_context_id = context.conversation_id or context.response_id
+            # Each turn writes to response-addressed checkpoint storage.
+            # Conversation continuation is updated from its latest checkpoint
+            # after the run.
+            write_context_id = context.response_id
             write_storage = _checkpoint_storage_for_context(
                 self._checkpoint_storage_path,
                 write_context_id,
@@ -869,7 +868,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 ):
                     yield item
 
-                await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
+                await self._finalize_workflow_checkpoints(
+                    write_storage,
+                    workflow_name=self._agent.workflow.name,
+                    conversation_id=context.conversation_id,
+                    user_id=user_id,
+                )
                 yield response_event_stream.emit_completed()
                 return
 
@@ -895,12 +899,44 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in tracker.close():
                 yield event
 
-            await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
+            await self._finalize_workflow_checkpoints(
+                write_storage,
+                workflow_name=self._agent.workflow.name,
+                conversation_id=context.conversation_id,
+                user_id=user_id,
+            )
             yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.exception("Failed to produce response for workflow agent")
             for event in self._emit_failure(response_event_stream, tracker, ex):
                 yield event
+
+    async def _finalize_workflow_checkpoints(
+        self,
+        response_storage: FileCheckpointStorage,
+        *,
+        workflow_name: str,
+        conversation_id: str | None,
+        user_id: str | None,
+    ) -> None:
+        """Keep one response checkpoint and update the conversation's latest-state alias."""
+        await self._delete_not_latest_checkpoints(response_storage, workflow_name)
+        if conversation_id is None:
+            return
+
+        latest_checkpoint = await response_storage.get_latest(workflow_name=workflow_name)
+        if latest_checkpoint is None:
+            return
+        if self._checkpoint_storage_path is None:
+            raise RuntimeError("Checkpoint storage path is not configured for workflow agent.")
+
+        conversation_storage = _checkpoint_storage_for_context(
+            self._checkpoint_storage_path,
+            conversation_id,
+            user_id=user_id,
+        )
+        await conversation_storage.save(latest_checkpoint)
+        await self._delete_not_latest_checkpoints(conversation_storage, workflow_name)
 
     @staticmethod
     async def _delete_not_latest_checkpoints(checkpoint_storage: FileCheckpointStorage, workflow_name: str) -> None:
