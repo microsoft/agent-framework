@@ -6,9 +6,9 @@ This package provides the integration of Agent Framework agents and workflows wi
 agents in addition to the Responses provider's message history. By default it
 uses the experimental `FoundrySessionStore` under `/.sessions` when hosted and
 an in-memory `SessionStore` locally. Hosted snapshots are partitioned by the
-Agent Server request context's platform user ID. Snapshot filenames use Responses `response_id` values, with an additional
-`conversation_id` snapshot that points to the latest state of each stored
-conversation.
+Agent Server request context's platform user ID. Snapshot filenames use
+Responses `response_id` values, with an additional `conversation_id` snapshot
+that points to the latest state of each stored conversation.
 
 Foundry's session file API exposes the hosted `$HOME` directory as `/`, so the
 API path `/.sessions` is stored on disk at `$HOME/.sessions`.
