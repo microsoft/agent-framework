@@ -2,12 +2,11 @@
 
 """A2UIAgent — wraps an agent with A2UI surface-generation support.
 
-Port of the .NET ``A2UIAgent`` (microsoft/agent-framework#6494). Every run gets a
-``generate_a2ui`` tool that delegates UI generation to a render sub-agent and returns
-a validated A2UI operations envelope as its tool result, run through the shared
-toolkit's validate→retry recovery loop.
+Every run gets a ``generate_a2ui`` tool that delegates UI generation to a render
+sub-agent and returns a validated A2UI operations envelope as its tool result, run
+through the shared toolkit's validate→retry recovery loop.
 
-Two paths mirror the .NET adapter:
+Two paths:
 
 * **Non-streaming** advertises a REAL ``generate_a2ui`` tool whose body runs the
   toolkit's synchronous ``run_a2ui_generation_with_recovery``; ordinary automatic
@@ -25,7 +24,6 @@ Two paths mirror the .NET adapter:
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -282,9 +280,8 @@ def _is_recoverable_error(exc: BaseException) -> bool:
     """Classify a sub-agent error. Programmer errors and cancellation rethrow;
     everything else is a recoverable attempt failure (retry).
 
-    Mirrors the .NET/TS classify: rethrow cancellation, TypeError, NameError, and any
-    non-Exception BaseException (SystemExit/KeyboardInterrupt). No undici exemption is
-    needed — Python transports do not raise TypeError for transient network failures.
+    Rethrow cancellation, TypeError, NameError, and any non-Exception BaseException
+    (SystemExit/KeyboardInterrupt); treat everything else as recoverable.
     """
     if isinstance(exc, asyncio.CancelledError):
         return False
@@ -435,31 +432,60 @@ class A2UIAgent:
             input_model=_generate_tool_schema(),
         )
 
-    async def _invoke_incoming_tool(self, tool: Any, name: str, args: dict[str, Any]) -> str:
-        """Execute an ordinary developer tool called alongside generate_a2ui.
+    def _inner_default_tools(self) -> list[Any]:
+        """The inner agent's own configured tools (``default_options["tools"]``).
 
-        The declaration-only generate_a2ui tool poisons the inner agent's batch function
-        invocation, so a tool called in the same turn is not run by the inner agent. Run
-        it here and return its result as a string to balance the tool call. Returns an
-        error envelope string on failure rather than raising, so one bad developer tool
-        does not abort the surface generation.
+        ``run_agent_stream`` passes no ``tools=`` when there are no AG-UI client tools, so
+        a server tool the developer wired on the agent reaches the streaming loop only
+        here — not in ``incoming_tools``. Included in the mixed-batch lookup so such a
+        tool still executes instead of being treated as unknown.
         """
-        if tool is None or getattr(tool, "func", None) is None:
-            return json.dumps({"error": f"tool '{name}' is not executable server-side"})
+        default_options = getattr(self.inner_agent, "default_options", None)
+        if isinstance(default_options, dict):
+            return _as_tool_list(default_options.get("tools"))
+        return []
+
+    async def _execute_server_tools(
+        self, server_calls: list[Any], tools: list[Any], run_kwargs: dict[str, Any]
+    ) -> list[Any]:
+        """Execute server tools called alongside generate_a2ui through the real pipeline.
+
+        Runs them through the shared function-invocation machinery with the inner agent's
+        function middleware and configuration — the same path the AG-UI approval resume
+        uses — so authorization/audit/policy middleware still apply. A direct
+        ``tool.invoke()`` would bypass all of that. Failures surface as error tool results
+        rather than aborting the surface generation.
+        """
+        from agent_framework._middleware import FunctionMiddlewarePipeline
+        from agent_framework._tools import (
+            _try_execute_function_call_groups,
+            normalize_function_invocation_configuration,
+        )
+
+        client = getattr(self.inner_agent, "client", None)
+        config = normalize_function_invocation_configuration(getattr(client, "function_invocation_configuration", None))
+        pipeline = FunctionMiddlewarePipeline(*(getattr(client, "function_middleware", None) or ()))
+        custom_args = {k: v for k, v in run_kwargs.items() if k != "options"}
         try:
-            out: Any = tool.invoke(arguments=args)
-            if inspect.isawaitable(out):
-                out = await out
-        except Exception as exc:  # noqa: BLE001 — surface as a tool result, never abort the run
-            logger.warning("A2UI: developer tool %r failed during a mixed generate turn: %s", name, exc)
-            return json.dumps({"error": str(exc)})
-        if isinstance(out, list):
-            for content in out:
-                if getattr(content, "type", None) == "function_result":
-                    result = getattr(content, "result", None)
-                    return result if isinstance(result, str) else json.dumps(result, default=str)
-            return json.dumps(out, default=str)
-        return out if isinstance(out, str) else json.dumps(out, default=str)
+            groups, _ = await _try_execute_function_call_groups(
+                custom_args=custom_args,
+                function_calls=server_calls,
+                tools=tools,
+                config=config,
+                middleware_pipeline=pipeline,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface as tool results, never abort the surface
+            logger.warning("A2UI: server tool execution failed during a mixed generate turn: %s", exc)
+            return [
+                Content.from_function_result(
+                    call_id=getattr(c, "call_id", "") or "", result=json.dumps({"error": str(exc)})
+                )
+                for c in server_calls
+            ]
+        results: list[Any] = []
+        for group in groups:
+            results.extend(c for c in group if getattr(c, "type", None) == "function_result")
+        return results
 
     async def _invoke_render_subagent(self, prompt: str, conversation: list[Any]) -> dict[str, Any] | None:
         """Run the render sub-agent (forced render_a2ui) and return its args, or None."""
@@ -553,39 +579,55 @@ class A2UIAgent:
                             all_concat[target] += frag
                 yield update
 
-            # Split coalesced calls into generate_a2ui vs ordinary developer tools.
+            # Classify the coalesced calls. The declaration-only generate_a2ui poisons
+            # the inner agent's batch invocation (a batch with any declaration-only call
+            # is paused before execution), so tools called alongside it are NOT run by the
+            # inner agent — handle them here by TYPE:
+            #   * generate_a2ui -> stream the surface (below).
+            #   * server tool (executable FunctionTool, found across incoming_tools OR the
+            #     inner agent's default tools) -> execute through the agent's real
+            #     function-invocation pipeline so middleware/config are preserved.
+            #   * client / declaration-only tool (func=None, browser-side) -> leave as a
+            #     user-input request for the frontend to execute and resume; do NOT
+            #     synthesize a result (that would break the resumable client-tool flow).
+            executable_tools = [*incoming_tools, *self._inner_default_tools()]
+            tool_by_name = {getattr(t, "name", None): t for t in executable_tools}
             generate_calls: list[Content] = []
-            ordinary_calls: list[tuple[str, str, dict[str, Any]]] = []
+            server_calls: list[Content] = []
+            client_calls: list[Content] = []
             for cid in call_order:
                 nm = name_by_cid.get(cid, "")
+                if not nm:
+                    continue
                 obj = _first_parsable_object(named_concat[cid], all_concat[cid])
                 if nm == self.params["tool_name"]:
-                    args_str = json.dumps(obj) if obj is not None else ""
-                    generate_calls.append(Content.from_function_call(call_id=cid, name=nm, arguments=args_str))
-                elif nm:
-                    ordinary_calls.append((cid, nm, obj if isinstance(obj, dict) else {}))
+                    generate_calls.append(
+                        Content.from_function_call(
+                            call_id=cid, name=nm, arguments=json.dumps(obj) if obj is not None else ""
+                        )
+                    )
+                    continue
+                args_str = json.dumps(obj) if isinstance(obj, dict) else (all_concat[cid] or "{}")
+                call = Content.from_function_call(call_id=cid, name=nm, arguments=args_str)
+                tool = tool_by_name.get(nm)
+                if tool is not None and getattr(tool, "func", None) is not None:
+                    server_calls.append(call)
+                else:
+                    call.user_input_request = True
+                    call.id = cid
+                    client_calls.append(call)
 
             if not generate_calls:
-                # No surface requested this round. Any ordinary calls in a batch WITHOUT a
-                # declaration-only tool are not poisoned, so the inner agent's own function
-                # invocation already executed them and looped; nothing more to do here.
+                # No surface requested this round. A batch WITHOUT a declaration-only call
+                # is not poisoned, so the inner agent already executed/surfaced its calls
+                # and looped; nothing more to do here.
                 return
 
-            # The declaration-only generate_a2ui poisons the inner agent's batch function
-            # invocation, so ordinary tools called alongside it are NOT executed by the
-            # inner agent. Execute them here so a "look up data and render it" turn does
-            # not silently skip the backend tool, and feed their results back to the planner.
-            ordinary_call_contents: list[Content] = []
-            ordinary_results: list[Content] = []
-            for cid, nm, args_obj in ordinary_calls:
-                ordinary_call_contents.append(
-                    Content.from_function_call(call_id=cid, name=nm, arguments=json.dumps(args_obj))
-                )
-                tool = next((t for t in incoming_tools if getattr(t, "name", None) == nm), None)
-                result_val = await self._invoke_incoming_tool(tool, nm, args_obj)
-                ordinary_results.append(Content.from_function_result(call_id=cid, result=result_val))
+            server_results = (
+                await self._execute_server_tools(server_calls, executable_tools, kwargs) if server_calls else []
+            )
 
-            assistant_contents = [*text_contents, *ordinary_call_contents, *generate_calls]
+            assistant_contents = [*text_contents, *server_calls, *client_calls, *generate_calls]
 
             generate_results: list[Content] = []
             for call in generate_calls:
@@ -594,7 +636,7 @@ class A2UIAgent:
                     yield update
                 generate_results.append(Content.from_function_result(call_id=call.call_id or "", result=box[0]))
 
-            all_results = [*ordinary_results, *generate_results]
+            all_results = [*server_results, *generate_results]
             # Surface tool results on the wire and feed back.
             yield AgentResponseUpdate(role="tool", contents=all_results)
             history = [

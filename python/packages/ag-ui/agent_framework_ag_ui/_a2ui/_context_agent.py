@@ -7,11 +7,10 @@ usage guidelines) to this wrapper directly at construction. This wrapper renders
 slice as a system message via the toolkit's ``build_context_prompt`` and prepends it,
 so a plain chat agent can render A2UI surfaces with no further setup.
 
-The slice is NOT read from run-option ``additional_properties`` (the old .NET
-``ChatOptions.AdditionalProperties`` channel): that stamped the slice onto the request
-options, which the provider SDK rejects as an unknown option, and it leaked to the
-provider on any run that supplied AG-UI context. Passing the slice in directly keeps
-it off the wire.
+The slice is NOT read from run-option ``additional_properties``: stamping it there put
+it on the request options, which the provider SDK rejects as an unknown option, and it
+leaked to the provider on any run that supplied AG-UI context. Passing the slice in
+directly keeps it off the wire.
 """
 
 from __future__ import annotations

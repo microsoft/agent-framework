@@ -2,11 +2,10 @@
 
 """Convenience wiring for A2UI on MAF-python.
 
-MAF does not own a tool registry the adapter can mutate per run, and (like the .NET
-sibling) auto-injection of ``render_a2ui`` happens CLIENT-side via the AG-UI
-a2ui-middleware (``injectA2UITool`` puts ``render_a2ui`` into ``input.tools``). The
-server-side opt-in is therefore explicit: the developer wraps their agent. This
-module provides that wrapping as a one-liner.
+Auto-injection of ``render_a2ui`` happens CLIENT-side via the AG-UI a2ui-middleware
+(``injectA2UITool`` puts ``render_a2ui`` into ``input.tools``). The server-side opt-in
+is explicit: the developer wraps their agent. This module provides that wrapping as a
+one-liner.
 
 Progressive-paint note: surface generation must run at the AGENT level
 (:class:`~._agent.A2UIAgent`) so the render sub-agent's argument fragments reach the
@@ -37,9 +36,9 @@ def enable_a2ui(
 ) -> AGUIContextAgent:
     """Wrap ``inner_agent`` with full A2UI support.
 
-    Composes the two wrappers in the order .NET uses: an :class:`A2UIAgent` (the
-    ``generate_a2ui`` streaming loop) wrapped by an :class:`AGUIContextAgent` (which
-    replays the forwarded component catalog into the prompt). The result is a drop-in
+    Composes an :class:`A2UIAgent` (the ``generate_a2ui`` streaming loop) wrapped by an
+    :class:`AGUIContextAgent` (which replays the forwarded component catalog into the
+    prompt). The result is a drop-in
     ``SupportsAgentRun`` to hand to ``AgentFrameworkAgent`` /
     ``add_agent_framework_fastapi_endpoint``.
 

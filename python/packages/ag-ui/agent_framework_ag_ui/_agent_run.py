@@ -2070,6 +2070,20 @@ def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThr
     session.state.update(restored.state)
 
 
+def _is_a2ui_runner(agent: Any) -> bool:
+    """True when ``agent`` is already an A2UI runner (manual ``enable_a2ui()`` path).
+
+    Lets the terminal-snapshot suppression treat a hand-wired A2UI agent the same as an
+    auto-injected one. Imported lazily so this module stays importable without the
+    optional ag-ui-a2ui-toolkit.
+    """
+    try:
+        from ._a2ui import A2UIAgent, AGUIContextAgent
+    except ImportError:
+        return False
+    return isinstance(agent, (A2UIAgent, AGUIContextAgent))
+
+
 def _a2ui_existing_tool_names(agent: SupportsAgentRun, tools: list[Any] | None) -> list[str]:
     """Tool names already visible for this run, for the A2UI no-double-injection check.
 
@@ -2350,6 +2364,13 @@ async def run_agent_stream(
             drop = set(plan["drop_tool_names"])
             if tools:
                 tools = [t for t in tools if getattr(t, "name", None) not in drop]
+
+    # The manually-wired enable_a2ui() path hands us an already-wrapped A2UI agent
+    # (plan_a2ui_injection returns None for it), so recognize that here too — otherwise
+    # a2ui_active stays false and the terminal MessagesSnapshotEvent re-renders the
+    # streamed surface/text out of order.
+    if not a2ui_active and _is_a2ui_runner(agent):
+        a2ui_active = True
 
     # Create session (with service session support)
     if config.use_service_session:

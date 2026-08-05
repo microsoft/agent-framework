@@ -100,8 +100,8 @@ def to_history_messages(messages: list[Any]) -> list[dict[str, Any]]:
     The toolkit's ``find_prior_surface`` / ``prepare_a2ui_request`` walk a list of
     ``{"role", "content"}`` entries, where a tool message's content is the JSON
     string of its function-result payload (the A2UI operations envelope for prior
-    renders). Mirrors .NET ``ToHistoryMessage``. Duck-typed (no agent_framework
-    import) so this module stays dependency-light.
+    renders). Duck-typed (no agent_framework import) so this module stays
+    dependency-light.
     """
     out: list[dict[str, Any]] = []
     for msg in messages:

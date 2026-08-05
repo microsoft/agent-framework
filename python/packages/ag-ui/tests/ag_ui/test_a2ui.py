@@ -951,3 +951,98 @@ def test_a2ui_existing_tool_names_includes_agent_default_tools():
     tool = FunctionTool(name="generate_a2ui", description="d", func=lambda: None)
     agent = Agent(name="a", instructions="i", client=None, tools=[tool])
     assert "generate_a2ui" in _a2ui_existing_tool_names(agent, None)  # no runtime tools
+
+
+def test_mixed_batch_server_tool_runs_through_middleware_pipeline():
+    # Server tools called alongside generate_a2ui must execute through the agent's real
+    # function-invocation pipeline (client function_middleware preserved), not a direct
+    # invoke that bypasses authorization/audit/policy middleware.
+    from agent_framework import FunctionTool
+    from agent_framework._middleware import FunctionMiddleware
+
+    seen: list[str] = []
+
+    class _RecordingMiddleware(FunctionMiddleware):
+        async def process(self, context, call_next):
+            seen.append("middleware-ran")
+            await call_next()
+
+    class _ClientWithMiddleware:
+        function_middleware = (_RecordingMiddleware(),)
+        function_invocation_configuration = None
+
+    def search(query: str = "") -> str:
+        return json.dumps({"results": ["Ritz"]})
+
+    class _InnerWithClient(_SearchThenGenerateInner):
+        client = _ClientWithMiddleware()
+
+    search_tool = FunctionTool(name="search", description="search", func=search)
+    kinds = asyncio.run(_drive(A2UIAgent(_InnerWithClient(), _RenderSub()), tools=[search_tool]))
+
+    assert "middleware-ran" in seen  # executed through the real pipeline, not a bypass
+    assert any(k[0] == "result" and k[1] == "s1" and "Ritz" in k[2] for k in kinds)
+
+
+class _ClientToolThenGenerateInner:
+    """Planner that calls a declaration-only CLIENT tool AND generate_a2ui together."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+        self.calls += 1
+        n = self.calls
+
+        async def gen():
+            if n == 1:
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(call_id="c1", name="browser_action", arguments="{}"),
+                        Content.from_function_call(
+                            call_id="g1", name="generate_a2ui", arguments=json.dumps({"intent": "create"})
+                        ),
+                    ],
+                )
+            else:
+                yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Done.")])
+
+        return gen()
+
+
+def test_mixed_batch_client_tool_left_as_user_input_not_synthesized():
+    # A declaration-only client tool (func=None, browser-side) called alongside
+    # generate_a2ui must NOT get a synthesized local result — that would break the
+    # resumable client-tool flow. It stays a user-input call; the surface still renders.
+    from agent_framework import FunctionTool
+
+    client_tool = FunctionTool(name="browser_action", description="d", func=None, input_model={"type": "object"})
+    kinds = asyncio.run(_drive(A2UIAgent(_ClientToolThenGenerateInner(), _RenderSub()), tools=[client_tool]))
+
+    assert not any(k[0] == "result" and k[1] == "c1" for k in kinds)  # no synthesized client-tool result
+    assert _generate_envelope(kinds) is not None  # surface still rendered
+
+
+def test_mixed_batch_executes_agent_default_tool():
+    # run_agent_stream passes no tools= when there are no AG-UI client tools, so a server
+    # tool the developer wired on the agent is reachable only via default_options["tools"].
+    # The mixed-batch lookup must cover it, or search returns "not executable" and the
+    # surface is generated without the backend data.
+    from agent_framework import FunctionTool
+
+    ran: list[str] = []
+
+    def search(query: str = "") -> str:
+        ran.append(query)
+        return json.dumps({"results": ["Ritz"]})
+
+    search_tool = FunctionTool(name="search", description="search", func=search)
+
+    class _InnerWithDefaultTool(_SearchThenGenerateInner):
+        # No client/middleware; the server tool lives on the agent's default options only.
+        default_options = {"tools": [search_tool]}
+
+    kinds = asyncio.run(_drive(A2UIAgent(_InnerWithDefaultTool(), _RenderSub())))  # NO incoming tools
+    assert ran == ["hotels"]  # default tool found + executed
+    assert any(k[0] == "result" and k[1] == "s1" and "Ritz" in k[2] for k in kinds)
