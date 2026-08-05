@@ -21,4 +21,4 @@ under `checkpoints`.
 ### Function approvals
 
 `ResponsesHostServer` persists function approvals durably. By default, it uses the
-`FoundryFunctionApprovalStore` when hosted and an in-memory `InMemoryFunctionApprovalStorage` locally. When hosted, the stored approvals will be isolated by the platform user ID and scoped under `function_approvals`.
+`FoundryFunctionApprovalStore` when hosted and an in-memory `InMemoryFunctionApprovalStore` locally. When hosted, the stored approvals will be isolated by the platform user ID and scoped under `function_approvals`.

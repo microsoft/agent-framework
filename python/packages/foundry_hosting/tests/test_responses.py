@@ -261,27 +261,7 @@ class _FunctionLoopRecordingClient(
 
             return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
 
-        async def get_response() -> ChatResponse:
-            if call_number == 1:
-                return ChatResponse(
-                    messages=[
-                        Message(
-                            role="assistant",
-                            contents=[
-                                Content.from_function_call(
-                                    call_id="call_1",
-                                    name="lookup_weather",
-                                    arguments='{"location": "Seattle"}',
-                                )
-                            ],
-                        )
-                    ]
-                )
-            return ChatResponse(
-                messages=[Message(role="assistant", contents=[Content.from_text("It is sunny in Seattle.")])]
-            )
-
-        return get_response()
+        raise NotImplementedError("The inner agent only runs in stream mode in Foundry Hosted Agents.")
 
 
 @tool(name="lookup_weather", approval_mode="never_require")
@@ -310,7 +290,7 @@ def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
     server = ResponsesHostServer(agent, store=response_store, **kwargs)
     if session_store is not _SESSION_STORE_UNSET:
         provider = MagicMock(spec=AgentSessionStoreProvider)
-        provider.get_storage.return_value = cast(SessionStore | None, session_store)
+        provider.get_store.return_value = cast(SessionStore | None, session_store)
         server._session_storage_provider = provider  # pyright: ignore[reportPrivateUsage]
     return server
 
@@ -410,7 +390,7 @@ class TestResponsesHostServerInit:
         provider = server._session_storage_provider  # pyright: ignore[reportPrivateUsage]
         assert provider is not None
         assert provider._in_memory_storage is None  # pyright: ignore[reportPrivateUsage]
-        session_store = provider.get_storage(is_hosted=False)
+        session_store = provider.get_store(is_hosted=False)
         assert type(session_store) is SessionStore
 
     def test_init_uses_foundry_state_store_lazily_when_hosted(
@@ -427,7 +407,7 @@ class TestResponsesHostServerInit:
         provider = server._session_storage_provider  # pyright: ignore[reportPrivateUsage]
         assert provider is not None
         assert provider._foundry_storage is None  # pyright: ignore[reportPrivateUsage]
-        session_store = provider.get_storage(is_hosted=True)
+        session_store = provider.get_store(is_hosted=True)
         assert isinstance(session_store, FoundryAgentSessionStore)
 
     def test_init_uses_in_memory_approval_store_lazily_locally(self) -> None:
@@ -439,9 +419,9 @@ class TestResponsesHostServerInit:
         provider = server._function_approval_storage_provider  # pyright: ignore[reportPrivateUsage]
         assert provider._in_memory_storage is None  # pyright: ignore[reportPrivateUsage]
 
-        approval_storage = provider.get_storage(is_hosted=False)
+        approval_storage = provider.get_store(is_hosted=False)
 
-        assert approval_storage is provider.get_storage(is_hosted=False)
+        assert approval_storage is provider.get_store(is_hosted=False)
         assert isinstance(approval_storage, InMemoryFunctionApprovalStore)
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
@@ -569,7 +549,7 @@ class TestAgentSessionPersistence:
 
         provider = server._session_storage_provider  # pyright: ignore[reportPrivateUsage]
         assert provider is not None
-        session_store = provider.get_storage(is_hosted=False)
+        session_store = provider.get_store(is_hosted=False)
         assert session_store is not None
         first_snapshot = await session_store.get(first.json()["id"])
         second_snapshot = await session_store.get(second.json()["id"])
@@ -3443,7 +3423,7 @@ class TestFunctionApprovalRoundTrip:
         assert approval_items[0]["server_label"] == "my_server"
 
         # Storage must contain a saved entry under the emitted request id.
-        loaded = await server._function_approval_storage_provider.get_storage(  # pyright: ignore[reportPrivateUsage]
+        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
             is_hosted=False
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
@@ -3473,7 +3453,7 @@ class TestFunctionApprovalRoundTrip:
                 break
         assert approval_request_id is not None
 
-        loaded = await server._function_approval_storage_provider.get_storage(  # pyright: ignore[reportPrivateUsage]
+        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
             is_hosted=False
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
@@ -4336,7 +4316,7 @@ class TestWorkflowAgentHosting:
         # builder; the original approval ``Content`` (carrying the inner
         # ``function_call``) must be persisted under that id so the next
         # turn can reconstruct it.
-        loaded = await server._function_approval_storage_provider.get_storage(  # pyright: ignore[reportPrivateUsage]
+        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
             is_hosted=False
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
@@ -4366,7 +4346,7 @@ class TestWorkflowAgentHosting:
                 break
         assert approval_request_id is not None
 
-        loaded = await server._function_approval_storage_provider.get_storage(  # pyright: ignore[reportPrivateUsage]
+        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
             is_hosted=False
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"

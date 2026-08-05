@@ -157,10 +157,10 @@ async def test_get_latest_returns_none_when_no_checkpoints_exist() -> None:
 def test_checkpoint_storage_provider_caches_storage_by_context(is_hosted: bool) -> None:
     provider = CheckpointStoreProvider()
 
-    first = provider.get_storage(is_hosted=is_hosted, context_id="context-1")
-    second = provider.get_storage(is_hosted=is_hosted, context_id="context-2")
+    first = provider.get_store(is_hosted=is_hosted, context_id="context-1")
+    second = provider.get_store(is_hosted=is_hosted, context_id="context-2")
 
-    assert provider.get_storage(is_hosted=is_hosted, context_id="context-1") is first
+    assert provider.get_store(is_hosted=is_hosted, context_id="context-1") is first
     assert second is not first
 
 
@@ -235,10 +235,10 @@ def test_function_approval_storage_provider_selects_backend(
 ) -> None:
     provider = FunctionApprovalStoreProvider()
 
-    storage = provider.get_storage(is_hosted=is_hosted)
+    storage = provider.get_store(is_hosted=is_hosted)
 
     assert type(storage) is expected_type
-    assert provider.get_storage(is_hosted=is_hosted) is storage
+    assert provider.get_store(is_hosted=is_hosted) is storage
 
 
 def test_function_approval_storage_provider_creates_only_requested_backend() -> None:
@@ -247,9 +247,9 @@ def test_function_approval_storage_provider_creates_only_requested_backend() -> 
         patch("agent_framework_foundry_hosting._state_store.InMemoryFunctionApprovalStore") as in_memory_storage_type,
     ):
         provider = FunctionApprovalStoreProvider()
-        storage = provider.get_storage(is_hosted=True)
+        storage = provider.get_store(is_hosted=True)
 
-        assert provider.get_storage(is_hosted=True) is storage
+        assert provider.get_store(is_hosted=True) is storage
 
     foundry_storage_type.assert_called_once_with()
     in_memory_storage_type.assert_not_called()
@@ -310,10 +310,10 @@ def test_agent_session_storage_provider_selects_backend(
 ) -> None:
     provider = AgentSessionStoreProvider()
 
-    storage = provider.get_storage(is_hosted=is_hosted)
+    storage = provider.get_store(is_hosted=is_hosted)
 
     assert type(storage) is expected_type
-    assert provider.get_storage(is_hosted=is_hosted) is storage
+    assert provider.get_store(is_hosted=is_hosted) is storage
 
 
 def test_agent_session_storage_provider_creates_only_requested_backend() -> None:
@@ -322,9 +322,9 @@ def test_agent_session_storage_provider_creates_only_requested_backend() -> None
         patch("agent_framework_foundry_hosting._state_store.SessionStore") as in_memory_storage_type,
     ):
         provider = AgentSessionStoreProvider()
-        storage = provider.get_storage(is_hosted=False)
+        storage = provider.get_store(is_hosted=False)
 
-        assert provider.get_storage(is_hosted=False) is storage
+        assert provider.get_store(is_hosted=False) is storage
 
     foundry_storage_type.assert_not_called()
     in_memory_storage_type.assert_called_once_with()

@@ -20,6 +20,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     RawAgent,
+    SessionStore,
     SupportsAgentRun,
     WorkflowAgent,
 )
@@ -70,6 +71,7 @@ from ._state_store import (
     CheckpointStoreProvider,
     FunctionApprovalStore,
     FunctionApprovalStoreProvider,
+    StoreProvider,
 )
 
 logger = logging.getLogger(__name__)
@@ -175,6 +177,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
+        agent_session_store_provider: StoreProvider[SessionStore] | None = None,
+        checkpoint_store_provider: StoreProvider[CheckpointStorage] | None = None,
+        function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -183,7 +188,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             agent: The agent to handle responses for.
             prefix: The URL prefix for the server.
             options: Optional server options.
-            store: Optional response store.
+            store: Optional response store for input and history look up.
+            agent_session_store_provider: Optional provider for MAF agent session storage.
+                If not provided, a default `AgentSessionStoreProvider` will be used.
+            checkpoint_store_provider: Optional provider for workflow checkpoint storage.
+                If not provided, a default `CheckpointStoreProvider` will be used.
+            function_approval_store_provider: Optional provider for function approval storage.
+                If not provided, a default `FunctionApprovalStoreProvider` will be used.
             **kwargs: Additional keyword arguments.
 
         Note:
@@ -240,9 +251,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self._agent: SupportsAgentRun = agent
 
         # Storage providers
-        self._checkpoint_storage_provider = CheckpointStoreProvider()
-        self._session_storage_provider = AgentSessionStoreProvider()
-        self._function_approval_storage_provider = FunctionApprovalStoreProvider()
+        self._checkpoint_storage_provider = (
+            CheckpointStoreProvider() if checkpoint_store_provider is None else checkpoint_store_provider
+        )
+        self._session_storage_provider = (
+            AgentSessionStoreProvider() if agent_session_store_provider is None else agent_session_store_provider
+        )
+        self._function_approval_storage_provider = (
+            FunctionApprovalStoreProvider()
+            if function_approval_store_provider is None
+            else function_approval_store_provider
+        )
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -327,8 +346,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             consent_errors_to_emit = consent_url_from_error(ex)
             if consent_errors_to_emit is None or len(consent_errors_to_emit) == 0:
                 logger.error("Failed to prepare agent: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
-                self._emit_failure(response_event_stream, None, ex)
+                for event in self._emit_failure(response_event_stream, None, ex):
+                    yield event
                 return
+
             for consent_error in consent_errors_to_emit:
                 logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
                 oauth_item = OAuthConsentRequestOutputItem(
@@ -341,21 +362,31 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 builder = response_event_stream.add_output_item(oauth_item["id"])
                 yield builder.emit_added(oauth_item)
                 yield builder.emit_done(oauth_item)
+
             yield response_event_stream.emit_incomplete(
                 reason=f"OAuth consent required for {len(consent_errors_to_emit)} tool(s)."
             )
             return
 
         try:
-            approval_storage = self._function_approval_storage_provider.get_storage(is_hosted=self.config.is_hosted)
-            read_session_id = context.conversation_id or request.get("previous_response_id")
-            session_storage = self._session_storage_provider.get_storage(is_hosted=self.config.is_hosted)
-            previous_session = await session_storage.get(read_session_id) if read_session_id is not None else None
-            # A session should exist for the given conversation_id or previous_response_id if one was provided;
-            # otherwise, create a new session.
-            if read_session_id is not None and previous_session is None:
-                raise RuntimeError(f"No Agent Framework session was found for id {read_session_id!r}.")
-            session = previous_session if previous_session is not None else self._agent.create_session()
+            approval_storage = self._function_approval_storage_provider.get_store(is_hosted=self.config.is_hosted)
+            session_storage = self._session_storage_provider.get_store(is_hosted=self.config.is_hosted)
+            # Agent sessions are either tied to the conversation_id (for multi-turn conversation mode)
+            # or the previous_response_id (for response chaining). If neither is present, a new session
+            # is created for this request and stored under the current response_id. The current response_id
+            # will become the previous_response_id for the next request in a response chain, allowing the
+            # session to be retrieved.
+            session_id = context.conversation_id or request.get("previous_response_id")
+            session = await session_storage.get(session_id) if session_id is not None else None
+            if session is None:
+                if session_id is not None:
+                    # Note that we cannot determine if the session was deleted or never existed,
+                    # so we log a warning and create a new session.
+                    logger.info(
+                        "Cannot find an existing agent session for id=%s. Creating a new session.",
+                        session_id,
+                    )
+                session = self._agent.create_session()
         except Exception as ex:
             logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
             for event in self._emit_failure(response_event_stream, None, ex):
@@ -458,7 +489,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker: _OutputItemTracker | None = None
 
         try:
-            approval_storage = self._function_approval_storage_provider.get_storage(is_hosted=self.config.is_hosted)
+            approval_storage = self._function_approval_storage_provider.get_store(is_hosted=self.config.is_hosted)
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
@@ -492,7 +523,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             restore_storage: CheckpointStorage | None = None
             if context_id is not None:
                 validate_path_segment(context_id, kind="context id")
-                restore_storage = self._checkpoint_storage_provider.get_storage(
+                restore_storage = self._checkpoint_storage_provider.get_store(
                     is_hosted=self.config.is_hosted,
                     context_id=context_id,
                 )
@@ -510,7 +541,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # directory and write_storage points at the *current* response's.
             write_context_id = context.conversation_id or context.response_id
             validate_path_segment(write_context_id, kind="context id")
-            write_storage = self._checkpoint_storage_provider.get_storage(
+            write_storage = self._checkpoint_storage_provider.get_store(
                 is_hosted=self.config.is_hosted,
                 context_id=write_context_id,
             )
