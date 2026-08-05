@@ -4,7 +4,7 @@ description = "Experimental modules for Microsoft Agent Framework"
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260721"
+version = "1.0.0b260730"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,7 +22,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "agent-framework-core>=1.11.0,<2",
+  "agent-framework-core>=1.13.0,<2",
 ]
 
 [project.optional-dependencies]
@@ -57,8 +57,8 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv==0.11.29",
-    "ruff==0.15.22",
+    "uv==0.11.32",
+    "ruff==0.16.0",
     "pytest==9.1.1",
     "mypy==2.3.0",
     "pyright==1.1.411",
@@ -67,7 +67,7 @@ dev = [
     "rich>=13.7.1,<15.0.0",
     "tomli==2.4.1",
     "tomli-w==1.2.0",
-    "prek==0.4.10",
+    "prek==0.4.11",
 ]
 # tau2 is an executable optional feature fetched from source because it is not available on PyPI.
 tau2 = [

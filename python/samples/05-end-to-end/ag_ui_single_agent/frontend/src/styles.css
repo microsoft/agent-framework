@@ -1,0 +1,259 @@
+/* Copyright (c) Microsoft. All rights reserved. */
+
+:root {
+  --page-bg: #edf4f8;
+  --panel-bg: #fdfdfd;
+  --ink: #132534;
+  --muted: #607487;
+  --line: #c6d6e2;
+  --teal: #1f9d8b;
+  --teal-dark: #11756a;
+  --shadow: 0 20px 45px rgb(15 35 51 / 14%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Avenir Next", "Helvetica Neue", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 12% 8%, rgb(31 157 139 / 20%) 0%, transparent 28%),
+    radial-gradient(circle at 88% 18%, rgb(255 154 60 / 20%) 0%, transparent 30%),
+    linear-gradient(150deg, #eff6fa 0%, #dceaf3 46%, #e7f1f6 100%);
+}
+
+.page-shell {
+  min-height: 100vh;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 28px;
+  animation: fade-in 320ms ease-out;
+}
+
+.hero {
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.72rem;
+  color: var(--teal-dark);
+  font-weight: 700;
+}
+
+.hero h1 {
+  margin: 6px 0 8px;
+  font-size: clamp(1.6rem, 2.8vw, 2.4rem);
+  line-height: 1.15;
+}
+
+.subtitle {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.status-pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  box-shadow: 0 8px 20px rgb(19 37 52 / 8%);
+}
+
+.status-pill span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.status-pill strong {
+  font-size: 1rem;
+}
+
+.status-pill[data-running="true"] {
+  border-color: var(--teal);
+}
+
+.card {
+  background: var(--panel-bg);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 18px;
+}
+
+.chat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 60vh;
+}
+
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-toolbar h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.ghost-button {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--teal-dark);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ghost-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 6px 2px;
+  max-height: 52vh;
+}
+
+.empty-state {
+  color: var(--muted);
+  display: grid;
+  gap: 12px;
+}
+
+.starter-prompts {
+  display: grid;
+  gap: 10px;
+}
+
+.starter-prompt {
+  text-align: left;
+  border: 1px dashed var(--line);
+  background: #f6fafc;
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.starter-prompt:hover:not(:disabled) {
+  border-color: var(--teal);
+}
+
+.starter-prompt:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.bubble {
+  border-radius: 14px;
+  padding: 10px 14px;
+  max-width: 82%;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.bubble p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.bubble-role {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.bubble-user {
+  align-self: flex-end;
+  background: var(--teal);
+  border-color: var(--teal-dark);
+  color: #fff;
+}
+
+.bubble-user .bubble-role {
+  color: rgb(255 255 255 / 80%);
+}
+
+.bubble-assistant {
+  align-self: flex-start;
+}
+
+.bubble-system {
+  align-self: center;
+  background: #fff4e6;
+  border-color: #ffcf99;
+  color: #8a5200;
+  max-width: 100%;
+}
+
+.composer {
+  display: flex;
+  gap: 10px;
+}
+
+.composer input {
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 1rem;
+}
+
+.composer input:focus {
+  outline: none;
+  border-color: var(--teal);
+}
+
+.send-button {
+  border: none;
+  background: var(--teal);
+  color: #fff;
+  border-radius: 12px;
+  padding: 12px 22px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.send-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
