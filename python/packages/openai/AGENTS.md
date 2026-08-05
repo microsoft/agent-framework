@@ -41,12 +41,17 @@ Mistral, DeepSeek, Ollama, …) diverge on the edges — e.g. returning reasonin
 `reasoning` / `reasoning_content` / `reasoning_details`, or `content` as a list of chunks. Rather
 than branching in core, the client exposes two optional callables so callers adapt it themselves:
 
-- `response_parser: OpenAIChatResponseContentsParser` — `(choice, default_contents) -> contents`.
-  Post-processes the `Content` items parsed from each response choice / streaming delta. Use it to
-  surface non-standard fields for display. Applied per choice in both streaming and non-streaming paths.
+- `response_parser: OpenAIChatResponseContentsParser` — `(message_or_delta, default_contents) -> contents`.
+  Post-processes the `Content` items parsed from each response choice. Receives the already-selected
+  `ChatCompletionMessage` (non-streaming) or `ChoiceDelta` (streaming) — the client resolves the
+  dispatch — so a parser reads provider fields directly (e.g. `getattr(msg, "reasoning", None)`) without
+  branching. Use it to surface non-standard fields for display. Applied per choice in both paths.
 - `message_preparer: OpenAIChatMessagePreparer` — `(message, default_dicts) -> dicts`. Post-processes
-  the outgoing request message dicts built from each framework `Message`. Use it to echo
-  provider-specific fields (e.g. vLLM `reasoning`) back on later turns for multi-turn continuity.
+  the outgoing request message dicts built from each framework `Message` (called once per `Message`, for
+  every role including `system`/`developer`). Use it to echo provider-specific fields (e.g. vLLM
+  `reasoning`) back on later turns for multi-turn continuity. To correlate a surfaced-reasoning `Content`
+  with the dict the default serializer emitted for it, tag the `Content` via `additional_properties` in
+  the parser and match against `message.contents` rather than raw request-string matching.
 
 Both default to `None` (no-op → byte-identical stock OpenAI behavior) and are constructor args on
 `RawOpenAIChatCompletionClient` / `OpenAIChatCompletionClient`. Provider round-trips generally need

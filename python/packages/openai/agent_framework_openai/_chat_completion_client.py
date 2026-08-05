@@ -50,8 +50,9 @@ from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types import CompletionUsage
 from openai.types.chat.chat_completion import ChatCompletion, Choice
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.chat.chat_completion_message_custom_tool_call import (
     ChatCompletionMessageCustomToolCall,
 )
@@ -139,12 +140,17 @@ ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
-OpenAIChatResponseContentsParser: TypeAlias = Callable[["Choice | ChunkChoice", list[Content]], list[Content]]
-"""Hook to customize how a response choice/delta is parsed into ``Content`` items.
+OpenAIChatResponseContentsParser: TypeAlias = Callable[
+    ["ChatCompletionMessage | ChoiceDelta", list[Content]], list[Content]
+]
+"""Hook to customize how a response message/delta is parsed into ``Content`` items.
 
 Called once per choice (non-streaming) or per streaming update-choice, after the client
-has built its default ``Content`` list. Receives the raw OpenAI ``Choice`` / streaming
-``ChunkChoice`` and the default-parsed contents, and returns the contents to use instead.
+has built its default ``Content`` list. Receives the already-selected OpenAI
+``ChatCompletionMessage`` (non-streaming) or ``ChoiceDelta`` (streaming) and the
+default-parsed contents, and returns the contents to use instead. The client resolves the
+streaming/non-streaming dispatch, so a parser can read provider fields directly (e.g.
+``getattr(message, "reasoning", None)``) without branching.
 
 This is the extension point for OpenAI-compatible endpoints that return non-standard fields
 (e.g. OpenRouter/vLLM ``reasoning`` / ``reasoning_details`` or Mistral chunked ``content``).
@@ -859,7 +865,7 @@ class RawOpenAIChatCompletionClient(
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
                 contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
             if self.response_parser is not None:
-                contents = list(self.response_parser(choice, contents))
+                contents = list(self.response_parser(choice.message, contents))
             messages.append(Message(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -906,7 +912,7 @@ class RawOpenAIChatCompletionClient(
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):
                 choice_contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
             if self.response_parser is not None:
-                choice_contents = list(self.response_parser(choice, choice_contents))
+                choice_contents = list(self.response_parser(choice.delta, choice_contents))
             contents.extend(choice_contents)
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
@@ -1027,7 +1033,18 @@ class RawOpenAIChatCompletionClient(
     # region Parsers
 
     def _prepare_message_for_openai(self, message: Message) -> list[dict[str, Any]]:
-        """Prepare a chat message for OpenAI."""
+        """Prepare a chat message for OpenAI, applying the ``message_preparer`` hook if set.
+
+        The hook is applied here so it runs exactly once per framework ``Message`` for every
+        role, including ``system`` / ``developer`` messages that build a different shape.
+        """
+        all_messages = self._build_openai_messages(message)
+        if self.message_preparer is not None:
+            all_messages = list(self.message_preparer(message, all_messages))
+        return all_messages
+
+    def _build_openai_messages(self, message: Message) -> list[dict[str, Any]]:
+        """Build the default OpenAI message dicts for a framework message (no hook applied)."""
         # System/developer messages default to plain string content because some
         # OpenAI-compatible endpoints reject list content for non-user roles. The
         # exception is a prompt cache breakpoint on a text part: it can only live on
@@ -1146,8 +1163,6 @@ class RawOpenAIChatCompletionClient(
                         for text_item in text_items
                     )
 
-        if self.message_preparer is not None:
-            all_messages = list(self.message_preparer(message, all_messages))
         return all_messages
 
     def _prepare_content_for_openai(self, content: Content) -> dict[str, Any]:

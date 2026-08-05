@@ -2472,38 +2472,59 @@ def test_prepare_options_prompt_cache_options_guarded_on_old_openai(monkeypatch:
 
 # region response_parser / message_preparer hooks
 
-_VLLM_REASONING_KEY = "vllm_reasoning"
+_VLLM_REASONING_FIELD_KEY = "_source_reasoning_field"
 
 
-def _vllm_reasoning_parser(choice: Any, contents: list[Content]) -> list[Content]:
-    """Example response_parser: surface a top-level ``reasoning`` field as reasoning content."""
-    message = choice.message if hasattr(choice, "message") else choice.delta
+def _vllm_reasoning_parser(message: Any, contents: list[Content]) -> list[Content]:
+    """Example response_parser: surface a top-level ``reasoning`` field as reasoning content.
+
+    Receives the already-selected message/delta (no streaming dispatch needed) and tags the
+    surfaced content with its originating field name so a message_preparer can echo it back
+    and correlate it robustly.
+    """
     reasoning = getattr(message, "reasoning", None)
     if isinstance(reasoning, str) and reasoning:
         return [
             *contents,
-            Content.from_text_reasoning(text=reasoning, additional_properties={_VLLM_REASONING_KEY: True}),
+            Content.from_text_reasoning(
+                text=reasoning,
+                additional_properties={_VLLM_REASONING_FIELD_KEY: "reasoning"},
+            ),
         ]
     return contents
 
 
 def _vllm_reasoning_preparer(message: Message, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Example message_preparer: echo surfaced reasoning back under vLLM's ``reasoning`` key.
+    """Example message_preparer: echo surfaced reasoning back under its originating key.
 
-    The default serializer would replay the surfaced reasoning as visible assistant text, so this
-    drops those auto-emitted messages and attaches the reasoning to the final assistant message.
+    Correlates via ``message.contents`` markers instead of raw request-string matching: each
+    marked reasoning content maps to exactly one auto-emitted assistant text dict, removed
+    one-to-one in order, then the provider field is attached to the final message.
     """
-    reasoning_texts = {
-        content.text
+    surfaced = [
+        (content.additional_properties[_VLLM_REASONING_FIELD_KEY], content.text)
         for content in message.contents
-        if content.type == "text_reasoning" and content.additional_properties.get(_VLLM_REASONING_KEY) and content.text
-    }
-    if not reasoning_texts:
+        if content.type == "text_reasoning"
+        and _VLLM_REASONING_FIELD_KEY in content.additional_properties
+        and content.text
+    ]
+    if not surfaced:
         return messages
-    filtered = [m for m in messages if m.get("content") not in reasoning_texts]
-    if filtered:
-        filtered[-1]["reasoning"] = "".join(sorted(reasoning_texts))
-    return filtered
+
+    remaining = list(messages)
+    fields: dict[str, str] = {}
+    for field_name, text in surfaced:
+        # Remove exactly one auto-emitted assistant text dict matching this reasoning text.
+        for i, msg in enumerate(remaining):
+            if msg.get("role") == "assistant" and "tool_calls" not in msg and msg.get("content") == text:
+                remaining.pop(i)
+                break
+        fields[field_name] = fields.get(field_name, "") + text
+
+    if remaining:
+        for field_name, value in fields.items():
+            remaining[-1][field_name] = value
+    return remaining
 
 
 def _make_chat_completion(message: ChatCompletionMessage, model: str = "vllm-model") -> ChatCompletion:
@@ -2565,6 +2586,44 @@ def test_message_preparer_hook_transforms_messages(openai_unit_test_env: dict[st
     assert prepared[-1]["content"] == "hi"
 
 
+@pytest.mark.parametrize("role", ["system", "developer"])
+def test_message_preparer_hook_runs_for_system_and_developer(role: str, openai_unit_test_env: dict[str, str]) -> None:
+    """The message_preparer runs once per Message, including system/developer roles."""
+    seen: list[str] = []
+
+    def preparer(message: Message, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        seen.append(str(message.role))
+        for msg in messages:
+            msg["gateway_field"] = "required"
+        return messages
+
+    client = OpenAIChatCompletionClient(message_preparer=preparer)
+    prepared = client._prepare_message_for_openai(Message(role=cast(Any, role), contents=[Content.from_text("sys")]))
+
+    assert seen == [role]
+    assert prepared[-1]["gateway_field"] == "required"
+    assert prepared[-1]["content"] == "sys"
+
+
+def test_message_preparer_correlation_does_not_drop_same_text_answer(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Marker-based correlation removes only one reasoning dict, even if the answer shares its text."""
+    client = OpenAIChatCompletionClient(message_preparer=_vllm_reasoning_preparer)
+    # Answer text is byte-identical to the reasoning text; only the surfaced reasoning
+    # (marked) content should be echoed back and its single dict removed.
+    same = "same text"
+    reasoning = Content.from_text_reasoning(text=same, additional_properties={_VLLM_REASONING_FIELD_KEY: "reasoning"})
+    message = Message(role="assistant", contents=[Content.from_text(same), reasoning])
+
+    prepared = client._prepare_message_for_openai(message)
+
+    # The answer message survives (one dict removed, not both) and carries the echoed field.
+    assert len(prepared) == 1
+    assert prepared[0]["content"] == same
+    assert prepared[0]["reasoning"] == same
+
+
 def test_hooks_roundtrip_vllm_reasoning(openai_unit_test_env: dict[str, str]) -> None:
     """End-to-end: parser surfaces reasoning for display, preparer echoes it back under `reasoning`."""
     client = OpenAIChatCompletionClient(
@@ -2620,10 +2679,9 @@ def test_default_parsing_skips_non_string_content(openai_unit_test_env: dict[str
 
 
 def test_response_parser_can_expand_chunked_content(openai_unit_test_env: dict[str, str]) -> None:
-    """A response_parser receives the raw choice and can expand structured list content."""
+    """A response_parser receives the selected message and can expand structured list content."""
 
-    def chunk_parser(choice: Any, contents: list[Content]) -> list[Content]:
-        message = choice.message if hasattr(choice, "message") else choice.delta
+    def chunk_parser(message: Any, contents: list[Content]) -> list[Content]:
         if not isinstance(message.content, list):
             return contents
         expanded = list(contents)
