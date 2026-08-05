@@ -1035,3 +1035,88 @@ def test_mixed_batch_executes_agent_default_tool():
     kinds = asyncio.run(_drive(A2UIAgent(_InnerWithDefaultTool(), _RenderSub())))  # NO incoming tools
     assert ran == ["hotels"]  # default tool found + executed
     assert any(k[0] == "result" and k[1] == "s1" and "Ritz" in k[2] for k in kinds)
+
+
+# --------------------------------------------------------------------------- #
+# Bridge integration: client tool + generate_a2ui in one turn, through run_agent_stream
+# --------------------------------------------------------------------------- #
+
+
+class _ClientToolThenGenerateBridgeInner:
+    """Planner double for the bridge test: turn 1 calls a client tool AND generate_a2ui
+    together, turn 2 narrates."""
+
+    id = "p"
+    name = "planner"
+    description = "d"
+
+    def __init__(self):
+        self.calls = 0
+
+    def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+        self.calls += 1
+        n = self.calls
+
+        async def gen():
+            if n == 1:
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(call_id="c1", name="browser_action", arguments="{}"),
+                        Content.from_function_call(
+                            call_id="g1", name="generate_a2ui", arguments=json.dumps({"intent": "create"})
+                        ),
+                    ],
+                )
+            else:
+                yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Done.")])
+
+        return gen()
+
+
+def _etype(event):
+    t = getattr(event, "type", None)
+    return getattr(t, "name", None) or str(t)
+
+
+async def test_bridge_client_tool_with_generate_surfaces_resumable_not_synthesized():
+    # End-to-end through run_agent_stream: a turn that calls a declaration-only CLIENT
+    # tool AND generate_a2ui together. Validates the resumable client-tool contract on
+    # the AG-UI wire — the client tool surfaces as a frontend tool call (START/ARGS/END)
+    # with NO server-synthesized result, so the frontend executes it and resumes with a
+    # new run; the surface still renders; the run finishes cleanly; and (manual
+    # enable_a2ui path) no terminal MESSAGES_SNAPSHOT is emitted to reorder the stream.
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    runner = A2UIAgent(_ClientToolThenGenerateBridgeInner(), _RenderSub())  # manual enable_a2ui path
+    wrapper = AgentFrameworkAgent(agent=runner)
+    input_data = {
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{"name": "browser_action", "description": "d", "parameters": {"type": "object"}}],
+    }
+    events = [e async for e in wrapper.run(input_data)]
+    types = [_etype(e) for e in events]
+
+    def _ids(event_type):
+        return [getattr(e, "tool_call_id", None) for e in events if _etype(e) == event_type]
+
+    started = {
+        getattr(e, "tool_call_name", None): getattr(e, "tool_call_id", None)
+        for e in events
+        if _etype(e) == "TOOL_CALL_START"
+    }
+    # Client tool surfaced as a frontend tool call the client can execute...
+    assert started.get("browser_action") == "c1"
+    # ...but the server did NOT synthesize a result for it (frontend resumes it).
+    assert "c1" not in _ids("TOOL_CALL_RESULT")
+
+    # The A2UI surface still generated + painted (progressive render_a2ui args + result).
+    assert started.get("generate_a2ui") == "g1"
+    assert "g1" in _ids("TOOL_CALL_RESULT")
+    assert started.get("render_a2ui") == "r1"
+    assert _ids("TOOL_CALL_ARGS").count("r1") >= 1
+
+    # Run finishes (frontend-tool resume happens out of band via a new run), and no
+    # terminal MESSAGES_SNAPSHOT is emitted for the A2UI run (streamed order preserved).
+    assert "RUN_FINISHED" in types
+    assert "MESSAGES_SNAPSHOT" not in types
