@@ -1656,18 +1656,26 @@ async def _execute_single_function_call(
     live_tools: list[ToolTypes] | None,
 ) -> tuple[list[Content], bool]:
     from ._middleware import MiddlewareTermination
+    from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
     from ._types import Content
 
     try:
-        result = await _auto_invoke_function(
-            function_call_content=function_call,
-            custom_args=custom_args,
-            tool_map=tool_map,
-            invocation_session=invocation_session,
-            middleware_pipeline=middleware_pipeline,
-            config=config,
-            live_tools=live_tools,
-        )
+        # A run-persistence gate defers only the gated run's own persistence; nested
+        # agent runs persist inline at their own boundaries. Run-identity ownership
+        # (see _sessions._RunPersistenceGate.accepts) enforces that for every run that
+        # stamps an identity; suspending the gate around the tool invocation (the most
+        # common nesting seam) additionally covers nested agents with fully custom run
+        # loops, which never stamp one and would otherwise inherit the outer identity.
+        with _suspend_run_persistence_gate():
+            result = await _auto_invoke_function(
+                function_call_content=function_call,
+                custom_args=custom_args,
+                tool_map=tool_map,
+                invocation_session=invocation_session,
+                middleware_pipeline=middleware_pipeline,
+                config=config,
+                live_tools=live_tools,
+            )
         return [result], False
     except MiddlewareTermination as exc:
         if isinstance(exc.result, Content):
@@ -2845,7 +2853,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     ) -> None:
         from ._middleware import categorize_middleware
 
-        categorized_middleware = categorize_middleware(middleware)
+        # Chat clients install only chat and function middleware. Agent middleware in
+        # a bundle raises (a bundle must never be partially installed); bare agent
+        # middleware is warned about and skipped inside categorize_middleware.
+        categorized_middleware = categorize_middleware(middleware, supported_categories=("chat", "function"))
         self.function_middleware: list[FunctionMiddlewareTypes] = list(categorized_middleware["function"])
         self._cached_function_middleware_pipeline: FunctionMiddlewarePipeline | None = None
         self.function_invocation_configuration = normalize_function_invocation_configuration(
@@ -3235,7 +3246,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 ),
                 *middleware,
             ]
-        categorized_runtime_middleware = categorize_middleware(request_kwargs.pop("middleware", []))
+        # Same contract as the constructor: this seam installs chat and function
+        # middleware only; a bundle carrying an agent member fails loudly instead of
+        # silently losing that member.
+        categorized_runtime_middleware = categorize_middleware(
+            request_kwargs.pop("middleware", []), supported_categories=("chat", "function")
+        )
 
         function_middleware_pipeline = self._get_function_middleware_pipeline(
             categorized_runtime_middleware["function"]

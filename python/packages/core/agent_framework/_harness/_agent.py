@@ -14,7 +14,7 @@ import logging
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsShellTool, SupportsWebSearchTool
@@ -339,7 +339,7 @@ def create_harness_agent(
     loop_max_iterations: int | None = DEFAULT_MAX_ITERATIONS,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
-    middleware: Sequence[MiddlewareTypes] | None = None,
+    middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
     default_options: Mapping[str, Any] | None = None,
 ) -> Agent[OptionsCoT]:
     """Create a pre-configured agent with batteries included.
@@ -655,8 +655,13 @@ def create_harness_agent(
     # Message injection is always on. It is a no-op when no messages are queued for the session,
     # so there is no opt-out.
     assembled_middleware.append(MessageInjectionMiddleware())
-    if middleware:
-        assembled_middleware.extend(middleware)
+    if middleware is not None:
+        # A bare middleware object (including a MiddlewareBundle, which is
+        # deliberately not a sequence) counts as a one-element source.
+        if isinstance(middleware, Sequence):
+            assembled_middleware.extend(cast("Sequence[MiddlewareTypes]", middleware))
+        else:
+            assembled_middleware.append(middleware)
 
     agent = Agent(
         client,

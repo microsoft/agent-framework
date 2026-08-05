@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewTyp
 
 from typing_extensions import TypedDict
 
+from ._feature_stage import ExperimentalFeature, experimental
 from ._serialization import SerializationMixin
 from .exceptions import AdditionItemMismatch, ContentError
 
@@ -3225,10 +3226,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         return stream
 
     @classmethod
+    @experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
     def buffered_and_gated(
         cls,
         consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
-        gate: Callable[[list[UpdateT], FinalT, bool], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+        gate: Callable[[list[UpdateT], FinalT], Awaitable[tuple[FinalT, bool]]],
+        rederive: Callable[[FinalT], Sequence[UpdateT]],
     ) -> ResponseStream[UpdateT, FinalT]:
         """Create a fully buffered stream whose content is finalized by a gate.
 
@@ -3242,29 +3245,38 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
            far (for example hooks attached by middleware pipelines after they unwind)
            is applied to the buffered updates and result now — **before** the gate —
            so the gate's verdict covers their effect. The hooks are consumed: they are
-           not applied again during replay.
-        3. ``gate`` receives the post-hook updates, the post-hook result, and whether
-           any pending transform/result hooks were applied. It returns the updates and
-           result to release (it may raise to block egress entirely). A gate that
-           issues its verdict over the final result should re-derive the released
-           updates from that result whenever hooks were applied, so streamed egress
-           cannot diverge from the verdicted content.
-        4. The stream is then sealed: the gated updates and result are replayed
+           not applied again during replay. Because they run ahead of the verdict,
+           these hooks also *see* pre-verdict content: they are rewriters inside the
+           enforcement boundary. A host-facing observer must consume the released
+           stream instead of registering a hook here.
+        3. ``gate`` receives the post-hook updates and the post-hook result. It
+           returns the result to release and whether it transformed that result (it
+           may raise to block egress entirely).
+        4. The combinator owns the no-divergence rule: whenever pending hooks were
+           applied or the gate reports a transform, the released updates are
+           re-derived from the gated result via ``rederive``, so streamed egress can
+           never diverge from the verdicted content. Otherwise the buffered updates
+           are replayed as-is.
+        5. The stream is then sealed: the released updates and result are replayed
            verbatim, and registering further transform or result hooks raises
            ``RuntimeError`` — nothing can rewrite content past the gate.
 
         Args:
             consume: Produces the buffered updates and finalized result. Runs inside
                 the caller's context (the caller owns any context-variable scoping).
-            gate: Receives ``(updates, final, hooks_applied)`` after pending hooks are
-                applied; returns the ``(updates, final)`` to release.
+            gate: Receives ``(updates, final)`` after pending hooks are applied;
+                returns ``(final, transformed)`` — the result to release and whether
+                the gate changed it.
+            rederive: Rebuilds the released updates from the gated result; applied by
+                the combinator whenever hooks ran or the gate transformed, so no
+                caller can accidentally egress un-verdicted updates.
 
         Returns:
             A sealed, fully buffered ResponseStream.
         """
         return cast(
             "ResponseStream[UpdateT, FinalT]",
-            cast(Any, _GatedResponseStream).create_buffered_and_gated(consume, gate),
+            cast(Any, _GatedResponseStream).create_buffered_and_gated(consume, gate, rederive),
         )
 
     async def _get_stream(self) -> AsyncIterable[UpdateT]:
@@ -3565,7 +3577,8 @@ class _GatedResponseStream(ResponseStream[UpdateT, FinalT]):
     def create_buffered_and_gated(
         cls,
         consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
-        gate: Callable[[list[UpdateT], FinalT, bool], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+        gate: Callable[[list[UpdateT], FinalT], Awaitable[tuple[FinalT, bool]]],
+        rederive: Callable[[FinalT], Sequence[UpdateT]],
     ) -> _GatedResponseStream[UpdateT, FinalT]:
         """Build the gated stream for :meth:`ResponseStream.buffered_and_gated`."""
         holder: dict[str, Any] = {}
@@ -3602,10 +3615,15 @@ class _GatedResponseStream(ResponseStream[UpdateT, FinalT]):
                 cleanup_result = cleanup_hook()
                 if isawaitable(cleanup_result):
                     await cleanup_result
-            gated_updates, gated_final = await gate(hooked_updates, final, bool(transform_hooks or result_hooks))
+            gated_final, gate_transformed = await gate(hooked_updates, final)
             holder["final"] = gated_final
             stream._gate_sealed = True
-            for update in gated_updates:
+            # No-divergence rule (contract step 4), owned here: hooks or a gate
+            # transform mean the buffered updates may no longer match the verdicted
+            # result, so the released updates are re-derived from it.
+            hooks_applied = bool(transform_hooks or result_hooks)
+            released = rederive(gated_final) if (hooks_applied or gate_transformed) else hooked_updates
+            for update in released:
                 yield update
 
         def _finalizer(_: Sequence[UpdateT]) -> FinalT:

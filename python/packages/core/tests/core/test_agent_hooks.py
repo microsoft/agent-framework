@@ -180,7 +180,7 @@ async def test_bare_bundle_at_construction_is_fully_enforced(chat_client_base: M
     guard = PointGuard("output", Verdict.deny(reason="egress_blocked"))
     agent = Agent(
         client=chat_client_base,
-        middleware=cast("Any", create_agent_hooks_middleware([guard], record_sink=records.append)),
+        middleware=create_agent_hooks_middleware([guard], record_sink=records.append),
     )
 
     with pytest.raises(InterceptionBlocked) as exc_info:
@@ -223,11 +223,23 @@ async def test_factory_returns_an_indivisible_bundle() -> None:
     assert len(categorized["agent"]) == 1
     assert len(categorized["chat"]) == 1
     assert len(categorized["function"]) == 1
-    # ...but cannot be partially installed: it is opaque (not a sequence).
+    # ...but cannot be partially installed: it is opaque (not a sequence). These are
+    # deliberate runtime probes of operations the static types also reject, so they go
+    # through an Any-typed alias instead of ignore comments (which the three test
+    # typing checkers spell differently).
+    opaque = cast("Any", bundle)
     with pytest.raises(TypeError):
-        iter(bundle)  # type: ignore[call-overload]
+        iter(opaque)
     with pytest.raises(TypeError):
-        bundle[0]  # type: ignore[index]
+        opaque[0]
+
+
+def test_middleware_bundle_is_experimental() -> None:
+    # Both bundle producers carry @experimental; the bundle type itself does too.
+    # Asserting on the stage metadata is deterministic (the runtime warning dedups
+    # per feature id per process, so warn-order would make a warns() assertion flaky).
+    assert getattr(MiddlewareBundle, "__feature_stage__", None) == "experimental"
+    assert getattr(MiddlewareBundle, "__feature_id__", None) == "AGENT_HOOKS"
 
 
 # endregion
@@ -840,7 +852,7 @@ async def test_chat_seam_without_run_state_fails_closed(chat_client_base: MockBa
     # without an active agent-hooks run (its agent sibling never ran) must fail
     # closed, not silently skip enforcement.
     bundle = create_agent_hooks_middleware([AllowGuard()])
-    chat_client_base.chat_middleware = cast("list[Any]", [_bundle_member(bundle, "ChatMiddleware")])
+    chat_client_base.chat_middleware = [_bundle_member(bundle, "ChatMiddleware")]
 
     with pytest.raises(MiddlewareException, match="without an active agent-hooks run"):
         await chat_client_base.get_response([Message(role="user", contents=["hi"])])
@@ -1161,7 +1173,7 @@ async def test_function_seam_without_run_state_blocks_tool(chat_client_base: Moc
     agent = Agent(
         client=chat_client_base,
         tools=[weather_tool],
-        middleware=[cast("Any", _bundle_member(bundle, "FunctionMiddleware"))],
+        middleware=[_bundle_member(bundle, "FunctionMiddleware")],
     )
 
     response = await agent.run("get the weather")
@@ -1171,6 +1183,27 @@ async def test_function_seam_without_run_state_blocks_tool(chat_client_base: Moc
     assert chat_client_base.call_count == 1
     transcript = str([content.result for message in response.messages for content in message.contents])
     assert "without an active agent-hooks run" in transcript
+
+
+@requires_sdk
+async def test_bundle_passed_to_chat_client_call_raises_instead_of_dropping_the_gate(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    # The chat-client middleware seam installs only chat and function middleware; the
+    # bundle's agent member carries the output gate and the halt re-raise, so silently
+    # dropping it would install partial enforcement. The seam must raise instead.
+    bundle = create_agent_hooks_middleware([AllowGuard()])
+    with pytest.raises(MiddlewareException, match="cannot be partially installed"):
+        chat_client_base.get_response([Message(role="user", contents=["hi"])], middleware=cast("Any", [bundle]))
+
+
+@requires_sdk
+async def test_bundle_passed_to_chat_client_constructor_raises_instead_of_dropping_the_gate() -> None:
+    from agent_framework._tools import FunctionInvocationLayer
+
+    bundle = create_agent_hooks_middleware([AllowGuard()])
+    with pytest.raises(MiddlewareException, match="cannot be partially installed"):
+        FunctionInvocationLayer(middleware=cast("Any", [bundle]))
 
 
 @requires_sdk
@@ -1431,6 +1464,231 @@ async def test_per_service_call_persistence_still_persists_on_allow() -> None:
     assert [message.text for message in stored] == ["hi", "test response - hi"]
 
 
+def _sub_agent_call_response(task: str, call_id: str) -> ChatResponse:
+    """An outer-model response that calls the ``sub`` sub-agent tool."""
+    return ChatResponse(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id=call_id, name="sub", arguments=f'{{"task": "{task}"}}')],
+            )
+        ]
+    )
+
+
+@requires_sdk
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_outer_deny_never_drops_permitted_nested_run_history(streaming: bool) -> None:
+    # An unhooked sub-agent run (as_tool, session shared with the parent) owns its own
+    # persistence: it must land inline at the inner run's boundary, not defer into the
+    # outer gate's pending list where an outer output deny would silently drop it.
+    from agent_framework import AgentSession, InMemoryHistoryProvider
+
+    inner_provider = InMemoryHistoryProvider(source_id="inner_history")
+    session = AgentSession()
+    sub_agent = Agent(client=MockBaseChatClient(), name="sub", context_providers=[inner_provider])
+
+    outer_client = MockBaseChatClient()
+    if streaming:
+        outer_client.streaming_responses = [
+            [
+                ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(call_id="c1", name="sub", arguments='{"task": "look this up"}')
+                    ],
+                    role="assistant",
+                    finish_reason="tool_calls",
+                )
+            ],
+            [ChatResponseUpdate(contents=[Content.from_text("outer summary")], role="assistant", finish_reason="stop")],
+        ]
+    else:
+        outer_client.run_responses = [_sub_agent_call_response("look this up", "c1"), final_response("outer summary")]
+    outer_agent = Agent(
+        client=outer_client,
+        name="outer",
+        tools=[sub_agent.as_tool(propagate_session=True)],
+        middleware=[create_agent_hooks_middleware([PointGuard("output", Verdict.deny(reason="egress_blocked"))])],
+    )
+
+    with pytest.raises(InterceptionBlocked):
+        if streaming:
+            async for _ in outer_agent.run("go delegate", session=session, stream=True):
+                pass
+        else:
+            await outer_agent.run("go delegate", session=session)
+
+    # The fully-permitted inner history is durable despite the outer deny...
+    # (as_tool always runs the sub-agent streaming; the mock streams "update - ...")
+    inner_stored = cast("list[Message]", session.state["inner_history"]["messages"])
+    assert [message.text for message in inner_stored] == ["look this up", "update - look this up"]
+    # ...while the denied outer run's own history was dropped with the outer gate.
+    outer_stored = cast("list[Message]", session.state.get("in_memory", {}).get("messages", []))
+    assert outer_stored == []
+
+
+@requires_sdk
+async def test_second_sub_agent_call_in_one_outer_run_reads_fresh_history() -> None:
+    # Two sequential calls to the same sub-agent within one hooked outer run: the
+    # second call must load the history the first call persisted (inline at the inner
+    # run boundary), not a stale pre-first-call snapshot.
+    from agent_framework import AgentSession, InMemoryHistoryProvider
+
+    inner_requests: list[list[str]] = []
+
+    class CaptureInnerRequests(ChatMiddleware):
+        async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            inner_requests.append([message.text for message in context.messages])
+            await call_next()
+
+    inner_provider = InMemoryHistoryProvider(source_id="inner_history")
+    session = AgentSession()
+    sub_agent = Agent(
+        client=MockBaseChatClient(),
+        name="sub",
+        context_providers=[inner_provider],
+        middleware=[CaptureInnerRequests()],
+    )
+
+    outer_client = MockBaseChatClient()
+    outer_client.run_responses = [
+        _sub_agent_call_response("task one", "c1"),
+        _sub_agent_call_response("task two", "c2"),
+        final_response("outer summary"),
+    ]
+    outer_agent = Agent(
+        client=outer_client,
+        name="outer",
+        tools=[sub_agent.as_tool(propagate_session=True)],
+        middleware=[create_agent_hooks_middleware([AllowGuard()])],
+    )
+
+    response = await outer_agent.run("go delegate twice", session=session)
+
+    assert response.text == "outer summary"
+    assert inner_requests[0] == ["task one"]
+    # The second inner model call sees the first call's persisted exchange.
+    # (as_tool always runs the sub-agent streaming; the mock streams "update - ...")
+    assert inner_requests[1] == ["task one", "update - task one", "task two"]
+
+
+@requires_sdk
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+@pytest.mark.parametrize("when", ["before_call_next", "after_call_next"])
+async def test_middleware_initiated_sub_agent_history_survives_outer_deny(streaming: bool, when: str) -> None:
+    # Nested runs are not limited to the tool seam: user agent middleware below the
+    # bundle can run a sub-agent directly inside the gated section. That run owns its
+    # own persistence, so it must land inline at the inner run boundary (run-identity
+    # ownership), never defer into the outer gate where an outer deny would drop it.
+    from agent_framework import AgentSession, InMemoryHistoryProvider
+
+    inner_provider = InMemoryHistoryProvider(source_id="inner_history")
+    session = AgentSession()
+    sub_agent = Agent(client=MockBaseChatClient(), name="sub", context_providers=[inner_provider])
+
+    class DelegatingMiddleware(AgentMiddleware):
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            if when == "before_call_next":
+                await sub_agent.run("delegated task", session=session)
+            await call_next()
+            if when == "after_call_next":
+                await sub_agent.run("delegated task", session=session)
+
+    outer_agent = Agent(
+        client=MockBaseChatClient(),
+        name="outer",
+        middleware=[
+            create_agent_hooks_middleware([PointGuard("output", Verdict.deny(reason="egress_blocked"))]),
+            DelegatingMiddleware(),
+        ],
+    )
+
+    with pytest.raises(InterceptionBlocked):
+        if streaming:
+            async for _ in outer_agent.run("go delegate", session=session, stream=True):
+                pass
+        else:
+            await outer_agent.run("go delegate", session=session)
+
+    # The middleware-initiated run's fully-permitted history is durable...
+    inner_stored = cast("list[Message]", session.state["inner_history"]["messages"])
+    assert [message.text for message in inner_stored] == ["delegated task", "test response - delegated task"]
+    # ...while the denied outer run's own history was dropped with the outer gate.
+    outer_stored = cast("list[Message]", session.state.get("in_memory", {}).get("messages", []))
+    assert outer_stored == []
+
+
+@requires_sdk
+async def test_custom_run_loop_agent_nested_sub_agent_persists_inline() -> None:
+    # GitHubCopilotAgent-shaped composition: a hookable agent (AgentMiddlewareLayer in
+    # its MRO) whose fully custom run loop invokes tools directly via
+    # FunctionTool.invoke — never passing the framework's function-invocation seam.
+    # The nested core-agent run stamps its own identity, so its permitted history
+    # persists inline even though the outer gate never binds (the custom loop never
+    # adopts the claim); the custom outer run's own persistence stays gated
+    # fail-closed and is dropped on the outer deny.
+    from agent_framework import AgentSession, BaseAgent, InMemoryHistoryProvider, SessionContext
+    from agent_framework._middleware import AgentMiddlewareLayer
+
+    inner_provider = InMemoryHistoryProvider(source_id="inner_history")
+    outer_provider = InMemoryHistoryProvider(source_id="outer_history")
+    session = AgentSession()
+    sub_agent = Agent(client=MockBaseChatClient(), name="sub", context_providers=[inner_provider])
+    sub_tool = sub_agent.as_tool(propagate_session=True)
+
+    class CustomLoopRawAgent(BaseAgent):
+        def run(  # type: ignore[override]
+            self,
+            messages: Any = None,
+            *,
+            stream: bool = False,
+            session: Any = None,
+            **kwargs: Any,
+        ) -> Any:
+            assert not stream
+
+            async def _run() -> AgentResponse[Any]:
+                # The custom loop invokes the sub-agent tool directly, bypassing
+                # _execute_single_function_call (like GitHubCopilotAgent's loop).
+                tool_context = FunctionInvocationContext(
+                    function=sub_tool, arguments={"task": "delegated task"}, session=session
+                )
+                await sub_tool.invoke(arguments={"task": "delegated task"}, context=tool_context)
+                response: AgentResponse[Any] = AgentResponse(
+                    messages=[Message(role="assistant", contents=["custom outer answer"])]
+                )
+                session_context = SessionContext(
+                    session_id=session.session_id if session is not None else None,
+                    input_messages=[Message(role="user", contents=["go delegate"])],
+                )
+                session_context._response = response  # pyright: ignore[reportPrivateUsage]
+                await self._run_after_providers(session=session, context=session_context)
+                return response
+
+            return _run()
+
+    class CustomLoopAgent(  # type: ignore[misc]  # ty: ignore[invalid-method-override]  # same shape as GitHubCopilotAgent
+        AgentMiddlewareLayer, CustomLoopRawAgent
+    ):
+        pass
+
+    outer_agent = CustomLoopAgent(
+        name="outer",
+        context_providers=[outer_provider],
+        middleware=[create_agent_hooks_middleware([PointGuard("output", Verdict.deny(reason="egress_blocked"))])],
+    )
+
+    with pytest.raises(InterceptionBlocked):
+        await cast("Any", outer_agent).run("go delegate", session=session)
+
+    # The nested sub-agent's permitted history persisted inline (as_tool streams the
+    # sub-agent; the mock streams "update - ...")...
+    inner_stored = cast("list[Message]", session.state["inner_history"]["messages"])
+    assert [message.text for message in inner_stored] == ["delegated task", "update - delegated task"]
+    # ...while the denied custom outer run's own history stayed gated and was dropped.
+    assert session.state.get("outer_history", {}).get("messages", []) == []
+
+
 # endregion
 
 # region Stream hooks cannot escape the gate
@@ -1477,6 +1735,74 @@ async def test_stream_hooks_cannot_rewrite_egress_after_the_verdict(chat_client_
     assert final.text == "update - hi"
 
 
+@requires_sdk
+async def test_as_tool_stream_callback_sees_nothing_on_deny() -> None:
+    # The observe direction of the gate contract: `as_tool(stream_callback=...)` is a
+    # host-facing observer, so on a denied sub-agent run it must never receive the
+    # (complete, buffered) denied content — not even transiently.
+    seen: list[str] = []
+
+    def observe(update: AgentResponseUpdate) -> None:
+        seen.append(update.text)
+
+    sub_agent = Agent(
+        client=MockBaseChatClient(),
+        name="sub",
+        middleware=[create_agent_hooks_middleware([PointGuard("output", Verdict.deny(reason="egress_blocked"))])],
+    )
+    sub_tool = sub_agent.as_tool(stream_callback=observe)
+
+    with pytest.raises(InterceptionBlocked) as exc_info:
+        await sub_tool.invoke(arguments={"task": "hello"})
+
+    assert exc_info.value.result.verdict.reason == "egress_blocked"
+    assert seen == []
+
+
+@requires_sdk
+async def test_as_tool_stream_callback_sees_only_transformed_egress() -> None:
+    # Observe direction, transform case: the callback receives the redacted updates
+    # only, never the unredacted original.
+    seen: list[str] = []
+
+    async def observe(update: AgentResponseUpdate) -> None:
+        seen.append(update.text)
+
+    guard = PointGuard(
+        "output",
+        Verdict(decision=Decision.TRANSFORM, transform=Transform(path="$target.content", value="[redacted]")),
+    )
+    sub_agent = Agent(
+        client=MockBaseChatClient(),
+        name="sub",
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+    sub_tool = sub_agent.as_tool(stream_callback=observe)
+
+    result = await sub_tool.invoke(arguments={"task": "hello"})
+
+    assert [content.text for content in result] == ["[redacted]"]
+    assert "".join(seen) == "[redacted]"
+    assert not any("test response" in text for text in seen)
+
+
+async def test_as_tool_stream_callback_still_observes_unhooked_streams() -> None:
+    # Behavior preservation for the common (unhooked) case: the callback observes
+    # every released update of the sub-agent's stream.
+    seen: list[str] = []
+
+    def observe(update: AgentResponseUpdate) -> None:
+        seen.append(update.text)
+
+    sub_agent = Agent(client=MockBaseChatClient(), name="sub")
+    sub_tool = sub_agent.as_tool(stream_callback=observe)
+
+    result = await sub_tool.invoke(arguments={"task": "hello"})
+
+    assert "".join(content.text or "" for content in result) == "".join(seen)
+    assert seen  # the stream produced updates and the observer saw them
+
+
 async def test_gated_response_stream_applies_pending_hooks_before_the_gate_and_seals() -> None:
     # Contract test for ResponseStream.buffered_and_gated (no SDK required).
     order: list[str] = []
@@ -1485,13 +1811,17 @@ async def test_gated_response_stream_applies_pending_hooks_before_the_gate_and_s
         order.append("consume")
         return ["a", "b"], "ab"
 
-    async def gate(updates: list[str], final: str, hooks_applied: bool) -> tuple[list[str], str]:
-        order.append(f"gate(hooks_applied={hooks_applied})")
+    async def gate(updates: list[str], final: str) -> tuple[str, bool]:
+        order.append("gate")
         assert updates == ["a!", "b!"]  # pending transform hooks applied pre-gate
         assert final == "ab!"  # pending result hooks applied pre-gate
-        return updates, final
+        return final, False
 
-    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=gate)
+    def rederive(final: str) -> list[str]:
+        order.append(f"rederive({final})")
+        return list(final)
+
+    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=gate, rederive=rederive)
 
     def transform(update: str) -> str:
         order.append(f"transform({update})")
@@ -1506,15 +1836,70 @@ async def test_gated_response_stream_applies_pending_hooks_before_the_gate_and_s
     stream.with_result_hook(result_hook)
 
     released = [update async for update in stream]
-    assert released == ["a!", "b!"]
+    # Hooks ran, so the combinator itself re-derived the released updates from the
+    # gated result — the hooked buffer cannot egress un-verdicted.
+    assert released == ["a", "b", "!"]
     assert await stream.get_final_response() == "ab!"
-    assert order == ["consume", "transform(a)", "transform(b)", "result_hook", "gate(hooks_applied=True)"]
+    assert order == ["consume", "transform(a)", "transform(b)", "result_hook", "gate", "rederive(ab!)"]
 
     # ...and once the gate has run, content is sealed: further hooks are rejected.
     with pytest.raises(RuntimeError, match="sealed"):
         stream.with_transform_hook(transform)
     with pytest.raises(RuntimeError, match="sealed"):
         stream.with_result_hook(result_hook)
+
+
+async def test_gated_response_stream_combinator_owns_the_rederive_rule() -> None:
+    # The no-divergence rule lives in the combinator, not in each gate: whenever the
+    # gate reports a transform, the released updates are re-derived from the gated
+    # result even though the gate never touches the update list; when nothing changed,
+    # the buffered updates replay verbatim and rederive is never consulted.
+    rederived: list[str] = []
+
+    def rederive(final: str) -> list[str]:
+        rederived.append(final)
+        return list(final)
+
+    async def consume() -> tuple[list[str], str]:
+        return ["a", "b"], "ab"
+
+    async def transforming_gate(updates: list[str], final: str) -> tuple[str, bool]:
+        return "XY", True
+
+    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=transforming_gate, rederive=rederive)
+    assert [update async for update in stream] == ["X", "Y"]
+    assert await stream.get_final_response() == "XY"
+    assert rederived == ["XY"]
+
+    async def passthrough_gate(updates: list[str], final: str) -> tuple[str, bool]:
+        return final, False
+
+    rederived.clear()
+    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=passthrough_gate, rederive=rederive)
+    assert [update async for update in stream] == ["a", "b"]
+    assert rederived == []
+
+
+async def test_gated_response_stream_raising_rederive_releases_nothing() -> None:
+    # A failing rederive is fail-closed for streamed egress: the iteration raises
+    # before anything is released. The gate already sealed its verdicted result, so
+    # non-streaming consumption still returns it.
+    async def consume() -> tuple[list[str], str]:
+        return ["a", "b"], "ab"
+
+    async def gate(updates: list[str], final: str) -> tuple[str, bool]:
+        return "XY", True
+
+    def rederive(final: str) -> list[str]:
+        raise RuntimeError("rederive failed")
+
+    stream = cast("Any", ResponseStream).buffered_and_gated(consume=consume, gate=gate, rederive=rederive)
+    released: list[str] = []
+    with pytest.raises(RuntimeError, match="rederive failed"):
+        async for update in stream:
+            released.append(update)
+    assert released == []  # zero egress
+    assert await stream.get_final_response() == "XY"  # the verdicted final survives
 
 
 # endregion
@@ -1757,10 +2142,26 @@ def test_tool_result_codec_round_trip() -> None:
     original = [Content.from_text("weather in Seattle")]
     wire = codecs._ToolResultCodec.to_wire(original)
     assert wire == "weather in Seattle"
-    # Untouched wire value -> shape-preserving native value.
-    written = codecs._ToolResultCodec.write_back(original, "scrubbed")
+    # The codec owns the untouched-wire rule: an untouched wire value maps back to
+    # the identical native object.
+    assert codecs._ToolResultCodec.write_back(original, wire, wire) is original
+    # A transformed wire value maps back shape-preservingly onto the native value.
+    written = codecs._ToolResultCodec.write_back(original, wire, "scrubbed")
     assert isinstance(written[0], Content)
     assert written[0].text == "scrubbed"
+
+
+def test_wire_equality_distinguishes_bool_from_number() -> None:
+    # Python's == equates 1 == True; the untouched-wire checks must not, or a
+    # bool<->number transform would be silently dropped (fail-open for the transform).
+    codecs = _codecs()
+    assert codecs._wire_equal(1, True) is False
+    assert codecs._wire_equal(True, 1) is False
+    assert codecs._wire_equal({"flag": [0]}, {"flag": [False]}) is False
+    assert codecs._wire_equal({"flag": [1, "x"]}, {"flag": [1, "x"]}) is True
+    # The tool-result codec treats 1 -> True as a genuine transform, not untouched.
+    assert codecs._ToolResultCodec.write_back(1, 1, True) is True
+    assert codecs._ToolResultCodec.write_back(1, 1, 1) == 1
 
 
 def test_output_codec_untouched_target_is_a_no_op() -> None:

@@ -47,7 +47,21 @@ Enforcement semantics (``mode="enforce"``):
   emission permits the content, so denied content never becomes durable and transformed
   content is persisted post-transform. Each persist is gated by its own covering
   verdict: per-service-call history persisted under a permitted ``post_model_call``
-  verdict remains durable even if the run's ``output`` is later denied.
+  verdict remains durable even if the run's ``output`` is later denied. A mid-run deny
+  is conservative in the other direction: the dropped per-service-call persist carries
+  that service call's request messages too, so the denied turn's input is not
+  persisted either. Only the gated run's own persistence defers: nested and
+  middleware-initiated agent runs (sub-agents invoked as tools, agents run by other
+  middleware or context providers, even on a shared session) persist inline at their
+  own run boundaries — the gate is bound to its run's identity (see the run
+  persistence gate in ``_sessions.py``), and the function-invocation layer
+  additionally suspends the gate around tool invocations to cover nested agents with
+  fully custom run loops. An outer deny therefore never discards fully-permitted
+  inner history, and a second sub-agent call within one outer run reads fresh
+  history. Residual limitation: an agent whose run loop never stamps a run identity
+  (a fully custom ``run()`` implementation) that itself nests another such agent
+  outside the tool seam falls back to deferring both — fail-closed, matching the
+  pre-ownership behavior.
 
 Streaming is supported **fail-closed by buffering** via
 :meth:`ResponseStream.buffered_and_gated`: the model/agent stream is fully consumed
@@ -102,7 +116,10 @@ from ._middleware import (
     MiddlewareTermination,
 )
 from ._serialization import make_json_safe
-from ._sessions import _DEFERRED_RUN_PERSISTENCE  # pyright: ignore[reportPrivateUsage]
+from ._sessions import (
+    _current_run_identity,  # pyright: ignore[reportPrivateUsage]
+    _RunPersistenceGate,  # pyright: ignore[reportPrivateUsage]
+)
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -218,22 +235,37 @@ class _RunState:
 
 _RUN_STATE: ContextVar[_RunState | None] = ContextVar("agent_framework_agent_hooks_run_state", default=None)
 
-_PersistCallback = Callable[[], Awaitable[None]]
-
-
-async def _run_pending_persistence(pending: list[_PersistCallback]) -> None:
-    """Execute persistence work that was deferred behind a permitting verdict.
-
-    The caller must have reset the persistence gate first, so re-entrant persistence
-    calls made by these callables run inline.
-    """
-    for persist in pending:
-        await persist()
-
 
 # endregion
 
 # region Wire building blocks (framework values <-> AGENT-HOOKS wire JSON)
+
+
+def _wire_equal(left: Any, right: Any) -> bool:
+    """Type-aware equality for wire JSON values (the codecs' untouched-target checks).
+
+    Python's ``==`` equates ``1 == True`` and ``0 == False``, so a transform that
+    swaps a value between bool and number would look untouched and be silently
+    dropped (the untransformed native value would proceed — fail-open for the
+    transform). Bool-ness is therefore compared explicitly at every nesting level.
+    """
+    if isinstance(left, bool) != isinstance(right, bool):
+        return False
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        left_map = cast("Mapping[Any, Any]", left)
+        right_map = cast("Mapping[Any, Any]", right)
+        if left_map.keys() != right_map.keys():
+            return False
+        return all(_wire_equal(item, right_map[key]) for key, item in left_map.items())
+    left_is_sequence = isinstance(left, Sequence) and not isinstance(left, (str, bytes, bytearray))
+    right_is_sequence = isinstance(right, Sequence) and not isinstance(right, (str, bytes, bytearray))
+    if left_is_sequence and right_is_sequence:
+        left_items = cast("Sequence[Any]", left)
+        right_items = cast("Sequence[Any]", right)
+        if len(left_items) != len(right_items):
+            return False
+        return all(_wire_equal(left_item, right_item) for left_item, right_item in zip(left_items, right_items))
+    return bool(left == right)
 
 
 def _role_str(role: Any) -> str:
@@ -338,7 +370,7 @@ def _write_back_message_list(
     for index, item in enumerate(after_items):
         item_dict = dict(item)
         match_index = next(
-            (position for position in range(cursor, len(originals)) if before_dicts[position] == item_dict),
+            (position for position in range(cursor, len(originals)) if _wire_equal(before_dicts[position], item_dict)),
             None,
         )
         if match_index is not None:
@@ -347,7 +379,7 @@ def _write_back_message_list(
             continue
         if cursor < len(originals):
             candidate_projection = before_dicts[cursor]
-            preserved_later = any(dict(later) == candidate_projection for later in after_items[index + 1 :])
+            preserved_later = any(_wire_equal(dict(later), candidate_projection) for later in after_items[index + 1 :])
             role = str(item.get("role") or "user")
             if not preserved_later and role == str(candidate_projection.get("role")):
                 message = originals[cursor]
@@ -424,7 +456,7 @@ class _InputCodec:
     @classmethod
     def write_back(cls, messages: list[Message], before: Mapping[str, Any], after: Any) -> None:
         """Write a transformed ``input`` target back into the run's message list."""
-        if after is None or after == before:
+        if after is None or _wire_equal(after, before):
             return
         if not isinstance(after, Mapping):
             raise _AgentHooksWriteBackError("agent-hooks input transform must produce an input object target.")
@@ -440,7 +472,7 @@ class _InputCodec:
                 )
             messages[0].role = after_role
         after_content = after_map.get("content")
-        if after_content == before.get("content"):
+        if _wire_equal(after_content, before.get("content")):
             return
         if len(messages) == 1 and not _looks_like_message_dicts(after_content):
             messages[0].contents = _wire_to_contents(after_content, point="input")
@@ -461,7 +493,7 @@ class _ModelRequestCodec:
         messages: Sequence[Message], before: Sequence[Mapping[str, Any]], after: Any
     ) -> list[Message] | None:
         """Return the transformed message list, or None when the target is untouched."""
-        if after == list(before):
+        if _wire_equal(after, list(before)):
             return None
         return _write_back_message_list(list(messages), before, after, point="pre_model_call")
 
@@ -517,7 +549,7 @@ class _ModelResponseCodec:
     @classmethod
     def write_back(cls, response: ChatResponse[Any], before: Mapping[str, Any], after: Any) -> bool:
         """Write a transformed ``post_model_call`` target back into the chat response."""
-        if after is None or after == before:
+        if after is None or _wire_equal(after, before):
             return False
         if not isinstance(after, Mapping):
             raise _AgentHooksWriteBackError("agent-hooks post_model_call transform must produce a response object.")
@@ -532,10 +564,10 @@ class _ModelResponseCodec:
             response.finish_reason = cast(Any, after_finish)
             changed = True
         after_calls = after_map.get("tool_calls")
-        if after_calls != before.get("tool_calls"):
+        if not _wire_equal(after_calls, before.get("tool_calls")):
             changed = cls._write_back_tool_calls(response, after_calls) or changed
         after_content = after_map.get("content")
-        if after_content != before.get("content"):
+        if not _wire_equal(after_content, before.get("content")):
             cls._write_back_content(response, after_content)
             changed = True
         return changed
@@ -579,7 +611,7 @@ class _ModelResponseCodec:
                     raise _AgentHooksWriteBackError(
                         "agent-hooks post_model_call transform must keep each tool call's args an object."
                     )
-                if _arguments_to_wire(content.arguments) != dict(cast("Mapping[str, Any]", wire_args)):
+                if not _wire_equal(_arguments_to_wire(content.arguments), dict(cast("Mapping[str, Any]", wire_args))):
                     content.arguments = {str(key): item for key, item in cast("Mapping[Any, Any]", wire_args).items()}
                     changed = True
                 kept.append(content)
@@ -662,7 +694,7 @@ class _ToolArgumentsCodec:
         if not isinstance(after, Mapping):
             raise _AgentHooksWriteBackError("agent-hooks pre_tool_call transform must produce an arguments object.")
         effective = {str(key): item for key, item in cast("Mapping[Any, Any]", after).items()}
-        if effective == dict(before):
+        if _wire_equal(effective, dict(before)):
             return arguments, effective
         if isinstance(arguments, BaseModel):
             native: dict[str, Any] = {name: getattr(arguments, name) for name in type(arguments).model_fields}
@@ -672,7 +704,7 @@ class _ToolArgumentsCodec:
             native = {}
         merged = {key: item for key, item in native.items() if key in effective}
         for key, item in effective.items():
-            if key not in before or before[key] != item:
+            if key not in before or not _wire_equal(before[key], item):
                 merged[key] = item
         return merged, effective
 
@@ -711,14 +743,19 @@ class _ToolResultCodec:
         return make_json_safe(value)
 
     @staticmethod
-    def write_back(original: Any, after: Any) -> Any:
+    def write_back(original: Any, before: Any, after: Any) -> Any:
         """Convert a transformed ``post_tool_call`` value back into the native result shape.
 
-        When the original result is the framework's canonical ``list[Content]`` and the
-        transformed value is shape-compatible, the Content wrappers are preserved;
-        otherwise the transformed wire value becomes the result as-is (the function
-        invocation layer serializes arbitrary JSON-native results faithfully).
+        A wire value the interceptors left untouched maps back to the untouched native
+        result (the codec region's shared rule, applied here like in the other five
+        codecs). When the original result is the framework's canonical
+        ``list[Content]`` and the transformed value is shape-compatible, the Content
+        wrappers are preserved; otherwise the transformed wire value becomes the
+        result as-is (the function invocation layer serializes arbitrary JSON-native
+        results faithfully).
         """
+        if _wire_equal(after, before):
+            return original
         if (
             isinstance(original, list)
             and original
@@ -731,7 +768,7 @@ class _ToolResultCodec:
             if after_items is not None and len(after_items) == len(original_contents):
                 rebuilt: list[Content] = []
                 for content, item in zip(original_contents, after_items):
-                    if _ToolResultCodec.to_wire(content) == item:
+                    if _wire_equal(_ToolResultCodec.to_wire(content), item):
                         rebuilt.append(content)
                     elif content.type == "text" and isinstance(item, str):
                         rebuilt.append(Content.from_text(item))
@@ -760,7 +797,7 @@ class _OutputCodec:
         if not isinstance(after, Mapping):
             raise _AgentHooksWriteBackError("agent-hooks output transform must produce an output object target.")
         after_content = cast("Mapping[str, Any]", after).get("content")
-        if after_content == before_content:
+        if _wire_equal(after_content, before_content):
             return False
         originals = list(response.messages)
         if isinstance(after_content, str):
@@ -972,20 +1009,21 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
         token = _RUN_STATE.set(state)
         shutdown_reason = "completed"
         try:
+            gate = _RunPersistenceGate()
+            # Hand the gate to the pipeline's final handler via the context: the run
+            # it starts adopts the gate and binds it to its own identity, so only that
+            # run's persistence defers (middleware-initiated runs persist inline).
+            context._run_persistence_gate = gate  # pyright: ignore[reportPrivateUsage]
             try:
                 await self._emit_run_start(context, state)
                 termination: MiddlewareTermination | None = None
-                pending: list[_PersistCallback] = []
-                persistence_token = _DEFERRED_RUN_PERSISTENCE.set(pending)
-                try:
+                with gate:
                     try:
                         await call_next()
                     except MiddlewareTermination as exc:
                         # A middleware short-circuited the run; any substituted result
                         # still egresses to the caller, so it passes the output point.
                         termination = exc
-                finally:
-                    _DEFERRED_RUN_PERSISTENCE.reset(persistence_token)
                 if state.halted is not None:
                     raise state.halted
                 result = context.result
@@ -996,13 +1034,14 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                         f"agent-hooks cannot guard a run result of type {type(result).__name__}; "
                         "the output interception point was not emitted."
                     )
-                # The verdict permitted the content (or nothing egresses): run the
-                # persistence the run deferred behind the gate. A deny above skips
-                # this entirely, so denied content never becomes durable.
-                await _run_pending_persistence(pending)
+                # The verdict permitted the content (or nothing egresses): release the
+                # persistence the run deferred behind the gate. A deny above drops it
+                # instead, so denied content never becomes durable.
+                await gate.flush()
                 if termination is not None:
                     raise termination
             except InterceptionBlocked:
+                gate.drop()
                 shutdown_reason = "error"
                 context.result = None
                 raise
@@ -1033,6 +1072,10 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
         # the trail as an error; ``None`` means ownership was handed off.
         shutdown_reason: str | None = "error"
         try:
+            gate_handle = _RunPersistenceGate()
+            # Hand the gate to the pipeline's final handler via the context (see the
+            # non-streaming branch): the run it starts binds the gate to its identity.
+            context._run_persistence_gate = gate_handle  # pyright: ignore[reportPrivateUsage]
             await self._emit_run_start(context, state)
             termination: MiddlewareTermination | None = None
             try:
@@ -1050,7 +1093,7 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                     f"got {type(inner).__name__}."
                 )
             context.result = self._gated_agent_stream(
-                state, cast("ResponseStream[AgentResponseUpdate, AgentResponse[Any]]", inner)
+                state, cast("ResponseStream[AgentResponseUpdate, AgentResponse[Any]]", inner), gate_handle
             )
             # The gated stream now owns the shutdown emission.
             shutdown_reason = None
@@ -1070,23 +1113,23 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
         self,
         state: _RunState,
         inner: ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
+        gate_handle: _RunPersistenceGate,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Guard a streaming run with a fail-closed buffered gate.
 
         The run is fully consumed (with the run state and the persistence gate active),
         middleware stream hooks are applied by the combinator before the verdict, the
-        ``output`` verdict is applied to the finalized response, deferred persistence
-        runs only after the verdict permits, and only then are updates released. A
-        transformed output (or any applied stream hooks) re-derives the released
-        updates from the verdicted response so streamed egress cannot diverge from it.
+        ``output`` verdict is applied to the finalized response, and deferred
+        persistence is released only after the verdict permits. The combinator owns the
+        no-divergence rule: a transformed output (or any applied stream hooks)
+        re-derives the released updates from the verdicted response.
         """
-        pending: list[_PersistCallback] = []
 
         async def _consume() -> tuple[Sequence[AgentResponseUpdate], AgentResponse[Any]]:
             run_token = _RUN_STATE.set(state)
-            persistence_token = _DEFERRED_RUN_PERSISTENCE.set(pending)
             try:
-                final = await inner.get_final_response()
+                with gate_handle:
+                    final = await inner.get_final_response()
             except asyncio.CancelledError:
                 await self._emit_shutdown(state, "cancelled")
                 raise
@@ -1094,13 +1137,12 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                 await self._emit_shutdown(state, "error")
                 raise
             finally:
-                _DEFERRED_RUN_PERSISTENCE.reset(persistence_token)
                 _RUN_STATE.reset(run_token)
             return list(inner.updates), final
 
         async def _gate(
-            updates: list[AgentResponseUpdate], final: AgentResponse[Any], hooks_applied: bool
-        ) -> tuple[Sequence[AgentResponseUpdate], AgentResponse[Any]]:
+            _updates: list[AgentResponseUpdate], final: AgentResponse[Any]
+        ) -> tuple[AgentResponse[Any], bool]:
             from agent_hooks import InterceptionBlocked
 
             try:
@@ -1112,11 +1154,11 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                         "the output interception point was not emitted."
                     )
                 transformed = await self._emit_output(state, final)
-                await _run_pending_persistence(pending)
+                await gate_handle.flush()
                 await self._emit_shutdown(state, "completed")
-                released = _agent_updates_from_response(final) if (transformed or hooks_applied) else updates
-                return released, final
+                return final, transformed
             except InterceptionBlocked:
+                gate_handle.drop()
                 await self._emit_shutdown(state, "error")
                 raise
             except asyncio.CancelledError:
@@ -1128,7 +1170,9 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
 
         return cast(
             "ResponseStream[AgentResponseUpdate, AgentResponse[Any]]",
-            cast(Any, ResponseStream).buffered_and_gated(consume=_consume, gate=_gate),
+            cast(Any, ResponseStream).buffered_and_gated(
+                consume=_consume, gate=_gate, rederive=_agent_updates_from_response
+            ),
         )
 
 
@@ -1158,22 +1202,22 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
             context.messages = transformed_messages
 
         termination: MiddlewareTermination | None = None
-        pending: list[_PersistCallback] = []
-        persistence_token = _DEFERRED_RUN_PERSISTENCE.set(pending)
-        try:
+        gate = _RunPersistenceGate()
+        # The chat seam runs inside its run's identity scope, so the gate binds to the
+        # current run immediately: only this run's per-service-call persists defer.
+        gate.bind_owner(_current_run_identity())
+        with gate:
             try:
                 await call_next()
             except MiddlewareTermination as exc:
                 # A chat middleware short-circuited with a substituted result; whatever
                 # was substituted still flows into the agent loop, so it is guarded below.
                 termination = exc
-        finally:
-            _DEFERRED_RUN_PERSISTENCE.reset(persistence_token)
 
         result = context.result
         if isinstance(result, ResponseStream):
             context.result = self._gated_chat_stream(
-                state, model_id, cast("ResponseStream[ChatResponseUpdate, ChatResponse[Any]]", result), pending
+                state, model_id, cast("ResponseStream[ChatResponseUpdate, ChatResponse[Any]]", result), gate
             )
         elif isinstance(result, ChatResponse):
             try:
@@ -1181,9 +1225,10 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
             except InterceptionBlocked:
                 # §6.1: the denied response must not be incorporated (and the deferred
                 # per-service-call persistence for it is dropped, never executed).
+                gate.drop()
                 context.result = None
                 raise
-            await _run_pending_persistence(pending)
+            await gate.flush()
         elif result is not None:
             raise MiddlewareException(
                 f"agent-hooks cannot guard a chat result of type {type(result).__name__}; "
@@ -1214,40 +1259,46 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
         state: _RunState,
         model_id: str,
         inner: ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-        pending: list[_PersistCallback],
+        gate_handle: _RunPersistenceGate,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Guard a streaming model call with a fail-closed buffered gate.
 
         Spec §12.1: the complete response is assembled before ``post_model_call`` is
         emitted, and nothing (updates or tool calls) is released beforehand. A deny
         raises before any update egresses, and per-service-call history persistence
-        deferred by the run persistence gate executes only after the verdict permits.
+        deferred by the run persistence gate is released only after the verdict
+        permits. The combinator owns the no-divergence rule: a transformed response
+        (or any applied stream hooks) re-derives the released updates from it.
         """
 
         async def _consume() -> tuple[Sequence[ChatResponseUpdate], ChatResponse[Any]]:
-            persistence_token = _DEFERRED_RUN_PERSISTENCE.set(pending)
-            try:
+            with gate_handle:
                 response = await inner.get_final_response()
-            finally:
-                _DEFERRED_RUN_PERSISTENCE.reset(persistence_token)
             return list(inner.updates), response
 
-        async def _gate(
-            updates: list[ChatResponseUpdate], final: ChatResponse[Any], hooks_applied: bool
-        ) -> tuple[Sequence[ChatResponseUpdate], ChatResponse[Any]]:
+        async def _gate(_updates: list[ChatResponseUpdate], final: ChatResponse[Any]) -> tuple[ChatResponse[Any], bool]:
+            from agent_hooks import InterceptionBlocked
+
             if not isinstance(final, ChatResponse):
                 raise MiddlewareException(
                     f"agent-hooks cannot guard a streamed chat result of type {type(final).__name__}; "
                     "the post_model_call interception point was not emitted."
                 )
-            changed = await self._emit_post_model_call(state, model_id, final)
-            await _run_pending_persistence(pending)
-            released = _chat_updates_from_response(final) if (changed or hooks_applied) else updates
-            return released, final
+            try:
+                changed = await self._emit_post_model_call(state, model_id, final)
+            except InterceptionBlocked:
+                # §6.1: the deferred per-service-call persistence for the denied
+                # response is dropped, never executed.
+                gate_handle.drop()
+                raise
+            await gate_handle.flush()
+            return final, changed
 
         return cast(
             "ResponseStream[ChatResponseUpdate, ChatResponse[Any]]",
-            cast(Any, ResponseStream).buffered_and_gated(consume=_consume, gate=_gate),
+            cast(Any, ResponseStream).buffered_and_gated(
+                consume=_consume, gate=_gate, rederive=_chat_updates_from_response
+            ),
         )
 
 
@@ -1362,8 +1413,7 @@ class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddlewar
             outcome = await state.emitter.emit(
                 state.builder.post_tool_call(call_id=call_id, name=name, args=args, value=value)
             )
-            if outcome.target != value:
-                context.result = _ToolResultCodec.write_back(context.result, outcome.target)
+            context.result = _ToolResultCodec.write_back(context.result, value, outcome.target)
         except InterceptionBlocked as exc:
             # §6.1: the result must be discarded as if the call had errored.
             self._block(state, context, exc, "post_tool_call")
@@ -1413,8 +1463,12 @@ def create_agent_hooks_middleware(
         (outermost), and install exactly one bundle per agent (stacked bundles are
         rejected fail-closed). Middleware listed before the bundle runs outside the
         enforcement boundary: a function middleware placed before it, for example, can
-        substitute a tool result that the tool seam never brackets. Outer position is
-        outer trust — the final ``output`` point still guards whatever egresses.
+        substitute a tool result that the tool seam never brackets, and stream hooks
+        registered by outer-position middleware are applied to buffered streaming
+        content ahead of the verdict, granting that middleware pre-verdict *read*
+        access (its rewrites remain covered by the verdict, and nothing egresses to
+        the caller before the verdict). Outer position is outer trust — the final
+        ``output`` point still guards whatever egresses.
 
     Args:
         interceptors: The agent-hooks interceptors to register, either as a sequence or
