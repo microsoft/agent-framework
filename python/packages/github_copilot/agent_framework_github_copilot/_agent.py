@@ -140,15 +140,6 @@ def _deny_all_permissions(
     return PermissionDecisionUserNotAvailable()
 
 
-# Session options that let the working directory's checked-in configuration influence what
-# the CLI does on the host. The agent leaves them off so a session behaves the same way in
-# every checkout; callers that want the checkout-driven behavior can turn each one back on
-# through ``default_options`` or per-run options.
-_WORKSPACE_CONFIG_DEFAULTS: dict[str, bool] = {
-    "enable_file_hooks": False,
-}
-
-
 class GitHubCopilotSettings(TypedDict, total=False):
     """GitHub Copilot model settings.
 
@@ -1218,8 +1209,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         the Copilot SDK, so any ``create_session`` parameter is supported without a
         dedicated mapping here (an unknown name surfaces as a ``TypeError`` from the
         SDK). A few keys are handled specially because they need a specific default
-        (``on_permission_request`` defaults to denying all requests, and the options in
-        ``_WORKSPACE_CONFIG_DEFAULTS`` default to off) or transforming:
+        (``on_permission_request`` defaults to denying all requests and
+        ``enable_file_hooks`` defaults to off) or transforming:
         ``tools`` are merged with the agent's tools and converted to SDK tools, and
         approval callbacks are turned into ``hooks``.
 
@@ -1248,10 +1239,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         kwargs["on_permission_request"] = (
             opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
         )
-        # Workspace-driven session options stay off unless the caller opts in (either layer).
-        for option, value in _WORKSPACE_CONFIG_DEFAULTS.items():
-            if kwargs.get(option) is None:
-                kwargs[option] = value
+        # File hooks let the working directory's checked-in configuration influence what the
+        # CLI does on the host, so the agent leaves them off for a consistent session in every
+        # checkout. Callers opt in through ``default_options`` or per-run options.
+        if kwargs.get("enable_file_hooks") is None:
+            kwargs["enable_file_hooks"] = False
         kwargs["hooks"] = self._build_session_hooks(all_tools, kwargs)
 
         # Strip agent-internal and client-level keys that are consumed here or in the
