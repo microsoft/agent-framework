@@ -435,10 +435,7 @@ class BaseAgent(SerializationMixin):
             description: The description of the agent.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware, or a single middleware object (including a
-                ``MiddlewareBundle``) which is treated as a one-element list. Note:
-                a bare middleware object — passed here or assigned directly to the
-                ``middleware`` attribute — used to be silently ignored by ``run()``
-                and now executes.
+                ``MiddlewareBundle``) which is treated as a one-element list.
             additional_properties: Additional properties set on the agent.
         """
         if id is None:
@@ -814,9 +811,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
                 A single middleware object (including a ``MiddlewareBundle``) is
-                treated as a one-element list. Note: a bare middleware object —
-                passed here or assigned directly to the ``middleware`` attribute —
-                used to be silently ignored by ``run()`` and now executes.
+                treated as a one-element list.
             require_per_service_call_history_persistence: When True (and a HistoryProvider is
                 present), the provider always persists history via per-service-call middleware,
                 regardless of whether the client stores history server-side. If the client does
