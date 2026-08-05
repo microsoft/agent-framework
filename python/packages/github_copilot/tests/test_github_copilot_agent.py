@@ -1125,7 +1125,7 @@ class TestGitHubCopilotAgentSessionManagement:
             model=unittest.mock.ANY,
             on_permission_request=unittest.mock.ANY,
             hooks=unittest.mock.ANY,
-            enable_file_hooks=unittest.mock.ANY,
+            enable_file_hooks=False,
         )
 
     async def test_session_config_includes_model(
