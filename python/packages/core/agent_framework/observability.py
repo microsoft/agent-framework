@@ -127,6 +127,29 @@ INNER_ACCUMULATED_USAGE: Final[contextvars.ContextVar[UsageDetails | None]] = co
     "inner_accumulated_usage", default=None
 )
 
+# Allows protocol adapters to supply an application-managed conversation identity for one execution
+# without putting that value into a service-owned continuation field.
+_TELEMETRY_CONVERSATION_ID: Final[contextvars.ContextVar[str | None]] = contextvars.ContextVar(
+    "telemetry_conversation_id", default=None
+)
+
+
+@contextlib.contextmanager
+def _use_telemetry_conversation_id(  # pyright: ignore[reportUnusedFunction]
+    conversation_id: str | None,
+) -> Generator[None]:
+    """Set an application-managed OTel conversation id for the current execution."""
+    if conversation_id is None:
+        yield
+        return
+
+    token = _TELEMETRY_CONVERSATION_ID.set(conversation_id)
+    try:
+        yield
+    finally:
+        _TELEMETRY_CONVERSATION_ID.reset(token)
+
+
 OTEL_METRICS: Final[str] = "__otel_metrics__"
 TOKEN_USAGE_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
     1,
@@ -1528,6 +1551,10 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             service_url=service_url,
             **merged_client_kwargs,
         )
+        if (telemetry_conversation_id := _TELEMETRY_CONVERSATION_ID.get()) is not None:
+            # Keep application-managed telemetry correlation separate from the
+            # provider-owned conversation_id forwarded through chat options.
+            attributes[OtelAttr.CONVERSATION_ID] = telemetry_conversation_id
 
         if stream:
             agent_span = trace.get_current_span()
@@ -1824,11 +1851,13 @@ class AgentTelemetryLayer:
             "Callable[[AgentSession | None], str | None] | None",
             getattr(self, "_get_otel_conversation_id", None),
         )
-        conversation_id = (
-            get_otel_conversation_id(session)
-            if callable(get_otel_conversation_id)
-            else (session.service_session_id if (session and isinstance(session.service_session_id, str)) else None)
-        )
+        conversation_id = _TELEMETRY_CONVERSATION_ID.get()
+        if conversation_id is None:
+            conversation_id = (
+                get_otel_conversation_id(session)
+                if callable(get_otel_conversation_id)
+                else (session.service_session_id if (session and isinstance(session.service_session_id, str)) else None)
+            )
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -2903,7 +2932,11 @@ def create_workflow_span(
     kind: trace.SpanKind = trace.SpanKind.INTERNAL,
 ) -> _AgnosticContextManager[trace.Span]:
     """Create a generic workflow span."""
-    return workflow_tracer().start_as_current_span(name, kind=kind, attributes=attributes)
+    span_attributes = dict(attributes) if attributes is not None else {}
+    conversation_id = _TELEMETRY_CONVERSATION_ID.get()
+    if name == OtelAttr.WORKFLOW_RUN_SPAN and conversation_id is not None:
+        span_attributes.setdefault(OtelAttr.CONVERSATION_ID, conversation_id)
+    return workflow_tracer().start_as_current_span(name, kind=kind, attributes=span_attributes or None)
 
 
 def create_processing_span(
