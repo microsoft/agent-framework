@@ -2514,8 +2514,8 @@ class TestQuarantineClient:
         # Create config with quarantine client
         config = SecureAgentConfig(quarantine_chat_client=mock_client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
-        # Should have set the global client
-        assert get_quarantine_client() is mock_client
+        # Construction must not mutate process/task-global state. The client is bound by before_run.
+        assert get_quarantine_client() is None
 
         # Config should also return the client
         assert config.get_quarantine_client() is mock_client
@@ -3478,9 +3478,9 @@ class TestMCPAnnotationMapping:
     @pytest.mark.parametrize(
         ("read_only", "open_world", "default_integrity", "expected_integrity", "expected_max_conf", "expected_accepts"),
         [
-            (True, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, None, True),
-            (True, True, IntegrityLabel.TRUSTED, IntegrityLabel.UNTRUSTED, None, True),
-            (True, False, IntegrityLabel.UNTRUSTED, IntegrityLabel.TRUSTED, None, True),
+            (True, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, True),
+            (True, True, IntegrityLabel.TRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, True),
+            (True, False, IntegrityLabel.UNTRUSTED, IntegrityLabel.TRUSTED, ConfidentialityLabel.PUBLIC, True),
             (False, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
             (False, True, IntegrityLabel.TRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
             (False, False, IntegrityLabel.UNTRUSTED, IntegrityLabel.TRUSTED, ConfidentialityLabel.PUBLIC, False),
