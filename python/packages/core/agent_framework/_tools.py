@@ -915,7 +915,9 @@ class FunctionTool(SerializationMixin):
     @override
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         as_dict = super().to_dict(exclude=exclude, exclude_none=exclude_none)
-        if not exclude or "concurrency_group" not in exclude:
+        if (not exclude or "concurrency_group" not in exclude) and (
+            not exclude_none or self.concurrency_group is not None
+        ):
             as_dict["concurrency_group"] = self.concurrency_group
         if (exclude and "input_model" in exclude) or not self.input_model:
             return as_dict
@@ -1971,9 +1973,11 @@ async def _try_execute_function_call_groups(
 
     await asyncio.gather(*execution_tasks)
 
-    # Safer extraction to prevent TypeError if a result is unexpectedly None
-    should_terminate = any(result[1] for result in ordered_results if result is not None)
-    return [result[0] for result in ordered_results if result is not None], should_terminate
+    if any(result is None for result in ordered_results):
+        raise RuntimeError("Internal error: missing tool execution result(s).")
+    completed_results = cast(list[tuple[list[Content], bool]], ordered_results)
+    should_terminate = any(terminate for _, terminate in completed_results)
+    return [result_contents for result_contents, _ in completed_results], should_terminate
 
 
 @dataclass
@@ -3727,7 +3731,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
         request_config = dict(self.function_invocation_configuration)
-        if tool_exec_order := mutable_options.get("tool_execution_order"):
+        if tool_exec_order := mutable_options.pop("tool_execution_order", None):
             request_config["tool_execution_order"] = tool_exec_order
 
         execute_function_calls = partial(
