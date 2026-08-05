@@ -49,7 +49,7 @@ namespace Microsoft.Agents.AI;
 public sealed class ToolApprovalAgent : DelegatingAIAgent
 {
     /// <summary>The default value used for <see cref="ToolApprovalAgentOptions.MaxAutoApprovalIterations"/> when none is specified.</summary>
-    public const int DefaultMaxAutoApprovalIterations = 10;
+    public const int DefaultMaxAutoApprovalIterations = 40;
 
     private readonly ProviderSessionState<ToolApprovalState> _sessionState;
     private readonly JsonSerializerOptions _jsonSerializerOptions;
