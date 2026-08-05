@@ -140,7 +140,7 @@ async def test_get_latest_uses_timestamp_and_list_ids_filters() -> None:
     storage = FoundryCheckpointStore("context-1")
     older = _checkpoint("older", timestamp="2026-01-01T00:00:00+00:00")
     newer = _checkpoint("newer", timestamp="2026-01-02T00:00:00+00:00")
-    storage.list_checkpoints = AsyncMock(return_value=[newer, older])
+    storage.list_checkpoints = AsyncMock(return_value=[newer, older])  # zuban:ignore
 
     assert await storage.get_latest(workflow_name="workflow") == newer
     assert await storage.list_checkpoint_ids(workflow_name="workflow") == ["newer", "older"]
@@ -148,7 +148,7 @@ async def test_get_latest_uses_timestamp_and_list_ids_filters() -> None:
 
 async def test_get_latest_returns_none_when_no_checkpoints_exist() -> None:
     storage = FoundryCheckpointStore("context-1")
-    storage.list_checkpoints = AsyncMock(return_value=[])
+    storage.list_checkpoints = AsyncMock(return_value=[])  # zuban:ignore
 
     assert await storage.get_latest(workflow_name="workflow") is None
 
@@ -294,9 +294,8 @@ async def test_delete_agent_session_is_idempotent() -> None:
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
-        result = await FoundryAgentSessionStore().delete("storage-session-1")
+        await FoundryAgentSessionStore().delete("storage-session-1")
 
-    assert result is None
     store.delete_item.assert_awaited_once_with("storage-session-1")
 
 

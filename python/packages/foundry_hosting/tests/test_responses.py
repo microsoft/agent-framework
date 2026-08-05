@@ -68,7 +68,8 @@ from agent_framework_foundry_hosting._responses import (
 )
 from agent_framework_foundry_hosting._state_store import (
     AgentSessionStoreProvider,
-    FoundryAgentSessionStore,
+    CheckpointStoreProvider,
+    FunctionApprovalStoreProvider,
     InMemoryFunctionApprovalStore,
 )
 
@@ -125,7 +126,12 @@ def _make_agent(
     stream_updates: list[AgentResponseUpdate] | None = None,
     raw_agent: bool = True,
 ) -> MagicMock:
-    """Create a mock agent implementing SupportsAgentRun."""
+    """Create a mock agent implementing SupportsAgentRun.
+
+    ``ResponsesHostServer`` always invokes the inner agent in streaming mode. ``response`` is a convenience for
+    tests that only care about complete output messages: the helper converts those messages into streamed updates.
+    ``stream_updates`` is for tests that need explicit chunk boundaries to verify streaming event behavior.
+    """
     agent = MagicMock(spec=RawAgent) if raw_agent else MagicMock()
     agent.id = "test-agent"
     agent.name = "Test Agent"
@@ -354,11 +360,6 @@ def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
 
 
 class TestResponsesHostServerInit:
-    def test_init_does_not_expose_session_store_override(self) -> None:
-        import inspect
-
-        assert "session_store" not in inspect.signature(ResponsesHostServer).parameters
-
     def test_init_basic(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
@@ -372,47 +373,24 @@ class TestResponsesHostServerInit:
         assert history_sentinel.store_inputs is True
         assert history_sentinel.store_outputs is True
 
-    def test_init_uses_in_memory_session_store_lazily_locally(self) -> None:
+    def test_init_uses_default_store_providers(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
         server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
-        provider = server._session_storage_provider  # pyright: ignore[reportPrivateUsage]
-        assert provider is not None
-        assert provider._in_memory_storage is None  # pyright: ignore[reportPrivateUsage]
-        session_store = provider.get_store(is_hosted=False)
-        assert type(session_store) is SessionStore
 
-    def test_init_uses_foundry_state_store_lazily_when_hosted(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        assert isinstance(
+            server._session_storage_provider,  # pyright: ignore[reportPrivateUsage]
+            AgentSessionStoreProvider,
         )
-
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
-
-        provider = server._session_storage_provider  # pyright: ignore[reportPrivateUsage]
-        assert provider is not None
-        assert provider._foundry_storage is None  # pyright: ignore[reportPrivateUsage]
-        session_store = provider.get_store(is_hosted=True)
-        assert isinstance(session_store, FoundryAgentSessionStore)
-
-    def test_init_uses_in_memory_approval_store_lazily_locally(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        assert isinstance(
+            server._checkpoint_storage_provider,  # pyright: ignore[reportPrivateUsage]
+            CheckpointStoreProvider,
         )
-        server = _make_server(agent)
-
-        provider = server._function_approval_storage_provider  # pyright: ignore[reportPrivateUsage]
-        assert provider._in_memory_storage is None  # pyright: ignore[reportPrivateUsage]
-
-        approval_storage = provider.get_store(is_hosted=False)
-
-        assert approval_storage is provider.get_store(is_hosted=False)
-        assert isinstance(approval_storage, InMemoryFunctionApprovalStore)
+        assert isinstance(
+            server._function_approval_storage_provider,  # pyright: ignore[reportPrivateUsage]
+            FunctionApprovalStoreProvider,
+        )
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
 
@@ -479,7 +457,7 @@ class TestResponsesHostServerInit:
                 asyncio.Event(),
             )
 
-    async def test_previous_response_requires_existing_snapshot(self) -> None:
+    async def test_previous_response_requires_existing_agent_session(self) -> None:
         agent = _make_agent()
         server = _make_server(agent, session_store=SessionStore())
         request = CreateResponse(model="m", input="hi", previous_response_id="response-missing")
@@ -541,16 +519,16 @@ class TestAgentSessionPersistence:
         assert provider is not None
         session_store = provider.get_store(is_hosted=False)
         assert session_store is not None
-        first_snapshot = await session_store.get(first.json()["id"])
-        second_snapshot = await session_store.get(second.json()["id"])
-        third_snapshot = await session_store.get(third.json()["id"])
-        assert first_snapshot is not None
-        assert second_snapshot is not None
-        assert third_snapshot is not None
-        assert first_snapshot.state["turn_count"] == 1
-        assert second_snapshot.state["turn_count"] == 2
-        assert third_snapshot.state["turn_count"] == 2
-        assert first_snapshot.session_id == second_snapshot.session_id == third_snapshot.session_id
+        first_session = await session_store.get(first.json()["id"])
+        second_session = await session_store.get(second.json()["id"])
+        third_session = await session_store.get(third.json()["id"])
+        assert first_session is not None
+        assert second_session is not None
+        assert third_session is not None
+        assert first_session.state["turn_count"] == 1
+        assert second_session.state["turn_count"] == 2
+        assert third_session.state["turn_count"] == 2
+        assert first_session.session_id == second_session.session_id == third_session.session_id
 
     async def test_responses_history_is_not_duplicated_by_default_local_history(self) -> None:
         client = _RecordingHistoryClient()
@@ -605,22 +583,22 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert "_foundry_responses_history" not in stored.state
 
-    async def test_streaming_run_saves_final_session_state(self) -> None:
+    async def test_run_saves_final_session_state(self) -> None:
         store = SessionStore()
         agent = _make_agent()
 
-        def run_streaming(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        def run(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del _args
             session = kwargs["session"]
             assert isinstance(session, AgentSession)
 
             async def updates() -> AsyncIterator[AgentResponseUpdate]:
-                session.state["stream_complete"] = True
+                session.state["run_complete"] = True
                 yield AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant")
 
             return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
-        agent.run = MagicMock(side_effect=run_streaming)
+        agent.run = MagicMock(side_effect=run)
         server = _make_server(agent, session_store=store)
 
         response = await _post(server, stream=True)
@@ -629,7 +607,7 @@ class TestAgentSessionPersistence:
         stored = await store.get(session_id)
 
         assert stored is not None
-        assert stored.state["stream_complete"] is True
+        assert stored.state["run_complete"] is True
 
     async def test_failed_run_still_saves_mutated_session(self) -> None:
         store = SessionStore()
@@ -661,22 +639,22 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert stored.state["before_failure"] == "saved"
 
-    async def test_streaming_save_failure_emits_failed_response(self) -> None:
+    async def test_run_save_failure_emits_failed_response(self) -> None:
         store = _FailingSessionStore()
         agent = _make_agent()
 
-        def run_streaming(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        def run(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del _args
             session = kwargs["session"]
             assert isinstance(session, AgentSession)
 
             async def updates() -> AsyncIterator[AgentResponseUpdate]:
-                session.state["stream_complete"] = True
+                session.state["run_complete"] = True
                 yield AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant")
 
             return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
-        agent.run = MagicMock(side_effect=run_streaming)
+        agent.run = MagicMock(side_effect=run)
         server = _make_server(agent, session_store=store)
 
         response = await _post(server, stream=True)
@@ -818,6 +796,15 @@ class TestHealthCheck:
 
 
 class TestNonStreaming:
+    """
+    Non-streaming here means that the client requested a non-streaming response, instead of
+    the inner agent being run in non-streaming mode. The inner agent is always run in streaming mode, and the
+    ResponsesHostServer collects the streamed updates and returns a single JSON response at the end of the
+    request.
+
+    The opposite case, where the client requested a streaming response, is tested in `TestStreaming`.
+    """
+
     async def test_basic_text_response(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Hello!")])])
@@ -989,6 +976,15 @@ class TestNonStreaming:
 
 
 class TestStreaming:
+    """
+    Streaming here means that the client requested a streaming response, and the ResponsesHostServer
+    forwards the stream of updates from the inner agent to the client as a Server-Sent Events (SSE) stream.
+    The inner agent is always run in streaming mode, and the ResponsesHost Server forwards the updates as
+    are created, without waiting for the entire response to complete.
+
+    The opposite case, where the client requested a non-streaming response, is tested in `TestNonStreaming`.
+    """
+
     async def test_chat_options_forwarded(self) -> None:
         agent = _make_agent(
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")],
