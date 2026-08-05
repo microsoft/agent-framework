@@ -157,9 +157,8 @@ def _make_agent(
 
         def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args
-            if kwargs.get("stream"):
-                return ResponseStream(_stream_gen(), finalizer=AgentResponse.from_updates)
-            raise NotImplementedError("Only streaming is configured on this mock")
+            assert kwargs.get("stream") is True
+            return ResponseStream(_stream_gen(), finalizer=AgentResponse.from_updates)
 
         agent.run = MagicMock(side_effect=run_streaming)
 
@@ -180,19 +179,13 @@ class _RecordingHistoryClient(BaseChatClient):
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         del options, kwargs
+        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
         self.calls.append(list(messages))
 
-        if stream:
+        async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(contents=[Content.from_text("recorded")], role="assistant")
 
-            async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
-                yield ChatResponseUpdate(contents=[Content.from_text("recorded")], role="assistant")
-
-            return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
-
-        async def get_response() -> ChatResponse:
-            return ChatResponse(messages=[Message(role="assistant", contents=[Content.from_text("recorded")])])
-
-        return get_response()
+        return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
 
 
 class _PerServiceCallHistoryProvider(HistoryProvider):
@@ -238,30 +231,27 @@ class _FunctionLoopRecordingClient(
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         del options, kwargs
+        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
         self.calls.append(list(messages))
         self.saves_before_call.append(self._provider.save_calls)
         call_number = len(self.calls)
 
-        if stream:
+        async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
+            if call_number == 1:
+                yield ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_1",
+                            name="lookup_weather",
+                            arguments='{"location": "Seattle"}',
+                        )
+                    ],
+                    role="assistant",
+                )
+            else:
+                yield ChatResponseUpdate(contents=[Content.from_text("It is sunny in Seattle.")], role="assistant")
 
-            async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
-                if call_number == 1:
-                    yield ChatResponseUpdate(
-                        contents=[
-                            Content.from_function_call(
-                                call_id="call_1",
-                                name="lookup_weather",
-                                arguments='{"location": "Seattle"}',
-                            )
-                        ],
-                        role="assistant",
-                    )
-                else:
-                    yield ChatResponseUpdate(contents=[Content.from_text("It is sunny in Seattle.")], role="assistant")
-
-            return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
-
-        raise NotImplementedError("The inner agent only runs in stream mode in Foundry Hosted Agents.")
+        return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
 
 
 @tool(name="lookup_weather", approval_mode="never_require")
@@ -503,7 +493,7 @@ class TestResponsesHostServerInit:
         failed_event = cast(Mapping[str, Any], failed_events[0])
         response = cast(Mapping[str, Any], failed_event["response"])
         error = cast(Mapping[str, Any], response["error"])
-        assert "No Agent Framework session was found" in error["message"]
+        assert "Cannot find an existing agent session for previous_response_id=response-missing." in error["message"]
         agent.run.assert_not_called()
         agent.create_session.assert_not_called()
 
@@ -3901,9 +3891,8 @@ class TestResponseFailedSurfacing:
 
         def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
             del args
-            if kwargs.get("stream"):
-                return ResponseStream(_raise_stream(), finalizer=AgentResponse.from_updates)
-            raise NotImplementedError("Only streaming is configured on this mock")
+            assert kwargs.get("stream") is True
+            return ResponseStream(_raise_stream(), finalizer=AgentResponse.from_updates)
 
         agent.run = MagicMock(side_effect=run_streaming)
         server = _make_server(agent)
@@ -4084,9 +4073,8 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         del session
-        if stream:
-            return self._run_stream(messages=messages, **kwargs)
-        return self._run(messages=messages, **kwargs)
+        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
+        return self._run_stream(messages=messages, **kwargs)
 
     @staticmethod
     def _normalize(
@@ -4113,20 +4101,6 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
     @staticmethod
     def _approval_responses_in(messages: list[Message]) -> list[Content]:
         return [c for m in messages for c in m.contents if c.type == "function_approval_response"]
-
-    async def _run(
-        self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
-        **kwargs: Any,
-    ) -> AgentResponse:
-        del kwargs
-        normalized = self._normalize(messages)
-        self.last_run_messages = normalized
-        self.run_count += 1
-        if self._approval_responses_in(normalized):
-            return AgentResponse(messages=[Message("assistant", [Content.from_text(text=self._final_text)])])
-        approval = self._build_approval_request()
-        return AgentResponse(messages=[Message("assistant", [approval])])
 
     def _run_stream(
         self,
@@ -4205,11 +4179,9 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
             **kwargs: Any,
         ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
             del messages, session, kwargs
+            assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
             text = self._text
             name = self.name
-
-            async def _aresult() -> AgentResponse:
-                return AgentResponse(messages=[Message("assistant", [Content.from_text(text=text)])])
 
             async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
                 yield AgentResponseUpdate(
@@ -4218,9 +4190,7 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
                     author_name=name,
                 )
 
-            if stream:
-                return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
-            return _aresult()
+            return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
 
     inner = _TextAgent("text-agent", text)
 

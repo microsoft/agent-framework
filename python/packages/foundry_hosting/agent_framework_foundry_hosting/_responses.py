@@ -376,16 +376,24 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # is created for this request and stored under the current response_id. The current response_id
             # will become the previous_response_id for the next request in a response chain, allowing the
             # session to be retrieved.
-            session_id = context.conversation_id or request.get("previous_response_id")
-            session = await session_storage.get(session_id) if session_id is not None else None
-            if session is None:
-                if session_id is not None:
+            if (previous_response_id := request.get("previous_response_id")) is not None:
+                session = await session_storage.get(previous_response_id)
+                if session is None:
+                    raise RuntimeError(
+                        f"Cannot find an existing agent session for previous_response_id={previous_response_id}. "
+                        "Ensure that the previous response was created successfully and that the ID is correct."
+                    )
+            elif (conversation_id := context.conversation_id) is not None:
+                session = await session_storage.get(conversation_id)
+                if session is None:
                     # Note that we cannot determine if the session was deleted or never existed,
                     # so we log a warning and create a new session.
                     logger.info(
                         "Cannot find an existing agent session for id=%s. Creating a new session.",
-                        session_id,
+                        conversation_id,
                     )
+                    session = self._agent.create_session()
+            else:
                 session = self._agent.create_session()
         except Exception as ex:
             logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
