@@ -56,8 +56,7 @@ public class ToolApprovalAgentOptions
     /// <para>
     /// Each re-invocation is a fresh call to the inner agent, so a per-request cap such as
     /// <c>FunctionInvokingChatClient.MaximumIterationsPerRequest</c> restarts every time and cannot bound this
-    /// loop. Without this cap a model that keeps requesting an auto-approved tool — for example a skill-loading
-    /// tool under <see cref="ToolApprovalAgent.AllToolsAutoApprovalRule"/> — drives an unbounded sequence of
+    /// loop. Without this cap a model that keeps requesting an auto-approved tool, drives an unbounded sequence of
     /// billable model calls.
     /// </para>
     /// <para>
