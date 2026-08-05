@@ -66,6 +66,18 @@ When using multiple providers (e.g., skills + file access), combine their rules 
 })
 ```
 
+## ⚠️ Security: avoid tool-name collisions
+
+Built-in auto-approval rules match tool calls **solely by tool name**. A rule cannot tell the
+provider's own tool apart from any other registered tool that happens to share the same name. If a
+different tool — especially one with a caller-configurable name, such as the Harness shell tool
+(`HarnessAgentOptions.ShellToolName`) — is registered under a name that one of these rules approves
+(e.g. `load_skill`, `read_skill_resource`, `run_skill_script`, or the `file_access_*` names), that
+tool will be **silently auto-approved**, bypassing the human approval boundary.
+
+When using auto-approval rules, ensure no other tool's name collides with the reserved names the
+rules approve, and never assign a configurable tool name that matches one of them.
+
 ## Skills Included
 
 ### unit-converter

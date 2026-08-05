@@ -19,8 +19,8 @@ __all__ = [
     "BedrockEmbeddingOptions",
     "BedrockEmbeddingSettings",
     "BedrockGuardrailConfig",
-    "BedrockSettings",
-    "BedrockKnowledgeBaseTool",
     "BedrockKnowledgeBaseProvider",
+    "BedrockKnowledgeBaseTool",
+    "BedrockSettings",
     "__version__",
 ]

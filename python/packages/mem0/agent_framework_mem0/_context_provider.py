@@ -17,7 +17,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, TypedDict
 
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
+from agent_framework._telemetry import mark_feature_used
 from mem0 import AsyncMemory, AsyncMemoryClient
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -65,7 +68,10 @@ class Mem0ContextProvider(ContextProvider):
             source_id: Unique identifier for this provider instance.
             mem0_client: A pre-created Mem0 MemoryClient or None to create a default client.
             api_key: The API key for authenticating with the Mem0 API.
-            application_id: The application ID for scoping memories.
+            application_id: The application ID for scoping memories. Platform-only:
+                the OSS ``AsyncMemory`` client does not recognize an application
+                scope (it scopes only by user_id/agent_id in this provider), so
+                application_id cannot be used with an OSS client.
             agent_id: The agent ID for scoping memories.
             user_id: The user ID for scoping memories.
             context_prompt: The prompt to prepend to retrieved memories.
@@ -106,6 +112,7 @@ class Mem0ContextProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Search Mem0 for relevant memories and add to the session context."""
+        mark_feature_used(FeatureIndex.MEM0)
         self._validate_filters()
         input_text = "\n".join(msg.text for msg in context.input_messages if msg and msg.text and msg.text.strip())
         if not input_text.strip():
@@ -125,13 +132,9 @@ class Mem0ContextProvider(ContextProvider):
             agent_kwargs = self._build_search_kwargs(input_text, "agent_id", self.agent_id)
             search_tasks.append(self.mem0_client.search(**agent_kwargs))  # type: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
-        # Fall back to an app-scoped search when only application_id is configured
+        # Fall back to an app-scoped search when only application_id is configured.
         if not search_tasks and self.application_id:
-            app_kwargs: dict[str, Any] = {"query": input_text}
-            if isinstance(self.mem0_client, AsyncMemory):
-                app_kwargs["app_id"] = self.application_id
-            else:
-                app_kwargs["filters"] = {"app_id": self.application_id}
+            app_kwargs: dict[str, Any] = {"query": input_text, "filters": self._build_filters()}
             search_tasks.append(self.mem0_client.search(**app_kwargs))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         if not search_tasks:
             return
@@ -201,6 +204,7 @@ class Mem0ContextProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Store request/response messages to Mem0 for future retrieval."""
+        mark_feature_used(FeatureIndex.MEM0)
         self._validate_filters()
 
         messages_to_store: list[Message] = list(context.input_messages)
@@ -219,42 +223,53 @@ class Mem0ContextProvider(ContextProvider):
         if messages:
             add_kwargs: dict[str, Any] = {
                 "messages": messages,
-                "user_id": self.user_id,
-                "agent_id": self.agent_id,
             }
 
-            # Inject the application scope using the matching signature format for each SDK variant
             if isinstance(self.mem0_client, AsyncMemory):
-                if self.application_id:
-                    add_kwargs["app_id"] = self.application_id
+                add_kwargs["user_id"] = self.user_id
+                add_kwargs["agent_id"] = self.agent_id
             else:
-                if self.application_id:
-                    add_kwargs["filters"] = {"app_id": self.application_id}
+                add_kwargs["filters"] = self._build_filters()
 
             await self.mem0_client.add(**add_kwargs)  # type: ignore[misc, call-arg]
 
     # -- Internal methods ------------------------------------------------------
 
     def _validate_filters(self) -> None:
-        """Validates that at least one filter is provided."""
+        """Validates that at least one usable filter is provided for the configured client."""
         if not self.agent_id and not self.user_id and not self.application_id:
             raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
+        if isinstance(self.mem0_client, AsyncMemory) and self.application_id:
+            raise ValueError(
+                "application_id is not supported by the OSS AsyncMemory client, which scopes "
+                "memories only by user_id/agent_id. Remove application_id or use AsyncMemoryClient."
+            )
 
     def _build_search_kwargs(self, input_text: str, entity_key: str, entity_value: str) -> dict[str, Any]:
         """Build search keyword arguments formatted for OSS vs Platform clients."""
         filters: dict[str, Any] = {"query": input_text}
 
-        if isinstance(self.mem0_client, AsyncMemory):
-            # AsyncMemory (OSS) expects direct kwargs
-            filters[entity_key] = entity_value
-            if self.application_id:
-                filters["app_id"] = self.application_id
-        else:
-            # AsyncMemoryClient (Platform) expects a filters dict
-            filters["filters"] = {entity_key: entity_value}
-            if self.application_id:
-                filters["filters"]["app_id"] = self.application_id
+        if self.application_id and isinstance(self.mem0_client, AsyncMemory):
+            raise ValueError(
+                "application_id is not supported by the OSS AsyncMemory client, which scopes "
+                "memories only by user_id/agent_id. Remove application_id or use AsyncMemoryClient."
+            )
 
+        filters["filters"] = {entity_key: entity_value}
+        if self.application_id and not isinstance(self.mem0_client, AsyncMemory):
+            filters["filters"]["app_id"] = self.application_id
+
+        return filters
+
+    def _build_filters(self) -> dict[str, Any]:
+        """Build identity filters from initialization parameters."""
+        filters: dict[str, Any] = {}
+        if self.user_id:
+            filters["user_id"] = self.user_id
+        if self.agent_id:
+            filters["agent_id"] = self.agent_id
+        if self.application_id:
+            filters["app_id"] = self.application_id
         return filters
 
 

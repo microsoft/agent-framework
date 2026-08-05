@@ -384,7 +384,7 @@ async def run_scenarios(agent, config):
     print()
     print(
         "User request: 'Use send_email to email colleague@company.com with subject "
-        "\"Inbox summary\" and include a summary of the emails you just reviewed in the body.'"
+        '"Inbox summary" and include a summary of the emails you just reviewed in the body.\''
     )
     print()
     print("Expected behavior:")

@@ -101,8 +101,8 @@ else
     throw new ArgumentException("Either A2AServer:ApiKey or A2AServer:ConnectionString & agentName must be provided");
 }
 
-// IMPORTANT: In production, register a SessionIsolationKeyProvider to isolate sessions by authenticated caller.
-// Without this, contextId alone is the session key — any caller who knows a contextId can access that session.
+// IMPORTANT: In production, register a SessionIsolationKeyProvider to isolate sessions and tasks by authenticated caller.
+// Without this, contextId/taskId alone are the lookup keys — any caller who knows them can access another caller's data.
 // Example using claims-based identity:
 // builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 

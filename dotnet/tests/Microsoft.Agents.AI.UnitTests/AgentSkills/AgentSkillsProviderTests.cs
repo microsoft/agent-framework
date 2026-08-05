@@ -20,6 +20,9 @@ public sealed class AgentSkillsProviderTests : IDisposable
     private readonly string _testRoot;
     private readonly TestAIAgent _agent = new();
 
+    private static ToolAutoApprovalRuleContext CreateRuleContext(FunctionCallContent functionCall) =>
+        new(functionCall, new TestAIAgent(), session: null, requestMessages: [], agentRunOptions: null);
+
     public AgentSkillsProviderTests()
     {
         this._testRoot = Path.Combine(Path.GetTempPath(), "skills-provider-tests-" + Guid.NewGuid().ToString("N"));
@@ -1044,6 +1047,108 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task InvokingCoreAsync_DisableLoadSkillApproval_LoadSkillToolNotWrappedAsync()
+    {
+        // Arrange
+        var options = new AgentSkillsProviderOptions { DisableLoadSkillApproval = true };
+        var provider = new AgentSkillsProvider([new AgentInlineSkill("test-skill", "Test", "Body.")], options);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — load_skill should NOT be wrapped, others should still be wrapped
+        Assert.NotNull(result.Tools);
+        var loadTool = result.Tools!.FirstOrDefault(t => t.Name == "load_skill");
+        Assert.NotNull(loadTool);
+        Assert.IsNotType<ApprovalRequiredAIFunction>(loadTool);
+
+        var readTool = result.Tools!.FirstOrDefault(t => t.Name == "read_skill_resource");
+        Assert.NotNull(readTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(readTool);
+
+        var scriptTool = result.Tools!.FirstOrDefault(t => t.Name == "run_skill_script");
+        Assert.NotNull(scriptTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(scriptTool);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_DisableReadSkillResourceApproval_ReadToolNotWrappedAsync()
+    {
+        // Arrange
+        var options = new AgentSkillsProviderOptions { DisableReadSkillResourceApproval = true };
+        var provider = new AgentSkillsProvider([new AgentInlineSkill("test-skill", "Test", "Body.")], options);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — read_skill_resource should NOT be wrapped, others should still be wrapped
+        Assert.NotNull(result.Tools);
+        var readTool = result.Tools!.FirstOrDefault(t => t.Name == "read_skill_resource");
+        Assert.NotNull(readTool);
+        Assert.IsNotType<ApprovalRequiredAIFunction>(readTool);
+
+        var loadTool = result.Tools!.FirstOrDefault(t => t.Name == "load_skill");
+        Assert.NotNull(loadTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(loadTool);
+
+        var scriptTool = result.Tools!.FirstOrDefault(t => t.Name == "run_skill_script");
+        Assert.NotNull(scriptTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(scriptTool);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_DisableRunSkillScriptApproval_ScriptToolNotWrappedAsync()
+    {
+        // Arrange
+        var options = new AgentSkillsProviderOptions { DisableRunSkillScriptApproval = true };
+        var provider = new AgentSkillsProvider([new AgentInlineSkill("test-skill", "Test", "Body.")], options);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — run_skill_script should NOT be wrapped, others should still be wrapped
+        Assert.NotNull(result.Tools);
+        var scriptTool = result.Tools!.FirstOrDefault(t => t.Name == "run_skill_script");
+        Assert.NotNull(scriptTool);
+        Assert.IsNotType<ApprovalRequiredAIFunction>(scriptTool);
+
+        var loadTool = result.Tools!.FirstOrDefault(t => t.Name == "load_skill");
+        Assert.NotNull(loadTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(loadTool);
+
+        var readTool = result.Tools!.FirstOrDefault(t => t.Name == "read_skill_resource");
+        Assert.NotNull(readTool);
+        Assert.IsType<ApprovalRequiredAIFunction>(readTool);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_DisableAllApprovals_NoToolsWrappedAsync()
+    {
+        // Arrange
+        var options = new AgentSkillsProviderOptions
+        {
+            DisableLoadSkillApproval = true,
+            DisableReadSkillResourceApproval = true,
+            DisableRunSkillScriptApproval = true,
+        };
+        var provider = new AgentSkillsProvider([new AgentInlineSkill("test-skill", "Test", "Body.")], options);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — no tools should be wrapped
+        Assert.NotNull(result.Tools);
+        foreach (var tool in result.Tools!)
+        {
+            Assert.IsNotType<ApprovalRequiredAIFunction>(tool);
+        }
+    }
+
+    [Fact]
     public async Task ReadOnlyToolsAutoApprovalRule_ApprovesReadOnlyToolsAsync()
     {
         // Arrange
@@ -1053,12 +1158,12 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var unrelatedCall = new FunctionCallContent("call4", "some_other_tool", null);
 
         // Act & Assert — read-only tools should be approved
-        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(loadSkillCall));
-        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(readResourceCall));
+        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(CreateRuleContext(loadSkillCall)));
+        Assert.True(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(CreateRuleContext(readResourceCall)));
 
         // Act & Assert — script tool and unrelated tools should not be approved
-        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(runScriptCall));
-        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(unrelatedCall));
+        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(CreateRuleContext(runScriptCall)));
+        Assert.False(await AgentSkillsProvider.ReadOnlyToolsAutoApprovalRule(CreateRuleContext(unrelatedCall)));
     }
 
     [Fact]
@@ -1071,12 +1176,12 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var unrelatedCall = new FunctionCallContent("call4", "some_other_tool", null);
 
         // Act & Assert — all skill tools should be approved
-        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(loadSkillCall));
-        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(readResourceCall));
-        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(runScriptCall));
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(CreateRuleContext(loadSkillCall)));
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(CreateRuleContext(readResourceCall)));
+        Assert.True(await AgentSkillsProvider.AllToolsAutoApprovalRule(CreateRuleContext(runScriptCall)));
 
         // Act & Assert — unrelated tools should not be approved
-        Assert.False(await AgentSkillsProvider.AllToolsAutoApprovalRule(unrelatedCall));
+        Assert.False(await AgentSkillsProvider.AllToolsAutoApprovalRule(CreateRuleContext(unrelatedCall)));
     }
 
     [Fact]
@@ -1314,6 +1419,65 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.Null(capturingSource.LastContext.Session);
     }
 
+    [Fact]
+    public void Dispose_DefaultOwnership_DoesNotDisposeProvidedSource()
+    {
+        // Arrange
+        var source = new DisposeTrackingAgentSkillsSource();
+        var provider = new AgentSkillsProvider(source);
+
+        // Act
+        provider.Dispose();
+
+        // Assert — the caller retains ownership of the source by default.
+        Assert.Equal(0, source.DisposeCount);
+    }
+
+    [Fact]
+    public void Dispose_WhenOwningProvidedSource_DisposesSource()
+    {
+        // Arrange
+        var source = new DisposeTrackingAgentSkillsSource();
+        var provider = new AgentSkillsProvider(source, ownsSource: true);
+
+        // Act
+        provider.Dispose();
+
+        // Assert
+        Assert.Equal(1, source.DisposeCount);
+    }
+
+    [Fact]
+    public void Dispose_WhenOwningProvidedSource_IsIdempotent()
+    {
+        // Arrange
+        var source = new DisposeTrackingAgentSkillsSource();
+        var provider = new AgentSkillsProvider(source, ownsSource: true);
+
+        // Act
+        provider.Dispose();
+        provider.Dispose();
+
+        // Assert — the source is disposed exactly once.
+        Assert.Equal(1, source.DisposeCount);
+    }
+
+    [Fact]
+    public void Dispose_BuilderBuiltProvider_DisposesSourcePipeline()
+    {
+        // Arrange — the builder wraps the source in caching/dedup decorators and transfers ownership.
+        var source = new DisposeTrackingAgentSkillsSource();
+        var provider = new AgentSkillsProviderBuilder()
+            .UseSource(source)
+            .Build();
+
+        // Act
+        provider.Dispose();
+
+        // Assert — disposal cascades through the decorator pipeline to the leaf source.
+        Assert.Equal(1, source.DisposeCount);
+    }
+
     private sealed class TestAgentSession : AgentSession;
 
     /// <summary>
@@ -1372,5 +1536,26 @@ public sealed class AgentSkillsProviderTests : IDisposable
         public override AgentSkillFrontmatter Frontmatter { get; }
 
         protected override string Instructions => this._instructions;
+    }
+
+    /// <summary>
+    /// A test skill source that records how many times it has been disposed.
+    /// </summary>
+    private sealed class DisposeTrackingAgentSkillsSource : AgentSkillsSource
+    {
+        public int DisposeCount { get; private set; }
+
+        public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
+            => Task.FromResult<IList<AgentSkill>>([]);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                this.DisposeCount++;
+            }
+
+            base.Dispose(disposing);
+        }
     }
 }

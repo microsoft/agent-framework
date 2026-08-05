@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 
 namespace Microsoft.Agents.AI;
@@ -8,6 +7,13 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// Configuration options for <see cref="AgentMcpSkillsSource"/>.
 /// </summary>
+/// <remarks>
+/// <strong>Security consideration:</strong> The archive limits (<see cref="ArchiveMaxFileCount"/>,
+/// <see cref="ArchiveMaxSizeBytes"/>, <see cref="ArchiveMaxUncompressedSizeBytes"/>) bound how much a
+/// single MCP server response can extract to local disk. Since the server supplying these archives is
+/// an external, potentially untrusted system, keep these limits conservative unless you have vetted the
+/// server and legitimately need to raise them.
+/// </remarks>
 public sealed class AgentMcpSkillsSourceOptions
 {
     /// <summary>
@@ -79,17 +85,4 @@ public sealed class AgentMcpSkillsSourceOptions
     /// skipped.
     /// </remarks>
     public long? ArchiveMaxUncompressedSizeBytes { get; set; }
-
-    /// <summary>
-    /// Gets or sets the interval at which cached skills are considered fresh. When a caller invokes
-    /// <see cref="AgentMcpSkillsSource.GetSkillsAsync"/> and the cached result is younger than this
-    /// interval, the cached list is returned without contacting the MCP server.
-    /// </summary>
-    /// <remarks>
-    /// When <see langword="null"/> (the default), caching is disabled and every call fetches from
-    /// the MCP server. Set to a positive <see cref="TimeSpan"/> to enable caching. Values of
-    /// <see cref="TimeSpan.Zero"/> or negative durations effectively disable caching because the
-    /// cache age will always be greater than or equal to the interval.
-    /// </remarks>
-    public TimeSpan? RefreshInterval { get; set; }
 }

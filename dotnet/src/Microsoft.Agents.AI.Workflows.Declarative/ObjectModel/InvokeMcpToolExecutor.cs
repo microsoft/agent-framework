@@ -302,17 +302,7 @@ internal sealed class InvokeMcpToolExecutor(
                     using JsonDocument jsonDocument = JsonDocument.Parse(jsonString);
 
                     // Handle different JSON value kinds
-                    object? parsedValue = jsonDocument.RootElement.ValueKind switch
-                    {
-                        JsonValueKind.Object => jsonDocument.ParseRecord(VariableType.RecordType),
-                        JsonValueKind.Array => jsonDocument.ParseList(jsonDocument.RootElement.GetListTypeFromJson()),
-                        JsonValueKind.String => jsonDocument.RootElement.GetString(),
-                        JsonValueKind.Number => jsonDocument.RootElement.TryGetInt64(out long l) ? l : jsonDocument.RootElement.GetDouble(),
-                        JsonValueKind.True => true,
-                        JsonValueKind.False => false,
-                        JsonValueKind.Null => null,
-                        _ => jsonString,
-                    };
+                    object? parsedValue = jsonDocument.ParseJsonValue(jsonString);
 
                     parsedResults.Add(parsedValue);
                     continue;

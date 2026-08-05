@@ -1,9 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
-using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -29,7 +27,6 @@ namespace Microsoft.Agents.AI;
 /// as a non-null dictionary so it cannot be silently broadened to all invocations of the tool.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed class ToolApprovalRule
 {
     /// <summary>

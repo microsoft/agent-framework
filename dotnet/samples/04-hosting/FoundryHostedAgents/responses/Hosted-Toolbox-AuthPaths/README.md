@@ -8,7 +8,7 @@ Drive the agent across the auth paths with the shared [`Using-Samples/SimpleAgen
 
 | Aspect | This sample | Existing siblings |
 |---|---|---|
-| Toolbox marker pattern | `FoundryAITool.CreateHostedMcpToolbox(name)` + `AddFoundryToolboxes(name)` | Same as [`Hosted-Toolbox/`](../Hosted-Toolbox/) |
+| Toolbox marker pattern | `FoundryAITool.CreateHostedMcpToolbox(name)` + `AddFoundryToolboxes(credential, name)` | Same as [`Hosted-Toolbox/`](../Hosted-Toolbox/) |
 | Tools per toolbox | **Three MCP tools, each with a different auth method** | `Hosted-Toolbox/`: typically one demo tool |
 | Consumption | Server-side (Foundry resolves the marker) | Same |
 | Client | Shared [`Using-Samples/SimpleAgent/`](../Using-Samples/SimpleAgent/) REPL, pointed at this agent | `Hosted-Toolbox/`: any client |
@@ -190,6 +190,7 @@ Send a test email to myself.                                      # path #4 — 
 | **HTTP 404 from a tool call** | Toolbox name mismatch (`TOOLBOX_NAME` vs the name in the portal), or the toolbox was deleted. |
 | **Server logs a warning "Neither FOUNDRY_PROJECT_ENDPOINT nor AZURE_AI_PROJECT_ENDPOINT is set; toolbox support is disabled"** | Local dev without the env var set. The agent will load with zero tools and respond as if it has none. Set `AZURE_AI_PROJECT_ENDPOINT` (local-dev fallback) or `FOUNDRY_PROJECT_ENDPOINT` to your project endpoint. |
 | **Tools appear but model never invokes them** | `instructions:` in `Program.cs` may not surface what each tool is for. Tighten the `allowed_tools` lists and rephrase prompts to mention the upstream service by name. |
+| **`azd ai agent invoke` returns `404 not_found: Conversation '<id>' not found`** | `azd` saves the session and conversation per agent and reuses them on the next invoke. Once the agent is redeployed, deleted, or restarted, that saved conversation no longer exists on the server. Pass `--new-conversation` (and `--new-session` if it persists) to start a fresh one. |
 
 ## Region and model compatibility
 
@@ -203,4 +204,3 @@ Inline `authorization` on a toolbox tool entry stores credentials **inside the t
 - Local development against a test MCP server with a throwaway token.
 
 For everything else use `project_connection_id` and let the platform inject credentials.
-

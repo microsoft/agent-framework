@@ -2,13 +2,10 @@
 
 """Local client for the local_responses_workflow sample.
 
-The server expects a structured slogan brief. You can either pass a
-JSON object or a plain topic string (the server's run hook fills the
-other fields with defaults).
-
-Pass ``--previous-response-id <id>`` to continue a conversation by its
-``response.id`` — the host uses that as the workflow checkpoint scope
-key, so the workflow resumes from where it left off.
+Posts to ``/responses`` using the standard ``openai`` SDK. This client
+demonstrates the sample's only supported continuation mode:
+``previous_response_id``. It deliberately does not send ``conversation_id``,
+which the sample server rejects.
 
 Start the server first (in another shell)::
 
@@ -16,10 +13,7 @@ Start the server first (in another shell)::
 
 Then::
 
-    uv run python call_server.py \\
-        '{"topic": "electric SUV", "style": "playful", "audience": "young families"}'
-
-    uv run python call_server.py "electric SUV"  # uses default style/audience
+    uv run python call_server.py '{"topic": "electric SUV", "style": "playful", "audience": "young families"}'
 """
 
 from __future__ import annotations
@@ -29,24 +23,30 @@ import sys
 from openai import OpenAI
 
 BASE_URL = "http://127.0.0.1:8000"
+DEFAULT_BRIEF = '{"topic": "electric SUV", "style": "playful", "audience": "young families"}'
+FOLLOW_UP = "Make it a little more premium, but still family friendly."
 
 
 def main() -> None:
-    args = sys.argv[1:]
-    previous_response_id: str | None = None
-    if len(args) >= 2 and args[0] == "--previous-response-id":
-        previous_response_id = args[1]
-        args = args[2:]
-        print(f"Resuming response: {previous_response_id}")
-    prompt = " ".join(args) or '{"topic": "electric SUV", "style": "playful", "audience": "young families"}'
+    """Send a two-turn workflow conversation using ``previous_response_id``."""
     client = OpenAI(base_url=BASE_URL, api_key="not-needed")
-    response = client.responses.create(
-        input=prompt,
-        previous_response_id=previous_response_id,
+    brief = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_BRIEF
+
+    response = client.responses.create(input=brief)
+    print(f"User: {brief}")
+    print(f"Workflow: {response.output_text}")
+    print(f"Response ID: {response.id}")
+
+    # Continue with the returned response id. The server sample rejects
+    # `conversation_id` continuity.
+    follow_up = client.responses.create(
+        input=FOLLOW_UP,
+        previous_response_id=response.id,
     )
-    print(f"User: {prompt}")
-    print(f"Agent: {response.output_text}")
-    print(f"response.id: {response.id}")
+    print()
+    print(f"User: {FOLLOW_UP}")
+    print(f"Workflow: {follow_up.output_text}")
+    print(f"Response ID: {follow_up.id}")
 
 
 if __name__ == "__main__":

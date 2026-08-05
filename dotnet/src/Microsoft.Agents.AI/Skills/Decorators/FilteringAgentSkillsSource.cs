@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI;
 /// Skills for which the predicate returns <see langword="true"/> are included in the result;
 /// skills for which it returns <see langword="false"/> are excluded and logged at debug level.
 /// </remarks>
-internal sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkillsSource
+public sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkillsSource
 {
     private readonly Func<AgentSkill, AgentSkillsSourceContext, bool> _predicate;
     private readonly ILogger<FilteringAgentSkillsSource> _logger;

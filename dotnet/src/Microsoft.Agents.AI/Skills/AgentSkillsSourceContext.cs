@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -10,7 +8,6 @@ namespace Microsoft.Agents.AI;
 /// Provides contextual information about the agent and session to an <see cref="AgentSkillsSource"/>
 /// when retrieving skills.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentSkillsSourceContext
 {
     /// <summary>

@@ -198,8 +198,7 @@ async def test_approval_interrupt_resume_round_trip() -> None:
     stream1.assert_tool_calls_balanced()
 
     # Should have interrupt with function_approval_request
-    finished1 = stream1.last("RUN_FINISHED")
-    interrupt1 = finished1.model_dump().get("interrupt")
+    interrupt1 = stream1.run_finished_interrupts()
     assert interrupt1, "Expected interrupt in RUN_FINISHED"
 
     # Verify confirm_changes tool call was emitted
@@ -259,8 +258,8 @@ async def test_approval_interrupt_resume_round_trip() -> None:
 
     # Turn 2 should NOT have interrupt (approval completed)
     finished2 = stream2.last("RUN_FINISHED")
-    interrupt2 = finished2.model_dump().get("interrupt")
-    assert not interrupt2, f"Expected no interrupt after approval, got {interrupt2}"
+    dumped2 = finished2.model_dump(by_alias=True, exclude_none=True)
+    assert "outcome" not in dumped2, f"Expected no interrupt after approval, got {dumped2.get('outcome')}"
 
 
 # ── Workflow interrupt/resume round-trip ──
@@ -292,10 +291,9 @@ async def test_workflow_interrupt_resume_round_trip() -> None:
     stream1.assert_bookends()
     stream1.assert_no_run_error()
 
-    finished1 = stream1.last("RUN_FINISHED")
-    interrupt1 = finished1.model_dump().get("interrupt")
+    interrupt1 = stream1.run_finished_interrupts()
     assert interrupt1, "Expected flight interrupt"
-    assert interrupt1[0]["value"]["agent"] == "flights"
+    assert stream1.interrupt_metadata_value(interrupt1[0])["agent"] == "flights"
 
     # Turn 2: resume with flight selection
     events2 = [
@@ -329,7 +327,6 @@ async def test_workflow_interrupt_resume_round_trip() -> None:
     stream2.assert_no_run_error()
 
     # Should now have hotel interrupt
-    finished2 = stream2.last("RUN_FINISHED")
-    interrupt2 = finished2.model_dump().get("interrupt")
+    interrupt2 = stream2.run_finished_interrupts()
     assert interrupt2, "Expected hotel interrupt"
-    assert interrupt2[0]["value"]["agent"] == "hotels"
+    assert stream2.interrupt_metadata_value(interrupt2[0])["agent"] == "hotels"

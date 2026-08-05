@@ -40,7 +40,6 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
-from .._feature_stage import ExperimentalFeature, experimental
 from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._tools import tool
 from .._types import Message
@@ -177,10 +176,19 @@ class _ReplaceInput(BaseModel):
 
 
 class _LineEdit(BaseModel):
-    """A single whole-line replacement for ``file_memory_replace_lines``."""
+    """A single literal line replacement for ``file_memory_replace_lines``."""
 
     line_number: Annotated[int, Field(description="1-based line number to replace.")]
-    new_line: Annotated[str, Field(description="Replacement content for the whole line (no trailing newline).")]
+    new_line: Annotated[
+        str,
+        Field(
+            description=(
+                "Literal replacement text for the line, including any trailing newline you want to keep "
+                "(the editor does not add one). Set to an empty string to delete the line entirely, "
+                "including its line break."
+            )
+        ),
+    ]
 
 
 class _ReplaceLinesInput(BaseModel):
@@ -189,7 +197,7 @@ class _ReplaceLinesInput(BaseModel):
     file_name: Annotated[str, Field(description="Name of the memory file to modify.")]
     edits: Annotated[
         list[_LineEdit],
-        Field(description="List of 1-based line numbers and their replacement content."),
+        Field(description="List of 1-based line numbers and their literal replacement text."),
     ]
 
 
@@ -209,7 +217,6 @@ class _SearchFilesInput(BaseModel):
     ] = None
 
 
-@experimental(feature_id=ExperimentalFeature.HARNESS)
 class FileMemoryProvider(ContextProvider):
     """Context provider that gives an agent session-scoped, file-based memory.
 
@@ -307,7 +314,7 @@ class FileMemoryProvider(ContextProvider):
 
         @tool(name="file_memory_write", schema=_WriteFileInput, approval_mode="never_require")
         async def file_memory_write(file_name: str, content: str, description: str | None = None) -> str:
-            """Write a memory file with the given name and content. Overwrites the file if it already exists. Include a description for large files to provide a summary that helps with future discovery."""  # noqa: E501
+            """Write a memory file with the given name and content. Overwrites the file if it already exists. Include a description for large files to provide a summary that helps with future discovery."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
             except ValueError as exc:
@@ -343,7 +350,7 @@ class FileMemoryProvider(ContextProvider):
 
         @tool(name="file_memory_read", schema=_ReadFileInput, approval_mode="never_require")
         async def file_memory_read(file_name: str) -> str:
-            """Read the content of a memory file by name. Returns the file content or a message indicating the file was not found."""  # noqa: E501
+            """Read the content of a memory file by name. Returns the file content or a message indicating the file was not found."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
             except ValueError as exc:
@@ -383,7 +390,7 @@ class FileMemoryProvider(ContextProvider):
 
         @tool(name="file_memory_ls", schema=_ListInput, approval_mode="never_require")
         async def file_memory_ls(glob_pattern: str | None = None) -> list[dict[str, Any]] | str:
-            """List all memory files with their descriptions (if available). Optionally filter file names with a glob_pattern (e.g. "*.md"). Internal files (description sidecars and the memory index) are not shown. Each entry is {"name": <name>, "type": "file", "description": <desc-or-null>}."""  # noqa: E501
+            """List all memory files with their descriptions (if available). Optionally filter file names with a glob_pattern (e.g. "*.md"). Internal files (description sidecars and the memory index) are not shown. Each entry is {"name": <name>, "type": "file", "description": <desc-or-null>}."""  # ruff:ignore[line-too-long]
             try:
                 entries = await self.store.list_children(working_folder)
             except OSError as exc:
@@ -408,7 +415,7 @@ class FileMemoryProvider(ContextProvider):
         async def file_memory_replace(
             file_name: str, old_string: str, new_string: str, replace_all: bool = False
         ) -> str:
-            """Replace occurrences of old_string with new_string in a memory file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced."""  # noqa: E501
+            """Replace occurrences of old_string with new_string in a memory file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
             except ValueError as exc:
@@ -436,7 +443,7 @@ class FileMemoryProvider(ContextProvider):
 
         @tool(name="file_memory_replace_lines", schema=_ReplaceLinesInput, approval_mode="never_require")
         async def file_memory_replace_lines(file_name: str, edits: list[_LineEdit]) -> str:
-            """Replace whole lines in a memory file. Provide a list of edits, each with a 1-based line_number and the new_line content. Fails on out-of-range or duplicate line numbers."""  # noqa: E501
+            """Replace lines in a memory file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
             except ValueError as exc:
@@ -467,7 +474,7 @@ class FileMemoryProvider(ContextProvider):
             regex_pattern: str,
             glob_pattern: str | None = None,
         ) -> list[dict[str, Any]] | str:
-            """Search memory file contents using a case-insensitive regular expression. Optionally filter which files to search using a glob pattern (e.g., "*.md", "research*"). Returns matching file names, content snippets, and matching lines with line numbers. The regex_pattern must be 256 characters or fewer."""  # noqa: E501
+            """Search memory file contents using a case-insensitive regular expression. Optionally filter which files to search using a glob pattern (e.g., "*.md", "research*"). Returns matching file names, content snippets, and matching lines with line numbers. The regex_pattern must be 256 characters or fewer."""  # ruff:ignore[line-too-long]
             glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None
             try:
                 results = await self.store.search(working_folder, regex_pattern, glob_filter, recursive=False)

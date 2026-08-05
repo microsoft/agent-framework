@@ -27,6 +27,7 @@ import fnmatch
 import logging
 import os
 import re
+import stat
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, MutableMapping
 from pathlib import Path
@@ -37,7 +38,8 @@ from pydantic import BaseModel, Field
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
-from .._tools import tool
+from .._telemetry import FeatureIndex, mark_feature_used
+from .._tools import ApprovalMode, tool
 from .._types import Content
 
 logger = logging.getLogger(__name__)
@@ -79,6 +81,21 @@ _SEARCH_TIMEOUT_SECONDS = 10.0
 # refusal into the same :class:`ValueError` the static probe raises so the
 # caller can treat the two cases uniformly.
 _ELOOP = errno.ELOOP
+
+
+def _is_link_or_reparse_point(path: Path) -> bool:
+    """Return whether ``path`` is a symbolic link, junction, or other reparse point."""
+    path_stat = path.lstat()
+    if stat.S_ISLNK(path_stat.st_mode):
+        return True
+
+    is_junction = getattr(path, "is_junction", None)
+    if callable(is_junction) and is_junction():
+        return True
+
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    file_attributes = getattr(path_stat, "st_file_attributes", 0)
+    return bool(reparse_attribute and file_attributes & reparse_attribute)
 
 
 def _compile_search_regex(pattern: str) -> re.Pattern[str]:
@@ -227,17 +244,37 @@ def _apply_replace(content: str, old_string: str, new_string: str, replace_all: 
     return content.replace(old_string, new_string), count
 
 
-def _apply_replace_lines(content: str, edits: list[tuple[int, str]]) -> str:
-    """Apply whole-line replacements (1-based) to ``content``.
+def _split_lines_keepends(content: str) -> list[str]:
+    r"""Split ``content`` into lines on ``\n`` only, keeping the terminator attached.
 
-    Raises :class:`ValueError` when any line number is out of range or when a
-    line number is targeted more than once. Returns the modified content,
-    preserving a trailing newline if the original had one.
+    Splits solely on ``\n`` (a trailing ``\r`` stays as line content), reproducing
+    :func:`_search_file_content`'s ``content.split("\n")`` enumeration exactly, so a
+    ``line_number`` obtained from ``grep`` always targets the same line here and stays
+    in range. This means the result has ``len(content.split("\n"))`` elements: a
+    trailing ``\n`` yields a final empty (editable) line, and empty content yields a
+    single empty line. ``"".join(...)`` reproduces ``content`` verbatim.
+    """
+    segments = content.split("\n")
+    lines = [segment + "\n" for segment in segments[:-1]]
+    lines.append(segments[-1])
+    return lines
+
+
+def _apply_replace_lines(content: str, edits: list[tuple[int, str]]) -> str:
+    r"""Apply literal 1-based line replacements to ``content``.
+
+    Each ``new_line`` is written **verbatim** in place of the target line,
+    including any trailing newline the caller wants to keep — the editor never
+    adds a separator. An empty ``new_line`` deletes the line entirely (content
+    and its terminator), and a ``new_line`` containing embedded newlines expands
+    one line into several.
+
+    Raises :class:`ValueError` when no edits are provided, when any line number
+    is out of range, or when a line number is targeted more than once.
     """
     if not edits:
         raise ValueError("At least one line edit must be provided.")
-    had_trailing_newline = content.endswith("\n")
-    lines = content.splitlines()
+    lines = _split_lines_keepends(content)
     seen: set[int] = set()
     for line_number, _ in edits:
         if line_number in seen:
@@ -247,8 +284,7 @@ def _apply_replace_lines(content: str, edits: list[tuple[int, str]]) -> str:
             raise ValueError(f"line_number {line_number} is out of range (file has {len(lines)} lines).")
     for line_number, new_line in edits:
         lines[line_number - 1] = new_line
-    result = "\n".join(lines)
-    return result + "\n" if had_trailing_newline else result
+    return "".join(lines)
 
 
 def _line_edits(edits: list[Any]) -> list[tuple[int, str]]:
@@ -837,10 +873,9 @@ class FileSystemAgentFileStore(AgentFileStore):
         """Reject any segment between the root and ``candidate`` that is a symlink/reparse point.
 
         Walks each ancestor down from the root on the *unresolved* candidate so
-        ``Path.is_symlink`` observes the on-disk entries instead of their
-        canonical targets. Stops once a segment does not exist on disk so write
-        scenarios remain allowed. ``Path.is_symlink`` detects both POSIX
-        symlinks and Windows reparse points (junctions).
+        ``Path.lstat`` observes the on-disk entries instead of their canonical
+        targets. Stops once a segment does not exist on disk so write scenarios
+        remain allowed.
         """
         try:
             relative_parts = candidate.relative_to(self._root_path).parts
@@ -854,18 +889,19 @@ class FileSystemAgentFileStore(AgentFileStore):
         for segment in relative_parts:
             current = current / segment
             try:
-                is_link = current.is_symlink()
+                is_link = _is_link_or_reparse_point(current)
+            except FileNotFoundError:
+                break
             except OSError as exc:
                 # Fail closed: if we cannot verify whether a segment is a
                 # symlink/reparse point we refuse the operation rather than
                 # silently allow access that may escape the root.
+                probed_path = current.relative_to(self._root_path).as_posix()
                 raise ValueError(
-                    f"Invalid path: unable to verify whether '{segment}' is a symbolic link or reparse point."
+                    f"Invalid path: unable to verify whether {probed_path!r} is a symbolic link or reparse point."
                 ) from exc
             if is_link:
                 raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.")
-            if not current.exists():
-                break
 
     async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
@@ -889,9 +925,9 @@ class FileSystemAgentFileStore(AgentFileStore):
             flags |= os.O_TRUNC
         else:
             flags |= os.O_EXCL
-        # ``O_NOFOLLOW`` is POSIX-only; on Windows ``Path.is_symlink`` /
-        # reparse-point detection in :meth:`_throw_if_contains_symlink` is the
-        # only line of defence for the leaf segment.
+        # ``O_NOFOLLOW`` is POSIX-only; on Windows the lstat/reparse-point
+        # detection in :meth:`_throw_if_contains_symlink` is the only line of
+        # defence for the leaf segment.
         nofollow = getattr(os, "O_NOFOLLOW", 0)
         flags |= nofollow
         try:
@@ -966,7 +1002,12 @@ class FileSystemAgentFileStore(AgentFileStore):
         directories: list[FileStoreEntry] = []
         files: list[FileStoreEntry] = []
         for entry in full_dir.iterdir():
-            if entry.is_symlink():
+            try:
+                is_link = _is_link_or_reparse_point(entry)
+            except OSError:
+                # Fail closed when an entry cannot be inspected.
+                continue
+            if is_link:
                 continue
             if entry.is_dir():
                 directories.append(FileStoreEntry(entry.name, FileStoreEntry.DIRECTORY))
@@ -1020,7 +1061,12 @@ class FileSystemAgentFileStore(AgentFileStore):
         while directories:
             current = directories.pop()
             for entry in current.iterdir():
-                if entry.is_symlink():
+                try:
+                    is_link = _is_link_or_reparse_point(entry)
+                except OSError:
+                    # Fail closed when an entry cannot be inspected.
+                    continue
+                if is_link:
                     continue
                 if entry.is_dir():
                     if recursive:
@@ -1124,10 +1170,19 @@ class _ReplaceInput(BaseModel):
 
 
 class _LineEdit(BaseModel):
-    """A single whole-line replacement for ``file_access_replace_lines``."""
+    """A single literal line replacement for ``file_access_replace_lines``."""
 
     line_number: Annotated[int, Field(description="1-based line number to replace.")]
-    new_line: Annotated[str, Field(description="Replacement content for the whole line (no trailing newline).")]
+    new_line: Annotated[
+        str,
+        Field(
+            description=(
+                "Literal replacement text for the line, including any trailing newline you want to keep "
+                "(the editor does not add one). Set to an empty string to delete the line entirely, "
+                "including its line break."
+            )
+        ),
+    ]
 
 
 class _ReplaceLinesInput(BaseModel):
@@ -1136,7 +1191,7 @@ class _ReplaceLinesInput(BaseModel):
     file_name: Annotated[str, Field(description="Name (relative path) of the file to modify.")]
     edits: Annotated[
         list[_LineEdit],
-        Field(description="List of 1-based line numbers and their replacement content."),
+        Field(description="List of 1-based line numbers and their literal replacement text."),
     ]
 
 
@@ -1187,7 +1242,7 @@ class FileAccessProvider(ContextProvider):
     the caller and should already be scoped to the desired folder or storage
     location.
 
-    All tools always require approval: each is registered with
+    By default all tools require approval: each is registered with
     ``approval_mode="always_require"`` so the host must approve every file
     operation the model proposes. In the auto-invocation flow this means the
     model's calls to these tools are converted into
@@ -1196,9 +1251,14 @@ class FileAccessProvider(ContextProvider):
     use the base agent directly must install
     :class:`~agent_framework.ToolApprovalMiddleware` (or use
     :func:`~agent_framework.create_harness_agent`, which wires it in by default)
-    to drive that handshake; otherwise these tools never run. To run unattended,
-    supply one of the static auto-approval rules to
-    :class:`~agent_framework.ToolApprovalMiddleware` via its
+    to drive that handshake; otherwise these tools never run.
+
+    To run unattended you can disable approval at the source with
+    ``disable_readonly_tool_approval`` (read, ls, grep) and/or
+    ``disable_write_tool_approval`` (write, delete, replace, replace_lines),
+    which register the affected tools with ``approval_mode="never_require"``.
+    Alternatively, keep approval on and supply one of the static auto-approval
+    rules to :class:`~agent_framework.ToolApprovalMiddleware` via its
     ``auto_approval_rules``:
 
     - :meth:`read_only_tools_auto_approval_rule` — auto-approves only the
@@ -1255,6 +1315,8 @@ class FileAccessProvider(ContextProvider):
         source_id: str = DEFAULT_FILE_ACCESS_SOURCE_ID,
         instructions: str | None = None,
         disable_write_tools: bool = False,
+        disable_readonly_tool_approval: bool = False,
+        disable_write_tool_approval: bool = False,
     ) -> None:
         """Initialize the file access provider.
 
@@ -1272,11 +1334,22 @@ class FileAccessProvider(ContextProvider):
                 are advertised; the write tools (``file_access_write``,
                 ``file_access_delete``, ``file_access_replace``,
                 ``file_access_replace_lines``) are hidden from the model.
+            disable_readonly_tool_approval: When ``True``, the read-only tools
+                (``file_access_read``, ``file_access_ls``, ``file_access_grep``)
+                are registered with ``approval_mode="never_require"`` so they run
+                without host approval. Defaults to ``False`` (approval required).
+            disable_write_tool_approval: When ``True``, the write tools
+                (``file_access_write``, ``file_access_delete``,
+                ``file_access_replace``, ``file_access_replace_lines``) are
+                registered with ``approval_mode="never_require"`` so they run
+                without host approval. Defaults to ``False`` (approval required).
         """
         super().__init__(source_id)
         self.store = store
         self.instructions = instructions or DEFAULT_FILE_ACCESS_INSTRUCTIONS
         self.disable_write_tools = disable_write_tools
+        self.disable_readonly_tool_approval = disable_readonly_tool_approval
+        self.disable_write_tool_approval = disable_write_tool_approval
         # Serializes mutating tool operations (write/delete/replace/replace_lines).
         # The provider is shared across sessions/agents, so read-modify-write tools
         # (replace/replace_lines) could otherwise interleave and lose updates. Note
@@ -1314,6 +1387,15 @@ class FileAccessProvider(ContextProvider):
         auto-approved, even when their name matches a file-access tool, so the
         rule stays scoped to this provider's local tools.
 
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``file_access_read``,
+            ``file_access_ls``, and ``file_access_grep``). Any other local tool
+            registered under one of these names — for example a tool with a
+            caller-configurable name such as the shell tool — may also be
+            auto-approved, bypassing the human approval boundary. Ensure no other
+            tool collides with these reserved names.
+
         Args:
             function_call: The pending ``function_call`` content.
 
@@ -1341,6 +1423,17 @@ class FileAccessProvider(ContextProvider):
         auto-approved, even when their name matches a file-access tool, so the
         rule stays scoped to this provider's local tools.
 
+        .. warning::
+            **Security — avoid tool-name collisions.** This rule approves local
+            tool calls by tool name only (``file_access_write``,
+            ``file_access_read``, ``file_access_delete``, ``file_access_ls``,
+            ``file_access_grep``, ``file_access_replace``, and
+            ``file_access_replace_lines``). Any other local tool registered under
+            one of these names — for example a tool with a caller-configurable
+            name such as the shell tool — may also be auto-approved, bypassing
+            the human approval boundary. Ensure no other tool collides with these
+            reserved names.
+
         Args:
             function_call: The pending ``function_call`` content.
 
@@ -1362,10 +1455,13 @@ class FileAccessProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject file-access tools and instructions before the model runs."""
+        mark_feature_used(FeatureIndex.CORE_FILE_ACCESS_PROVIDER)
+        readonly_approval: ApprovalMode = "never_require" if self.disable_readonly_tool_approval else "always_require"
+        write_approval: ApprovalMode = "never_require" if self.disable_write_tool_approval else "always_require"
 
-        @tool(name=FileAccessProvider.WRITE_TOOL_NAME, schema=_WriteFileInput, approval_mode="always_require")
+        @tool(name=FileAccessProvider.WRITE_TOOL_NAME, schema=_WriteFileInput, approval_mode=write_approval)
         async def file_access_write(file_name: str, content: str, overwrite: bool = False) -> str:
-            """Write a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # noqa: E501
+            """Write a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 async with self._write_lock:
@@ -1378,9 +1474,9 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not write file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' written."
 
-        @tool(name=FileAccessProvider.READ_TOOL_NAME, schema=_ReadFileInput, approval_mode="always_require")
+        @tool(name=FileAccessProvider.READ_TOOL_NAME, schema=_ReadFileInput, approval_mode=readonly_approval)
         async def file_access_read(file_name: str) -> str:
-            """Read the content of a file by name. Returns the file content or a message indicating the file could not be read."""  # noqa: E501
+            """Read the content of a file by name. Returns the file content or a message indicating the file could not be read."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 content = await self.store.read(normalized)
@@ -1390,7 +1486,7 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not read file '{file_name}': {exc.strerror or exc}"
             return content if content is not None else f"File '{file_name}' not found."
 
-        @tool(name=FileAccessProvider.DELETE_TOOL_NAME, schema=_DeleteFileInput, approval_mode="always_require")
+        @tool(name=FileAccessProvider.DELETE_TOOL_NAME, schema=_DeleteFileInput, approval_mode=write_approval)
         async def file_access_delete(file_name: str) -> str:
             """Delete a file by name."""
             try:
@@ -1403,12 +1499,12 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not delete file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' deleted." if deleted else f"File '{file_name}' not found."
 
-        @tool(name=FileAccessProvider.LS_TOOL_NAME, schema=_ListInput, approval_mode="always_require")
+        @tool(name=FileAccessProvider.LS_TOOL_NAME, schema=_ListInput, approval_mode=readonly_approval)
         async def file_access_ls(
             directory: str | None = None,
             glob_pattern: str | None = None,
         ) -> list[dict[str, str]] | str:
-            """List the direct child files and subdirectories of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``. Optionally filter entries with a ``glob_pattern`` (e.g. ``"*.md"``). Subdirectories are listed before files, and each entry is ``{"name": <name>, "type": "file"|"directory"}``."""  # noqa: E501
+            """List the direct child files and subdirectories of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``. Optionally filter entries with a ``glob_pattern`` (e.g. ``"*.md"``). Subdirectories are listed before files, and each entry is ``{"name": <name>, "type": "file"|"directory"}``."""  # ruff:ignore[line-too-long]
             target = directory if directory and directory.strip() else ""
             try:
                 listed = await self.store.list_children(target)
@@ -1420,14 +1516,14 @@ class FileAccessProvider(ContextProvider):
                 {"name": entry.name, "type": entry.type} for entry in listed if _matches_glob(entry.name, glob_pattern)
             ]
 
-        @tool(name=FileAccessProvider.REPLACE_TOOL_NAME, schema=_ReplaceInput, approval_mode="always_require")
+        @tool(name=FileAccessProvider.REPLACE_TOOL_NAME, schema=_ReplaceInput, approval_mode=write_approval)
         async def file_access_replace(
             file_name: str,
             old_string: str,
             new_string: str,
             replace_all: bool = False,
         ) -> str:
-            """Replace occurrences of old_string with new_string in a file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced."""  # noqa: E501
+            """Replace occurrences of old_string with new_string in a file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 async with self._write_lock:
@@ -1445,10 +1541,10 @@ class FileAccessProvider(ContextProvider):
         @tool(
             name=FileAccessProvider.REPLACE_LINES_TOOL_NAME,
             schema=_ReplaceLinesInput,
-            approval_mode="always_require",
+            approval_mode=write_approval,
         )
         async def file_access_replace_lines(file_name: str, edits: list[_LineEdit]) -> str:
-            """Replace whole lines in a file. Provide a list of edits, each with a 1-based line_number and the new_line content. Fails on out-of-range or duplicate line numbers."""  # noqa: E501
+            """Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 async with self._write_lock:
@@ -1463,7 +1559,7 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not edit file '{file_name}': {exc.strerror or exc}"
             return f"Replaced {len(edits)} line(s) in '{file_name}'."
 
-        @tool(name=FileAccessProvider.GREP_TOOL_NAME, schema=_SearchFilesInput, approval_mode="always_require")
+        @tool(name=FileAccessProvider.GREP_TOOL_NAME, schema=_SearchFilesInput, approval_mode=readonly_approval)
         async def file_access_grep(
             regex_pattern: str,
             glob_pattern: str | None = None,

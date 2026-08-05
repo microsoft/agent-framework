@@ -5,8 +5,7 @@
 import asyncio
 from unittest.mock import MagicMock, patch
 
-from agent_framework import FunctionTool
-from agent_framework._sessions import ContextProvider
+from agent_framework import FunctionTool, ContextProvider
 
 
 class TestBedrockKnowledgeBaseTool:
@@ -117,6 +116,29 @@ class TestBedrockKnowledgeBaseTool:
         result = asyncio.run(tool._retrieve(query="unknown"))
         assert "No relevant documents found" in result
 
+    def test_invoke_end_to_end(self):
+        """Test the public FunctionTool.invoke() path with argument validation."""
+        from agent_framework_bedrock._knowledge_base import BedrockKnowledgeBaseTool
+
+        mock_client = MagicMock()
+        mock_client.retrieve.return_value = {
+            "retrievalResults": [
+                {"content": {"text": "Invoked result"}, "score": 0.88, "location": {"s3Location": {"uri": "s3://b/invoke"}}}
+            ]
+        }
+
+        tool = BedrockKnowledgeBaseTool(
+            knowledge_base_id="TEST_KB",
+            use_agentic_retrieval=False,
+            client=mock_client,
+        )
+
+        # Call via the public invoke() API — exercises argument validation + Content parsing
+        result = asyncio.run(tool.invoke(arguments={"query": "test invoke"}))
+        # invoke() returns list[Content] by default
+        assert len(result) > 0
+        assert "Invoked result" in result[0].text
+
 
 class TestBedrockKnowledgeBaseProvider:
     def test_is_context_provider_subclass(self):
@@ -185,8 +207,7 @@ class TestBedrockKnowledgeBaseProvider:
         assert asyncio.iscoroutinefunction(provider.before_run)
 
     def test_before_run_injects_context(self):
-        from agent_framework import Message
-        from agent_framework._sessions import SessionContext
+        from agent_framework import Message, SessionContext
         from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
 
         mock_client = MagicMock()
@@ -225,7 +246,7 @@ class TestBedrockKnowledgeBaseProvider:
         assert "s3://b/doc" in injected[0].text
 
     def test_before_run_skips_empty_input(self):
-        from agent_framework._sessions import SessionContext
+        from agent_framework import SessionContext
         from agent_framework_bedrock._knowledge_base_provider import BedrockKnowledgeBaseProvider
 
         mock_client = MagicMock()

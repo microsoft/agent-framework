@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 from agent_framework import (
     Content,
     Message,
 )
+from agent_framework._telemetry import mark_feature_used
 from chatkit.types import (
     AssistantMessageItem,
     Attachment,
@@ -29,6 +30,8 @@ from chatkit.types import (
     WidgetItem,
     WorkflowItem,
 )
+
+from ._feature_usage import FeatureIndex
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +243,7 @@ class ThreadItemConverter:
                 content = converter.tag_to_message_content(tag)
                 # Returns: Content.from_text(text="<TAG>Name:John Doe</TAG>")
         """
-        name = getattr(tag.data, "name", tag.text if hasattr(tag, "text") else "unknown")
+        name = tag.data.get("name", tag.text) if isinstance(tag.data, Mapping) else getattr(tag.data, "name", tag.text)
         return Content.from_text(text=f"<TAG>Name:{name}</TAG>")
 
     def task_to_input(self, item: TaskItem) -> Message | list[Message] | None:
@@ -370,13 +373,17 @@ class ThreadItemConverter:
             .. code-block:: python
 
                 # Widget item
-                from chatkit.widgets import Card, Text
+                from chatkit.widgets import WidgetTemplate
 
                 widget_item = WidgetItem(
                     id="widget_1",
                     thread_id="thread_1",
                     created_at=datetime.now(),
-                    widget=Card(children=[Text(value="Hello")]),
+                    widget=WidgetTemplate({
+                        "version": "1.0",
+                        "name": "greeting",
+                        "template": '{"type":"Card","children":[{"type":"Text","value":"Hello"}]}',
+                    }).build(),
                 )
                 message = converter.widget_to_input(widget_item)
                 # Returns message with JSON representation of the widget
@@ -606,4 +613,5 @@ async def simple_to_agent_input(thread_items: Sequence[ThreadItem] | ThreadItem)
             # Convert multiple items
             messages = await simple_to_agent_input([user_message_item, assistant_message_item, task_item])
     """
+    mark_feature_used(FeatureIndex.CHATKIT)
     return await _DEFAULT_CONVERTER.to_agent_input(thread_items)

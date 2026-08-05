@@ -10,8 +10,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using AGUI.Abstractions;
+using AGUI.Client;
 using FluentAssertions;
-using Microsoft.Agents.AI.AGUI;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
@@ -30,7 +31,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "hello");
@@ -61,7 +62,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "test");
@@ -78,7 +79,9 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         updates.Should().NotBeEmpty();
         updates[0].ResponseId.Should().NotBeNullOrEmpty();
         ChatResponseUpdate firstUpdate = updates[0].AsChatResponseUpdate();
-        string? threadId = firstUpdate.ConversationId;
+        // The AG-UI thread id is surfaced on the RUN_STARTED event (the new AGUI.Client keeps the
+        // client stateless and never populates ChatResponseUpdate.ConversationId).
+        string? threadId = (firstUpdate.RawRepresentation as RunStartedEvent)?.ThreadId;
         string? runId = updates[0].ResponseId;
         threadId.Should().NotBeNullOrEmpty();
         runId.Should().NotBeNullOrEmpty();
@@ -97,7 +100,15 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         AgentResponseUpdate lastUpdate = updates[^1];
         lastUpdate.ResponseId.Should().Be(runId);
         ChatResponseUpdate lastChatUpdate = lastUpdate.AsChatResponseUpdate();
-        lastChatUpdate.ConversationId.Should().Be(threadId);
+        // The stateless client never populates ChatResponseUpdate.ConversationId; thread identity stays
+        // on the AG-UI wire events instead, so verify the RUN_FINISHED event carries the same ids.
+        lastChatUpdate.ConversationId.Should().BeNull();
+        RunFinishedEvent? runFinished = updates
+            .Select(u => u.AsChatResponseUpdate().RawRepresentation as RunFinishedEvent)
+            .FirstOrDefault(e => e is not null);
+        runFinished.Should().NotBeNull();
+        runFinished!.ThreadId.Should().Be(threadId);
+        runFinished.RunId.Should().Be(runId);
     }
 
     [Fact]
@@ -105,7 +116,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "hello");
@@ -124,7 +135,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage firstUserMessage = new(ChatRole.User, "First question");
@@ -168,7 +179,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync(useMultiMessageAgent: true);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage userMessage = new(ChatRole.User, "Tell me a story");
@@ -200,7 +211,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     {
         // Arrange
         await this.SetupTestServerAsync();
-        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
@@ -231,12 +242,33 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         response.Messages[0].Text.Should().Be("Hello from fake agent!");
     }
 
+    [Fact]
+    public async Task PostMalformedOrEmptyBody_ReturnsBadRequestAsync()
+    {
+        // Arrange
+        await this.SetupTestServerAsync();
+
+        var endpoint = new Uri("http://localhost/agent");
+
+        // Act - malformed JSON body
+        using var malformed = new StringContent("{ not valid json", System.Text.Encoding.UTF8, "application/json");
+        using HttpResponseMessage malformedResponse = await this._client!.PostAsync(endpoint, malformed);
+
+        // Act - empty body
+        using var empty = new StringContent(string.Empty, System.Text.Encoding.UTF8, "application/json");
+        using HttpResponseMessage emptyResponse = await this._client!.PostAsync(endpoint, empty);
+
+        // Assert - the hosting glue rejects both with 400 rather than 5xx.
+        malformedResponse.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
+        emptyResponse.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
+    }
+
     private async Task SetupTestServerAsync(bool useMultiMessageAgent = false)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
 
-        builder.Services.AddAGUI();
+        builder.Services.AddAGUIServer();
 
         if (useMultiMessageAgent)
         {
@@ -253,7 +285,7 @@ public sealed class BasicStreamingTests : IAsyncDisposable
             ? this._app.Services.GetRequiredService<FakeMultiMessageAgent>()
             : this._app.Services.GetRequiredService<FakeChatClientAgent>();
 
-        this._app.MapAGUI("/agent", agent);
+        this._app.MapAGUIServer("/agent", agent);
 
         await this._app.StartAsync();
 

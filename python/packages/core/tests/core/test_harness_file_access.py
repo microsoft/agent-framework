@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -56,6 +60,29 @@ def _tool_by_name(tools: list[object], name: str) -> FunctionTool:
 def _text(content: Content) -> str:
     assert content.text is not None
     return content.text
+
+
+def _create_junction_or_skip(*, link: Path, target: Path) -> None:
+    if sys.platform != "win32":
+        pytest.skip("Windows directory junctions are only available on Windows")
+
+    result = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd"), "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"Could not create Windows directory junction: {result.stderr or result.stdout}")
+
+    is_junction = getattr(link, "is_junction", None)
+    is_reparse_point = bool(
+        getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        and getattr(link.lstat(), "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )
+    if not (callable(is_junction) and is_junction()) and not is_reparse_point:
+        link.rmdir()
+        pytest.skip("Created junction was not reported as a reparse point")
 
 
 def test_normalize_relative_path_collapses_and_validates() -> None:
@@ -420,6 +447,31 @@ async def test_filesystem_store_search_and_list_skip_symlinked_directories(tmp_p
     assert {result.file_name for result in results} == {"inside.md"}
 
 
+async def test_filesystem_store_search_and_list_skip_junctioned_directories(tmp_path: Path) -> None:
+    """Recursive search and listing must not follow Windows junctions outside the root."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("ERROR outside the root", encoding="utf-8")
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "inside.md").write_text("ERROR inside", encoding="utf-8")
+    junction = root / "linked"
+    _create_junction_or_skip(link=junction, target=outside)
+
+    try:
+        store = FileSystemAgentFileStore(root)
+
+        with pytest.raises(ValueError):
+            await store.read("linked/secret.md")
+        assert await _list_dirs(store) == []
+
+        results = await store.search("", "error", recursive=True)
+        assert {result.file_name for result in results} == {"inside.md"}
+    finally:
+        junction.rmdir()
+
+
 async def test_filesystem_store_search_skips_non_utf8_files(tmp_path: Path) -> None:
     """The filesystem store should silently skip non-UTF-8 files instead of aborting the search."""
     store = FileSystemAgentFileStore(tmp_path)
@@ -534,6 +586,44 @@ async def test_file_access_provider_all_tools_require_approval(
         FileAccessProvider.REPLACE_LINES_TOOL_NAME,
     ):
         assert _tool_by_name(tools, name).approval_mode == "always_require"
+
+
+async def test_file_access_provider_approval_opt_outs(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """The approval opt-out flags flip only the affected tool group to ``never_require``."""
+    readonly_names = (
+        FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.LS_TOOL_NAME,
+        FileAccessProvider.GREP_TOOL_NAME,
+    )
+    write_names = (
+        FileAccessProvider.WRITE_TOOL_NAME,
+        FileAccessProvider.DELETE_TOOL_NAME,
+        FileAccessProvider.REPLACE_TOOL_NAME,
+        FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+    )
+
+    # Disabling read-only approval only affects the read-only tools.
+    tools = await _prepare_access_tools(chat_client_base, disable_readonly_tool_approval=True)
+    for name in readonly_names:
+        assert _tool_by_name(tools, name).approval_mode == "never_require"
+    for name in write_names:
+        assert _tool_by_name(tools, name).approval_mode == "always_require"
+
+    # Disabling write approval only affects the write tools.
+    tools = await _prepare_access_tools(chat_client_base, disable_write_tool_approval=True)
+    for name in readonly_names:
+        assert _tool_by_name(tools, name).approval_mode == "always_require"
+    for name in write_names:
+        assert _tool_by_name(tools, name).approval_mode == "never_require"
+
+    # Disabling both drops approval everywhere.
+    tools = await _prepare_access_tools(
+        chat_client_base, disable_readonly_tool_approval=True, disable_write_tool_approval=True
+    )
+    for name in (*readonly_names, *write_names):
+        assert _tool_by_name(tools, name).approval_mode == "never_require"
 
 
 def test_read_only_tools_auto_approval_rule() -> None:
@@ -735,17 +825,22 @@ async def test_run_search_with_timeout_raises_value_error(monkeypatch: pytest.Mo
 async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """If ``Path.is_symlink`` raises during the probe, the operation must be refused."""
+    """If ``Path.lstat`` raises during the probe, the operation must be refused."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write("ok.txt", "content")
+    await store.write("same/same/ok.txt", "content")
 
-    def boom(self: Path) -> bool:
-        raise PermissionError("access denied")
+    original_lstat = Path.lstat
+    failing_path = store.root_path / "same" / "same"
 
-    monkeypatch.setattr(Path, "is_symlink", boom)
+    def fail_for_target(self: Path) -> os.stat_result:
+        if self == failing_path:
+            raise PermissionError("access denied")
+        return original_lstat(self)
 
-    with pytest.raises(ValueError, match="symbolic link or reparse point"):
-        await store.read("ok.txt")
+    monkeypatch.setattr(Path, "lstat", fail_for_target)
+
+    with pytest.raises(ValueError, match=r"'same/same'"):
+        await store.read("same/same/ok.txt")
 
 
 def test_file_access_harness_classes_are_marked_experimental() -> None:
@@ -953,11 +1048,20 @@ async def test_filesystem_store_rejects_symlinked_intermediate_directory(tmp_pat
 
 
 async def _prepare_access_tools(
-    chat_client_base: SupportsChatGetResponse, *, disable_write_tools: bool = False
+    chat_client_base: SupportsChatGetResponse,
+    *,
+    disable_write_tools: bool = False,
+    disable_readonly_tool_approval: bool = False,
+    disable_write_tool_approval: bool = False,
 ) -> list[object]:
     """Prepare a FileAccessProvider and return its registered tools."""
     session = AgentSession(session_id="session-1")
-    provider = FileAccessProvider(store=InMemoryAgentFileStore(), disable_write_tools=disable_write_tools)
+    provider = FileAccessProvider(
+        store=InMemoryAgentFileStore(),
+        disable_write_tools=disable_write_tools,
+        disable_readonly_tool_approval=disable_readonly_tool_approval,
+        disable_write_tool_approval=disable_write_tool_approval,
+    )
     agent = Agent(client=chat_client_base, context_providers=[provider])
     _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
         session=session,
@@ -1004,23 +1108,66 @@ async def test_file_access_replace(chat_client_base: SupportsChatGetResponse) ->
 
 
 async def test_file_access_replace_lines(chat_client_base: SupportsChatGetResponse) -> None:
-    """``file_access_replace_lines`` should replace whole 1-based lines and reject bad input."""
+    """``file_access_replace_lines`` should apply literal 1-based line edits and reject bad input."""
     tools = await _prepare_access_tools(chat_client_base)
     save = _tool_by_name(tools, "file_access_write")
     read = _tool_by_name(tools, "file_access_read")
     replace_lines = _tool_by_name(tools, "file_access_replace_lines")
 
-    await save.invoke(arguments={"file_name": "a.txt", "content": "one\ntwo\nthree"})
+    async def write(content: str) -> None:
+        await save.invoke(arguments={"file_name": "a.txt", "content": content, "overwrite": True})
 
+    async def current() -> str:
+        return _text((await read.invoke(arguments={"file_name": "a.txt"}))[0])
+
+    # Literal replacement: the caller supplies the trailing newline.
+    await write("one\ntwo\nthree")
     done = await replace_lines.invoke(
-        arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": "TWO"}]}
+        arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": "TWO\n"}]}
     )
     assert "1 line" in _text(done[0])
-    assert _text((await read.invoke(arguments={"file_name": "a.txt"}))[0]) == "one\nTWO\nthree"
+    assert await current() == "one\nTWO\nthree"
+
+    # Empty new_line deletes a middle line, including its terminator.
+    await write("line1\nline2\nline3\n")
+    await replace_lines.invoke(arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": ""}]})
+    assert await current() == "line1\nline3\n"
+
+    # Empty new_line deletes the last line even when it has no terminator.
+    await write("line1\nline2")
+    await replace_lines.invoke(arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": ""}]})
+    assert await current() == "line1\n"
+
+    # Delete + replace in the same call.
+    await write("a\nb\nc\n")
+    await replace_lines.invoke(
+        arguments={
+            "file_name": "a.txt",
+            "edits": [{"line_number": 1, "new_line": ""}, {"line_number": 3, "new_line": "C\n"}],
+        }
+    )
+    assert await current() == "b\nC\n"
+
+    # Embedded newlines expand one line into several.
+    await write("a\nb\nc\n")
+    await replace_lines.invoke(arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": "b1\nb2\n"}]})
+    assert await current() == "a\nb1\nb2\nc\n"
+
+    # CRLF terminators are preserved when the caller keeps them.
+    await write("line1\r\nline2\r\nline3")
+    await replace_lines.invoke(
+        arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": "CHANGED\r\n"}]}
+    )
+    assert await current() == "line1\r\nCHANGED\r\nline3"
 
     # Out-of-range line -> failure.
+    await write("one\ntwo\nthree")
     oor = await replace_lines.invoke(arguments={"file_name": "a.txt", "edits": [{"line_number": 9, "new_line": "x"}]})
     assert "out of range" in _text(oor[0])
+
+    # Empty edits list -> failure.
+    empty = await replace_lines.invoke(arguments={"file_name": "a.txt", "edits": []})
+    assert "At least one line edit" in _text(empty[0])
 
     # Duplicate line numbers -> failure.
     dup = await replace_lines.invoke(
@@ -1030,6 +1177,52 @@ async def test_file_access_replace_lines(chat_client_base: SupportsChatGetRespon
         }
     )
     assert "Duplicate" in _text(dup[0])
+
+
+async def test_file_access_grep_line_numbers_are_editable(chat_client_base: SupportsChatGetResponse) -> None:
+    """A ``line_number`` returned by ``file_access_grep`` must be in range for ``replace_lines``.
+
+    This is the core cross-tool invariant: agents locate lines with grep and then edit
+    them by number, so the two tools must enumerate lines identically -- including the
+    trailing empty line of a newline-terminated file and interior blank lines.
+    """
+    tools = await _prepare_access_tools(chat_client_base)
+    save = _tool_by_name(tools, "file_access_write")
+    read = _tool_by_name(tools, "file_access_read")
+    grep = _tool_by_name(tools, "file_access_grep")
+    replace_lines = _tool_by_name(tools, "file_access_replace_lines")
+
+    async def write(content: str) -> None:
+        await save.invoke(arguments={"file_name": "a.txt", "content": content, "overwrite": True})
+
+    async def current() -> str:
+        return _text((await read.invoke(arguments={"file_name": "a.txt"}))[0])
+
+    async def grep_line_numbers(pattern: str) -> list[int]:
+        result = await grep.invoke(arguments={"regex_pattern": pattern, "glob_pattern": "a.txt"})
+        payload = json.loads(_text(result[0]))
+        return [match["line_number"] for entry in payload for match in entry["matching_lines"]]
+
+    # Interior blank line: grep ^$ finds it, replace_lines can fill it in range.
+    # The trailing empty line (line 4) is also exposed by grep -- both must be editable.
+    await write("a\n\nc\n")
+    blanks = await grep_line_numbers("^$")
+    assert blanks == [2, 4]
+    await replace_lines.invoke(
+        arguments={"file_name": "a.txt", "edits": [{"line_number": blanks[0], "new_line": "b\n"}]}
+    )
+    assert await current() == "a\nb\nc\n"
+
+    # Trailing empty line of a newline-terminated file: grep exposes it and it is
+    # editable (e.g. to append), rather than being rejected as out of range.
+    await write("a\nb\n")
+    trailing = await grep_line_numbers("^$")
+    assert trailing == [3]
+    appended = await replace_lines.invoke(
+        arguments={"file_name": "a.txt", "edits": [{"line_number": trailing[0], "new_line": "c\n"}]}
+    )
+    assert "out of range" not in _text(appended[0])
+    assert await current() == "a\nb\nc\n"
 
 
 async def test_file_access_disable_write_tools_hides_write_tools(

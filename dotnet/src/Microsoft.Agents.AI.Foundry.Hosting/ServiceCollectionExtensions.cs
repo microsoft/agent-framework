@@ -3,16 +3,21 @@
 using System;
 using System.ClientModel.Primitives;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
-using Azure.Identity;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -52,6 +57,7 @@ public static class FoundryHostingExtensions
         ArgumentNullException.ThrowIfNull(services);
         services.AddResponsesServer();
         services.AddHealthChecks();
+        ConfigureFoundryListenPort(services);
         services.TryAddSingleton<AgentSessionStore>(_ => FileSystemAgentSessionStore.CreateDefault());
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
@@ -88,6 +94,7 @@ public static class FoundryHostingExtensions
 
         services.AddResponsesServer();
         services.AddHealthChecks();
+        ConfigureFoundryListenPort(services);
         agentSessionStore ??= FileSystemAgentSessionStore.CreateDefault();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
@@ -122,31 +129,43 @@ public static class FoundryHostingExtensions
     /// <para>
     /// Example:
     /// <code>
-    /// builder.Services.AddFoundryToolboxes("my-toolbox", "another-toolbox");
+    /// builder.Services.AddFoundryToolboxes(credential, "my-toolbox", "another-toolbox");
     /// </code>
     /// </para>
     /// </remarks>
     /// <param name="services">The service collection.</param>
+    /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to connect to.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryToolboxes(
         this IServiceCollection services,
+        TokenCredential credential,
         params string[] toolboxNames)
-        => services.AddFoundryToolboxes(configureOptions: null, toolboxNames);
+        => services.AddFoundryToolboxes(credential, configureOptions: null, toolboxNames);
 
     /// <summary>
     /// Registers the Foundry Toolbox service with additional options configuration.
     /// </summary>
     /// <param name="services">The service collection.</param>
+    /// <param name="credential">The <see cref="TokenCredential"/> used to authenticate with the Foundry Toolboxes MCP proxy.</param>
     /// <param name="configureOptions">Callback to further configure <see cref="FoundryToolboxOptions"/> (e.g. set <see cref="FoundryToolboxOptions.StrictMode"/>).</param>
     /// <param name="toolboxNames">Names of the Foundry toolboxes to pre-register at startup.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryToolboxes(
         this IServiceCollection services,
+        TokenCredential credential,
         Action<FoundryToolboxOptions>? configureOptions,
         params string[] toolboxNames)
     {
         ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(credential);
+
+        if (services.Any(d => d.ServiceType == typeof(FoundryToolboxService)))
+        {
+            throw new InvalidOperationException(
+                $"{nameof(FoundryToolboxService)} is already registered. " +
+                $"Call {nameof(AddFoundryToolboxes)} only once per service collection.");
+        }
 
         services.Configure<FoundryToolboxOptions>(opt =>
         {
@@ -161,22 +180,20 @@ public static class FoundryHostingExtensions
             configureOptions?.Invoke(opt);
         });
 
-        // Register DefaultAzureCredential as the default TokenCredential if not already registered
-        services.TryAddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
-
-        // Register FoundryToolboxService as a singleton so it can be injected into the handler
-        services.TryAddSingleton<FoundryToolboxService>();
-
-        // AddHostedService uses TryAddEnumerable internally, so calling AddFoundryToolboxes
-        // multiple times will not invoke StartAsync twice on the same singleton.
+        // Register FoundryToolboxService as a singleton, injecting the caller-provided credential
+        // directly rather than resolving TokenCredential from DI.
+        services.AddSingleton(sp => new FoundryToolboxService(
+            sp.GetRequiredService<IOptions<FoundryToolboxOptions>>(),
+            credential: credential,
+            sp.GetService<ILogger<FoundryToolboxService>>()));
         services.AddHostedService(sp => sp.GetRequiredService<FoundryToolboxService>());
 
         // Register the toolbox health check on the same /readiness pipeline that
         // MapFoundryResponses maps. This gates the Foundry hosted runtime's readiness
         // probe (per container-image-spec.md §3.1) on the outcome of the pre-registered
         // toolbox connections opened in FoundryToolboxService.StartAsync.
-        // AddCheck<T>(name, ...) does NOT dedupe by name, so guard against duplicate
-        // registration when AddFoundryToolboxes is called multiple times.
+        // AddCheck<T>(name, ...) does NOT dedupe by name, so guard against a host that
+        // already registered a health check with this name.
         const string HealthCheckName = "foundry-toolbox";
         services.AddHealthChecks();
         services.Configure<HealthCheckServiceOptions>(opts =>
@@ -235,6 +252,104 @@ public static class FoundryHostingExtensions
         endpoints.MapResponsesServer(prefix);
         MapReadinessIfMissing(endpoints);
         return endpoints;
+    }
+
+    /// <summary>
+    /// Configuration key the Foundry hosting platform populates with a non-empty value inside a
+    /// hosted container. It is the documented way for container code to detect a Foundry context.
+    /// </summary>
+    internal const string FoundryHostingEnvironmentKey = "FOUNDRY_HOSTING_ENVIRONMENT";
+
+    /// <summary>
+    /// Configuration key holding the HTTP listen port, matching the Agent Server SDK.
+    /// </summary>
+    internal const string ListenPortKey = "PORT";
+
+    /// <summary>
+    /// Port the Foundry hosted runtime probes and routes to when <see cref="ListenPortKey"/> is
+    /// not set, matching <see cref="FoundryEnvironment.Port"/>.
+    /// </summary>
+    internal const int DefaultListenPort = 8088;
+
+    /// <summary>
+    /// Marker registered once per <see cref="IServiceCollection"/> so the Foundry listen-port
+    /// configuration is applied at most once, even across multiple <c>AddFoundryResponses</c> calls.
+    /// </summary>
+    private sealed class FoundryListenPortMarker;
+
+    /// <summary>
+    /// Binds Kestrel to the port the Foundry hosted runtime probes and routes to, so a plain
+    /// <c>WebApplication.CreateBuilder</c> host (Tier 3) works with no Dockerfile. Mirrors
+    /// <c>AgentHostBuilder</c>, which listens on the <c>PORT</c> value (default 8088).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The listener is added only when configuration reports a Foundry container through
+    /// <see cref="FoundryHostingEnvironmentKey"/>. A listener configured in code overrides the
+    /// addresses a host resolves from configuration, so adding it everywhere would silently move
+    /// any non-Foundry app off its configured address.
+    /// </para>
+    /// <para>
+    /// Both values come from <see cref="IConfiguration"/> rather than from
+    /// <see cref="FoundryEnvironment"/>, which caches every value in a static constructor. Reading
+    /// through configuration keeps the decision observable when the host is built, honours the
+    /// host's configuration sources, and lets tests supply values without mutating the process
+    /// environment.
+    /// </para>
+    /// <para>
+    /// Inside a Foundry container the listener cannot be skipped based on <c>ASPNETCORE_URLS</c>:
+    /// the .NET base image always sets it to port 80, so such a guard would always trip and leave
+    /// the container failing the readiness probe with HTTP 424. It cannot key off the presence of
+    /// <c>PORT</c> either, because the platform sets that value only when it needs a port other
+    /// than the default.
+    /// </para>
+    /// <para>
+    /// Idempotent, and harmless when no Kestrel server is present (for example under
+    /// <c>TestServer</c>): the <see cref="KestrelServerOptions"/> callback only runs when Kestrel
+    /// is resolved.
+    /// </para>
+    /// </remarks>
+    private static void ConfigureFoundryListenPort(IServiceCollection services)
+    {
+        if (services.Any(static d => d.ServiceType == typeof(FoundryListenPortMarker)))
+        {
+            return;
+        }
+
+        services.AddSingleton<FoundryListenPortMarker>();
+        services.AddOptions<KestrelServerOptions>()
+            .Configure<IConfiguration>(static (options, configuration) =>
+            {
+                if (string.IsNullOrEmpty(configuration[FoundryHostingEnvironmentKey]))
+                {
+                    return;
+                }
+
+                options.ListenAnyIP(ResolveListenPort(configuration));
+            });
+    }
+
+    /// <summary>
+    /// Reads the listen port from configuration, applying the same contract as
+    /// <see cref="FoundryEnvironment.Port"/>: <see cref="DefaultListenPort"/> when unset, otherwise
+    /// a port number in the range 1-65535.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The configured value is not a valid port.</exception>
+    private static int ResolveListenPort(IConfiguration configuration)
+    {
+        var value = configuration[ListenPortKey];
+        if (string.IsNullOrEmpty(value))
+        {
+            return DefaultListenPort;
+        }
+
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port) || port is < 1 or > 65535)
+        {
+            throw new InvalidOperationException(
+                $"The {ListenPortKey} environment variable value '{value}' is not a valid port number (1-65535).");
+        }
+
+        return port;
     }
 
     /// <summary>

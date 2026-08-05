@@ -2,7 +2,7 @@
 # These are optional elements. Feel free to remove any of them.
 status: accepted
 contact: westey-m
-date: 2025-07-10 {YYYY-MM-DD when the decision was last updated}
+date: 2025-07-10
 deciders: sergeymenshykh, markwallace, rbarreto, dmytrostruk, westey-m, eavanvalkenburg, stephentoub
 consulted:
 informed:
@@ -139,7 +139,7 @@ Therefore something like `AgentResponse.Text` which also aggregates all `TextCon
 
 #### Option 1.2 Presence of Secondary Content is determined by a runtime parameter
 
-We can allow callers to choose whether to include secondary content in the list of reponse messages.
+We can allow callers to choose whether to include secondary content in the list of response messages.
 Open Question: Do we allow secondary content to use `TextContent` types?
 
 ```csharp

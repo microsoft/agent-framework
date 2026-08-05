@@ -436,6 +436,7 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(toolboxName);
+        this.EnsureSafeToolboxName(toolboxName);
 
         if (this._toolboxes.TryGetValue(toolboxName, out var cached))
         {
@@ -485,11 +486,78 @@ public sealed class FoundryToolboxService : IHostedService, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Validates that <paramref name="toolboxName"/> resolves to a single, intact path segment in the
+    /// toolbox proxy request URL, so a caller-influenced name cannot change the request target.
+    /// </summary>
+    /// <remarks>
+    /// Rather than block-listing characters, this builds the proxy URL exactly as
+    /// <see cref="OpenToolboxAsync"/> does and confirms, via <see cref="Uri"/>, that the name lands as
+    /// one path segment between <c>toolboxes</c> and <c>mcp</c> and alters nothing else: the scheme and
+    /// authority still match the configured endpoint, no fragment is introduced, the path is still
+    /// <c>{base}/toolboxes/{name}/mcp</c>, and that single segment round-trips back to the original
+    /// name. This is deliberately forgiving — any character that stays inside the segment (for example
+    /// <c>:</c>, <c>@</c>, <c>~</c>, or a dot that is not a standalone <c>.</c>/<c>..</c>) is allowed —
+    /// while a name that would move the target is rejected: path separators (<c>/</c>, <c>\</c>),
+    /// <c>.</c>/<c>..</c> traversal, a <c>?</c>/<c>#</c> that ends the path early, and their
+    /// percent-encoded forms (an encoded separator does not round-trip, so it is rejected before a
+    /// downstream proxy could decode it).
+    /// </remarks>
+    /// <param name="toolboxName">The toolbox name to validate.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the name would not resolve to a single, intact path segment.
+    /// </exception>
+    private void EnsureSafeToolboxName(string toolboxName)
+    {
+        // No endpoint resolved yet means there is no URL to protect; the caller surfaces the
+        // missing-endpoint error separately, so skip the effect-based check here.
+        if (string.IsNullOrEmpty(this._resolvedEndpoint))
+        {
+            return;
+        }
+
+        var baseUri = new Uri(this._resolvedEndpoint, UriKind.Absolute);
+        var candidate = $"{this._resolvedEndpoint}/toolboxes/{toolboxName}/mcp?api-version={this._options.ApiVersion}";
+
+        if (Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
+            && string.Equals(uri.Scheme, baseUri.Scheme, StringComparison.Ordinal)
+            && string.Equals(uri.Authority, baseUri.Authority, StringComparison.Ordinal)
+            && string.IsNullOrEmpty(uri.Fragment))
+        {
+            var prefix = $"{baseUri.AbsolutePath.TrimEnd('/')}/toolboxes/";
+            const string Suffix = "/mcp";
+            var path = uri.AbsolutePath;
+
+            if (path.Length > prefix.Length + Suffix.Length
+                && path.StartsWith(prefix, StringComparison.Ordinal)
+                && path.EndsWith(Suffix, StringComparison.Ordinal))
+            {
+                var segment = path.Substring(prefix.Length, path.Length - prefix.Length - Suffix.Length);
+                if (segment.Length > 0
+                    && segment.IndexOf('/') < 0
+                    && string.Equals(Uri.UnescapeDataString(segment), toolboxName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Toolbox name '{toolboxName}' is not a valid single-segment identifier. " +
+            "Toolbox names must resolve to a single path segment and must not alter the request target.");
+    }
+
     private async Task<ToolboxOpenResult> OpenToolboxAsync(
         string toolboxName,
         string? version,
         CancellationToken cancellationToken)
     {
+        // Defense-in-depth: every open path (startup, lazy per-request, consent retry, deferred
+        // retry) funnels through here, so validate the name at the single point where it is used to
+        // build the request URL. This guarantees a name that is not a safe single path segment can
+        // never form the proxy target, independent of the caller.
+        this.EnsureSafeToolboxName(toolboxName);
+
         // Test seam: when set, the open behavior (the only part that does real network I/O via the
         // MCP transport) is supplied by the test so the consent/tools resolution logic can be
         // exercised without a live toolbox proxy. Never set in production.

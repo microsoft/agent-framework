@@ -4,7 +4,7 @@
 
 from ag_ui.core import StateDeltaEvent
 
-from agent_framework_ag_ui._orchestration._predictive_state import PredictiveStateHandler
+from agent_framework_ag_ui._predictive_state import PredictiveStateHandler
 
 
 class TestPredictiveStateHandlerInit:

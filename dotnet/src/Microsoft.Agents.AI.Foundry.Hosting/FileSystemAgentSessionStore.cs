@@ -147,7 +147,7 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
     }
 
     /// <inheritdoc/>
-    public override async ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
+    public override async ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, string? userId, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
@@ -155,7 +155,7 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
 
         JsonElement serialized = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        string path = this.GetSessionPath(agent, conversationId);
+        string path = this.GetSessionPath(agent, conversationId, userId);
 
         // Each save writes to its own temp file before atomically renaming over the
         // destination. Last writer wins for the final file, but no reader can observe
@@ -208,12 +208,12 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         $"(for example {nameof(InMemoryAgentSessionStore)}) via AddFoundryResponses(agent, agentSessionStore).";
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, string? userId, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
 
-        string path = this.GetSessionPath(agent, conversationId);
+        string path = this.GetSessionPath(agent, conversationId, userId);
         if (!File.Exists(path))
         {
             return await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
@@ -231,20 +231,82 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         return await agent.DeserializeSessionAsync(element, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private string GetSessionPath(AIAgent agent, string conversationId)
+    private string GetSessionPath(AIAgent agent, string conversationId, string? userId)
     {
-        // When agent.Name is set we bucket sessions into a per-agent subdirectory so
-        // multiple keyed agents sharing a single in-process default store cannot
-        // collide on the same conversationId. agent.Id is intentionally NOT used
-        // because it is regenerated on every startup for in-memory-defined agents.
-        string fileName = $"{Sanitize(conversationId)}.json";
-        if (string.IsNullOrEmpty(agent.Name))
+        // Path layout uses self-describing, prefixed segments so every layer is unambiguous and a
+        // collapsed layout can never be confused with a different layer (e.g. a user id can never
+        // masquerade as an agent name):
+        //
+        //   {root}/a-{agent}/u-{userId}/c-{conversationId}.json
+        //
+        // - a-{agent}  buckets per hosted agent, because a single container hosts multiple keyed
+        //              agents that must not collide on the same conversationId. (agent.Id is NOT
+        //              used: it is regenerated on every startup for in-memory-defined agents.)
+        // - u-{userId} partitions per end user (x-agent-user-id) for multi-tenant isolation. Present
+        //              only when a user id was resolved; absent for local runs with no platform header.
+        // - c-{conv}   the conversation/context key. {conversationId} is HostedConversationKey.Resolve's
+        //              output (conversation_id, else the partition of previous_response_id / response id).
+        //
+        // The prefixes are constant literals applied AFTER sanitizing/validating each untrusted value,
+        // so they can never themselves introduce path traversal.
+        string dir = this.RootDirectory;
+
+        if (!string.IsNullOrEmpty(agent.Name))
         {
-            return Path.Combine(this.RootDirectory, fileName);
+            dir = Path.Combine(dir, "a-" + Sanitize(agent.Name!));
         }
 
-        string agentDir = Path.Combine(this.RootDirectory, Sanitize(agent.Name!));
-        return Path.Combine(agentDir, fileName);
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            // The user id is the platform-injected, untrusted partition key. Reject (do not sanitize)
+            // anything that is not a single safe path component so a forged value cannot escape the root.
+            ValidatePathSegment(userId!, "user id");
+            dir = Path.Combine(dir, "u-" + Sanitize(userId!));
+        }
+
+        string path = Path.Combine(dir, "c-" + Sanitize(conversationId) + ".json");
+
+        // Defense in depth: regardless of per-segment handling, the fully-resolved path must remain
+        // under the storage root. Reject anything that escapes (CWE-22).
+        string fullRoot = Path.GetFullPath(this.RootDirectory);
+        string fullPath = Path.GetFullPath(path);
+        string rootWithSeparator = fullRoot.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal)
+            ? fullRoot
+            : fullRoot + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(rootWithSeparator, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Refusing to resolve a session path outside of the storage root '{fullRoot}'.");
+        }
+
+        return path;
+    }
+
+    /// <summary>
+    /// Validates that <paramref name="segment"/> is a single safe path component (CWE-22).
+    /// </summary>
+    /// <remarks>
+    /// The value originates from caller-controlled or platform-injected fields (such as the
+    /// <c>x-agent-user-id</c> partition key). It must be treated as an untrusted single path segment:
+    /// path separators, drive letters, parent references and similar would otherwise let the resulting
+    /// directory escape the configured storage root. We deliberately do not URL-decode the value (the
+    /// hosting layer never decodes these ids before joining them, so forms such as <c>%2e%2e</c> are
+    /// accepted as literal directory names), and we do not "sanitize" by stripping characters because
+    /// that can introduce collisions between distinct ids — a non-conforming value is rejected outright.
+    /// </remarks>
+    private static void ValidatePathSegment(string segment, string kind)
+    {
+        // Reject any value that is not a single safe path component. This covers POSIX/Windows
+        // separators, NUL bytes, drive letters, rooted paths, and all-dot segments (".", "..", "...").
+        if (segment.IndexOf('/') >= 0
+            || segment.IndexOf('\\') >= 0
+            || segment.IndexOf('\0') >= 0
+            || segment.Trim('.').Length == 0
+            || Path.IsPathRooted(segment)
+            || !string.IsNullOrEmpty(Path.GetPathRoot(segment)))
+        {
+            throw new InvalidOperationException($"Invalid {kind}: '{segment}'.");
+        }
     }
 
     private static string Sanitize(string value)

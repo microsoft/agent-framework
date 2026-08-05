@@ -23,11 +23,16 @@ This folder contains examples demonstrating how to use Amazon Bedrock Knowledge 
 
 ```json
 {
-    "Effect": "Allow",
-    "Action": [
-        "bedrock:Retrieve",
-        "bedrock:AgenticRetrieveStream"
-    ],
-    "Resource": "arn:aws:bedrock:*:*:knowledge-base/*"
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "bedrock:Retrieve",
+                "bedrock:AgenticRetrieveStream"
+            ],
+            "Resource": "arn:aws:bedrock:*:*:knowledge-base/*"
+        }
+    ]
 }
 ```

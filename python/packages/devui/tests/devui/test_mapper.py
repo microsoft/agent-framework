@@ -208,6 +208,63 @@ async def test_mixed_content_types(mapper: MessageMapper, test_request: AgentFra
     assert "response.function_call_arguments.delta" in event_types
 
 
+async def test_usage_content_preserves_token_details(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test usage aggregation preserves cache and reasoning token details."""
+    first_update = create_test_agent_update([
+        Content.from_usage({
+            "input_token_count": 10,
+            "output_token_count": 5,
+            "total_token_count": 15,
+            "cache_creation_input_token_count": 3,
+            "cache_read_input_token_count": 4,
+            "reasoning_output_token_count": 2,
+        })
+    ])
+    second_update = create_test_agent_update([
+        Content.from_usage({
+            "input_token_count": 4,
+            "output_token_count": 3,
+            "total_token_count": 7,
+            "cache_creation_input_token_count": 1,
+            "cache_read_input_token_count": 2,
+            "reasoning_output_token_count": 1,
+        })
+    ])
+
+    assert await mapper.convert_event(first_update, test_request) == []
+    assert await mapper.convert_event(second_update, test_request) == []
+
+    response = await mapper.aggregate_to_response([], test_request)
+
+    assert response.usage is not None
+    assert response.usage.input_tokens == 14
+    assert response.usage.output_tokens == 8
+    assert response.usage.total_tokens == 22
+    assert response.usage.input_tokens_details.cached_tokens == 6
+    assert response.usage.input_tokens_details.cache_write_tokens == 4
+    assert response.usage.output_tokens_details.reasoning_tokens == 3
+
+
+async def test_zero_usage_content_does_not_use_estimate(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test explicit zero usage remains zero instead of falling back to estimates."""
+    update = create_test_agent_update([
+        Content.from_usage({"input_token_count": 0, "output_token_count": 0, "total_token_count": 0})
+    ])
+
+    assert await mapper.convert_event(update, test_request) == []
+
+    response = await mapper.aggregate_to_response([], test_request)
+
+    assert response.usage is not None
+    assert response.usage.input_tokens == 0
+    assert response.usage.output_tokens == 0
+    assert response.usage.total_tokens == 0
+
+
 # =============================================================================
 # Agent Lifecycle Event Tests
 # =============================================================================

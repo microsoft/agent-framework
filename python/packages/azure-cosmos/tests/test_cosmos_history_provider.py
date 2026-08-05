@@ -17,6 +17,7 @@ from azure.cosmos.aio import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 import agent_framework_azure_cosmos._history_provider as history_provider_module
+from agent_framework_azure_cosmos._feature_usage import FeatureIndex
 from agent_framework_azure_cosmos._history_provider import CosmosHistoryProvider
 
 skip_if_cosmos_integration_tests_disabled = pytest.mark.skipif(
@@ -42,6 +43,15 @@ def _to_async_iter(items: list[Any]) -> AsyncIterator[Any]:
             yield item
 
     return _iterator()
+
+
+async def test_save_messages_marks_azure_cosmos_used_before_empty_return() -> None:
+    provider = object.__new__(CosmosHistoryProvider)
+
+    with patch("agent_framework_azure_cosmos._history_provider.mark_feature_used") as mark_feature_used:
+        await provider.save_messages(None, [])
+
+    mark_feature_used.assert_called_once_with(FeatureIndex.AZURE_COSMOS)
 
 
 @pytest.fixture

@@ -5,11 +5,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Any, Optional
 
-from agent_framework import Message
-from agent_framework._sessions import AgentSession, ContextProvider, SessionContext
-from agent_framework._telemetry import get_user_agent
+from agent_framework import AgentSession, ContextProvider, Message, SessionContext
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
@@ -24,7 +24,10 @@ except ImportError as e:
         "Install it with: pip install boto3>=1.43.32"
     ) from e
 
-from agent_framework_bedrock._knowledge_base import _get_source_uri
+from ._feature_usage import FeatureIndex
+from ._knowledge_base import _get_source_uri
+
+logger = logging.getLogger("agent_framework.bedrock")
 
 
 class BedrockKnowledgeBaseProvider(ContextProvider):
@@ -75,7 +78,7 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
         self.min_score = min_score
         self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
 
-        if client:
+        if client is not None:
             self._client = client
         else:
             self._client = boto3.client(
@@ -96,7 +99,7 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
 
         Called automatically before each model invocation. Extracts the user's
         query from input messages, retrieves relevant passages, and adds them
-        as a system message to the context.
+        as a user message to the context.
 
         Args:
             agent: The agent running this invocation.
@@ -111,13 +114,21 @@ class BedrockKnowledgeBaseProvider(ContextProvider):
         if not input_text.strip():
             return
 
-        # Retrieve from knowledge base
-        retrieved_context = await self._retrieve(input_text)
+        # Retrieve from knowledge base (non-fatal — agent continues without context on failure)
+        mark_feature_used(FeatureIndex.BEDROCK)
+        try:
+            retrieved_context = await self._retrieve(input_text)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("KB retrieval failed, continuing without context", exc_info=True)
+            return
+
         if not retrieved_context:
             return
 
-        # Inject as a system message via extend_messages
-        context_message = Message(role="system", contents=[f"{self.context_prompt}\n\n{retrieved_context}"])
+        # Inject as a user message (untrusted external content) via extend_messages
+        context_message = Message(role="user", contents=[f"{self.context_prompt}\n\n{retrieved_context}"])
         context.extend_messages(self, [context_message])
 
     async def _retrieve(self, query: str) -> str:

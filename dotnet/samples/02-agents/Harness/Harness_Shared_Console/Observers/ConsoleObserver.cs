@@ -20,9 +20,7 @@ public abstract class ConsoleObserver
     /// <param name="options">The run options to configure.</param>
     /// <param name="agent">The agent being interacted with.</param>
     /// <param name="session">The current agent session.</param>
-    public virtual void ConfigureRunOptions(AgentRunOptions options, AIAgent agent, AgentSession session)
-    {
-    }
+    public virtual ValueTask ConfigureRunOptionsAsync(AgentRunOptions options, AIAgent agent, AgentSession session) => default;
 
     /// <summary>
     /// Called for each <see cref="AgentResponseUpdate"/> in the response stream, regardless of

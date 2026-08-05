@@ -6,7 +6,7 @@ Adds an Agent Framework tool that queries Amazon Bedrock Knowledge Bases for man
 ## Usage
 ```python
 from agent_framework import Agent
-from agent_framework_bedrock import BedrockKnowledgeBaseTool
+from agent_framework_bedrock import BedrockKnowledgeBaseTool, BedrockChatClient, BedrockChatOptions
 
 tool = BedrockKnowledgeBaseTool(
     knowledge_base_id="YOUR_KB_ID",
@@ -14,7 +14,7 @@ tool = BedrockKnowledgeBaseTool(
 )
 
 # As a FunctionTool, pass directly to an Agent:
-agent = Agent(tools=[tool])
+agent = Agent(client=BedrockChatClient(options=BedrockChatOptions(model_id="...")), tools=[tool])
 
 # Or invoke directly for testing:
 import asyncio
@@ -47,12 +47,17 @@ All configuration is via constructor parameters:
 ## Required IAM Permissions
 ```json
 {
-  "Effect": "Allow",
-  "Action": [
-    "bedrock:Retrieve",
-    "bedrock:AgenticRetrieveStream"
-  ],
-  "Resource": "arn:aws:bedrock:<region>:<account-id>:knowledge-base/<kb-id>"
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:Retrieve",
+        "bedrock:AgenticRetrieveStream"
+      ],
+      "Resource": "arn:aws:bedrock:<region>:<account-id>:knowledge-base/<kb-id>"
+    }
+  ]
 }
 ```
 

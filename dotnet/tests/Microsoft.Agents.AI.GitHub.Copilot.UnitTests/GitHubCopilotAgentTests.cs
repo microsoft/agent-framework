@@ -94,7 +94,7 @@ public sealed class GitHubCopilotAgentTests
     {
         // Arrange
         CopilotClient copilotClient = new(new CopilotClientOptions());
-        List<AITool> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
+        List<AIFunctionDeclaration> tools = [AIFunctionFactory.Create(() => "test", "TestFunc", "Test function")];
 
         // Act
         var agent = new GitHubCopilotAgent(copilotClient, tools: tools);

@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#if !NET10_0_OR_GREATER
+
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -19,3 +21,5 @@ internal static class TestHelpers
         }
     }
 }
+
+#endif

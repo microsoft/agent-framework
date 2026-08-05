@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Shared.DiagnosticIds;
@@ -16,7 +17,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// HealthChecks pipeline so the <c>GET /readiness</c> probe (mapped by
 /// <see cref="FoundryHostingExtensions.MapFoundryResponses"/>) reflects whether
 /// pre-registered toolbox connections are usable. Registered automatically by
-/// <see cref="FoundryHostingExtensions.AddFoundryToolboxes(IServiceCollection, string[])"/>
+/// <see cref="FoundryHostingExtensions.AddFoundryToolboxes(IServiceCollection, TokenCredential, string[])"/>
 /// and its overloads.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]

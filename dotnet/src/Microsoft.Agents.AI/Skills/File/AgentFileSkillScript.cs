@@ -1,11 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -13,7 +11,6 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// A file-path-backed skill script. Represents a script file on disk that requires an external runner to run.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentFileSkillScript : AgentSkillScript
 {
     /// <summary>

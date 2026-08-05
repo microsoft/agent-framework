@@ -1,12 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Evaluate tool-calling accuracy using Azure AI Foundry's TOOL_CALL_ACCURACY evaluator.
+"""Evaluate tool-calling accuracy using Microsoft Foundry's TOOL_CALL_ACCURACY evaluator.
 
 This sample demonstrates evaluating how well an agent selects and invokes tools
 by using ``FoundryEvals.evaluate()`` with ``TOOL_CALL_ACCURACY``.
 
 Prerequisites:
-- An Azure AI Foundry project with a deployed model
+- A Microsoft Foundry project with a deployed model
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
 """
 

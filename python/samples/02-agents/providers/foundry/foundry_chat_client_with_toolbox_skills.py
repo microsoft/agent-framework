@@ -55,7 +55,6 @@ async def main() -> None:
     async with (
         httpx.AsyncClient(
             auth=_BearerAuth(credential),
-            headers={"Foundry-Features": "Toolboxes=V1Preview"},
             timeout=httpx.Timeout(30.0, read=300.0),
             follow_redirects=True,
         ) as http_client,

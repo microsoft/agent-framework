@@ -9,6 +9,7 @@ from agent_framework._settings import load_settings
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
+from agent_framework_claude._feature_usage import FeatureIndex
 
 # region Test ClaudeAgentSettings
 
@@ -231,9 +232,13 @@ class TestClaudeAgentRun:
         ]
         mock_client = self._create_mock_client(messages)
 
-        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework_claude._agent.mark_feature_used") as mark_feature_used,
+        ):
             agent = ClaudeAgent()
             response = await agent.run("Hello")
+            mark_feature_used.assert_called_once_with(FeatureIndex.CLAUDE)
             assert response.text == "Hello!"
 
     async def test_run_captures_session_id(self) -> None:
@@ -270,6 +275,61 @@ class TestClaudeAgentRun:
             session = agent.create_session()
             await agent.run("Hello", session=session)
             assert session.service_session_id == "test-session-id"
+
+    @pytest.mark.parametrize(
+        ("stop_reason", "expected_finish_reason"),
+        [("end_turn", "stop"), ("pause_turn", "pause_turn")],
+    )
+    async def test_run_captures_result_message_usage_and_finish_reason(
+        self, stop_reason: str, expected_finish_reason: str
+    ) -> None:
+        """Test that ResultMessage metadata is propagated to the final AgentResponse."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Response"},
+                },
+                uuid="event-1",
+                session_id="test-session-id",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Response")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session-id",
+                stop_reason=stop_reason,
+                usage={
+                    "input_tokens": 42,
+                    "output_tokens": 18,
+                    "cache_creation_input_tokens": 3,
+                    "cache_read_input_tokens": 5,
+                },
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            response = await agent.run("Hello")
+
+        assert response.finish_reason == expected_finish_reason
+        assert response.usage_details == {
+            "input_token_count": 42,
+            "output_token_count": 18,
+            "total_token_count": 60,
+            "cache_creation_input_token_count": 3,
+            "cache_read_input_token_count": 5,
+        }
 
     async def test_run_with_session(self) -> None:
         """Test run with existing session."""
@@ -377,6 +437,51 @@ class TestClaudeAgentRunStream:
             assert updates[0].role == "assistant"
             assert updates[0].text == "Streaming "
             assert updates[1].text == "response"
+
+    async def test_run_stream_final_response_captures_usage_and_finish_reason(self) -> None:
+        """Test run(stream=True) final response includes ResultMessage metadata."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Streaming response"},
+                },
+                uuid="event-1",
+                session_id="stream-session",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Streaming response")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="stream-session",
+                stop_reason="max_tokens",
+                usage={"input_tokens": 7, "output_tokens": 9},
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            stream = agent.run("Hello", stream=True)
+            async for _ in stream:
+                pass
+            response = await stream.get_final_response()
+
+        assert response.finish_reason == "length"
+        assert response.usage_details == {
+            "input_token_count": 7,
+            "output_token_count": 9,
+            "total_token_count": 16,
+        }
 
     async def test_run_stream_raises_on_assistant_message_error(self) -> None:
         """Test run raises AgentException when AssistantMessage has an error."""

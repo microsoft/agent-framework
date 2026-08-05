@@ -7,11 +7,11 @@
 
 using Azure.AI.Projects;
 using Azure.Identity;
+using CommunityToolkit.VectorData.InMemory;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Samples;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.VectorData;
-using Microsoft.SemanticKernel.Connectors.InMemory;
 
 var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
@@ -24,7 +24,7 @@ AIProjectClient aiProjectClient = new(
     new Uri(endpoint),
     new DefaultAzureCredential());
 
-// Create an In-Memory vector store that uses the Azure AI Foundry embedding model to generate embeddings.
+// Create an In-Memory vector store that uses the Microsoft Foundry embedding model to generate embeddings.
 VectorStore vectorStore = new InMemoryVectorStore(new()
 {
     EmbeddingGenerator = aiProjectClient.GetProjectOpenAIClient().GetEmbeddingClient(embeddingDeploymentName).AsIEmbeddingGenerator()

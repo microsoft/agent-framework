@@ -9,8 +9,10 @@ import logging
 from typing import TYPE_CHECKING, Annotated, Any, Optional
 
 from agent_framework import FunctionTool
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from pydantic import BaseModel, Field
+
+from ._feature_usage import FeatureIndex
 
 if TYPE_CHECKING:
     from botocore.client import BaseClient
@@ -24,10 +26,10 @@ except ImportError as e:
         "Install it with: pip install boto3>=1.43.32"
     ) from e
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("agent_framework.bedrock")
 
 
-def _get_source_uri(result: dict) -> str:
+def _get_source_uri(result: dict[str, Any]) -> str:
     """Extract source URI from a retrieval result."""
     location = result.get("location", {})
     if "s3Location" in location:
@@ -55,10 +57,11 @@ class BedrockKnowledgeBaseTool(FunctionTool):
     Subclasses FunctionTool so it can be passed directly to any Agent or ChatClient.
 
     Usage:
-        from agent_framework_bedrock import BedrockKnowledgeBaseTool
+        from agent_framework_bedrock import BedrockKnowledgeBaseTool, BedrockChatClient, BedrockChatOptions
+        from agent_framework import Agent
 
         tool = BedrockKnowledgeBaseTool(knowledge_base_id="YOUR_KB_ID")
-        agent = Agent(tools=[tool])
+        agent = Agent(client=BedrockChatClient(options=BedrockChatOptions(model_id="...")), tools=[tool])
     """
 
     def __init__(
@@ -91,7 +94,7 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         self.number_of_results = number_of_results
         self.use_agentic_retrieval = use_agentic_retrieval
 
-        if client:
+        if client is not None:
             self._client = client
         else:
             self._client = boto3.client(
@@ -116,11 +119,15 @@ class BedrockKnowledgeBaseTool(FunctionTool):
         Returns:
             Formatted string of retrieval results.
         """
+        mark_feature_used(FeatureIndex.BEDROCK)
+
         if self.use_agentic_retrieval:
             try:
                 results = await asyncio.to_thread(self._agentic_retrieve, query)
                 if results:
                     return self._format_results(results)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.debug("Agentic retrieval failed, falling back: %s", e)
 

@@ -54,12 +54,13 @@ The `script_runner` parameter on `SkillsProvider` is only applicable to **file-b
 ## Prerequisites
 
 All samples require:
-- An [Azure AI Foundry](https://ai.azure.com/) project with a deployed model (e.g. `gpt-4o-mini`)
+- A [Microsoft Foundry](https://ai.azure.com/) project with a deployed model (e.g. `gpt-4o-mini`)
 - Azure CLI authentication (`az login`)
 - Environment variables set in a `.env` file (see `python/.env.example`)
 
-## Suppressing the experimental warning
+## Suppressing the experimental MCP Skills warning
 
-The Agent Skills APIs in these samples are still experimental. Each sample includes
-a short commented `warnings.filterwarnings(...)` snippet near the imports. Uncomment
-it if you want to suppress the Skills warning before using the experimental APIs.
+The core Agent Skills APIs are stable. MCP-based skill discovery
+(`MCPSkillsSource`) is still experimental, so the [mcp_based_skill](mcp_based_skill/)
+sample includes a short commented `warnings.filterwarnings(...)` snippet near the
+imports. Uncomment it if you want to suppress the MCP Skills warning.

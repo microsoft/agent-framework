@@ -145,10 +145,52 @@ def _contains_chat_message(type_hint: Any) -> bool:
     return False
 
 
+def _is_list_message_type(type_hint: Any) -> bool:
+    """Return True if type_hint is exactly list[Message]."""
+    return get_origin(type_hint) is list and bool(get_args(type_hint)) and get_args(type_hint)[0] is Message
+
+
+def _find_chat_message_type(type_hint: Any) -> Any | None:
+    """Return ``list[Message]`` or ``Message`` if present in type_hint, else None.
+
+    Recursively inspects union members so that a single-element ``message_types``
+    list like ``[dict | str | list[Message] | ...]`` (the real ``JoinExecutor``
+    form) is handled correctly.  ``list[Message]`` takes priority over bare
+    ``Message``.
+    """
+    if _is_list_message_type(type_hint):
+        return type_hint
+    if type_hint is Message:
+        return Message
+
+    origin = get_origin(type_hint)
+    if origin in (Union, UnionType):
+        fallback = None
+        for arg in get_args(type_hint):
+            found = _find_chat_message_type(arg)
+            if found is None:
+                continue
+            if _is_list_message_type(found):
+                return found  # list[Message] wins immediately
+            if fallback is None:
+                fallback = found  # bare Message — keep searching
+        return fallback
+
+    return None
+
+
 def select_primary_input_type(message_types: list[Any]) -> Any | None:
     """Choose the most user-friendly input type for workflow inputs.
 
     Prefers Message (or containers thereof) and then falls back to primitives.
+    When the executor's union contains ``list[Message]`` (as the declarative
+    entry ``JoinExecutor`` does), that type is returned so that
+    ``parse_input_for_type`` can wrap the user's text in a list before
+    dispatching — avoiding a "cannot handle message of type Message" error.
+
+    ``message_types`` may contain full union types as single elements (the real
+    ``JoinExecutor`` emits ``[dict | str | list[Message] | ...]``), so each
+    element is searched recursively.
 
     Args:
         message_types: List of possible message types
@@ -159,6 +201,13 @@ def select_primary_input_type(message_types: list[Any]) -> Any | None:
     if not message_types:
         return None
 
+    # First pass: search each type (including union members) for list[Message] or Message.
+    for message_type in message_types:
+        found = _find_chat_message_type(message_type)
+        if found is not None:
+            return found
+
+    # Second pass: broader fallback for deeply nested or unusual containers.
     for message_type in message_types:
         if _contains_chat_message(message_type):
             return Message
@@ -405,6 +454,8 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
     """Generate JSON schema for workflow input type.
 
     Supports multiple input types in priority order:
+    0. list[Message] — rendered as a plain string input (DevUI presents a text
+       box; the text is later wrapped in a list by parse_input_for_type)
     1. Built-in types (str, dict, int, etc.)
     2. Pydantic models (via model_json_schema)
     3. SerializationMixin classes (via __init__ introspection)
@@ -417,6 +468,10 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
     Returns:
         JSON schema dict
     """
+    # 0. list[Message] — treat as simple text so DevUI shows a text box
+    if _is_list_message_type(input_type):
+        return {"type": "string"}
+
     # 1. Built-in types
     if input_type is str:
         return {"type": "string"}
@@ -455,6 +510,7 @@ def parse_input_for_type(input_data: Any, target_type: type) -> Any:
     """Parse input data to match the target type.
 
     Handles conversion from raw input (string, dict) to the expected type:
+    - list[Message]: build a Message from the raw input and wrap it in a list
     - Built-in types: direct conversion
     - Pydantic models: use model_validate or model_validate_json
     - SerializationMixin: use from_dict or construct from string
@@ -467,6 +523,41 @@ def parse_input_for_type(input_data: Any, target_type: type) -> Any:
     Returns:
         Parsed input matching target_type, or original input if parsing fails
     """
+    # list[Message]: generic aliases cannot be used with isinstance, handle first.
+    if _is_list_message_type(target_type):
+        raw: object = input_data
+        if isinstance(raw, list):
+            items = cast(list[object], raw)
+            if all(isinstance(m, Message) for m in items):
+                return items
+            # Try to convert each item (serialized str/dict OpenAI message) to Message.
+            converted: list[Message] = []
+            ok = True
+            for item in items:
+                if isinstance(item, Message):
+                    converted.append(item)
+                elif isinstance(item, str):
+                    converted.append(_build_message_from_legacy_payload(item))
+                elif isinstance(item, dict):
+                    converted.append(_build_message_from_legacy_payload(cast(dict[str, Any], item)))
+                else:
+                    ok = False
+                    break
+            if ok:
+                return converted
+            # A list never matches the Message/str/dict checks below; stringify directly.
+            return [_build_message_from_legacy_payload(str(items))]
+        if isinstance(raw, Message):
+            return [raw]
+        if isinstance(raw, str):
+            return [_build_message_from_legacy_payload(raw)]
+        parsed_dict = _string_key_dict(raw)
+        if parsed_dict is not None:
+            if parsed_dict and _looks_like_message_dict(parsed_dict):
+                return [_build_message_from_legacy_payload(parsed_dict)]
+            return raw
+        return [_build_message_from_legacy_payload(str(raw))]
+
     # If already correct type, return as-is
     if isinstance(input_data, target_type):
         return input_data
@@ -482,6 +573,26 @@ def parse_input_for_type(input_data: Any, target_type: type) -> Any:
 
     # Fallback: return original
     return input_data
+
+
+def _looks_like_message_dict(d: dict[str, Any]) -> bool:
+    """Return True if *d* is a recognisable serialised Message payload.
+
+    Three recognised signatures (in priority order):
+    1. ``type`` discriminator is literally ``"message"`` — output of ``Message.to_dict()``.
+    2. Dict has a ``"role"`` key — all framework Message objects carry a role.
+    3. Dict has exactly the single key ``"input"`` — DevUI ``WorkflowInputForm``
+       submits ``{"input": "<user text>"}`` for workflows whose schema is ``{"type":
+       "string"}``.
+
+    Anything else is treated as a structured workflow input and passed through
+    unchanged, to be handled by the dict-union branch of the executor.
+    """
+    if d.get("type") == "message":
+        return True
+    if "role" in d:
+        return True
+    return set(d.keys()) == {"input"}
 
 
 def _build_message_from_legacy_payload(input_data: str | dict[str, Any]) -> Message:
@@ -514,7 +625,12 @@ def _build_message_from_legacy_payload(input_data: str | dict[str, Any]) -> Mess
         contents_list = [contents]
 
     kwargs: dict[str, Any] = {}
-    for field in ("author_name", "message_id", "additional_properties", "raw_representation"):
+    for field in (
+        "author_name",
+        "message_id",
+        "additional_properties",
+        "raw_representation",
+    ):
         if field in input_data:
             kwargs[field] = input_data[field]
 

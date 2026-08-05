@@ -38,7 +38,17 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredentia
             Instructions = "You are a helpful assistant that can convert units.",
         },
         AIContextProviders = [skillsProvider],
-    });
+    })
+    .AsBuilder()
+    .UseToolApproval(new ToolApprovalAgentOptions
+    {
+        // NOTE: Auto-approving all skill tools is done here for simplicity in
+        // this demonstration. In production, you should prompt the user before
+        // allowing script execution. See Agent_Step07_SkillsAutoApproval for a
+        // walkthrough of the full approval flow.
+        AutoApprovalRules = [AgentSkillsProvider.AllToolsAutoApprovalRule],
+    })
+    .Build();
 
 // --- Example: Unit conversion ---
 Console.WriteLine("Converting units with file-based skills");

@@ -13,12 +13,12 @@ The WriterAgent is configured with HTTPS redirection so the Aspire DevUI integra
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)
 - [Aspire CLI](https://learn.microsoft.com/dotnet/aspire/fundamentals/setup-tooling)
-- An Azure subscription with access to [Azure AI Foundry](https://learn.microsoft.com/azure/ai-studio/)
+- An Azure subscription with access to [Microsoft Foundry](https://learn.microsoft.com/azure/ai-studio/)
 - Azure CLI authenticated (`az login`)
 
-## Azure AI Foundry configuration
+## Microsoft Foundry configuration
 
-The sample requires an Azure AI Foundry resource with a deployed `gpt-4.1` model. You have two options:
+The sample requires a Microsoft Foundry resource with a deployed `gpt-4.1` model. You have two options:
 
 ### Option 1: Connect to an existing Foundry resource
 
@@ -54,7 +54,7 @@ Remove or comment out the `AsExisting` block in `DevUIIntegration.AppHost/Progra
 // foundry.AsExisting(existingFoundryName, existingFoundryResourceGroup);
 ```
 
-Aspire will provision a new Azure AI Foundry resource on startup. The DevUI resource uses `.WaitFor(foundry)` transitively through the agent services, so the frontend won't become available until provisioning completes. This can take several minutes on first run.
+Aspire will provision a new Microsoft Foundry resource on startup. The DevUI resource uses `.WaitFor(foundry)` transitively through the agent services, so the frontend won't become available until provisioning completes. This can take several minutes on first run.
 
 You still need to fill in the `Azure` section of `appsettings.json` (subscription, location, etc.) so Aspire knows where to create the resource.
 

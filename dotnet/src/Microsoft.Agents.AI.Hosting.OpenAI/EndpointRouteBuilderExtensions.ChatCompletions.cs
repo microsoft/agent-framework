@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;
+using Microsoft.Agents.AI.Hosting.OpenAI;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions;
 using Microsoft.Agents.AI.Hosting.OpenAI.ChatCompletions.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -29,10 +30,11 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI ChatCompletions endpoints to.</param>
     /// <param name="agentBuilder">The builder for <see cref="AIAgent"/> to map the OpenAI ChatCompletions endpoints for.</param>
     /// <param name="path">Custom route path for the chat completions endpoint.</param>
-    public static IEndpointConventionBuilder MapOpenAIChatCompletions(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string? path)
+    /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
+    public static IEndpointConventionBuilder MapOpenAIChatCompletions(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string? path, OpenAIChatCompletionsMapOptions? mapOptions = null)
     {
         var agent = endpoints.ServiceProvider.GetRequiredKeyedService<AIAgent>(agentBuilder.Name);
-        return MapOpenAIChatCompletions(endpoints, agent, path);
+        return MapOpenAIChatCompletions(endpoints, agent, path, mapOptions);
     }
 
     /// <summary>
@@ -49,10 +51,12 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
     /// <param name="endpoints">The <see cref="IEndpointRouteBuilder"/> to add the OpenAI ChatCompletions endpoints to.</param>
     /// <param name="agent">The <see cref="AIAgent"/> instance to map the OpenAI ChatCompletions endpoints for.</param>
     /// <param name="path">Custom route path for the chat completions endpoint.</param>
+    /// <param name="mapOptions">Optional options controlling how incoming requests are mapped onto the agent run.</param>
     public static IEndpointConventionBuilder MapOpenAIChatCompletions(
         this IEndpointRouteBuilder endpoints,
         AIAgent agent,
-        [StringSyntax("Route")] string? path)
+        [StringSyntax("Route")] string? path,
+        OpenAIChatCompletionsMapOptions? mapOptions = null)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentNullException.ThrowIfNull(agent);
@@ -64,7 +68,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
         var endpointAgentName = agent.Name ?? agent.Id;
 
         group.MapPost("/", async ([FromBody] CreateChatCompletion request, CancellationToken cancellationToken)
-            => await AIAgentChatCompletionsProcessor.CreateChatCompletionAsync(agent, request, cancellationToken).ConfigureAwait(false))
+            => await AIAgentChatCompletionsProcessor.CreateChatCompletionAsync(agent, request, mapOptions, cancellationToken).ConfigureAwait(false))
             .WithName(endpointAgentName + "/CreateChatCompletion");
 
         return group;

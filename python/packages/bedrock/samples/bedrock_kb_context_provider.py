@@ -34,18 +34,15 @@ async def main() -> None:
 
     # Create an agent with the context provider — context is injected automatically
     agent = Agent(
+        client=chat_client,
         name="ContextualAssistant",
         instructions="You are a helpful assistant that answers based on provided context.",
-        chat_client=chat_client,
         context_providers=[kb_provider],  # ContextProvider subclass, injects context on every run
     )
 
     # Run the agent — KB context is retrieved and injected automatically via before_run()
     session = agent.create_session()
-    response = await agent.invoke(
-        session=session,
-        input_message="What data sources does Bedrock support?",
-    )
+    response = await agent.run("What data sources does Bedrock support?", session=session)
     print(f"Agent response: {response.text}")
 
 

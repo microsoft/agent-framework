@@ -63,7 +63,17 @@ AIAgent agent = new AIProjectClient(new Uri(openAiEndpoint), new DefaultAzureCre
             Instructions = "You are a helpful assistant. Use available skills to answer the user.",
         },
         AIContextProviders = [skillsProvider],
-    });
+    })
+    .AsBuilder()
+    .UseToolApproval(new ToolApprovalAgentOptions
+    {
+        // NOTE: Auto-approving all skill tools is done here for simplicity in
+        // this demonstration. In production, you should prompt the user before
+        // allowing skill tools to execute. See Agent_Step07_SkillsAutoApproval
+        // for a walkthrough of the full approval flow.
+        AutoApprovalRules = [AgentSkillsProvider.AllToolsAutoApprovalRule],
+    })
+    .Build();
 
 // --- Run ---
 Console.WriteLine(new string('-', 60));

@@ -34,18 +34,15 @@ async def main() -> None:
 
     # Create an agent with the KB tool — Agent will call it when it needs context
     agent = Agent(
+        client=chat_client,
         name="KnowledgeAssistant",
         instructions="You are a helpful assistant. Use the knowledge base tool to answer questions about the company.",
-        chat_client=chat_client,
         tools=[kb_tool],  # FunctionTool subclass, works with any ChatClient
     )
 
     # Run the agent
     session = agent.create_session()
-    response = await agent.invoke(
-        session=session,
-        input_message="What is our return policy for electronics?",
-    )
+    response = await agent.run("What is our return policy for electronics?", session=session)
     print(f"Agent response: {response.text}")
 
 

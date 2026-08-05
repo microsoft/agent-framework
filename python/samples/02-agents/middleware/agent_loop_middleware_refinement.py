@@ -24,7 +24,7 @@ The loop is run with streaming, so the injected messages between iterations show
 updates; the stream is printed as ``<role>: <content>`` lines.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint URL
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint URL
     FOUNDRY_MODEL            — Model deployment name
 
 Authentication:

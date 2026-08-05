@@ -302,6 +302,80 @@ class TestPropertySchema:
         assert "required" not in json_schema["properties"]["language"]
         assert "required" not in json_schema["properties"]["answer"]
 
+    def test_property_schema_array_items_kind_renamed_recursively(self):
+        """Nested array 'items' schemas get kind -> type renamed and empty enums dropped."""
+        schema = PropertySchema.from_dict({
+            "properties": {
+                "issues": {"kind": "array", "items": {"kind": "string"}},
+            },
+        })
+
+        json_schema = schema.to_json_schema()
+
+        assert json_schema["properties"]["issues"]["type"] == "array"
+        assert json_schema["properties"]["issues"]["items"] == {"type": "string"}
+
+    def test_property_schema_nested_object_properties_kind_renamed_recursively(self):
+        """Nested object 'properties' (including arrays of objects) are converted at every depth."""
+        schema = PropertySchema.from_dict({
+            "properties": {
+                "picks": {
+                    "kind": "array",
+                    "items": {
+                        "kind": "object",
+                        "properties": {"ref": {"kind": "number"}},
+                    },
+                },
+            },
+        })
+
+        json_schema = schema.to_json_schema()
+
+        items = json_schema["properties"]["picks"]["items"]
+        assert items["type"] == "object"
+        assert items["properties"]["ref"] == {"type": "number"}
+        assert items["additionalProperties"] is False
+
+    def test_property_schema_object_nodes_get_additional_properties_false(self):
+        """Every object node below the root carries additionalProperties: false.
+
+        OpenAI strict structured outputs reject object nodes without it; chat
+        clients only inject it at the schema root.
+        """
+        schema = PropertySchema.from_dict({
+            "properties": {
+                "meta": {
+                    "kind": "object",
+                    "properties": {
+                        "inner": {"kind": "object", "properties": {"leaf": {"kind": "string"}}},
+                    },
+                },
+            },
+        })
+
+        json_schema = schema.to_json_schema()
+
+        meta = json_schema["properties"]["meta"]
+        assert meta["additionalProperties"] is False
+        assert meta["properties"]["inner"]["additionalProperties"] is False
+
+    def test_property_schema_unexpected_nested_properties_left_untouched(self):
+        """A nested properties list with an unexpected element is left fully unmodified."""
+        from agent_framework_declarative._models import _normalize_nested_schemas
+
+        node = {
+            "type": "object",
+            "properties": [
+                {"name": "ok", "kind": "string"},
+                "not-a-dict",
+            ],
+        }
+
+        _normalize_nested_schemas(node)
+
+        # No partial mutation: the well-formed first element keeps its original shape too.
+        assert node["properties"] == [{"name": "ok", "kind": "string"}, "not-a-dict"]
+
 
 class TestConnection:
     """Tests for Connection base class."""

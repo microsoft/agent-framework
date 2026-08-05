@@ -3,11 +3,6 @@
 import asyncio
 import json
 import os
-
-# Uncomment this filter to suppress the experimental Skills warning before
-# using the sample's Skills APIs.
-# import warnings  # isort: skip
-# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 from typing import Any
 
@@ -55,7 +50,7 @@ To use auto-approval rules, the agent must have ``ToolApprovalMiddleware`` in
 its middleware stack.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL (defaults to "gpt-4o-mini").
 """
 

@@ -3,6 +3,7 @@
 using System;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 
 #pragma warning disable CA1861 // Avoid constant arrays as arguments
@@ -115,6 +116,27 @@ public class ChatClientAgentSessionTests
 
         // Act & Assert
         Assert.Throws<ArgumentException>(() => ChatClientAgentSession.Deserialize(invalidJson));
+    }
+
+    [Fact]
+    public void VerifyDeserializeWithWhenWritingNullOptions()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        JsonSerializerOptions options = new()
+        {
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            RespectRequiredConstructorParameters = true,
+        };
+        options.TypeInfoResolverChain.Add(AgentJsonUtilities.DefaultOptions.TypeInfoResolver!);
+
+        // Act
+        var serializedSession = JsonSerializer.SerializeToElement(session, options.GetTypeInfo(typeof(ChatClientAgentSession)));
+        var deserializedSession = ChatClientAgentSession.Deserialize(serializedSession, options);
+
+        // Assert
+        Assert.False(serializedSession.TryGetProperty("conversationId", out _));
+        Assert.Null(deserializedSession.ConversationId);
     }
 
     #endregion Deserialize Tests

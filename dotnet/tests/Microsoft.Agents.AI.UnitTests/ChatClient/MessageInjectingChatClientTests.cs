@@ -175,17 +175,17 @@ public class MessageInjectingChatClientTests
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>()))
-            .Returns((IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken _) =>
+            .Returns(async (IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken ct) =>
             {
                 serviceCallCount++;
                 if (serviceCallCount == 1)
                 {
                     // First call — simulate that something enqueues a message (e.g., a provider or background task)
-                    injectorRef!.EnqueueMessages(sessionRef!, [new ChatMessage(ChatRole.User, "injected during first call")]);
+                    await injectorRef!.EnqueueMessagesAsync(sessionRef!, [new ChatMessage(ChatRole.User, "injected during first call")], ct);
                 }
 
                 // Return a plain text response (no FunctionCallContent) to trigger the internal loop
-                return Task.FromResult(new ChatResponse([new(ChatRole.Assistant, $"response {serviceCallCount}")]));
+                return new ChatResponse([new(ChatRole.Assistant, $"response {serviceCallCount}")]);
             });
 
         Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
@@ -236,20 +236,20 @@ public class MessageInjectingChatClientTests
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>()))
-            .Returns((IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken _) =>
+            .Returns(async (IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken ct) =>
             {
                 serviceCallCount++;
                 if (serviceCallCount == 1)
                 {
                     // Enqueue a message during the first call
-                    injectorRef!.EnqueueMessages(sessionRef!, [new ChatMessage(ChatRole.User, "injected")]);
+                    await injectorRef!.EnqueueMessagesAsync(sessionRef!, [new ChatMessage(ChatRole.User, "injected")], ct);
                     // Return a response with an actionable FunctionCallContent
-                    return Task.FromResult(new ChatResponse([new(ChatRole.Assistant,
-                        [new FunctionCallContent("call1", "myTool", new Dictionary<string, object?>())])]));
+                    return new ChatResponse([new(ChatRole.Assistant,
+                        [new FunctionCallContent("call1", "myTool", new Dictionary<string, object?>())])]);
                 }
 
                 // Subsequent calls return plain text (the FCC loop will call back after tool execution)
-                return Task.FromResult(new ChatResponse([new(ChatRole.Assistant, "final")]));
+                return new ChatResponse([new(ChatRole.Assistant, "final")]);
             });
 
         Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
@@ -306,19 +306,19 @@ public class MessageInjectingChatClientTests
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>()))
-            .Returns((IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken _) =>
+            .Returns(async (IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken ct) =>
             {
                 serviceCallCount++;
                 if (serviceCallCount == 1)
                 {
                     // Enqueue a message during the first call
-                    injectorRef!.EnqueueMessages(sessionRef!, [new ChatMessage(ChatRole.User, "injected")]);
+                    await injectorRef!.EnqueueMessagesAsync(sessionRef!, [new ChatMessage(ChatRole.User, "injected")], ct);
                     // Return a response with InformationalOnly FCC (not actionable)
-                    return Task.FromResult(new ChatResponse([new(ChatRole.Assistant,
-                        [new FunctionCallContent("call1", "myTool", new Dictionary<string, object?>()) { InformationalOnly = true }])]));
+                    return new ChatResponse([new(ChatRole.Assistant,
+                        [new FunctionCallContent("call1", "myTool", new Dictionary<string, object?>()) { InformationalOnly = true }])]);
                 }
 
-                return Task.FromResult(new ChatResponse([new(ChatRole.Assistant, "final")]));
+                return new ChatResponse([new(ChatRole.Assistant, "final")]);
             });
 
         Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
@@ -370,7 +370,7 @@ public class MessageInjectingChatClientTests
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>()))
-            .Returns((IEnumerable<ChatMessage> _, ChatOptions? opts, CancellationToken _) =>
+            .Returns(async (IEnumerable<ChatMessage> _, ChatOptions? opts, CancellationToken ct) =>
             {
                 serviceCallCount++;
                 capturedConversationIds.Add(opts?.ConversationId);
@@ -378,15 +378,15 @@ public class MessageInjectingChatClientTests
                 if (serviceCallCount == 1)
                 {
                     // First call: inject a message and return a ConversationId
-                    injectorRef!.EnqueueMessages(sessionRef!, [new ChatMessage(ChatRole.User, "injected")]);
-                    return Task.FromResult(new ChatResponse([new(ChatRole.Assistant, "first response")])
+                    await injectorRef!.EnqueueMessagesAsync(sessionRef!, [new ChatMessage(ChatRole.User, "injected")], ct);
+                    return new ChatResponse([new(ChatRole.Assistant, "first response")])
                     {
                         ConversationId = "conv-123",
-                    });
+                    };
                 }
 
                 // Second call (from loop): should have the propagated ConversationId
-                return Task.FromResult(new ChatResponse([new(ChatRole.Assistant, "second response")]));
+                return new ChatResponse([new(ChatRole.Assistant, "second response")]);
             });
 
         ChatClientAgent agent = new(mockService.Object, options: new()
@@ -427,7 +427,7 @@ public class MessageInjectingChatClientTests
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>()))
-            .Returns((IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken _) =>
+            .Returns(async (IEnumerable<ChatMessage> msgs, ChatOptions? _, CancellationToken ct) =>
             {
                 if (runCount == 1)
                 {
@@ -435,16 +435,16 @@ public class MessageInjectingChatClientTests
 
                     // Inject a message during the first run — this will remain pending (not drained)
                     // because we return an actionable FCC that causes the parent loop to take over.
-                    injectorRef!.EnqueueMessages(sessionRef!, [new ChatMessage(ChatRole.User, "injected before serialization")]);
+                    await injectorRef!.EnqueueMessagesAsync(sessionRef!, [new ChatMessage(ChatRole.User, "injected before serialization")], ct);
 
                     // Return actionable FCC so the injection loop does NOT drain the message
-                    return Task.FromResult(new ChatResponse([new(ChatRole.Assistant,
-                        [new FunctionCallContent("call1", "myTool", new Dictionary<string, object?>())])]));
+                    return new ChatResponse([new(ChatRole.Assistant,
+                        [new FunctionCallContent("call1", "myTool", new Dictionary<string, object?>())])]);
                 }
 
                 // Second run (after deserialization) — capture what messages come through
                 capturedMessagesSecondRun.AddRange(msgs);
-                return Task.FromResult(new ChatResponse([new(ChatRole.Assistant, "final response")]));
+                return new ChatResponse([new(ChatRole.Assistant, "final response")]);
             });
 
         Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
@@ -489,5 +489,52 @@ public class MessageInjectingChatClientTests
         // Assert — the second run should include the injected message from before serialization
         Assert.Contains(capturedMessagesSecondRun, m => m.Text == "injected before serialization");
         Assert.Contains(capturedMessagesSecondRun, m => m.Text == "second run message");
+    }
+
+    /// <summary>
+    /// Verifies that concurrent <see cref="MessageInjectingChatClient.EnqueueMessagesAsync"/> calls on the same
+    /// session do not lose messages. This guards against the queue-creation race where two callers could
+    /// each create a separate backing queue and one overwrites the other.
+    /// </summary>
+    [Fact]
+    public async Task EnqueueMessages_ConcurrentEnqueues_DoesNotLoseMessagesAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            EnableMessageInjection = true,
+        });
+
+        var injector = agent.ChatClient.GetService<MessageInjectingChatClient>();
+        Assert.NotNull(injector);
+
+        var session = await agent.CreateSessionAsync();
+
+        const int ThreadCount = 16;
+        const int MessagesPerThread = 100;
+
+        // Release all threads at once to maximize the chance of hitting the queue-creation race.
+        using var barrier = new Barrier(ThreadCount);
+        var tasks = new List<Task>(ThreadCount);
+        for (int t = 0; t < ThreadCount; t++)
+        {
+            int threadIndex = t;
+            tasks.Add(Task.Run(async () =>
+            {
+                barrier.SignalAndWait();
+                for (int i = 0; i < MessagesPerThread; i++)
+                {
+                    await injector!.EnqueueMessagesAsync(session, [new ChatMessage(ChatRole.User, $"{threadIndex}-{i}")]);
+                }
+            }));
+        }
+
+        // Act
+        await Task.WhenAll(tasks);
+
+        // Assert — every enqueued message must be present (none lost to a creation race).
+        IReadOnlyList<ChatMessage> pending = await injector!.GetPendingMessagesAsync(session);
+        Assert.Equal(ThreadCount * MessagesPerThread, pending.Count);
     }
 }

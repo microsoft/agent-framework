@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import copy
-from typing import TYPE_CHECKING, Any, Literal, Union
+from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
@@ -18,19 +18,22 @@ from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
 
+from ._feature_usage import create_feature_usage_http_client
+
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # pragma: no cover
 else:
     from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from agent_framework import Content
     from azure.core.credentials import TokenCredential
     from azure.core.credentials_async import AsyncTokenCredential
 
     AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 
-AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # noqa: S105 # nosec B105
+AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # ruff:ignore[hardcoded-password-string] # nosec B105
 
 
 RESPONSE_TYPE = Union[
@@ -47,6 +50,25 @@ RESPONSE_TYPE = Union[
 ]
 
 AzureTokenProvider = Callable[[], str | Awaitable[str]]
+
+
+PROMPT_CACHE_BREAKPOINT_KEY = "prompt_cache_breakpoint"
+
+
+def _attach_prompt_cache_breakpoint(  # pyright: ignore[reportUnusedFunction]
+    part: dict[str, Any], content: Content
+) -> dict[str, Any]:
+    """Copy a prompt cache breakpoint from content metadata onto an outgoing part.
+
+    GPT-5.6 and later models accept an explicit cache breakpoint on supported content
+    blocks; users opt in per part via
+    ``Content.additional_properties["prompt_cache_breakpoint"]``.
+    """
+    props = content.additional_properties
+    breakpoint_value = props.get(PROMPT_CACHE_BREAKPOINT_KEY) if props else None
+    if isinstance(breakpoint_value, Mapping):
+        part[PROMPT_CACHE_BREAKPOINT_KEY] = dict(cast("Mapping[str, Any]", breakpoint_value))
+    return part
 
 
 class OpenAISettings(TypedDict, total=False):
@@ -265,6 +287,7 @@ def load_openai_service_settings(
     if client:
         return azure_settings, client, True  # type: ignore[return-value]
     client_args["default_headers"] = merged_headers
+    client_args["http_client"] = create_feature_usage_http_client()
     if endpoint := azure_settings.get("endpoint"):
         if responses_mode:
             client_args["base_url"] = f"{endpoint.rstrip('/')}/openai/v1/"
@@ -297,6 +320,7 @@ def load_openai_service_settings(
         openai_args: dict[str, Any] = {
             "base_url": resolved_base_url,
             "default_headers": client_args.get("default_headers"),
+            "http_client": client_args["http_client"],
         }
         if "azure_ad_token_provider" in client_args:
             openai_args["api_key"] = _ensure_async_token_provider(client_args["azure_ad_token_provider"])
