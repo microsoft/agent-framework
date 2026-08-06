@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import inspect
 import logging
@@ -29,7 +30,7 @@ from agent_framework import (
     normalize_tools,
 )
 from agent_framework._telemetry import mark_feature_used
-from agent_framework.exceptions import AgentException
+from agent_framework.exceptions import AgentException, AgentInvalidRequestException
 from agent_framework.observability import AgentTelemetryLayer
 from claude_agent_sdk import (
     AssistantMessage,
@@ -388,7 +389,11 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         self._default_options = opts
         self._started = False
-        self._structured_output: Any = None
+        # An injected client is a single Claude conversation; bind it to the first
+        # session that uses it and serialize access so distinct sessions cannot
+        # share it and concurrent runs cannot race its connection or interleave.
+        self._injected_session: AgentSession | None = None
+        self._client_lock = asyncio.Lock()
 
     def _normalize_tools(
         self,
@@ -434,12 +439,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         Raises:
             AgentException: If the client fails to start.
         """
-        if self._client is not None and not self._owns_client and not self._started:
-            try:
-                await self._client.connect()
-                self._started = True
-            except Exception as ex:
-                raise AgentException(f"Failed to start Claude SDK client: {ex}") from ex
+        if self._client is not None and not self._owns_client:
+            async with self._client_lock:
+                await self._connect_injected_client()
 
     async def stop(self) -> None:
         """Stop the Claude SDK client and clean up resources.
@@ -455,22 +457,37 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         self._started = False
 
-    async def _acquire_client(self, resume_session_id: str | None = None) -> tuple[ClaudeSDKClient, bool]:
+    async def _connect_injected_client(self) -> None:
+        """Connect the injected client once. Caller must hold ``_client_lock``.
+
+        Raises:
+            AgentException: If the client fails to connect.
+        """
+        if self._client is None or self._started:
+            return
+        try:
+            await self._client.connect()
+            self._started = True
+        except Exception as ex:
+            raise AgentException(f"Failed to start Claude SDK client: {ex}") from ex
+
+    async def _acquire_client(self, session: AgentSession) -> tuple[ClaudeSDKClient, bool]:
         """Acquire a Claude SDK client for a single run.
 
         A ``ClaudeSDKClient`` is stateful and represents exactly one provider
         conversation, so obtaining it is an isolation decision, not just a
         connection optimization. When a client was injected at construction, that
-        single client is reused for every run and its lifecycle is owned by the
-        caller. Otherwise a fresh client scoped to this run is created and
-        connected, resuming ``resume_session_id`` when the framework session
-        already carries a provider conversation id. Binding the client to the run
-        rather than to shared agent state keeps distinct sessions isolated even
-        when they run concurrently against the same agent instance.
+        single conversation is bound to the first session that uses it and reused
+        for that session's runs; a different session is rejected because one
+        injected conversation cannot be shared across sessions without leaking
+        context. Otherwise a fresh client scoped to this run is created and
+        connected, resuming the session's provider conversation when it already
+        carries one. Binding the client to the run rather than to shared agent
+        state keeps distinct sessions isolated even when they run concurrently
+        against the same agent instance.
 
         Args:
-            resume_session_id: The provider continuation id to resume, or None for
-                a fresh conversation.
+            session: The active session for this run.
 
         Returns:
             A tuple of the client and whether the caller owns it and must
@@ -479,19 +496,25 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         Raises:
             AgentException: If the client fails to connect.
+            AgentInvalidRequestException: If an injected client is reused with a
+                different session than the one it is bound to.
         """
         if self._client is not None and not self._owns_client:
-            # Injected client: a single shared conversation with a caller-managed
-            # lifecycle. Connect it once and reuse it verbatim.
-            if not self._started:
-                try:
-                    await self._client.connect()
-                    self._started = True
-                except Exception as ex:
-                    raise AgentException(f"Failed to start Claude SDK client: {ex}") from ex
+            # Injected client: a single caller-managed conversation. Bind it to
+            # the first session and refuse to let another session reuse it.
+            if self._injected_session is None:
+                self._injected_session = session
+            elif self._injected_session.session_id != session.session_id:
+                raise AgentInvalidRequestException(
+                    "An injected ClaudeSDKClient represents a single Claude conversation and is "
+                    "bound to one session; it cannot be reused with a different session. Omit "
+                    "`client=` so each run gets its own isolated client, or use a separate "
+                    "ClaudeAgent per session."
+                )
+            await self._connect_injected_client()
             return self._client, False
 
-        opts = self._prepare_client_options(resume_session_id=resume_session_id)
+        opts = self._prepare_client_options(resume_session_id=self._get_chat_conversation_id(session))
         client = ClaudeSDKClient(options=opts)
         try:
             await client.connect()
@@ -708,16 +731,18 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             opts["instructions"] = system_prompt
         return opts
 
-    def _finalize_response(self, updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
+    def _finalize_response(self, updates: Sequence[AgentResponseUpdate], structured_output: Any) -> AgentResponse[Any]:
         """Build AgentResponse and propagate structured_output as value.
 
         Args:
             updates: The collected stream updates.
+            structured_output: The run-scoped structured output captured during the
+                run, propagated as the response value if present.
 
         Returns:
             An AgentResponse with structured_output set as value if present.
         """
-        return AgentResponse.from_updates(updates, value=self._structured_output)
+        return AgentResponse.from_updates(updates, value=structured_output)
 
     @overload
     def run(
@@ -768,9 +793,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             When stream=True: An ResponseStream for streaming updates.
             When stream=False: An Awaitable[AgentResponse] with the complete response.
         """
+        # Structured output is scoped to this run so concurrent runs on a shared
+        # agent instance cannot overwrite each other's value before the finalizer
+        # reads it.
+        run_state: dict[str, Any] = {"structured_output": None}
         response = ResponseStream(
-            self._get_stream(messages, session=session, options=options),
-            finalizer=self._finalize_response,
+            self._get_stream(messages, session=session, options=options, run_state=run_state),
+            finalizer=lambda updates: self._finalize_response(updates, run_state["structured_output"]),
         )
 
         if stream:
@@ -783,18 +812,35 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
+        run_state: dict[str, Any] | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal streaming implementation."""
-        session = session or self.create_session()
+        if run_state is None:
+            run_state = {"structured_output": None}
+
+        # An injected client is a single caller-owned conversation: reuse the
+        # session it is bound to when the caller passes none (so multi-turn runs
+        # stay continuous), and serialize access so its connection is not raced
+        # and concurrent runs do not interleave on the one shared client.
+        if self._client is not None and not self._owns_client:
+            if session is None and self._injected_session is not None:
+                session = self._injected_session
+            session = session or self.create_session()
+            async with self._client_lock:
+                client, _ = await self._acquire_client(session)
+                async for update in self._stream_run(client, session, messages, options, run_state):
+                    yield update
+            return
 
         # A ClaudeSDKClient represents a single provider conversation, so each run
         # acquires its own client (resuming the framework session's provider
         # conversation when one exists) and releases it when the run completes.
         # Binding the client to the run keeps distinct sessions isolated even when
         # they run concurrently against the same agent instance.
-        client, owns_client = await self._acquire_client(self._get_chat_conversation_id(session))
+        session = session or self.create_session()
+        client, owns_client = await self._acquire_client(session)
         try:
-            async for update in self._stream_run(client, session, messages, options):
+            async for update in self._stream_run(client, session, messages, options, run_state):
                 yield update
         finally:
             if owns_client:
@@ -807,6 +853,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         session: AgentSession,
         messages: AgentRunInputs | None,
         options: OptionsT | None,
+        run_state: dict[str, Any],
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Run a single query against ``client`` and stream response updates.
 
@@ -816,6 +863,8 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 the provider conversation id when the run completes.
             messages: The input messages for this run.
             options: Runtime options (model, permission_mode) for this run.
+            run_state: Per-run state holder; the structured output is written here
+                for the run's finalizer instead of on shared agent state.
         """
         prompt = self._format_prompt(normalize_messages(messages))
 
@@ -914,8 +963,8 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         if session_id:
             session.service_session_id = session_id
 
-        # Store structured output for the finalizer
-        self._structured_output = structured_output
+        # Store structured output for the run's finalizer (run-scoped, not on self)
+        run_state["structured_output"] = structured_output
 
 
 class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[OptionsT]):

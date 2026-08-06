@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import AgentResponseUpdate, AgentSession, Content, Message, tool
 from agent_framework._settings import load_settings
+from agent_framework.exceptions import AgentInvalidRequestException
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
@@ -580,7 +581,7 @@ class TestClaudeAgentSessionManagement:
         mock_client = self._make_mock_client()
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
-            client, owns_client = await agent._acquire_client(None)  # type: ignore[reportPrivateUsage]
+            client, owns_client = await agent._acquire_client(agent.create_session())  # type: ignore[reportPrivateUsage]
 
         assert client is mock_client
         assert owns_client is True
@@ -591,29 +592,54 @@ class TestClaudeAgentSessionManagement:
         mock_client = self._make_mock_client()
         with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
+            session = agent.get_session(service_session_id="provider-session-1")
             with patch.object(
                 agent,
                 "_prepare_client_options",
                 wraps=agent._prepare_client_options,  # type: ignore[reportPrivateUsage]
             ) as prepare:
-                _, owns_client = await agent._acquire_client("provider-session-1")  # type: ignore[reportPrivateUsage]
+                _, owns_client = await agent._acquire_client(session)  # type: ignore[reportPrivateUsage]
 
         assert owns_client is True
         prepare.assert_called_once_with(resume_session_id="provider-session-1")
 
-    async def test_acquire_client_reuses_injected_client(self) -> None:
-        """An injected client is reused across runs and never owned by the run."""
+    async def test_acquire_client_reuses_injected_client_for_same_session(self) -> None:
+        """An injected client is reused across runs of one session and never owned by the run."""
         injected = self._make_mock_client()
         agent = ClaudeAgent(client=injected)
+        session = agent.create_session()
 
-        client_a, owns_a = await agent._acquire_client(None)  # type: ignore[reportPrivateUsage]
-        client_b, owns_b = await agent._acquire_client("session-123")  # type: ignore[reportPrivateUsage]
+        client_a, owns_a = await agent._acquire_client(session)  # type: ignore[reportPrivateUsage]
+        client_b, owns_b = await agent._acquire_client(session)  # type: ignore[reportPrivateUsage]
 
         assert client_a is injected
         assert client_b is injected
         assert owns_a is False
         assert owns_b is False
         # Connected once and reused; never disconnected by the run.
+        injected.connect.assert_awaited_once()
+        injected.disconnect.assert_not_called()
+
+    async def test_injected_client_rejects_second_session(self) -> None:
+        """An injected client is bound to one session and rejects a different one."""
+        injected = self._make_mock_client()
+        agent = ClaudeAgent(client=injected)
+
+        await agent._acquire_client(agent.create_session())  # type: ignore[reportPrivateUsage]
+
+        with pytest.raises(AgentInvalidRequestException, match="single Claude conversation"):
+            await agent._acquire_client(agent.create_session())  # type: ignore[reportPrivateUsage]
+
+    async def test_injected_client_reused_across_runs_without_session(self) -> None:
+        """No-session runs on an injected client share its one bound conversation."""
+        injected = self._make_mock_client()
+        with patch("agent_framework_claude._agent.ClaudeSDKClient") as mock_client_class:
+            agent = ClaudeAgent(client=injected)
+            await agent.run("first")
+            await agent.run("second")
+
+        # No new clients were constructed; the injected one served both runs.
+        mock_client_class.assert_not_called()
         injected.connect.assert_awaited_once()
         injected.disconnect.assert_not_called()
 
