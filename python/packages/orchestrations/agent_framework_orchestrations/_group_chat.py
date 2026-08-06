@@ -69,6 +69,12 @@ else:
 
 logger = logging.getLogger(__name__)
 
+# Sent when a participant is selected to speak again immediately after it spoke: it gets no
+# broadcast (its own reply is already in its session) and its executor cache was cleared after
+# the previous run, so its request would otherwise carry no messages at all. Some agents
+# (for example A2AAgent) reject empty input.
+_CONSECUTIVE_TURN_DEFAULT_INSTRUCTION = "Continue the conversation."
+
 
 @dataclass(frozen=True)
 class GroupChatState:
@@ -233,6 +239,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         await self._send_request_to_participant(
             next_speaker,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
+            additional_instruction=_CONSECUTIVE_TURN_DEFAULT_INSTRUCTION if next_speaker == participant else None,
         )
         self._increment_round()
 
@@ -409,10 +416,12 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             participants=[p for p in self._participant_registry.participants if p != participant],
         )
         # Send request to selected participant
+        next_speaker = agent_orchestration_output.next_speaker
         await self._send_request_to_participant(
             # If not terminating, next_speaker must be provided thus will not be None
-            agent_orchestration_output.next_speaker,  # type: ignore[arg-type]
+            next_speaker,  # type: ignore[arg-type]
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
+            additional_instruction=_CONSECUTIVE_TURN_DEFAULT_INSTRUCTION if next_speaker == participant else None,
         )
         self._increment_round()
 
