@@ -1322,6 +1322,221 @@ class TestExtractJsonFromResponse:
         result = _extract_json_from_response(text)
         assert result == {"status": "complete", "id": 42}
 
+    def test_multiple_qualified_code_blocks_returns_last_valid(self):
+        """Test that the last valid qualified code block is returned."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json
+{"status": "pending"}
+```
+```json
+{"status": "complete"}
+```"""
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_invalid_later_qualified_code_block_uses_previous_valid(self):
+        """Test that an invalid later block does not replace an earlier valid block."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json
+{"status": "complete"}
+```
+```json
+not valid JSON
+```"""
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_qualified_code_block_takes_precedence_over_plain_block(self):
+        """Test that a qualified block is preferred over a later plain block."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json
+{"source": "qualified"}
+```
+```
+{"source": "plain"}
+```"""
+        result = _extract_json_from_response(text)
+        assert result == {"source": "qualified"}
+
+    def test_invalid_qualified_code_block_falls_through_to_plain_block(self):
+        """Test that plain blocks are considered when qualified blocks are invalid."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json
+not valid JSON
+```
+```
+{"source": "plain"}
+```"""
+        result = _extract_json_from_response(text)
+        assert result == {"source": "plain"}
+
+    @pytest.mark.parametrize(("json_text", "expected"), [("null", None), ("false", False), ("0", 0)])
+    def test_json_scalar_in_qualified_code_block(self, json_text, expected):
+        """Test that valid JSON scalars are not confused with a missing result."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response(f"```json\n{json_text}\n```")
+        assert result == expected
+
+    def test_unrecognized_code_block_qualifier_is_not_removed(self):
+        """Test that the plain-block pass does not consume language qualifiers."""
+        import json
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        with pytest.raises(json.JSONDecodeError):
+            _extract_json_from_response("```yaml\nfalse\n```")
+
+    def test_inline_json_code_block(self):
+        """Test extracting JSON from an inline qualified code block."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('Result: ```json{"status": "complete"}```.')
+        assert result == {"status": "complete"}
+
+    def test_json_code_block_with_crlf(self):
+        """Test extracting JSON from a code block with CRLF line endings."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('Result:\r\n```json\r\n{"status": "complete"}\r\n```\r\n')
+        assert result == {"status": "complete"}
+
+    def test_array_with_brackets_and_escapes_in_string(self):
+        """Test nested delimiters and escapes inside JSON strings."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = r'Info: [{"message": "Use [x] and {y}", "path": "C:\\temp"}]'
+        result = _extract_json_from_response(text)
+        assert result == [{"message": "Use [x] and {y}", "path": r"C:\temp"}]
+
+    def test_unterminated_code_block_raises_error(self):
+        """Test that an unterminated whitespace-heavy code block fails safely."""
+        import json
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = f"```json\n{' ' * 64}X"
+        with pytest.raises(json.JSONDecodeError):
+            _extract_json_from_response(text)
+
+    @pytest.mark.parametrize("text", ["{" * 64 + "X", "[" * 64 + "X"])
+    def test_repeated_unmatched_brackets_raise_error(self, text):
+        """Test that repeated unmatched opening brackets fail safely."""
+        import json
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        with pytest.raises(json.JSONDecodeError):
+            _extract_json_from_response(text)
+
+    def test_valid_json_after_unmatched_outer_bracket(self):
+        """Test recovering valid JSON nested after an unmatched outer bracket."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('{{"status": "complete"}')
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_mismatched_bracket_candidate(self):
+        """Test recovering valid JSON after a malformed mixed-bracket candidate."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = '{"broken": [} then {"status": "complete"} ]}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_double_escaped_fragment(self):
+        """Test recovering valid JSON after a double-escaped malformed fragment."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = r'{\"partial\": true} then {"status": "complete"}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_double_escaped_fenced_fragment(self):
+        """Test recovering valid JSON after an invalid fenced fragment."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json
+{\\"partial\\": true}
+```
+{"status": "complete"}"""
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_brace_in_quoted_explanation(self):
+        """Test recovering valid JSON after a brace in quoted explanatory text."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = 'The model said "use { as the opener" before {"status": "complete"}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_unterminated_quoted_candidate(self):
+        """Test recovering valid JSON after an unterminated quoted candidate."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = '{"partial: true} then {"status": "complete"}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_latest_json_after_valid_and_unterminated_candidates(self):
+        """Test returning the latest JSON after an earlier valid and poisoned candidate."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = '{"status": "pending"} {"partial: true} then {"status": "complete"}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
+    def test_valid_json_after_two_poisoned_candidates(self):
+        """Test recovering valid JSON after two malformed candidates."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = '{"mixed": [} {"partial: true} then {"status": "complete"}'
+        result = _extract_json_from_response(text)
+        assert result == {"status": "complete"}
+
 
 class TestPowerFxConditionalImport:
     """The _declarative_base module should be importable without dotnet/powerfx."""

@@ -16,6 +16,7 @@ import contextlib
 import json
 import logging
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -35,6 +36,112 @@ from ._declarative_base import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CODE_FENCE = "```"
+_JSON_CODE_FENCE = "```json"
+_MAX_JSON_RECOVERY_SCANS = 2
+_NO_JSON = object()
+
+
+def _iter_fenced_blocks(text: str, opening_fence: str) -> Iterator[str]:
+    """Yield non-overlapping fenced blocks in source order."""
+    search_start = 0
+    while True:
+        opening_index = text.find(opening_fence, search_start)
+        if opening_index < 0:
+            return
+
+        content_start = opening_index + len(opening_fence)
+        while content_start < len(text) and text[content_start].isspace():
+            content_start += 1
+
+        closing_index = text.find(_CODE_FENCE, content_start)
+        if closing_index < 0:
+            return
+
+        yield text[content_start:closing_index].strip()
+        search_start = closing_index + len(_CODE_FENCE)
+
+
+def _index_json_candidates(text: str, start_index: int = 0) -> tuple[list[int], dict[int, int], int | None]:
+    """Index balanced JSON object and array candidates in one pass."""
+    opening_positions: list[int] = []
+    closing_positions: dict[int, int] = {}
+    object_stack: list[int] = []
+    array_stack: list[int] = []
+    in_string = False
+    escape_next = False
+
+    for index in range(start_index, len(text)):
+        char = text[index]
+        if not object_stack and not array_stack:
+            if char in "{[":
+                opening_positions.append(index)
+                (object_stack if char == "{" else array_stack).append(index)
+            continue
+
+        if escape_next:
+            escape_next = False
+            continue
+
+        if char == "\\":
+            escape_next = True
+            continue
+
+        if char == '"':
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if char in "{[":
+            opening_positions.append(index)
+            (object_stack if char == "{" else array_stack).append(index)
+        elif char == "}" and object_stack:
+            closing_positions[object_stack.pop()] = index
+        elif char == "]" and array_stack:
+            closing_positions[array_stack.pop()] = index
+
+    unresolved_positions = [stack[0] for stack in (object_stack, array_stack) if stack]
+    unresolved_root = min(unresolved_positions) if unresolved_positions else None
+    return opening_positions, closing_positions, unresolved_root
+
+
+def _find_next_json_opening(text: str, start_index: int) -> int:
+    """Find the next object or array opening delimiter."""
+    object_index = text.find("{", start_index)
+    array_index = text.find("[", start_index)
+    if object_index < 0:
+        return array_index
+    if array_index < 0:
+        return object_index
+    return min(object_index, array_index)
+
+
+def _decode_last_json_candidate(
+    text: str,
+    opening_positions: list[int],
+    closing_positions: dict[int, int],
+) -> tuple[int, Any] | None:
+    """Decode the last valid non-overlapping JSON candidate."""
+    last_json: tuple[int, Any] | None = None
+    candidate_index = 0
+    while candidate_index < len(opening_positions):
+        json_start = opening_positions[candidate_index]
+        json_end = closing_positions.get(json_start)
+        if json_end is None:
+            candidate_index += 1
+            continue
+
+        with contextlib.suppress(json.JSONDecodeError):
+            last_json = (json_start, json.loads(text[json_start : json_end + 1]))
+
+        candidate_index += 1
+        while candidate_index < len(opening_positions) and opening_positions[candidate_index] <= json_end:
+            candidate_index += 1
+
+    return last_json
 
 
 def _extract_json_from_response(text: str) -> Any:
@@ -58,13 +165,11 @@ def _extract_json_from_response(text: str) -> Any:
         text: The raw text response from an agent
 
     Returns:
-        Parsed JSON as a Python dict/list, or None if parsing fails
+        Parsed JSON, or None if the response is empty.
 
     Raises:
         json.JSONDecodeError: If no valid JSON can be extracted
     """
-    import re
-
     if not text:
         return None
 
@@ -79,93 +184,36 @@ def _extract_json_from_response(text: str) -> Any:
     except json.JSONDecodeError:
         pass
 
-    # Try extracting from markdown code blocks: ```json ... ``` or ``` ... ```
-    # Use the last code block if there are multiple
-    code_block_patterns = [
-        r"```json\s*\n?(.*?)\n?```",  # ```json ... ```
-        r"```\s*\n?(.*?)\n?```",  # ``` ... ```
-    ]
-    for pattern in code_block_patterns:
-        matches = list(re.finditer(pattern, text, re.DOTALL))
-        if matches:
-            # Try the last match first (most likely to be the final result)
-            for match in reversed(matches):
-                try:
-                    return json.loads(match.group(1).strip())
-                except json.JSONDecodeError:
-                    continue
-
-    # Find ALL JSON objects {...} or arrays [...] in the text and return the last valid one
-    # This handles cases where agents stream multiple JSON objects (partial, then final)
-    all_json_objects: list[Any] = []
-
-    pos = 0
-    while pos < len(text):
-        # Find next { or [
-        json_start = -1
-        bracket_char = None
-        for i in range(pos, len(text)):
-            if text[i] == "{":
-                json_start = i
-                bracket_char = "{"
-                break
-            if text[i] == "[":
-                json_start = i
-                bracket_char = "["
-                break
-
-        if json_start < 0:
-            break  # No more JSON objects
-
-        # Find matching closing bracket
-        open_bracket = bracket_char
-        close_bracket = "}" if open_bracket == "{" else "]"
-        depth = 0
-        in_string = False
-        escape_next = False
-        found_end = False
-
-        for i in range(json_start, len(text)):
-            char = text[i]
-
-            if escape_next:
-                escape_next = False
+    # Qualified fences take precedence over plain fences, matching the existing behavior.
+    for opening_fence in (_JSON_CODE_FENCE, _CODE_FENCE):
+        last_fenced_json: Any = _NO_JSON
+        for block in _iter_fenced_blocks(text, opening_fence):
+            try:
+                last_fenced_json = json.loads(block)
+            except json.JSONDecodeError:
                 continue
+        if last_fenced_json is not _NO_JSON:
+            return last_fenced_json
 
-            if char == "\\":
-                escape_next = True
-                continue
+    # Bound recovery so malformed input cannot trigger unbounded suffix scans.
+    scan_start = 0
+    last_json: tuple[int, Any] | None = None
+    for _ in range(_MAX_JSON_RECOVERY_SCANS + 1):
+        opening_positions, closing_positions, unresolved_root = _index_json_candidates(text, scan_start)
+        scanned_json = _decode_last_json_candidate(text, opening_positions, closing_positions)
+        if scanned_json is not None and (last_json is None or scanned_json[0] > last_json[0]):
+            last_json = scanned_json
 
-            if char == '"' and not escape_next:
-                in_string = not in_string
-                continue
+        if unresolved_root is None:
+            break
 
-            if in_string:
-                continue
+        recovery_start = _find_next_json_opening(text, unresolved_root + 1)
+        if recovery_start < 0:
+            break
+        scan_start = recovery_start
 
-            if char == open_bracket:
-                depth += 1
-            elif char == close_bracket:
-                depth -= 1
-                if depth == 0:
-                    # Found the end
-                    potential_json = text[json_start : i + 1]
-                    try:
-                        parsed = json.loads(potential_json)
-                        all_json_objects.append(parsed)
-                    except json.JSONDecodeError:
-                        pass
-                    pos = i + 1
-                    found_end = True
-                    break
-
-        if not found_end:
-            # Malformed JSON, move past the start character
-            pos = json_start + 1
-
-    # Return the last valid JSON object (most likely to be the final/complete result)
-    if all_json_objects:
-        return all_json_objects[-1]
+    if last_json is not None:
+        return last_json[1]
 
     # Unable to extract JSON
     raise json.JSONDecodeError("No valid JSON found in response", text, 0)
