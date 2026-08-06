@@ -996,7 +996,7 @@ class ObservabilitySettings:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
             # Attach a handler with the provider to the root logger
             handler = LoggingHandler(logger_provider=logger_provider)
-            logger.addHandler(handler)
+            logging.getLogger().addHandler(handler)
             set_logger_provider(logger_provider)
 
         # metrics
