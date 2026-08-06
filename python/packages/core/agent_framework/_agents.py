@@ -26,7 +26,13 @@ from uuid import uuid4
 
 from ._clients import BaseChatClient, SupportsChatGetResponse
 from ._docstrings import apply_layered_docstring
-from ._middleware import AgentMiddlewareLayer, FunctionInvocationContext, MiddlewareTypes, categorize_middleware
+from ._middleware import (
+    AgentMiddlewareLayer,
+    FunctionInvocationContext,
+    MiddlewareTypes,
+    _as_middleware_list,  # pyright: ignore[reportPrivateUsage]
+    categorize_middleware,
+)
 from ._serialization import SerializationMixin
 from ._sessions import (
     AgentSession,
@@ -435,7 +441,9 @@ class BaseAgent(SerializationMixin):
             description: The description of the agent.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware, or a single middleware object (including a
-                ``MiddlewareBundle``) which is treated as a one-element list.
+                ``MiddlewareBundle``) which is treated as a one-element list. The
+                constructor copies the sequence; assign to or mutate the
+                ``middleware`` attribute for post-construction changes.
             additional_properties: Additional properties set on the agent.
         """
         if id is None:
@@ -444,14 +452,11 @@ class BaseAgent(SerializationMixin):
         self.name = name
         self.description = description
         self.context_providers: list[ContextProvider] = list(context_providers or [])
-        # Canonicalize storage: a bare middleware source (a single middleware object
-        # or a MiddlewareBundle) is stored as a single-element list so the declared
-        # attribute type stays `list[MiddlewareTypes] | None`. Interpreting bare
-        # sources is owned by categorize_middleware; this mirrors it for storage only.
-        if middleware is not None and not isinstance(middleware, Sequence):
-            middleware = [middleware]
+        # Canonicalize storage: the bare-source rule (a single middleware object or a
+        # MiddlewareBundle is one element) is owned by _as_middleware_list; storing a
+        # normalized list keeps the declared attribute type honest.
         self.middleware: list[MiddlewareTypes] | None = (
-            cast(list[MiddlewareTypes], middleware) if middleware is not None else None
+            _as_middleware_list(middleware) if middleware is not None else None
         )
         self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
 
@@ -1495,31 +1500,22 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 *middleware_list["chat"],
             ]
             if provider_function_chat_middleware:
-                existing_middleware = effective_client_kwargs.get("middleware")
-                if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes)):
-                    effective_client_kwargs["middleware"] = [
-                        *existing_middleware,
-                        *provider_function_chat_middleware,
-                    ]
-                elif existing_middleware is not None:
-                    effective_client_kwargs["middleware"] = [
-                        cast(MiddlewareTypes, existing_middleware),
-                        *provider_function_chat_middleware,
-                    ]
-                else:
-                    effective_client_kwargs["middleware"] = provider_function_chat_middleware
+                existing_middleware = cast(
+                    "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
+                )
+                effective_client_kwargs["middleware"] = [
+                    *_as_middleware_list(existing_middleware),
+                    *provider_function_chat_middleware,
+                ]
 
         if per_service_call_history_middleware is not None:
-            existing_middleware = effective_client_kwargs.get("middleware")
-            if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes)):
-                effective_client_kwargs["middleware"] = [*existing_middleware, per_service_call_history_middleware]
-            elif existing_middleware is not None:
-                effective_client_kwargs["middleware"] = [
-                    cast(MiddlewareTypes, existing_middleware),
-                    per_service_call_history_middleware,
-                ]
-            else:
-                effective_client_kwargs["middleware"] = [per_service_call_history_middleware]
+            existing_middleware = cast(
+                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
+            )
+            effective_client_kwargs["middleware"] = [
+                *_as_middleware_list(existing_middleware),
+                per_service_call_history_middleware,
+            ]
 
         return {
             "session": active_session,

@@ -1450,7 +1450,10 @@ def create_agent_hooks_middleware(
     written back into the framework's messages, arguments, and results so execution uses
     exactly the values the interceptors approved, streaming runs are buffered and only
     released after the ``output`` verdict permits, and durable history persistence is
-    deferred until the covering verdict permits the content.
+    deferred until the covering verdict permits the content. When middleware retries a
+    run, every attempt's persistence stays behind the one final verdict; note that
+    ``post_model_call`` is the content-complete audit point — a discarded attempt's
+    response passes its own ``post_model_call`` verdict but never reaches ``output``.
 
     Every agent run is one agent-hooks session: a fresh ``InterceptionEmitter`` and
     ``AgentContextBuilder`` pair is created per run and ``agent_startup`` /

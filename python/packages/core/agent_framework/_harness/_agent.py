@@ -14,7 +14,7 @@ import logging
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsShellTool, SupportsWebSearchTool
@@ -655,13 +655,11 @@ def create_harness_agent(
     # Message injection is always on. It is a no-op when no messages are queued for the session,
     # so there is no opt-out.
     assembled_middleware.append(MessageInjectionMiddleware())
-    if middleware is not None:
-        # A bare middleware object (including a MiddlewareBundle, which is
-        # deliberately not a sequence) counts as a one-element source.
-        if isinstance(middleware, Sequence):
-            assembled_middleware.extend(cast("Sequence[MiddlewareTypes]", middleware))
-        else:
-            assembled_middleware.append(middleware)
+    # Bare-source normalization (a single middleware object or a MiddlewareBundle is
+    # one element) is owned by _as_middleware_list.
+    from .._middleware import _as_middleware_list  # pyright: ignore[reportPrivateUsage]
+
+    assembled_middleware.extend(_as_middleware_list(middleware))
 
     agent = Agent(
         client,

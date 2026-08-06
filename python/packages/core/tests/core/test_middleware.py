@@ -1755,3 +1755,15 @@ class TestCategorizeMiddleware:
         result = categorize_middleware([chat_only], supported_categories=("chat", "function"))
         assert len(result["chat"]) == 1
         assert len(result["function"]) == 1
+
+    def test_as_middleware_list_owns_the_bare_source_rule(self) -> None:
+        """One owner for bare-source normalization, including the str/bytes exclusion."""
+        from agent_framework._middleware import _as_middleware_list
+
+        agent_mw = TestAgentMiddleware()
+        assert _as_middleware_list(None) == []
+        assert _as_middleware_list(agent_mw) == [agent_mw]
+        assert _as_middleware_list([agent_mw]) == [agent_mw]
+        assert _as_middleware_list((agent_mw,)) == [agent_mw]
+        # Strings are sequences but never element-ized into characters.
+        assert _as_middleware_list("bare-string") == ["bare-string"]  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]

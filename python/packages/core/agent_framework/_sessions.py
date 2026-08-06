@@ -35,7 +35,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeGuard, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
 
 import msgspec
 
@@ -185,18 +185,6 @@ def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[s
             seen_origin_session_ids.add(origin_session_id)
             unique_origin_session_ids.append(origin_session_id)
     return unique_origin_session_ids
-
-
-def _is_middleware_sequence(
-    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
-) -> TypeGuard[Sequence[MiddlewareTypes]]:
-    return isinstance(middleware, Sequence) and not isinstance(middleware, (str, bytes))
-
-
-def _is_single_middleware(
-    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
-) -> TypeGuard[MiddlewareTypes]:
-    return not _is_middleware_sequence(middleware)
 
 
 @dataclass(frozen=True, slots=True)
@@ -691,15 +679,10 @@ class SessionContext:
             source_id: The provider source_id adding this middleware.
             middleware: A single chat/function middleware object/callable or sequence of middleware.
         """
-        from ._middleware import categorize_middleware
+        from ._middleware import _as_middleware_list, categorize_middleware  # pyright: ignore[reportPrivateUsage]
         from .exceptions import MiddlewareException
 
-        if _is_middleware_sequence(middleware):
-            middleware_items = list(middleware)
-        elif _is_single_middleware(middleware):
-            middleware_items = [middleware]
-        else:
-            raise TypeError("middleware must be a middleware object or a sequence of middleware objects.")
+        middleware_items = _as_middleware_list(middleware)
         middleware_list = categorize_middleware(middleware_items)
         if middleware_list["agent"]:
             raise MiddlewareException("Context providers may only add chat or function middleware.")
@@ -1128,14 +1111,19 @@ class _RunPersistenceGate:
     (the covering verdict permitted the content) or discards them with :meth:`drop`
     (the content was denied and must never become durable).
 
-    Ownership: the gate covers exactly one run's verdict, so it only collects that
-    run's own persistence (see :meth:`accepts`). The agent-seam gate is created before
-    its run starts and is bound lazily through the
-    :func:`_offer_run_persistence_gate_claim` / :func:`_adopt_run_persistence_gate_claim`
-    handshake; the chat-seam gate is created inside its run and bound immediately.
-    While unbound (an agent whose custom run loop never adopts the claim), the gate
-    falls back fail-closed: persists carrying no run identity defer, while persists
-    from identity-stamped (nested or sibling) runs execute inline at their own run
+    Ownership: the gate covers one pipeline execution's verdict, so it only collects
+    persistence issued by the run(s) that pipeline's final handler started (see
+    :meth:`accepts`). The agent-seam gate is created before its run starts and is
+    bound lazily through the :func:`_offer_run_persistence_gate_claim` /
+    :func:`_adopt_run_persistence_gate_claim` handshake; the chat-seam gate is created
+    inside its run and bound immediately. A retrying or fallback middleware may invoke
+    ``call_next()`` several times, re-offering the same gate: **every** identity
+    adopted through the gate's own ticket becomes an accepted owner, so each attempt's
+    persistence stays deferred behind the final verdict (a first-bind-wins rule would
+    let later attempts persist inline ahead of the verdict — fail-open). While unbound
+    (an agent whose custom run loop never adopts the claim), the gate falls back
+    fail-closed: persists carrying no run identity defer, while persists from
+    identity-stamped (nested or sibling) runs execute inline at their own run
     boundaries.
 
     Reset-before-drain is enforced by construction: :meth:`flush` refuses to run while
@@ -1158,19 +1146,26 @@ class _RunPersistenceGate:
     persists and restores the outer gate on exit.
     """
 
-    __slots__ = ("_owner", "_owner_bound", "_pending", "_token")
+    __slots__ = ("_owner_identities", "_pending", "_token")
 
     def __init__(self) -> None:
         self._pending: list[Callable[[], Awaitable[None]]] = []
         self._token: Token[_RunPersistenceGate | None] | None = None
-        self._owner: object | None = None
-        self._owner_bound: bool = False
+        self._owner_identities: list[object | None] = []
 
     def bind_owner(self, owner: object | None) -> None:
-        """Bind the gate to the run identity whose persistence it defers (first bind wins)."""
-        if not self._owner_bound:
-            self._owner = owner
-            self._owner_bound = True
+        """Add ``owner`` to the run identities whose persistence this gate defers.
+
+        Every bind accumulates (it never replaces): binding is only reachable through
+        the gate's own instance-keyed claim ticket, so each added identity is a run
+        started by the covered pipeline's final handler — e.g. successive attempts
+        made by a retrying middleware. All of those attempts' persists must stay
+        deferred behind the one final verdict; dropping earlier identities (rebind) or
+        ignoring later ones (first-bind-wins) would let some attempt's persistence run
+        inline ahead of the verdict, which is fail-open.
+        """
+        if not any(existing is owner for existing in self._owner_identities):
+            self._owner_identities.append(owner)
 
     def collect(self, persist: Callable[[], Awaitable[None]]) -> None:
         """Collect one deferred persistence callable (see :func:`_defer_run_persistence`)."""
@@ -1179,14 +1174,16 @@ class _RunPersistenceGate:
     def accepts(self, identity: object | None) -> bool:
         """Whether a persist issued under ``identity`` belongs to this gate's run.
 
-        A bound gate accepts exactly its owner identity. An unbound gate (its run
-        never adopted the claim — a custom run loop) accepts only identity-less
-        persists: the covered run's own persists carry no identity there (fail-closed,
-        matching the pre-ownership behavior), while identity-stamped persists come
-        from other runs that own their content's verdicts themselves.
+        A bound gate accepts every identity adopted through its claim ticket (each
+        ``call_next()`` attempt of the covered pipeline — see :meth:`bind_owner`). An
+        unbound gate (its run never adopted the claim — a custom run loop) accepts
+        only identity-less persists: the covered run's own persists carry no identity
+        there (fail-closed, matching the pre-ownership behavior), while
+        identity-stamped persists come from other runs that own their content's
+        verdicts themselves.
         """
-        if self._owner_bound:
-            return identity is self._owner
+        if self._owner_identities:
+            return any(owner is identity for owner in self._owner_identities)
         return identity is None
 
     def __enter__(self) -> _RunPersistenceGate:

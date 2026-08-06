@@ -1622,6 +1622,24 @@ class MiddlewareDict(TypedDict):
     chat: list[ChatMiddleware | ChatMiddlewareCallable]
 
 
+def _as_middleware_list(
+    source: MiddlewareTypes | Sequence[MiddlewareTypes] | None,
+) -> list[MiddlewareTypes]:
+    """Normalize one middleware source into a list — the bare-source rule's single owner.
+
+    ``None`` is empty; a sequence (never str/bytes) is taken element-wise; any other
+    bare source — a single middleware object or a :class:`MiddlewareBundle`, which is
+    deliberately not a sequence — is one element. The ``None`` check is deliberate
+    (not truthiness): a bare middleware object with a falsy ``__bool__``/``__len__``
+    still counts as one element, never silently dropped.
+    """
+    if source is None:
+        return []
+    if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
+        return list(cast("Sequence[MiddlewareTypes]", source))
+    return [cast("MiddlewareTypes", source)]
+
+
 def categorize_middleware(
     *middleware_sources: MiddlewareTypes | Sequence[MiddlewareTypes] | None,
     supported_categories: Collection[str] | None = None,
@@ -1631,8 +1649,8 @@ def categorize_middleware(
     Args:
         *middleware_sources: Variable number of middleware sources to categorize.
             A bare (non-sequence) source — a single middleware object or a
-            :class:`MiddlewareBundle` — is treated as a one-element list; this
-            function is the single owner of that rule.
+            :class:`MiddlewareBundle` — is treated as a one-element list
+            (normalization is owned by :func:`_as_middleware_list`).
 
     Keyword Args:
         supported_categories: The categories the call site actually installs, e.g.
@@ -1651,16 +1669,11 @@ def categorize_middleware(
     """
     result: MiddlewareDict = {"agent": [], "function": [], "chat": []}
 
-    # Merge all middleware sources into a single list. The None check is deliberate
-    # (not truthiness): a bare middleware object with a falsy __bool__/__len__ must
-    # still be treated as a one-element source, never silently dropped.
+    # Merge all middleware sources into a single list (bare-source normalization is
+    # owned by _as_middleware_list).
     all_middleware: list[Any] = []
     for source in middleware_sources:
-        if source is not None:
-            if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
-                all_middleware.extend(source)  # type: ignore
-            else:
-                all_middleware.append(source)
+        all_middleware.extend(_as_middleware_list(source))
 
     # Expand bundles first: a bundle's members are categorized individually (in
     # order) but travel as one unit, so a feature spanning several categories can

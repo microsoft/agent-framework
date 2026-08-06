@@ -72,6 +72,7 @@ if TYPE_CHECKING:
         FunctionInvocationContext,
         FunctionMiddlewarePipeline,
         FunctionMiddlewareTypes,
+        MiddlewareTypes,
     )
     from ._sessions import AgentSession
     from ._types import (
@@ -3223,7 +3224,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-        from ._middleware import categorize_middleware
+        from ._middleware import _as_middleware_list, categorize_middleware  # pyright: ignore[reportPrivateUsage]
         from ._types import (
             ChatResponse,
             ResponseStream,
@@ -3237,12 +3238,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Build the run-local middleware pipeline and recover shared budget/session state for approval re-entry.
         request_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if middleware is not None:
-            existing_middleware = request_kwargs.get("middleware", [])
             request_kwargs["middleware"] = [
-                *(
-                    existing_middleware
-                    if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes))
-                    else [existing_middleware]
+                *_as_middleware_list(
+                    cast("MiddlewareTypes | Sequence[MiddlewareTypes] | None", request_kwargs.get("middleware"))
                 ),
                 *middleware,
             ]

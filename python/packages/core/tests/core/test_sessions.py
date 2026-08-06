@@ -1801,12 +1801,21 @@ class TestRunPersistenceGate:
         await gate.flush()
         assert executed == ["custom-own"]
 
-    def test_bind_owner_first_bind_wins(self) -> None:
+    def test_bind_owner_accepts_every_adopted_identity(self) -> None:
+        # A retrying/fallback middleware re-invokes call_next(): the final handler
+        # re-offers the same gate and each attempt's run adopts it. Every adopted
+        # identity must stay accepted — first-bind-wins would let attempt 2's
+        # persistence run inline ahead of the final verdict (fail-open), and
+        # rebind-replace would flip attempt 1's still-running work to inline.
         gate = _RunPersistenceGate()
         first = object()
+        second = object()
         gate.bind_owner(first)
-        gate.bind_owner(object())
+        gate.bind_owner(second)
         assert gate.accepts(first) is True
+        assert gate.accepts(second) is True
+        assert gate.accepts(object()) is False  # other runs still persist inline
+        assert gate.accepts(None) is False  # bound gates reject identity-less persists
 
     def test_claim_handshake_is_keyed_to_the_agent_instance(self) -> None:
         gate = _RunPersistenceGate()

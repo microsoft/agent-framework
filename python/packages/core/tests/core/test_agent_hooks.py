@@ -1689,6 +1689,115 @@ async def test_custom_run_loop_agent_nested_sub_agent_persists_inline() -> None:
     assert session.state.get("outer_history", {}).get("messages", []) == []
 
 
+class _FlakyOnceClient(MockBaseChatClient):
+    """Fails the first model call (both shapes), then behaves like the mock."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._failed_once = False
+
+    def _inner_get_response(self, **kwargs: Any) -> Any:
+        if not self._failed_once:
+            self._failed_once = True
+            if kwargs.get("stream"):
+
+                async def _boom() -> AsyncIterable[ChatResponseUpdate]:
+                    raise RuntimeError("attempt 1 failed")
+                    yield  # pragma: no cover  # pyright: ignore[reportUnreachable]
+
+                return ResponseStream(_boom())
+
+            async def _fail() -> ChatResponse:
+                raise RuntimeError("attempt 1 failed")
+
+            return _fail()
+        return super()._inner_get_response(**kwargs)  # pyright: ignore[reportCallIssue]
+
+
+class _RetryOnceMiddleware(AgentMiddleware):
+    """The documented retry pattern: catch a failing attempt and re-invoke call_next()."""
+
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        if not context.stream:
+            try:
+                await call_next()
+            except RuntimeError:
+                context.result = None
+                await call_next()
+            return
+        await call_next()
+        stream = cast("ResponseStream[AgentResponseUpdate, AgentResponse[Any]]", context.result)
+        try:
+            await stream.get_final_response()
+        except RuntimeError:
+            context.result = None
+            await call_next()
+
+
+@requires_sdk
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_retried_run_denied_output_never_becomes_durable(streaming: bool) -> None:
+    # A retrying middleware re-invokes call_next(): attempt 2 runs with a fresh
+    # identity adopted through the same gate ticket. The gate must accept every
+    # adopted identity — pinning the first attempt's identity would let attempt 2's
+    # persistence run inline BEFORE the output verdict, making the denied response
+    # durable (fail-open).
+    from agent_framework import AgentSession, InMemoryHistoryProvider
+
+    provider = InMemoryHistoryProvider()
+    session = AgentSession()
+    agent = Agent(
+        client=_FlakyOnceClient(),
+        name="retried",
+        context_providers=[provider],
+        middleware=[
+            create_agent_hooks_middleware([PointGuard("output", Verdict.deny(reason="egress_blocked"))]),
+            _RetryOnceMiddleware(),
+        ],
+    )
+
+    with pytest.raises(InterceptionBlocked):
+        if streaming:
+            async for _ in agent.run("hello there", session=session, stream=True):
+                pass
+        else:
+            await agent.run("hello there", session=session)
+
+    # Nothing from either attempt is durable: the failed attempt produced no
+    # persistence and the retried attempt's persistence stayed behind the denied gate.
+    assert session.state.get(provider.source_id, {}).get("messages", []) == []
+
+
+@requires_sdk
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_retried_run_allowed_output_persists_the_retry_attempt(streaming: bool) -> None:
+    from agent_framework import AgentSession, InMemoryHistoryProvider
+
+    provider = InMemoryHistoryProvider()
+    session = AgentSession()
+    agent = Agent(
+        client=_FlakyOnceClient(),
+        name="retried",
+        context_providers=[provider],
+        middleware=[create_agent_hooks_middleware([AllowGuard()]), _RetryOnceMiddleware()],
+    )
+
+    if streaming:
+        stream = agent.run("hello there", session=session, stream=True)
+        async for _ in stream:
+            pass
+        final = await stream.get_final_response()
+    else:
+        final = await agent.run("hello there", session=session)
+
+    expected_response = "update - hello there" if streaming else "test response - hello there"
+    assert final.text == expected_response
+    # The permitted retry attempt's exchange is durable (the failed attempt produced
+    # nothing to persist).
+    stored = cast("list[Message]", session.state[provider.source_id]["messages"])
+    assert [message.text for message in stored] == ["hello there", expected_response]
+
+
 # endregion
 
 # region Stream hooks cannot escape the gate
