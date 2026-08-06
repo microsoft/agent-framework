@@ -1078,10 +1078,18 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
             context._run_persistence_gate = gate_handle  # pyright: ignore[reportPrivateUsage]
             await self._emit_run_start(context, state)
             termination: MiddlewareTermination | None = None
-            try:
-                await call_next()
-            except MiddlewareTermination as exc:
-                termination = exc
+            # The gate covers the pipeline descent too, exactly like the non-streaming
+            # branch: a middleware that drains an attempt's stream in-pipeline (e.g. a
+            # retry that discards a successful attempt) issues that attempt's run-end
+            # persistence here, and it must defer behind the final verdict — the
+            # attempt's identity is an accepted owner via the claim ticket. The gate
+            # is then re-entered (sequential reuse) around the released stream's
+            # consumption in _consume, and flushed/dropped exactly once by its gate.
+            with gate_handle:
+                try:
+                    await call_next()
+                except MiddlewareTermination as exc:
+                    termination = exc
             inner = context.result
             if inner is None and termination is not None:
                 # Terminated without a result: nothing will egress.

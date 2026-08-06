@@ -1156,13 +1156,16 @@ class _RunPersistenceGate:
     def bind_owner(self, owner: object | None) -> None:
         """Add ``owner`` to the run identities whose persistence this gate defers.
 
-        Every bind accumulates (it never replaces): binding is only reachable through
-        the gate's own instance-keyed claim ticket, so each added identity is a run
-        started by the covered pipeline's final handler — e.g. successive attempts
-        made by a retrying middleware. All of those attempts' persists must stay
-        deferred behind the one final verdict; dropping earlier identities (rebind) or
-        ignoring later ones (first-bind-wins) would let some attempt's persistence run
-        inline ahead of the verdict, which is fail-open.
+        Every bind accumulates (it never replaces). Both bind sites sit inside the
+        covered pipeline, so every added identity is a run whose persistence the
+        gate's one covering verdict must gate: the agent seam binds through the
+        gate's instance-keyed claim ticket (each run the pipeline's final handler
+        starts — e.g. successive attempts made by a retrying middleware), and the
+        chat seam binds directly at gate creation to the identity of the run it is
+        executing in. All of those runs' persists must stay deferred behind the
+        final verdict; dropping earlier identities (rebind) or ignoring later ones
+        (first-bind-wins) would let some attempt's persistence run inline ahead of
+        the verdict, which is fail-open.
         """
         if not any(existing is owner for existing in self._owner_identities):
             self._owner_identities.append(owner)

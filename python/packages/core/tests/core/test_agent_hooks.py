@@ -1798,6 +1798,139 @@ async def test_retried_run_allowed_output_persists_the_retry_attempt(streaming: 
     assert [message.text for message in stored] == ["hello there", expected_response]
 
 
+class _DrainAndRetryOnceMiddleware(AgentMiddleware):
+    """Retry pattern that fully drains a SUCCESSFUL first attempt, discards it, retries.
+
+    Unlike the failure-retry pattern, the discarded attempt completes and issues its
+    run-end persistence during the pipeline descent — on the streaming seam that
+    draining happens inside the middleware, so the gate must already be active there.
+    """
+
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
+        if context.stream and context.result is not None:
+            stream = cast("ResponseStream[AgentResponseUpdate, AgentResponse[Any]]", context.result)
+            await stream.get_final_response()  # attempt 1 fully drained (successful)
+        context.result = None  # ...and discarded
+        await call_next()
+
+
+@requires_sdk
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_drained_and_discarded_attempt_stays_gated_on_deny(streaming: bool) -> None:
+    # The drained attempt SUCCEEDS: its run-end persistence is issued during the
+    # pipeline descent. On the streaming seam call_next must run under the gate just
+    # like the non-streaming seam, or that exchange persists on the spot, before any
+    # verdict — a deny would then only drop the retry attempt's deferred work.
+    from agent_framework import AgentSession, InMemoryHistoryProvider
+
+    provider = InMemoryHistoryProvider()
+    session = AgentSession()
+    agent = Agent(
+        client=MockBaseChatClient(),
+        name="retried",
+        context_providers=[provider],
+        middleware=[
+            create_agent_hooks_middleware([PointGuard("output", Verdict.deny(reason="egress_blocked"))]),
+            _DrainAndRetryOnceMiddleware(),
+        ],
+    )
+
+    with pytest.raises(InterceptionBlocked):
+        if streaming:
+            async for _ in agent.run("hello there", session=session, stream=True):
+                pass
+        else:
+            await agent.run("hello there", session=session)
+
+    # NOTHING is durable — including the drained-and-discarded attempt's exchange.
+    assert session.state.get(provider.source_id, {}).get("messages", []) == []
+
+
+@requires_sdk
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_drained_and_discarded_attempt_flushes_on_allow(streaming: bool) -> None:
+    # Accumulation semantics: both attempts' identities are accepted owners, so on a
+    # permitted verdict the gate flushes both attempts' deferred run-end persistence
+    # (matching unhooked semantics, where each attempt would have persisted inline).
+    from agent_framework import AgentSession, InMemoryHistoryProvider
+
+    provider = InMemoryHistoryProvider()
+    session = AgentSession()
+    agent = Agent(
+        client=MockBaseChatClient(),
+        name="retried",
+        context_providers=[provider],
+        middleware=[create_agent_hooks_middleware([AllowGuard()]), _DrainAndRetryOnceMiddleware()],
+    )
+
+    if streaming:
+        stream = agent.run("hello there", session=session, stream=True)
+        async for _ in stream:
+            pass
+        final = await stream.get_final_response()
+    else:
+        final = await agent.run("hello there", session=session)
+
+    expected_response = "update - hello there" if streaming else "test response - hello there"
+    assert final.text == expected_response
+    stored = cast("list[Message]", session.state[provider.source_id]["messages"])
+    assert [message.text for message in stored] == ["hello there", expected_response] * 2
+
+
+@requires_sdk
+async def test_tool_nested_run_inside_drained_attempt_persists_inline() -> None:
+    # With the streaming gate now covering the pipeline descent, tool invocations
+    # inside a middleware-drained attempt execute under an ACTIVE gate. The tool-seam
+    # suspension must still make the nested sub-agent run persist inline there, while
+    # the drained attempt's own run-end persistence defers and drops on the deny.
+    from agent_framework import AgentSession, InMemoryHistoryProvider
+
+    inner_provider = InMemoryHistoryProvider(source_id="inner_history")
+    outer_provider = InMemoryHistoryProvider(source_id="outer_history", load_messages=False)
+    session = AgentSession()
+    sub_agent = Agent(client=MockBaseChatClient(), name="sub", context_providers=[inner_provider])
+
+    outer_client = MockBaseChatClient()
+    outer_client.streaming_responses = [
+        # Attempt 1 (drained by the middleware): calls the sub-agent tool, then answers.
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="c1", name="sub", arguments='{"task": "look this up"}')],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+        ],
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text("attempt one answer")], role="assistant", finish_reason="stop"
+            )
+        ],
+        # Attempt 2 falls through to the mock default ("update - ...").
+    ]
+    outer_agent = Agent(
+        client=outer_client,
+        name="outer",
+        tools=[sub_agent.as_tool(propagate_session=True)],
+        context_providers=[outer_provider],
+        middleware=[
+            create_agent_hooks_middleware([PointGuard("output", Verdict.deny(reason="egress_blocked"))]),
+            _DrainAndRetryOnceMiddleware(),
+        ],
+    )
+
+    with pytest.raises(InterceptionBlocked):
+        async for _ in outer_agent.run("go delegate", session=session, stream=True):
+            pass
+
+    # The nested run inside the drained attempt persisted inline (suspension under an
+    # active gate)...
+    inner_stored = cast("list[Message]", session.state["inner_history"]["messages"])
+    assert [message.text for message in inner_stored] == ["look this up", "update - look this up"]
+    # ...while both outer attempts' own persistence stayed gated and dropped on deny.
+    assert session.state.get("outer_history", {}).get("messages", []) == []
+
+
 # endregion
 
 # region Stream hooks cannot escape the gate
