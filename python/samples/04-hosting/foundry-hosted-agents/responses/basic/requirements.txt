@@ -1,3 +1,2 @@
-agent-framework-core @ https://github.com/microsoft/agent-framework/archive/refs/heads/taochen/issue-7532.zip#subdirectory=python/packages/core
-agent-framework-foundry @ https://github.com/microsoft/agent-framework/archive/refs/heads/taochen/issue-7532.zip#subdirectory=python/packages/foundry
-agent-framework-foundry-hosting @ https://github.com/microsoft/agent-framework/archive/refs/heads/taochen/issue-7532.zip#subdirectory=python/packages/foundry_hosting
+agent-framework-foundry
+agent-framework-foundry-hosting>=1.0.0a260630
