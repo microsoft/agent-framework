@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -28,6 +29,9 @@ namespace Microsoft.Agents.AI;
 /// first is returned to the caller while the rest are queued. On subsequent calls, queued items are re-evaluated
 /// against rules (which may have been updated by the caller's "always approve" response) and presented one at a time.
 /// Once all queued requests are resolved, the collected responses are injected and the inner agent is called again.
+/// This one-at-a-time behavior no longer applies once the auto-approval cap
+/// (<see cref="ToolApprovalAgentOptions.MaxAutoApprovalIterations"/>) is reached: the final inner turn is returned
+/// as-is, so more than one approval request may be surfaced to the caller at once.
 /// </item>
 /// <item>
 /// <b>Inbound (caller to agent):</b> When the caller sends an <see cref="AlwaysApproveToolApprovalResponseContent"/>,
@@ -47,9 +51,13 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public sealed class ToolApprovalAgent : DelegatingAIAgent
 {
+    /// <summary>The default value used for <see cref="ToolApprovalAgentOptions.MaxAutoApprovalIterations"/> when none is specified.</summary>
+    public const int DefaultMaxAutoApprovalIterations = 40;
+
     private readonly ProviderSessionState<ToolApprovalState> _sessionState;
     private readonly JsonSerializerOptions _jsonSerializerOptions;
     private readonly Func<ToolAutoApprovalRuleContext, ValueTask<bool>>[]? _autoApprovalRules;
+    private readonly int _maxAutoApprovalIterations;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ToolApprovalAgent"/> class.
@@ -65,6 +73,8 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     {
         this._jsonSerializerOptions = options?.JsonSerializerOptions ?? AgentJsonUtilities.DefaultOptions;
         this._autoApprovalRules = options?.AutoApprovalRules?.ToArray();
+        this._maxAutoApprovalIterations = Throw.IfLessThan(
+            options?.MaxAutoApprovalIterations ?? DefaultMaxAutoApprovalIterations, 1);
         this._sessionState = new ProviderSessionState<ToolApprovalState>(
             _ => new ToolApprovalState(),
             "toolApprovalState",
@@ -125,10 +135,24 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         // 3. Call the inner agent in a loop. If the inner agent returns approval requests
         //    that are ALL auto-approved by standing rules, we immediately re-call with the
         //    collected approval responses injected. This avoids returning empty responses.
-        while (true)
+        //
+        //    The loop is bounded by _maxAutoApprovalIterations. Each pass is a fresh inner
+        //    invocation, so a per-request cap (FunctionInvokingChatClient.MaximumIterationsPerRequest)
+        //    restarts every time and cannot bound it; without a cap here a model that keeps
+        //    requesting an auto-approved tool bills indefinitely.
+        for (int iteration = 0; ; iteration++)
         {
             // Inject any collected approval responses as a user message ahead of the caller's messages.
             var processedMessages = this.InjectCollectedResponses(callerMessages, state, session);
+
+            if (iteration >= this._maxAutoApprovalIterations)
+            {
+                // Cap reached: take one final turn without auto-approving again, so any approval
+                // request it surfaces goes to the caller to decide rather than continuing the chain.
+                // Returning here without this call would hand back a response whose approval requests
+                // were already stripped — the empty response the loop exists to avoid.
+                return await this.InnerAgent.RunAsync(processedMessages, session, options, cancellationToken).ConfigureAwait(false);
+            }
 
             var response = await this.InnerAgent.RunAsync(processedMessages, session, options, cancellationToken).ConfigureAwait(false);
 
@@ -173,10 +197,25 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         // 3. Stream from the inner agent in a loop. If all approval requests from the stream
         //    are auto-approved by standing rules, we immediately re-stream with the collected
         //    approval responses injected. This avoids returning empty streams.
-        while (true)
+        //
+        //    Bounded by _maxAutoApprovalIterations for the same reason as the non-streaming path:
+        //    every pass is a fresh inner invocation, so no per-request cap can bound it.
+        for (int iteration = 0; ; iteration++)
         {
             // Inject any collected approval responses as a user message ahead of the caller's messages.
             var processedMessages = this.InjectCollectedResponses(callerMessages, state, session);
+
+            if (iteration >= this._maxAutoApprovalIterations)
+            {
+                // Cap reached: take one final turn without auto-approving again. Updates are yielded
+                // as-is, so any approval request reaches the caller to decide instead of continuing.
+                await foreach (var update in this.InnerAgent.RunStreamingAsync(processedMessages, session, options, cancellationToken).ConfigureAwait(false))
+                {
+                    yield return update;
+                }
+
+                yield break;
+            }
 
             // Stream from the inner agent. Non-approval content is yielded immediately.
             // Approval requests are collected (not yielded) so we can classify the full batch.
