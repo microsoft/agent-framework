@@ -42,7 +42,7 @@ jobs:
       python-changes: ${{ steps.detect-changes.outputs.python }}
     steps:
       - name: Check out trusted workflow helpers
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -102,6 +102,7 @@ jobs:
     needs: resolve-ref
     if: needs.resolve-ref.outputs.dotnet-changes == 'true'
     permissions:
+      copilot-requests: write
       contents: read
       id-token: write
     uses: ./.github/workflows/dotnet-integration-tests.yml
@@ -112,7 +113,6 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZUREAI__ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
       OPENAI__APIKEY: ${{ secrets.OPENAI__APIKEY }}
 
   python-integration-tests:
@@ -120,6 +120,7 @@ jobs:
     needs: resolve-ref
     if: needs.resolve-ref.outputs.python-changes == 'true'
     permissions:
+      copilot-requests: write
       contents: read
       id-token: write
     uses: ./.github/workflows/python-integration-tests.yml
@@ -130,6 +131,5 @@ jobs:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
       FOUNDRY_MODELS_API_KEY: ${{ secrets.FOUNDRY_MODELS_API_KEY }}
       OPENAI__APIKEY: ${{ secrets.OPENAI__APIKEY }}

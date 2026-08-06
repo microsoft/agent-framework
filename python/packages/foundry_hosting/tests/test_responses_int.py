@@ -259,6 +259,14 @@ class TestStructuredContentInput:
         output_text = output_messages[0]["content"][0]["text"].lower()
         assert "cat" in output_text
 
+    @pytest.mark.xfail(
+        reason=(
+            "Foundry Responses API rejects inline base64 data URIs in image_url with "
+            "'invalid_payload: ... is not a valid absolute URI'. It requires an absolute "
+            "http(s) URI or an uploaded file_id. Re-enable if Foundry adds data-URI support."
+        ),
+        strict=False,
+    )
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled

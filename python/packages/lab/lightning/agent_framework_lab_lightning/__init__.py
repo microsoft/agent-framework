@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import importlib.metadata
 
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.observability import enable_instrumentation
+from agent_framework_lab_common._feature_usage import FeatureIndex
 from agentlightning.tracer import (
     AgentOpsTracer,
 )
@@ -26,6 +28,7 @@ class AgentFrameworkTracer(AgentOpsTracer):
 
     def init(self) -> None:
         """Initialize the agent-framework-lab-lightning for training."""
+        mark_feature_used(FeatureIndex.LAB)
         enable_instrumentation()
         super().init()
 

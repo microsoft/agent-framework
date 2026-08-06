@@ -9,6 +9,7 @@ from agent_framework._settings import load_settings
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
+from agent_framework_claude._feature_usage import FeatureIndex
 
 # region Test ClaudeAgentSettings
 
@@ -231,9 +232,13 @@ class TestClaudeAgentRun:
         ]
         mock_client = self._create_mock_client(messages)
 
-        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework_claude._agent.mark_feature_used") as mark_feature_used,
+        ):
             agent = ClaudeAgent()
             response = await agent.run("Hello")
+            mark_feature_used.assert_called_once_with(FeatureIndex.CLAUDE)
             assert response.text == "Hello!"
 
     async def test_run_captures_session_id(self) -> None:

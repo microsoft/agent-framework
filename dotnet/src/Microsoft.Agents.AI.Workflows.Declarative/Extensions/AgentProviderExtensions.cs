@@ -77,13 +77,18 @@ internal static class AgentProviderExtensions
 
             updates.Add(update);
 
-            if (autoSend)
+            // Error updates are withheld: they reach the client verbatim, bypassing the host's
+            // exception-detail policy. The detail still arrives via the thrown exception.
+            if (autoSend && !HasError(update))
             {
                 await context.AddEventAsync(new AgentResponseUpdateEvent(executorId, update), cancellationToken).ConfigureAwait(false);
             }
         }
 
         AgentResponse response = updates.ToAgentResponse();
+
+        // Fail before the response is announced as completed or copied to the conversation.
+        ThrowIfFailed(response, agentName);
 
         if (autoSend)
         {
@@ -110,5 +115,42 @@ internal static class AgentProviderExtensions
                 await context.QueueConversationUpdateAsync(conversationId, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    /// <summary>
+    /// Indicates whether an update carries an agent error rather than usable content.
+    /// </summary>
+    private static bool HasError(AgentResponseUpdate update) =>
+        update.Contents.Any(content => content is ErrorContent);
+
+    /// <summary>
+    /// Fails the action when the agent reported an error rather than a usable response.
+    /// </summary>
+    /// <remarks>
+    /// Any top-level <see cref="ErrorContent"/> is a failure, covering both a failed run and a
+    /// refusal, and excluding <c>incomplete</c>, which carries partial content instead. The detail
+    /// is folded into the exception so one error path stays under the host's exception-detail policy.
+    /// </remarks>
+    private static void ThrowIfFailed(AgentResponse response, string agentName)
+    {
+        // The last error wins: a run that fails without detail yields a generic placeholder first,
+        // and the specific cause follows as its own error.
+        ErrorContent? error =
+            response.Messages
+                .SelectMany(message => message.Contents)
+                .OfType<ErrorContent>()
+                .LastOrDefault();
+
+        if (error is null)
+        {
+            return;
+        }
+
+        string errorCode = string.IsNullOrWhiteSpace(error.ErrorCode) ? "unknown" : error.ErrorCode!;
+        string errorMessage = string.IsNullOrWhiteSpace(error.Message) ? "No error message was provided." : error.Message!;
+
+        // No inner exception: DeclarativeActionException is unwrapped to its inner exception when
+        // reported, which would discard this message.
+        throw new DeclarativeActionException($"Agent '{agentName}' failed [{errorCode}]: {errorMessage}");
     }
 }

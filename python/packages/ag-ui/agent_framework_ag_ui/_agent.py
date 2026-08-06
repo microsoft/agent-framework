@@ -7,9 +7,11 @@ from typing import Any, cast
 
 from ag_ui.core import BaseEvent
 from agent_framework import SupportsAgentRun
+from agent_framework._telemetry import mark_feature_used
 
 from ._agent_run import PendingApprovalEntry, PendingApprovalKey, run_agent_stream
 from ._approval_state import InMemoryAGUIApprovalStateStore
+from ._feature_usage import FeatureIndex
 from ._snapshots import AGUIThreadSnapshotStore
 
 
@@ -142,6 +144,7 @@ class AgentFrameworkAgent:
         Yields:
             AG-UI events
         """
+        mark_feature_used(FeatureIndex.AG_UI)
         async for event in run_agent_stream(
             input_data,
             self.agent,

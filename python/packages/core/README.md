@@ -53,6 +53,17 @@ client = OpenAIChatClient(
 )
 ```
 
+### Telemetry controls
+
+Agent Framework adds its package/version User-Agent to supported client
+requests. Approved Microsoft Foundry and Azure OpenAI request paths can also
+carry a documented feature-usage token.
+
+- `AGENT_FRAMEWORK_FEATURE_MASK_DISABLED=true` disables only the feature-usage
+  token while retaining the package/version User-Agent.
+- `AGENT_FRAMEWORK_USER_AGENT_DISABLED=true` disables the entire Agent Framework
+  User-Agent contribution, including the feature token.
+
 See the following [getting started samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/01-get-started) for more information.
 
 ## 2. Create a Simple Agent

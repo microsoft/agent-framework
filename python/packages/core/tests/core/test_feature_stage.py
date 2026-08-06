@@ -176,6 +176,23 @@ def test_experimental_abc_subclass_warning_points_at_user_file() -> None:
     assert Concrete().do() == 1
 
 
+def test_experimental_internal_framework_subclass_does_not_warn() -> None:
+    @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+    class ExperimentalBase:
+        pass
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        internal_subclass = type(
+            "InternalSubclass",
+            (ExperimentalBase,),
+            {"__module__": "agent_framework._internal_test"},
+        )
+
+    assert caught == []
+    assert issubclass(internal_subclass, ExperimentalBase)
+
+
 def test_experimental_runtime_checkable_protocol_keeps_protocol_runtime_checks() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

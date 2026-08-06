@@ -21,6 +21,7 @@ response = await client.get_response("Hello")
 
 ```python
 from agent_framework.ollama import OllamaChatClient
+
 # or directly:
 from agent_framework_ollama import OllamaChatClient
 ```
