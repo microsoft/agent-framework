@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Security;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -178,7 +179,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             return;
         }
 
-        foreach (string subdirectory in Directory.EnumerateDirectories(directory))
+        foreach (string subdirectory in this.SafeEnumerateDirectories(directory, attributesToSkip: 0))
         {
             if (IsLinkOrReparsePointOrInaccessible(subdirectory))
             {
@@ -428,11 +429,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         // Recurse into subdirectories if within depth limit
         if (currentDepth < this._searchDepth)
         {
-#if NET
-            foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory, "*", enumerationOptions))
-#else
-            foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory))
-#endif
+            foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory, FileAttributes.ReparsePoint))
             {
                 this.ScanDirectoryForResources(subdirectory, skillDirectoryFullPath, skillName, resources, currentDepth + 1);
             }
@@ -545,11 +542,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         // Recurse into subdirectories if within depth limit
         if (currentDepth < this._searchDepth)
         {
-#if NET
-            foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory, "*", enumerationOptions))
-#else
-            foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory))
-#endif
+            foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory, FileAttributes.ReparsePoint))
             {
                 this.ScanDirectoryForScripts(subdirectory, skillDirectoryFullPath, skillName, scripts, currentDepth + 1);
             }
@@ -588,40 +581,50 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         {
             return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
         }
-        catch (IOException)
-        {
-            return true;
-        }
-        catch (UnauthorizedAccessException)
+        catch (Exception ex) when (IsFileSystemInspectionFailure(ex))
         {
             return true;
         }
     }
 
-#if !NET
+    private static bool IsFileSystemInspectionFailure(Exception exception)
+    {
+        return exception is IOException or UnauthorizedAccessException or SecurityException;
+    }
+
     /// <summary>
-    /// Best-effort directory enumeration for target frameworks without
-    /// <c>EnumerationOptions.IgnoreInaccessible</c> support. Returns an empty
-    /// array when the caller lacks permission to read the directory contents,
-    /// so a single inaccessible child does not abort the entire skill scan.
+    /// Best-effort directory enumeration that returns an empty array when the
+    /// directory cannot be inspected, so a single inaccessible child does not
+    /// abort the entire skill scan.
     /// </summary>
-    private string[] SafeEnumerateDirectories(string path)
+    private string[] SafeEnumerateDirectories(string path, FileAttributes attributesToSkip)
     {
         try
         {
+#if NET
+            var enumerationOptions = new EnumerationOptions
+            {
+                RecurseSubdirectories = false,
+                IgnoreInaccessible = true,
+                AttributesToSkip = attributesToSkip,
+            };
+
+            return Directory.EnumerateDirectories(path, "*", enumerationOptions).ToArray();
+#else
+            _ = attributesToSkip;
             return Directory.GetDirectories(path);
+#endif
         }
-        catch (UnauthorizedAccessException)
+        catch (Exception ex) when (IsFileSystemInspectionFailure(ex))
         {
             if (this._logger.IsEnabled(LogLevel.Warning))
             {
-                LogDirectoryAccessDenied(this._logger, SanitizePathForLog(path));
+                LogDirectoryInspectionFailed(this._logger, SanitizePathForLog(path));
             }
 
             return Array.Empty<string>();
         }
     }
-#endif
 
     private static string ParseYamlScalarValue(string yamlContent, Match kvMatch)
     {
@@ -787,6 +790,6 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     [LoggerMessage(LogLevel.Warning, "Skipping script directory '{DirectoryName}' in skill '{SkillName}': directory path contains a symbolic link or reparse point, or could not be inspected")]
     private static partial void LogScriptSymlinkDirectory(ILogger logger, string skillName, string directoryName);
 
-    [LoggerMessage(LogLevel.Warning, "Skipping directory '{DirectoryPath}': access denied")]
-    private static partial void LogDirectoryAccessDenied(ILogger logger, string directoryPath);
+    [LoggerMessage(LogLevel.Warning, "Skipping directory '{DirectoryPath}': directory could not be inspected")]
+    private static partial void LogDirectoryInspectionFailed(ILogger logger, string directoryPath);
 }

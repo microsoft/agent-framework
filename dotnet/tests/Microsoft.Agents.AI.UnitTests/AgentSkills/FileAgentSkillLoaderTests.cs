@@ -6,6 +6,11 @@ using System.Diagnostics;
 #endif
 using System.IO;
 using System.Linq;
+#if NET
+using System.Runtime.Versioning;
+#endif
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
@@ -1007,6 +1012,111 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 #endif
 
+    /// <summary>
+    /// Denies permission to list the contents of <paramref name="path"/> while leaving the
+    /// directory itself inspectable, so enumerating it fails but reading its attributes does not.
+    /// Returns <see langword="false"/> when the environment does not honor the restriction
+    /// (for example, an elevated or root test host), in which case no cleanup is required.
+    /// </summary>
+    private static bool TryDenyDirectoryListing(string path, out Action restore)
+    {
+        restore = static () => { };
+
+        try
+        {
+#if NET
+            restore = OperatingSystem.IsWindows()
+                ? DenyDirectoryListingOnWindows(path)
+                : DenyDirectoryListingOnUnix(path);
+#else
+            restore = DenyDirectoryListingOnWindows(path);
+#endif
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return false;
+        }
+
+        // Confirm the restriction actually takes effect; elevated hosts can bypass it.
+        try
+        {
+            _ = Directory.GetDirectories(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return true;
+        }
+
+        restore();
+        restore = static () => { };
+        return false;
+    }
+
+#if NET
+    [SupportedOSPlatform("windows")]
+#endif
+    private static Action DenyDirectoryListingOnWindows(string path)
+    {
+        var directoryInfo = new DirectoryInfo(path);
+        SecurityIdentifier user = WindowsIdentity.GetCurrent().User!;
+        var denyRule = new FileSystemAccessRule(user, FileSystemRights.ListDirectory, AccessControlType.Deny);
+
+        DirectorySecurity security = directoryInfo.GetAccessControl();
+        security.AddAccessRule(denyRule);
+        directoryInfo.SetAccessControl(security);
+
+        return () =>
+        {
+            DirectorySecurity currentSecurity = directoryInfo.GetAccessControl();
+            currentSecurity.RemoveAccessRule(denyRule);
+            directoryInfo.SetAccessControl(currentSecurity);
+        };
+    }
+
+#if NET
+    [UnsupportedOSPlatform("windows")]
+    private static Action DenyDirectoryListingOnUnix(string path)
+    {
+        UnixFileMode originalMode = File.GetUnixFileMode(path);
+
+        // Execute-only: the directory can still be traversed and stat'ed, but not listed.
+        File.SetUnixFileMode(path, UnixFileMode.UserExecute);
+
+        return () => File.SetUnixFileMode(path, originalMode);
+    }
+#endif
+
+    [Fact]
+    public async Task GetSkillsAsync_UnreadableSubdirectory_StillDiscoversSiblingSkillsAsync()
+    {
+        // Arrange — discovery must not abort when a single subdirectory cannot be enumerated.
+        string root = Path.Combine(this._testRoot, "root");
+        string blockedDirectory = Path.Combine(root, "blocked");
+        Directory.CreateDirectory(blockedDirectory);
+        _ = CreateSkillDirectory(root, "good-skill");
+
+        if (!TryDenyDirectoryListing(blockedDirectory, out Action restore))
+        {
+            return;
+        }
+
+        try
+        {
+            var source = new AgentFileSkillsSource(root, s_noOpExecutor);
+
+            // Act
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+            // Assert
+            Assert.Single(skills);
+            Assert.Equal("good-skill", skills[0].Frontmatter.Name);
+        }
+        finally
+        {
+            restore();
+        }
+    }
+
     [Fact]
     public async Task GetSkillsAsync_FileWithUtf8Bom_ParsesSuccessfullyAsync()
     {
@@ -1317,7 +1427,6 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         return skillDir;
     }
 
-#if NET
     private static string CreateSkillDirectory(string root, string name)
     {
         string skillDirectory = Path.Combine(root, name);
@@ -1327,7 +1436,6 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
             $"---\nname: {name}\ndescription: A skill\n---\nBody.");
         return skillDirectory;
     }
-#endif
 
     private string CreateSkillDirectoryWithRawContent(string directoryName, string rawContent)
     {
