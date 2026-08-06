@@ -168,6 +168,18 @@ def test_checkpoint_storage_provider_caches_storage_by_context(is_hosted: bool) 
     assert second is not first
 
 
+@pytest.mark.parametrize(
+    "create_store",
+    [
+        lambda: FoundryCheckpointStore(""),
+        lambda: CheckpointStoreProvider().get_store(is_hosted=True, context_id=""),
+    ],
+)
+def test_checkpoint_stores_reject_empty_context_id(create_store: object) -> None:
+    with pytest.raises(ValueError, match="context_id must be provided"):
+        create_store()  # type: ignore[operator]
+
+
 def _approval_request(approval_request_id: str) -> Content:
     function_call = Content.from_function_call(
         "call-1",
@@ -239,10 +251,10 @@ def test_function_approval_storage_provider_selects_backend(
 ) -> None:
     provider = FunctionApprovalStoreProvider()
 
-    storage = provider.get_store(is_hosted=is_hosted)
+    storage = provider.get_store(is_hosted=is_hosted, context_id="context-1")
 
     assert type(storage) is expected_type
-    assert provider.get_store(is_hosted=is_hosted) is storage
+    assert provider.get_store(is_hosted=is_hosted, context_id="context-1") is storage
 
 
 def test_function_approval_storage_provider_creates_only_requested_backend() -> None:
@@ -251,9 +263,9 @@ def test_function_approval_storage_provider_creates_only_requested_backend() -> 
         patch("agent_framework_foundry_hosting._state_store.InMemoryFunctionApprovalStore") as in_memory_storage_type,
     ):
         provider = FunctionApprovalStoreProvider()
-        storage = provider.get_store(is_hosted=True)
+        storage = provider.get_store(is_hosted=True, context_id="context-1")
 
-        assert provider.get_store(is_hosted=True) is storage
+        assert provider.get_store(is_hosted=True, context_id="context-1") is storage
 
     foundry_storage_type.assert_called_once_with()
     in_memory_storage_type.assert_not_called()
@@ -328,10 +340,10 @@ def test_agent_session_storage_provider_selects_backend(
 ) -> None:
     provider = AgentSessionStoreProvider()
 
-    storage = provider.get_store(is_hosted=is_hosted)
+    storage = provider.get_store(is_hosted=is_hosted, context_id="context-1")
 
     assert type(storage) is expected_type
-    assert provider.get_store(is_hosted=is_hosted) is storage
+    assert provider.get_store(is_hosted=is_hosted, context_id="context-1") is storage
 
 
 def test_agent_session_storage_provider_creates_only_requested_backend() -> None:
@@ -340,9 +352,9 @@ def test_agent_session_storage_provider_creates_only_requested_backend() -> None
         patch("agent_framework_foundry_hosting._state_store.SessionStore") as in_memory_storage_type,
     ):
         provider = AgentSessionStoreProvider()
-        storage = provider.get_store(is_hosted=False)
+        storage = provider.get_store(is_hosted=False, context_id="context-1")
 
-        assert provider.get_store(is_hosted=False) is storage
+        assert provider.get_store(is_hosted=False, context_id="context-1") is storage
 
     foundry_storage_type.assert_not_called()
     in_memory_storage_type.assert_called_once_with()

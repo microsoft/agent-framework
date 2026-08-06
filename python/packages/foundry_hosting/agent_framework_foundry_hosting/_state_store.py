@@ -3,7 +3,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar
 
 from agent_framework import (
     AgentSession,
@@ -24,8 +24,22 @@ class StoreProvider(ABC, Generic[StoreT]):
     """Provide store for a hosting environment."""
 
     @abstractmethod
-    def get_store(self, *args: Any, **kwargs: Any) -> StoreT:
-        """Get store for a hosting environment."""
+    def get_store(self, *, is_hosted: bool, context_id: str) -> StoreT:
+        """Get store for a hosting environment.
+
+        Args:
+            is_hosted: A boolean indicating whether the environment is a Foundry
+                Hosted environment (vs. a local environment).
+            context_id: A string that uniquely identifies the context for which the store is scoped.
+
+        Returns:
+            The store instance for the given hosting environment and scoped by context ID.
+
+        Note:
+            `is_hosted` and `context_id` are used to determine which store implementation to return.
+            Concrete implementations are free to use these parameters as needed to return the appropriate
+            store instance.
+        """
 
 
 # region Checkpoint persistence
@@ -43,6 +57,9 @@ class FoundryCheckpointStore:
             context_id: A string that uniquely identifies the context for which the checkpoint store is scoped.
                         This can be used to isolate checkpoints for different workflow runs.
         """
+        if not context_id:
+            raise ValueError("context_id must be provided to initialize a FoundryCheckpointStore.")
+
         self.context_id = context_id
 
     async def _get_store(self) -> FoundryStateStore:
@@ -51,20 +68,50 @@ class FoundryCheckpointStore:
         )
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
+        """Save a workflow checkpoint to the store.
+
+        Args:
+            checkpoint: The workflow checkpoint to save.
+
+        The checkpoint will be serialized to a dictionary and then encoded before being stored.
+
+        Returns:
+            The ID of the saved checkpoint.
+        """
+        from agent_framework._workflows._checkpoint_encoding import encode_checkpoint_value
+
+        encoded_checkpoint = encode_checkpoint_value(checkpoint.to_dict())
+
         store = await self._get_store()
         async with store:
-            await store.set_item(checkpoint.checkpoint_id, checkpoint.to_dict())
+            await store.set_item(checkpoint.checkpoint_id, encoded_checkpoint)
             return checkpoint.checkpoint_id
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
+        """Load a workflow checkpoint from the store.
+
+        Args:
+            checkpoint_id: The ID of the checkpoint to load.
+
+        Returns:
+            The loaded workflow checkpoint.
+
+        Raises:
+            WorkflowCheckpointException: If no checkpoint is found with the given ID.
+        """
+        from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value
+
         store = await self._get_store()
         async with store:
             item = await store.get_item(checkpoint_id)
         if item is None:
             raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
-        return WorkflowCheckpoint.from_dict(item.value)
+        return WorkflowCheckpoint.from_dict(decode_checkpoint_value(item.value))
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
+        """List all workflow checkpoints for a given workflow name."""
+        from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value
+
         store = await self._get_store()
         checkpoints: list[WorkflowCheckpoint] = []
         after: str | None = None
@@ -75,7 +122,7 @@ class FoundryCheckpointStore:
                     item = await store.get_item(item_key.key)
                     if item is None:
                         continue
-                    checkpoint = WorkflowCheckpoint.from_dict(item.value)
+                    checkpoint = WorkflowCheckpoint.from_dict(decode_checkpoint_value(item.value))
                     if checkpoint.workflow_name == workflow_name:
                         checkpoints.append(checkpoint)
                 if not page.has_more or page.last_id is None:
@@ -119,6 +166,10 @@ class CheckpointStoreProvider(StoreProvider[CheckpointStorage]):
     ) -> CheckpointStorage:
         """Get checkpoint store for the requested hosting environment."""
         stores = self._foundry_storages if is_hosted else self._in_memory_storages
+
+        if not context_id:
+            raise ValueError("context_id must be provided to get a checkpoint store.")
+
         if context_id not in stores:
             stores[context_id] = FoundryCheckpointStore(context_id) if is_hosted else InMemoryCheckpointStorage()
         return stores[context_id]
@@ -142,7 +193,13 @@ class FunctionApprovalStore(Protocol):
 
 
 class FoundryFunctionApprovalStore:
-    """Function approval store backed by the `FoundryStateStore`."""
+    """Function approval store backed by the `FoundryStateStore`.
+
+    This storage implements a hybrid approach where the checkpoint metadata and structure are
+    stored in JSON format, while the actual state data (which may contain complex Python objects)
+    is serialized using pickle and embedded as base64-encoded strings within the JSON. This allows
+    for human-readable checkpoint files while preserving the ability to store complex Python objects.
+    """
 
     DEFAULT_ROOT_SCOPE = "function_approvals"
 
@@ -194,7 +251,7 @@ class FunctionApprovalStoreProvider(StoreProvider[FunctionApprovalStore]):
         self._foundry_storage: FunctionApprovalStore | None = None
         self._in_memory_storage: FunctionApprovalStore | None = None
 
-    def get_store(self, *, is_hosted: bool) -> FunctionApprovalStore:
+    def get_store(self, *, is_hosted: bool, context_id: str) -> FunctionApprovalStore:
         """Get function approval store for the requested hosting environment."""
         if is_hosted:
             if self._foundry_storage is None:
@@ -248,7 +305,7 @@ class AgentSessionStoreProvider(StoreProvider[SessionStore]):
         self._foundry_storage: SessionStore | None = None
         self._in_memory_storage: SessionStore | None = None
 
-    def get_store(self, *, is_hosted: bool) -> SessionStore:
+    def get_store(self, *, is_hosted: bool, context_id: str) -> SessionStore:
         """Get agent session store for the requested hosting environment."""
         if is_hosted:
             if self._foundry_storage is None:
