@@ -5007,6 +5007,95 @@ class TestWorkflowAgentHosting:
         ]
         assert branch_text == ["turn 2"]
 
+    async def test_failed_conversation_workflow_promotes_latest_response_checkpoint(self, tmp_path: Path) -> None:
+        workflow_agent = _build_text_workflow_agent("ignored")
+        checkpoint = WorkflowCheckpoint(
+            workflow_name=workflow_agent.workflow.name,
+            graph_signature_hash="hash",
+        )
+
+        async def failing_run(*args: Any, **kwargs: Any) -> AgentResponse:
+            await kwargs["checkpoint_storage"].save(checkpoint)
+            raise RuntimeError("workflow failed")
+
+        server = _make_server(workflow_agent)
+        server._checkpoint_storage_path = str(tmp_path)  # pyright: ignore[reportPrivateUsage]
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(
+            response_id="response-1",
+            conversation_id="conversation-1",
+            mode_flags=MagicMock(),
+        )
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(workflow_agent, "run", side_effect=failing_run),
+        ):
+            events = [
+                event
+                async for event in server._handle_inner_workflow(  # pyright: ignore[reportPrivateUsage]
+                    request,
+                    context,
+                )
+            ]
+
+        conversation_storage = FileCheckpointStorage(tmp_path / "conversation-1")
+        latest = await conversation_storage.get_latest(workflow_name=workflow_agent.workflow.name)
+        assert latest is not None
+        assert latest.checkpoint_id == checkpoint.checkpoint_id
+        assert getattr(events[-1], "type", None) == "response.failed"
+
+    @pytest.mark.parametrize("interruption", ["cancel", "close"])
+    async def test_interrupted_conversation_workflow_promotes_latest_response_checkpoint(
+        self,
+        tmp_path: Path,
+        interruption: str,
+    ) -> None:
+        workflow_agent = _build_text_workflow_agent("ignored")
+        checkpoint = WorkflowCheckpoint(
+            workflow_name=workflow_agent.workflow.name,
+            graph_signature_hash="hash",
+        )
+
+        async def updates(checkpoint_storage: FileCheckpointStorage) -> AsyncIterator[AgentResponseUpdate]:
+            await checkpoint_storage.save(checkpoint)
+            yield AgentResponseUpdate(contents=[Content.from_text("started")], role="assistant")
+            await asyncio.Event().wait()
+
+        def streaming_run(*args: Any, **kwargs: Any) -> AsyncIterator[AgentResponseUpdate]:
+            return updates(kwargs["checkpoint_storage"])
+
+        server = _make_server(workflow_agent)
+        server._checkpoint_storage_path = str(tmp_path)  # pyright: ignore[reportPrivateUsage]
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(
+            response_id="response-1",
+            conversation_id="conversation-1",
+            mode_flags=MagicMock(),
+        )
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(workflow_agent, "run", side_effect=streaming_run),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_inner_workflow(request, context),  # pyright: ignore[reportPrivateUsage]
+            )
+            await anext(handler)
+            await anext(handler)
+            await anext(handler)
+            if interruption == "cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await handler.athrow(asyncio.CancelledError())
+            else:
+                await handler.aclose()
+
+        conversation_storage = FileCheckpointStorage(tmp_path / "conversation-1")
+        latest = await conversation_storage.get_latest(workflow_name=workflow_agent.workflow.name)
+        assert latest is not None
+        assert latest.checkpoint_id == checkpoint.checkpoint_id
+
     async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")
         server = _make_server(workflow_agent)

@@ -824,89 +824,106 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 user_id=user_id,
             )
 
-            # Multi-turn pattern: when we have a prior checkpoint, restore it
-            # first (drive the workflow back to idle with prior state intact),
-            # then make a separate call that delivers the new user input. This
-            # depends on Workflow.run preserving shared state across calls. The
-            # restore-only call may yield events from any pending in-flight
-            # work in the checkpoint; we consume those internally here so they
-            # don't surface to the response stream as duplicates.
-            #
-            # If the restored checkpoint had pending request_info events, the
-            # restore-only call replays them through
-            # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
-            # and populates ``self._agent.pending_requests``. That is the correct
-            # state: those requests are genuinely outstanding, and the next
-            # ``run(input_messages, ...)`` call may contain ``function_call_output``
-            # items (carried as FunctionResult/FunctionApprovalResponse content)
-            # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-            if latest_checkpoint_id is not None:
-                if is_streaming_request:
-                    async for _ in self._agent.run(
-                        stream=True,
-                        checkpoint_id=latest_checkpoint_id,
-                        checkpoint_storage=restore_storage,
-                    ):
-                        pass
-                else:
-                    await self._agent.run(
+            request_failure: Exception | None = None
+            request_interrupted = False
+            try:
+                # Multi-turn pattern: when we have a prior checkpoint, restore it
+                # first (drive the workflow back to idle with prior state intact),
+                # then make a separate call that delivers the new user input. This
+                # depends on Workflow.run preserving shared state across calls. The
+                # restore-only call may yield events from any pending in-flight
+                # work in the checkpoint; we consume those internally here so they
+                # don't surface to the response stream as duplicates.
+                #
+                # If the restored checkpoint had pending request_info events, the
+                # restore-only call replays them through
+                # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
+                # and populates ``self._agent.pending_requests``. That is the correct
+                # state: those requests are genuinely outstanding, and the next
+                # ``run(input_messages, ...)`` call may contain ``function_call_output``
+                # items (carried as FunctionResult/FunctionApprovalResponse content)
+                # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
+                if latest_checkpoint_id is not None:
+                    if is_streaming_request:
+                        async for _ in self._agent.run(
+                            stream=True,
+                            checkpoint_id=latest_checkpoint_id,
+                            checkpoint_storage=restore_storage,
+                        ):
+                            pass
+                    else:
+                        await self._agent.run(
+                            stream=False,
+                            checkpoint_id=latest_checkpoint_id,
+                            checkpoint_storage=restore_storage,
+                        )
+
+                if not is_streaming_request:
+                    # Run the agent in non-streaming mode with the new user input.
+                    response = await self._agent.run(
+                        input_messages,
                         stream=False,
-                        checkpoint_id=latest_checkpoint_id,
-                        checkpoint_storage=restore_storage,
+                        checkpoint_storage=write_storage,
                     )
 
-            if not is_streaming_request:
-                # Run the agent in non-streaming mode with the new user input.
-                response = await self._agent.run(
-                    input_messages,
-                    stream=False,
-                    checkpoint_storage=write_storage,
-                )
+                    async for item in _to_outputs_for_messages(
+                        response_event_stream,
+                        response.messages,
+                        approval_storage=approval_storage,
+                    ):
+                        yield item
+                else:
+                    tracker = _OutputItemTracker(response_event_stream)
 
-                async for item in _to_outputs_for_messages(
-                    response_event_stream,
-                    response.messages,
-                    approval_storage=approval_storage,
-                ):
-                    yield item
+                    # Run the workflow agent in streaming mode with the new user input.
+                    async for update in self._agent.run(
+                        input_messages,
+                        stream=True,
+                        checkpoint_storage=write_storage,
+                    ):
+                        for content in update.contents:
+                            for event in tracker.handle(content):
+                                yield event
+                            if tracker.needs_async:
+                                async for item in _to_outputs(
+                                    response_event_stream, content, approval_storage=approval_storage
+                                ):
+                                    yield item
+                                tracker.needs_async = False
 
-                await self._finalize_workflow_checkpoints(
-                    write_storage,
-                    workflow_name=self._agent.workflow.name,
-                    conversation_id=context.conversation_id,
-                    user_id=user_id,
-                )
-                yield response_event_stream.emit_completed()
-                return
-
-            tracker = _OutputItemTracker(response_event_stream)
-
-            # Run the workflow agent in streaming mode with the new user input.
-            async for update in self._agent.run(
-                input_messages,
-                stream=True,
-                checkpoint_storage=write_storage,
-            ):
-                for content in update.contents:
-                    for event in tracker.handle(content):
+                    # Close any remaining active builder
+                    for event in tracker.close():
                         yield event
-                    if tracker.needs_async:
-                        async for item in _to_outputs(
-                            response_event_stream, content, approval_storage=approval_storage
-                        ):
-                            yield item
-                        tracker.needs_async = False
-
-            # Close any remaining active builder
-            for event in tracker.close():
-                yield event
-
-            await self._finalize_workflow_checkpoints(
-                write_storage,
-                workflow_name=self._agent.workflow.name,
-                conversation_id=context.conversation_id,
-                user_id=user_id,
-            )
+            except asyncio.CancelledError:
+                request_interrupted = True
+                raise
+            except GeneratorExit:
+                request_interrupted = True
+                raise
+            except Exception as ex:
+                request_failure = ex
+                raise
+            finally:
+                try:
+                    await self._finalize_workflow_checkpoints(
+                        write_storage,
+                        workflow_name=self._agent.workflow.name,
+                        conversation_id=context.conversation_id,
+                        user_id=user_id,
+                    )
+                except Exception as save_error:
+                    if request_interrupted:
+                        logger.error(
+                            "Failed to finalize workflow checkpoints while unwinding an interrupted request",
+                            exc_info=(type(save_error), save_error, save_error.__traceback__),
+                        )
+                    elif request_failure is not None:
+                        logger.error(
+                            "Failed to finalize workflow checkpoints after a workflow failure",
+                            exc_info=(type(save_error), save_error, save_error.__traceback__),
+                        )
+                    else:
+                        raise
             yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.exception("Failed to produce response for workflow agent")
