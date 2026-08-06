@@ -144,7 +144,11 @@ def _get_foundry_agent_session_id(response: Any) -> str | None:
     if isinstance(agent_session_id, str) and agent_session_id:
         return agent_session_id
 
-    session_id = getattr(getattr(response, "session", None), "id", None)
+    session = getattr(response, "session", None)
+    if isinstance(session, Mapping):
+        session_id = cast(Mapping[str, Any], session).get("id")
+    else:
+        session_id = getattr(session, "id", None)
     return session_id if isinstance(session_id, str) and session_id else None
 
 

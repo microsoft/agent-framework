@@ -37,6 +37,7 @@ from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from openai import AsyncOpenAI
+from openai.types.responses.response import Response as OpenAIResponse
 
 from agent_framework_foundry._agent import (
     FoundryAgent,
@@ -804,11 +805,26 @@ def test_raw_foundry_agent_chat_client_parse_response_suppresses_conversation_id
     assert result.conversation_id is None
 
 
+def _openai_response_with_session_id(session_id: str) -> OpenAIResponse:
+    return OpenAIResponse.model_validate({
+        "id": "resp_123",
+        "created_at": 0,
+        "model": "test-model",
+        "object": "response",
+        "output": [],
+        "parallel_tool_calls": False,
+        "tool_choice": "auto",
+        "tools": [],
+        "session": {"id": session_id},
+    })
+
+
 @pytest.mark.parametrize(
     "response",
     [
         SimpleNamespace(agent_session_id="agent-session-123"),
         SimpleNamespace(session=SimpleNamespace(id="agent-session-123")),
+        _openai_response_with_session_id("agent-session-123"),
         SimpleNamespace(agent_session_id="agent-session-123", session=SimpleNamespace(id="session-id-should-not-win")),
     ],
 )
@@ -887,6 +903,7 @@ def test_raw_foundry_agent_chat_client_parse_chunk_suppresses_conversation_id_fo
     [
         SimpleNamespace(agent_session_id="agent-session-123"),
         SimpleNamespace(session=SimpleNamespace(id="agent-session-123")),
+        _openai_response_with_session_id("agent-session-123"),
         SimpleNamespace(agent_session_id="agent-session-123", session=SimpleNamespace(id="session-id-should-not-win")),
     ],
 )
