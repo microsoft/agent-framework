@@ -1878,6 +1878,49 @@ async def test_drained_and_discarded_attempt_flushes_on_allow(streaming: bool) -
     assert [message.text for message in stored] == ["hello there", expected_response] * 2
 
 
+class _DrainThenTerminateWithoutResultMiddleware(AgentMiddleware):
+    """Drains a successful attempt, then short-circuits the run with NO result."""
+
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
+        if context.stream and context.result is not None:
+            stream = cast("ResponseStream[AgentResponseUpdate, AgentResponse[Any]]", context.result)
+            await stream.get_final_response()  # the attempt fully ran (successfully)
+        context.result = None
+        raise MiddlewareTermination("nothing egresses")
+
+
+@requires_sdk
+@pytest.mark.parametrize("streaming", [False, True], ids=["non_streaming", "streaming"])
+async def test_drained_attempt_history_survives_no_result_termination(streaming: bool) -> None:
+    # A no-egress termination is a permitted outcome (nothing needs an output
+    # verdict), so persistence the drained work deferred must be released — on both
+    # seams. The streaming no-result termination path must flush before re-raising,
+    # mirroring the non-streaming branch; otherwise history of model calls that
+    # really happened (and passed their own verdicts) quietly vanishes.
+    from agent_framework import AgentSession, InMemoryHistoryProvider
+
+    provider = InMemoryHistoryProvider()
+    session = AgentSession()
+    agent = Agent(
+        client=MockBaseChatClient(),
+        name="terminated",
+        context_providers=[provider],
+        middleware=[create_agent_hooks_middleware([AllowGuard()]), _DrainThenTerminateWithoutResultMiddleware()],
+    )
+
+    if streaming:
+        stream = agent.run("hello there", session=session, stream=True)
+        async for _ in stream:  # the terminated run egresses nothing
+            raise AssertionError("no updates should egress")
+    else:
+        assert await agent.run("hello there", session=session) is None
+
+    expected_response = "update - hello there" if streaming else "test response - hello there"
+    stored = cast("list[Message]", session.state.get(provider.source_id, {}).get("messages", []))
+    assert [message.text for message in stored] == ["hello there", expected_response]
+
+
 @requires_sdk
 async def test_tool_nested_run_inside_drained_attempt_persists_inline() -> None:
     # With the streaming gate now covering the pipeline descent, tool invocations

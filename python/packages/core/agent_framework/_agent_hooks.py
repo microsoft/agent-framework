@@ -1092,7 +1092,16 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
                     termination = exc
             inner = context.result
             if inner is None and termination is not None:
-                # Terminated without a result: nothing will egress.
+                if state.halted is not None:
+                    # The enforcement layer itself failed: strand the deferred
+                    # persistence (fail-closed) and surface the halt.
+                    raise state.halted
+                # Terminated without a result: nothing will egress, so the no-egress
+                # termination is a permitted outcome. Release the persistence the
+                # drained in-pipeline work deferred — history of model calls that
+                # really happened and passed their own verdicts — mirroring the
+                # non-streaming branch's flush-before-re-raise.
+                await gate_handle.flush()
                 shutdown_reason = "completed"
                 raise termination
             if not isinstance(inner, ResponseStream):
