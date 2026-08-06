@@ -160,6 +160,10 @@ def test_checkpoint_storage_provider_caches_storage_by_context(is_hosted: bool) 
     first = provider.get_store(is_hosted=is_hosted, context_id="context-1")
     second = provider.get_store(is_hosted=is_hosted, context_id="context-2")
 
+    if is_hosted:
+        assert type(first) is FoundryCheckpointStore
+        assert type(second) is FoundryCheckpointStore
+
     assert provider.get_store(is_hosted=is_hosted, context_id="context-1") is first
     assert second is not first
 
@@ -253,6 +257,21 @@ def test_function_approval_storage_provider_creates_only_requested_backend() -> 
 
     foundry_storage_type.assert_called_once_with()
     in_memory_storage_type.assert_not_called()
+
+
+async def test_set_agent_session_uses_scoped_store() -> None:
+    store = _store()
+    session = AgentSession(session_id="agent-session-1")
+    session.state["turn_count"] = 2
+
+    with patch(
+        "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+        new=AsyncMock(return_value=store),
+    ) as get_or_create:
+        await FoundryAgentSessionStore().set("storage-session-1", session)
+
+    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True)
+    store.set_item.assert_awaited_once_with("storage-session-1", session.to_dict())
 
 
 async def test_get_agent_session_returns_deserialized_session() -> None:
