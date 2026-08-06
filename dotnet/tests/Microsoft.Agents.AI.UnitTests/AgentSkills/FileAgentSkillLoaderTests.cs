@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+#if NET
+using System.Diagnostics;
+#endif
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -628,6 +631,223 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     }
 
 #if NET
+    private static bool TryCreateDirectorySymbolicLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return false;
+        }
+
+        return Directory.Exists(linkPath)
+            && (File.GetAttributes(linkPath) & FileAttributes.ReparsePoint) != 0;
+    }
+
+    private static bool TryCreateFileSymbolicLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(linkPath, targetPath);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return false;
+        }
+
+        return File.Exists(linkPath)
+            && (File.GetAttributes(linkPath) & FileAttributes.ReparsePoint) != 0;
+    }
+
+    private static bool TryCreateDirectoryJunction(string linkPath, string targetPath)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        string commandInterpreter = Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe";
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = commandInterpreter,
+            Arguments = $"/c mklink /J \"{linkPath}\" \"{targetPath}\"",
+            CreateNoWindow = true,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+        };
+
+        using Process? process = Process.Start(startInfo);
+        if (process is null)
+        {
+            return false;
+        }
+
+        process.WaitForExit();
+        return process.ExitCode == 0
+            && Directory.Exists(linkPath)
+            && (File.GetAttributes(linkPath) & FileAttributes.ReparsePoint) != 0;
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_SymlinkedSkillDirectory_SkipsLinkedSkillAsync()
+    {
+        // Arrange
+        string root = Path.Combine(this._testRoot, "root");
+        string outsideSkill = Path.Combine(this._testRoot, "outside", "evil-skill");
+        string linkedSkill = Path.Combine(root, "evil-skill");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(outsideSkill);
+        File.WriteAllText(
+            Path.Combine(outsideSkill, "SKILL.md"),
+            "---\nname: evil-skill\ndescription: Linked skill\n---\nBody.");
+        _ = CreateSkillDirectory(root, "good-skill");
+
+        if (!TryCreateDirectorySymbolicLink(linkedSkill, outsideSkill))
+        {
+            return;
+        }
+
+        try
+        {
+            var source = new AgentFileSkillsSource(root, s_noOpExecutor);
+
+            // Act
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+            // Assert
+            Assert.Single(skills);
+            Assert.Equal("good-skill", skills[0].Frontmatter.Name);
+        }
+        finally
+        {
+            Directory.Delete(linkedSkill);
+        }
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_SymlinkedSkillFile_SkipsSkillAsync()
+    {
+        // Arrange
+        string root = Path.Combine(this._testRoot, "root");
+        string skillDirectory = Path.Combine(root, "evil-skill");
+        string outsideSkillFile = Path.Combine(this._testRoot, "outside-SKILL.md");
+        string linkedSkillFile = Path.Combine(skillDirectory, "SKILL.md");
+        Directory.CreateDirectory(skillDirectory);
+        File.WriteAllText(
+            outsideSkillFile,
+            "---\nname: evil-skill\ndescription: Linked skill file\n---\nBody.");
+
+        if (!TryCreateFileSymbolicLink(linkedSkillFile, outsideSkillFile))
+        {
+            return;
+        }
+
+        try
+        {
+            var source = new AgentFileSkillsSource(root, s_noOpExecutor);
+
+            // Act
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+            // Assert
+            Assert.Empty(skills);
+        }
+        finally
+        {
+            File.Delete(linkedSkillFile);
+        }
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ConfiguredRootIsSymlink_DiscoversRealSkillsAsync()
+    {
+        // Arrange
+        string realRoot = Path.Combine(this._testRoot, "real-root");
+        string linkedRoot = Path.Combine(this._testRoot, "linked-root");
+        _ = CreateSkillDirectory(realRoot, "my-skill");
+
+        if (!TryCreateDirectorySymbolicLink(linkedRoot, realRoot))
+        {
+            return;
+        }
+
+        try
+        {
+            var source = new AgentFileSkillsSource(linkedRoot, s_noOpExecutor);
+
+            // Act
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+            // Assert
+            Assert.Single(skills);
+            Assert.Equal("my-skill", skills[0].Frontmatter.Name);
+        }
+        finally
+        {
+            Directory.Delete(linkedRoot);
+        }
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_JunctionedSkillDirectory_SkipsLinkedSkillAsync()
+    {
+        // Arrange
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string root = Path.Combine(this._testRoot, "root");
+        string outsideSkill = Path.Combine(this._testRoot, "outside", "evil-skill");
+        string junctionSkill = Path.Combine(root, "evil-skill");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(outsideSkill);
+        File.WriteAllText(
+            Path.Combine(outsideSkill, "SKILL.md"),
+            "---\nname: evil-skill\ndescription: Junctioned skill\n---\nBody.");
+        _ = CreateSkillDirectory(root, "good-skill");
+
+        if (!TryCreateDirectoryJunction(junctionSkill, outsideSkill))
+        {
+            return;
+        }
+
+        try
+        {
+            var source = new AgentFileSkillsSource(root, s_noOpExecutor);
+
+            // Act
+            var skills = await source.GetSkillsAsync(TestAgentSkillsSourceContextFactory.Create());
+
+            // Assert
+            Assert.Single(skills);
+            Assert.Equal("good-skill", skills[0].Frontmatter.Name);
+        }
+        finally
+        {
+            Directory.Delete(junctionSkill);
+        }
+    }
+
     [Fact]
     public async Task GetSkillsAsync_SymlinkInPath_SkipsSymlinkedResourcesAsync()
     {
@@ -1096,6 +1316,18 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
             $"---\nname: {name}\ndescription: {description}\n---\n{body}");
         return skillDir;
     }
+
+#if NET
+    private static string CreateSkillDirectory(string root, string name)
+    {
+        string skillDirectory = Path.Combine(root, name);
+        Directory.CreateDirectory(skillDirectory);
+        File.WriteAllText(
+            Path.Combine(skillDirectory, "SKILL.md"),
+            $"---\nname: {name}\ndescription: A skill\n---\nBody.");
+        return skillDirectory;
+    }
+#endif
 
     private string CreateSkillDirectoryWithRawContent(string directoryName, string rawContent)
     {
