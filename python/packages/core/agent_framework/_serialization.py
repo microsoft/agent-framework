@@ -9,6 +9,7 @@ import re
 from collections.abc import Mapping, MutableMapping
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
+from enum import Enum
 from functools import lru_cache
 from typing import Any, ClassVar, Protocol, TypeGuard, TypeVar, cast, runtime_checkable
 
@@ -649,7 +650,7 @@ def make_json_safe(obj: Any) -> Any:
     """Recursively convert an object to a JSON-serializable form.
 
     Handles dataclasses, Pydantic models, objects with ``to_dict``/``dict``/``__dict__``,
-    datetimes, lists, dicts, and primitives.  Falls back to ``str()`` for any remaining
+    datetimes, enums, sets, lists, dicts, and primitives.  Falls back to ``str()`` for any remaining
     non-serializable value so that ``json.dumps`` never raises a ``TypeError``.
 
     Args:
@@ -660,6 +661,8 @@ def make_json_safe(obj: Any) -> Any:
     """
     if isinstance(obj, _JSON_SCALAR_TYPES):
         return obj
+    if isinstance(obj, Enum):
+        return make_json_safe(obj.value)
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     if is_dataclass(obj) and not isinstance(obj, type):
@@ -686,6 +689,8 @@ def make_json_safe(obj: Any) -> Any:
     if isinstance(obj, dict):
         return {str(key): make_json_safe(value) for key, value in obj.items()}  # type: ignore[misc]
     if isinstance(obj, (list, tuple)):
+        return [make_json_safe(item) for item in obj]  # type: ignore[misc]
+    if isinstance(obj, (set, frozenset)):
         return [make_json_safe(item) for item in obj]  # type: ignore[misc]
     if hasattr(obj, "__dict__"):
         return {key: make_json_safe(value) for key, value in vars(obj).items()}

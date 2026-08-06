@@ -21,7 +21,7 @@ import logging
 import re
 import uuid
 import weakref
-from collections.abc import Awaitable, Callable, Iterable, MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime
@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
-from ._serialization import SerializationMixin
+from ._serialization import SerializationMixin, make_json_safe
 from ._sessions import ContextProvider
 from ._tools import FunctionTool, tool
 from ._types import Content, Message
@@ -84,28 +84,6 @@ def _get_additional_properties(obj: Any) -> dict[str, Any]:
     return cast(dict[str, Any], props) if isinstance(props, dict) else {}
 
 
-def _json_safe(value: Any) -> Any:
-    """Return a durable-state-safe representation of arbitrary metadata."""
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, Enum):
-        return value.value
-    if isinstance(value, dict):
-        mapping = cast(dict[Any, Any], value)
-        return {str(key): _json_safe(item) for key, item in mapping.items()}
-    if isinstance(value, (list, tuple, set, frozenset)):
-        items = cast(Iterable[Any], value)
-        return [_json_safe(item) for item in items]
-    to_dict = getattr(value, "to_dict", None)
-    if callable(to_dict):
-        with contextlib.suppress(Exception):
-            return _json_safe(to_dict())
-    with contextlib.suppress(TypeError, ValueError):
-        json.dumps(value)
-        return value
-    return repr(value)
-
-
 def _remember_session(session_var: ContextVar[Any], session: Any) -> None:
     """Remember the current session without keeping it alive after the task ends."""
     if session is None:
@@ -121,6 +99,21 @@ def _remembered_session(session_var: ContextVar[Any]) -> Any:
     """Return the weakly remembered session for the current async context."""
     reference = session_var.get(None)
     return cast(weakref.ReferenceType[Any], reference)() if isinstance(reference, weakref.ReferenceType) else None
+
+
+def _fides_session_state(session: Any) -> dict[str, Any]:
+    """Return the initialized ``session.state["_fides"]`` durable-state mapping.
+
+    This is the single owner of the FIDES session-state contract. Callers that may not
+    have a session must guard for ``None`` before calling.
+    """
+    state = cast(dict[str, Any], session.state.setdefault("_fides", {}))
+    state.setdefault("context_label", None)
+    state.setdefault("audit_log", [])
+    state.setdefault("pending_policy_approvals", {})
+    state.setdefault("turn_counter", 0)
+    state.setdefault("call_counter", 0)
+    return state
 
 
 # =============================================================================
@@ -229,7 +222,7 @@ class ContentLabel(SerializationMixin):
             "confidentiality": str(self.confidentiality),
         }
         if self.metadata:
-            result["metadata"] = _json_safe(self.metadata)
+            result["metadata"] = make_json_safe(self.metadata)
         return result
 
     @classmethod
@@ -723,31 +716,7 @@ class LabeledMessage(Message):
 
 
 # Async-safe storage for the active FIDES middleware and session.
-class _MiddlewareContext:
-    """ContextVar-backed holder with the legacy ``.instance`` compatibility API."""
-
-    def __init__(self, name: str) -> None:
-        self._var: ContextVar[Any] = ContextVar(name, default=None)
-
-    @property
-    def instance(self) -> Any:
-        return self._var.get(None)
-
-    @instance.setter
-    def instance(self, value: Any) -> None:
-        self._var.set(value)
-
-    def get(self, default: Any = None) -> Any:
-        return self._var.get(default)
-
-    def set(self, value: Any) -> Any:
-        return self._var.set(value)
-
-    def reset(self, token: Any) -> None:
-        self._var.reset(token)
-
-
-_current_middleware = _MiddlewareContext("_current_middleware")
+_current_middleware: ContextVar[Any] = ContextVar("_current_middleware", default=None)
 _current_middleware_session: ContextVar[Any] = ContextVar("_current_middleware_session", default=None)
 # The most recently observed session in the current async context.  Keep this
 # ContextVar at module scope: creating one per middleware/config instance makes
@@ -868,8 +837,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         """Read the cumulative context label from session state."""
         if session is None:
             return self._fallback_context_label
-        fides_state = session.state.setdefault("_fides", {})
-        data = fides_state.get("context_label")
+        fides_state = _fides_session_state(session)
+        data = fides_state["context_label"]
         if data is None:
             label = ContentLabel(
                 integrity=IntegrityLabel.TRUSTED,
@@ -883,7 +852,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     def _set_context_label(self, session: Any, label: ContentLabel) -> None:
         """Write the cumulative context label to session state."""
         if session is not None:
-            session.state.setdefault("_fides", {})["context_label"] = label.to_dict()
+            _fides_session_state(session)["context_label"] = label.to_dict()
         else:
             self._fallback_context_label = label
 
@@ -924,7 +893,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         return self._get_context_label(self._resolve_public_session(session))
 
     def _resolve_public_session(self, session: Any = None) -> Any:
-        return session or get_current_session() or _remembered_session(_fides_active_session)
+        return _resolve_active_session(session)
 
     def reset_context_label(self, session: Any = None) -> None:
         """Reset the context label to initial state (TRUSTED + PUBLIC).
@@ -1778,6 +1747,16 @@ def get_current_session() -> Any:
     return _current_middleware_session.get(None)
 
 
+def _resolve_active_session(session: Any = None) -> Any:
+    """Resolve the session to operate on.
+
+    Order of preference: an explicitly supplied session, else the framework's current
+    async-context session, else the last session remembered for the current async context.
+    Single owner so read/write accessors resolve the session consistently.
+    """
+    return session or get_current_session() or _remembered_session(_fides_active_session)
+
+
 @experimental(feature_id=ExperimentalFeature.FIDES)
 class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
     """Middleware that enforces security policies on tool invocations.
@@ -1867,19 +1846,19 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
     def _fides_state(session: Any) -> dict[str, Any] | None:
         if session is None:
             return None
-        return cast(dict[str, Any], session.state.setdefault("_fides", {}))
+        return _fides_session_state(session)
 
     def _resolve_audit_log(self, session: Any = None) -> list[dict[str, Any]]:
         state = self._fides_state(session)
         if state is None:
             return self._fallback_audit_log
-        return cast(list[dict[str, Any]], state.setdefault("audit_log", []))
+        return cast(list[dict[str, Any]], state["audit_log"])
 
     def _resolve_pending_approvals(self, session: Any = None) -> dict[str, dict[str, Any]]:
         state = self._fides_state(session)
         if state is None:
             return self._fallback_pending_policy_approvals
-        approvals = cast(dict[str, Any], state.setdefault("pending_policy_approvals", {}))
+        approvals = cast(dict[str, Any], state["pending_policy_approvals"])
         # Older in-memory versions used a NamedTuple, which durable session state serializes
         # as a positional list. Normalize that shape when a session is resumed.
         for call_id, record in list(approvals.items()):
@@ -1899,7 +1878,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         if state is None:
             self._fallback_turn_counter += 1
             return self._fallback_turn_counter
-        turn = int(state.get("turn_counter", 0)) + 1
+        turn = int(state["turn_counter"]) + 1
         state["turn_counter"] = turn
         state["call_counter"] = 0
         return turn
@@ -1909,16 +1888,18 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         if state is None:
             self._fallback_turn_counter += 1
             return self._fallback_turn_counter
-        if "turn_counter" not in state:
-            state["turn_counter"] = 1
-        return int(state["turn_counter"])
+        turn = int(state["turn_counter"])
+        if turn == 0:
+            turn = 1
+            state["turn_counter"] = turn
+        return turn
 
     def _resolve_call_counter(self, session: Any = None) -> int:
         state = self._fides_state(session)
         if state is None:
             self._fallback_call_counter += 1
             return self._fallback_call_counter
-        call_counter = int(state.get("call_counter", 0)) + 1
+        call_counter = int(state["call_counter"]) + 1
         state["call_counter"] = call_counter
         return call_counter
 
@@ -2418,11 +2399,13 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         Returns:
             List of violation records.
         """
-        return self._resolve_audit_log(session or get_current_session()).copy()
+        active_session = _resolve_active_session(session)
+        return self._resolve_audit_log(active_session).copy()
 
     def clear_audit_log(self, session: Any = None) -> None:
         """Clear the audit log."""
-        self._resolve_audit_log(session or get_current_session()).clear()
+        active_session = _resolve_active_session(session)
+        self._resolve_audit_log(active_session).clear()
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -2575,12 +2558,9 @@ class SecureAgentConfig(ContextProvider):
             context: The invocation context - tools, instructions, and middleware are added here.
             state: The provider-scoped mutable state dict.
         """
-        fides_state = session.state.setdefault("_fides", {})
-        if "context_label" not in fides_state:
+        fides_state = _fides_session_state(session)
+        if fides_state["context_label"] is None:
             self.label_tracker.reset_context_label(session)
-        fides_state.setdefault("audit_log", [])
-        fides_state.setdefault("pending_policy_approvals", {})
-        fides_state.setdefault("turn_counter", 0)
         _remember_session(_fides_active_session, session)
         if self.policy_enforcer is not None and self.policy_enforcer.enable_audit_log:
             self.policy_enforcer.begin_turn(session)
