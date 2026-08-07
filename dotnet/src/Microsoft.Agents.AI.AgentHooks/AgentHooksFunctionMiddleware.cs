@@ -89,10 +89,14 @@ internal static class AgentHooksFunctionMiddleware
             ? id
             : Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
         string name = context.Function?.Name ?? context.CallContent?.Name ?? "unknown";
-        JsonObject args = ToolArgumentsCodec.ToWire(context.Arguments);
 
+        JsonObject args;
         try
         {
+            // The projection runs inside the guarded block: a projection failure (e.g. a
+            // poisoned argument value whose serialization throws) is an enforcement-layer
+            // failure and must halt the run, not crash it with a trail gap.
+            args = ToolArgumentsCodec.ToWire(context.Arguments);
             var outcome = await state.Emitter.EmitAsync(state.Builder.PreToolCall(callId, name, args), cancellationToken).ConfigureAwait(false);
             args = ToolArgumentsCodec.WriteBack(context.Arguments, args, outcome.Target, out var merged);
             if (merged is not null)

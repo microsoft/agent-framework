@@ -266,13 +266,63 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
     }
 
     /// <summary>
-    /// Guard per-run options: a <see cref="ChatHistoryProvider"/> override smuggled in
-    /// through the run options' additional properties would bypass the gating wrapper
-    /// installed at construction, so it is wrapped here too.
+    /// Guard per-run options against enforcement bypasses.
     /// </summary>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item><description>A per-run <see cref="ChatClientAgentRunOptions.ChatClientFactory"/> would replace the
+    /// guarded chat pipeline — and the tool-wrapping stage riding it — silently removing the chat and tool seams,
+    /// so it is rejected loudly (fail closed).</description></item>
+    /// <item><description>A <see cref="ChatHistoryProvider"/> override can ride either the base
+    /// <see cref="AgentRunOptions.AdditionalProperties"/> (merged into the chat options with precedence by the
+    /// agent) or <see cref="ChatOptions.AdditionalProperties"/>; both would bypass the gating wrapper installed at
+    /// construction, so both are wrapped — on a clone, never mutating the caller's options.</description></item>
+    /// </list>
+    /// </remarks>
     private AgentRunOptions? WrapRunOptions(AgentRunOptions? options)
     {
-        if (options is ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } properties } &&
+        if (options is null)
+        {
+            return null;
+        }
+
+        if (options is ChatClientAgentRunOptions { ChatClientFactory: not null })
+        {
+            throw new InvalidOperationException(
+                $"A per-run {nameof(ChatClientAgentRunOptions.ChatClientFactory)} is not supported on an " +
+                "agent-hooks-guarded agent: it would replace the guarded chat pipeline (and the tool-wrapping " +
+                "stage riding it), silently removing the pre/post_model_call and pre/post_tool_call seams. " +
+                "Decorate the chat client supplied to the agent-hooks factory instead.");
+        }
+
+        bool wrapBase = HasUnwrappedProviderOverride(options.AdditionalProperties);
+        bool wrapChat = options is ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } chatProperties } &&
+            HasUnwrappedProviderOverride(chatProperties);
+        if (!wrapBase && !wrapChat)
+        {
+            return options;
+        }
+
+        // Copy-on-write: Clone() deep-copies both dictionaries, so the caller's options
+        // are never mutated.
+        var cloned = options.Clone();
+        this.WrapProviderOverride(cloned.AdditionalProperties);
+        if (cloned is ChatClientAgentRunOptions clonedChatOptions)
+        {
+            this.WrapProviderOverride(clonedChatOptions.ChatOptions?.AdditionalProperties);
+        }
+
+        return cloned;
+    }
+
+    private static bool HasUnwrappedProviderOverride(AdditionalPropertiesDictionary? properties) =>
+        properties is not null &&
+        properties.TryGetValue(out ChatHistoryProvider? overrideProvider) &&
+        overrideProvider is not null and not AgentHooksGatingChatHistoryProvider;
+
+    private void WrapProviderOverride(AdditionalPropertiesDictionary? properties)
+    {
+        if (properties is not null &&
             properties.TryGetValue(out ChatHistoryProvider? overrideProvider) &&
             overrideProvider is not null and not AgentHooksGatingChatHistoryProvider)
         {
@@ -280,7 +330,5 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
             properties[typeof(ChatHistoryProvider).FullName!] =
                 new AgentHooksGatingChatHistoryProvider(overrideProvider, this._configuration, perServiceCall);
         }
-
-        return options;
     }
 }

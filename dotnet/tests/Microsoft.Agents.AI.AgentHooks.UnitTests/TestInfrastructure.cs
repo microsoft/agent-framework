@@ -155,6 +155,21 @@ internal sealed class CrashingGuard(InterceptionPoint point) : IInterceptor
             : new(Verdict.Allow);
 }
 
+/// <summary>Denies at one point only when the projected context contains a marker string.</summary>
+internal sealed class ContentDenyGuard(InterceptionPoint point, string marker) : IInterceptor
+{
+    public ValueTask<Verdict> InterceptAsync(AgentContext context, CancellationToken ct = default) =>
+        context.InterceptionPoint == point && context.Json.ToJsonString().Contains(marker, StringComparison.Ordinal)
+            ? new(Verdict.Deny("marker_blocked"))
+            : new(Verdict.Allow);
+}
+
+/// <summary>An argument value whose serialization throws (drives projection-failure halts).</summary>
+internal sealed class PoisonedValue
+{
+    public string Boom => throw new ArgumentException("poisoned getter");
+}
+
 /// <summary>A chat history provider that records exactly what becomes durable.</summary>
 internal sealed class RecordingHistoryProvider : ChatHistoryProvider
 {

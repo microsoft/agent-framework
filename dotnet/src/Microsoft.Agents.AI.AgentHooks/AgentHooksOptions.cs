@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.AgentHooks;
 
 /// <summary>
 /// Options controlling the AGENT-HOOKS-0.1 enforcement installed by
-/// <see cref="AgentHooksChatClientExtensions.CreateAIAgentWithAgentHooks(IChatClient, AgentHooksOptions, ChatClientAgentOptions?, IServiceProvider?)"/>.
+/// <see cref="AgentHooksChatClientExtensions.AsAIAgentWithAgentHooks(IChatClient, AgentHooksOptions, ChatClientAgentOptions?, IServiceProvider?)"/>.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentHooksOptions

@@ -28,7 +28,7 @@ public class AgentHooksEnforcementTests
             .EnqueueText("It is sunny.");
         var guard = new AllowGuard();
         var records = new ConcurrentQueue<InterceptionRecord>();
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(guard) { RecordSink = records.Enqueue },
             AgentOptionsWithTools(WeatherTool()));
 
@@ -55,7 +55,7 @@ public class AgentHooksEnforcementTests
         // Arrange
         var client = new MockChatClient().EnqueueText("hi");
         var guard = new AllowGuard();
-        var agent = client.CreateAIAgentWithAgentHooks(new AgentHooksOptions(guard));
+        var agent = client.AsAIAgentWithAgentHooks(new AgentHooksOptions(guard));
 
         // Act
         _ = await agent.RunAsync(UserMessage("hello agent"));
@@ -76,7 +76,7 @@ public class AgentHooksEnforcementTests
         var client = new MockChatClient()
             .EnqueueResponse(new ChatResponse(new ChatMessage(ChatRole.Assistant, [new TextContent("look"), image])));
         var guard = new AllowGuard();
-        var agent = client.CreateAIAgentWithAgentHooks(new AgentHooksOptions(guard));
+        var agent = client.AsAIAgentWithAgentHooks(new AgentHooksOptions(guard));
 
         // Act
         var response = await agent.RunAsync(UserMessage("show me"));
@@ -98,7 +98,7 @@ public class AgentHooksEnforcementTests
             .EnqueueFunctionCall("call-1", "get_weather", new() { ["location"] = "Paris" })
             .EnqueueText("done");
         var guard = new AllowGuard();
-        var agent = client.CreateAIAgentWithAgentHooks(new AgentHooksOptions(guard), AgentOptionsWithTools(WeatherTool()));
+        var agent = client.AsAIAgentWithAgentHooks(new AgentHooksOptions(guard), AgentOptionsWithTools(WeatherTool()));
 
         // Act
         _ = await agent.RunAsync(UserMessage("weather?"));
@@ -119,7 +119,7 @@ public class AgentHooksEnforcementTests
     {
         // Arrange
         var client = new MockChatClient().EnqueueText("never");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Input, Verdict.Deny("blocked_input"))));
 
         // Act / Assert
@@ -133,7 +133,7 @@ public class AgentHooksEnforcementTests
     {
         // Arrange
         var client = new MockChatClient().EnqueueText("never");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.PreModelCall, Verdict.Deny("no_model"))));
 
         // Act / Assert
@@ -146,7 +146,7 @@ public class AgentHooksEnforcementTests
     {
         // Arrange
         var client = new MockChatClient().EnqueueText("secret");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.PostModelCall, Verdict.Deny("bad_response"))));
 
         // Act / Assert
@@ -162,7 +162,7 @@ public class AgentHooksEnforcementTests
         var client = new MockChatClient()
             .EnqueueFunctionCall("call-1", "get_weather", new() { ["location"] = "Paris" })
             .EnqueueText("recovered");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.PreToolCall, Verdict.Deny("tool_blocked"))),
             AgentOptionsWithTools(WeatherTool(_ => invoked = true)));
 
@@ -186,7 +186,7 @@ public class AgentHooksEnforcementTests
         var client = new MockChatClient()
             .EnqueueFunctionCall("call-1", "get_weather", new() { ["location"] = "Paris" })
             .EnqueueText("recovered");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.PostToolCall, Verdict.Deny("result_blocked"))),
             AgentOptionsWithTools(WeatherTool()));
 
@@ -206,7 +206,7 @@ public class AgentHooksEnforcementTests
     {
         // Arrange
         var client = new MockChatClient().EnqueueText("secret");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, Verdict.Deny("egress_blocked"))));
 
         // Act / Assert
@@ -224,7 +224,7 @@ public class AgentHooksEnforcementTests
         // Arrange
         var client = new MockChatClient().EnqueueText("ok");
         var transform = TransformTarget(new JsonObject { ["content"] = "[clean]", ["role"] = "user" });
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Input, transform)));
 
         // Act
@@ -240,7 +240,7 @@ public class AgentHooksEnforcementTests
         // Arrange
         var client = new MockChatClient().EnqueueText("ok");
         var transform = TransformTarget(new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "[redacted]" }));
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.PreModelCall, transform)));
 
         // Act
@@ -259,7 +259,7 @@ public class AgentHooksEnforcementTests
             .EnqueueFunctionCall("call-1", "get_weather", new() { ["location"] = "Paris" })
             .EnqueueText("done");
         var transform = TransformTarget(new JsonObject { ["location"] = "Berlin" });
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.PreToolCall, transform)),
             AgentOptionsWithTools(WeatherTool(location => seenLocation = location)));
 
@@ -278,7 +278,7 @@ public class AgentHooksEnforcementTests
             .EnqueueFunctionCall("call-1", "get_weather", new() { ["location"] = "Paris" })
             .EnqueueText("done");
         var transform = TransformTarget((JsonNode)"weather:[redacted]");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.PostToolCall, transform)),
             AgentOptionsWithTools(WeatherTool()));
 
@@ -303,7 +303,7 @@ public class AgentHooksEnforcementTests
             ["tool_calls"] = new JsonArray(),
             ["finish_reason"] = "stop",
         });
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.PostModelCall, transform)));
 
         // Act
@@ -319,7 +319,7 @@ public class AgentHooksEnforcementTests
         // Arrange
         var client = new MockChatClient().EnqueueText("raw output");
         var transform = TransformTarget(new JsonObject { ["content"] = "[final]" });
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, transform)));
 
         // Act
@@ -339,7 +339,7 @@ public class AgentHooksEnforcementTests
         // Arrange
         var client = new MockChatClient().EnqueueText("streamed text");
         var guard = new AllowGuard();
-        var agent = client.CreateAIAgentWithAgentHooks(new AgentHooksOptions(guard));
+        var agent = client.AsAIAgentWithAgentHooks(new AgentHooksOptions(guard));
 
         // Act
         var updates = await CollectAsync(agent.RunStreamingAsync(UserMessage("hi")));
@@ -354,7 +354,7 @@ public class AgentHooksEnforcementTests
     {
         // Arrange
         var client = new MockChatClient().EnqueueText("secret");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, Verdict.Deny("egress_blocked"))));
 
         // Act
@@ -377,7 +377,7 @@ public class AgentHooksEnforcementTests
     {
         // Arrange
         var client = new MockChatClient().EnqueueText("secret");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.PostModelCall, Verdict.Deny("bad_response"))));
 
         // Act
@@ -400,7 +400,7 @@ public class AgentHooksEnforcementTests
         // Arrange
         var client = new MockChatClient().EnqueueText("raw");
         var transform = TransformTarget(new JsonObject { ["content"] = "[final]" });
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, transform)));
 
         // Act
@@ -425,7 +425,7 @@ public class AgentHooksEnforcementTests
             .EnqueueFunctionCall("call-1", "get_weather", new() { ["location"] = "Paris" })
             .EnqueueText("recovered");
         var guard = new AllowGuard();
-        var agent = client.CreateAIAgentWithAgentHooks(new AgentHooksOptions(guard), AgentOptionsWithTools(tool));
+        var agent = client.AsAIAgentWithAgentHooks(new AgentHooksOptions(guard), AgentOptionsWithTools(tool));
 
         // Act
         _ = await agent.RunAsync(UserMessage("weather?"));
@@ -445,7 +445,7 @@ public class AgentHooksEnforcementTests
         var client = new MockChatClient()
             .EnqueueFunctionCall("call-1", "get_weather", new() { ["location"] = "Paris" })
             .EnqueueText("never");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new CrashingGuard(InterceptionPoint.PreToolCall)),
             AgentOptionsWithTools(WeatherTool(_ => invoked = true)));
 
@@ -461,7 +461,7 @@ public class AgentHooksEnforcementTests
     {
         // Arrange
         var client = new MockChatClient().EnqueueText("never");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new CrashingGuard(InterceptionPoint.Input)));
 
         // Act / Assert
@@ -476,7 +476,7 @@ public class AgentHooksEnforcementTests
         // Arrange
         var client = new MockChatClient().EnqueueText("secret");
         var guard = new AllowGuard();
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(guard).AddInterceptor(new PointGuard(InterceptionPoint.Output, Verdict.Deny("no"))));
 
         // Act
@@ -502,7 +502,7 @@ public class AgentHooksEnforcementTests
         }
 
         var records = new ConcurrentQueue<InterceptionRecord>();
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new AllowGuard()) { RecordSink = records.Enqueue });
 
         // Act
@@ -525,7 +525,7 @@ public class AgentHooksEnforcementTests
         // Arrange
         var client = new MockChatClient().EnqueueText("one").EnqueueText("two");
         var records = new ConcurrentQueue<InterceptionRecord>();
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new AllowGuard()) { RecordSink = records.Enqueue });
 
         // Act
@@ -544,7 +544,7 @@ public class AgentHooksEnforcementTests
         var emitter = new InterceptionEmitter().Register(guard);
         var builder = new AgentContextBuilder("host-agent", "host", "session-42");
         var client = new MockChatClient().EnqueueText("one").EnqueueText("two");
-        var agent = client.CreateAIAgentWithAgentHooks(emitter, builder);
+        var agent = client.AsAIAgentWithAgentHooks(emitter, builder);
 
         // Act
         _ = await agent.RunAsync(UserMessage("first"));
@@ -567,7 +567,7 @@ public class AgentHooksEnforcementTests
         // Arrange
         var client = new MockChatClient().EnqueueText("flows");
         var records = new ConcurrentQueue<InterceptionRecord>();
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Input, Verdict.Deny("would_block")))
             {
                 Mode = EnforcementMode.EvaluateOnly,
@@ -590,7 +590,7 @@ public class AgentHooksEnforcementTests
         // Arrange: a liftable deny plus a resolver that approves it.
         var client = new MockChatClient().EnqueueText("approved output");
         var resolver = new ApprovingResolver();
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, Verdict.Escalate("needs_review")))
             {
                 Resolver = resolver,
@@ -624,7 +624,7 @@ public class AgentHooksEnforcementTests
     {
         // Arrange
         var client = new MockChatClient().EnqueueText("never");
-        var agent = client.CreateAIAgentWithAgentHooks(new AgentHooksOptions(new AllowGuard()));
+        var agent = client.AsAIAgentWithAgentHooks(new AgentHooksOptions(new AllowGuard()));
         var extracted = agent.GetService<IChatClient>();
         Assert.NotNull(extracted);
 
@@ -645,7 +645,7 @@ public class AgentHooksEnforcementTests
             Interceptors = [new KeyValuePair<string?, IInterceptor>(null, new AllowGuard())],
         };
         var clientOfA = new AgentHooksChatClient(client, configurationA);
-        var agentB = clientOfA.CreateAIAgentWithAgentHooks(new AgentHooksOptions(new AllowGuard()));
+        var agentB = clientOfA.AsAIAgentWithAgentHooks(new AgentHooksOptions(new AllowGuard()));
 
         // Act / Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => agentB.RunAsync(UserMessage("hi")));
@@ -660,7 +660,7 @@ public class AgentHooksEnforcementTests
         var client = new MockChatClient();
 
         // Act / Assert
-        _ = Assert.Throws<ArgumentException>(() => client.CreateAIAgentWithAgentHooks(new AgentHooksOptions()));
+        _ = Assert.Throws<ArgumentException>(() => client.AsAIAgentWithAgentHooks(new AgentHooksOptions()));
     }
 
     [Fact]
@@ -669,7 +669,7 @@ public class AgentHooksEnforcementTests
         // Arrange: a guarded sub-agent invoked as a tool of a guarded outer agent.
         var subClient = new MockChatClient().EnqueueText("sub says hi");
         var subGuard = new AllowGuard();
-        var subAgent = subClient.CreateAIAgentWithAgentHooks(new AgentHooksOptions(subGuard));
+        var subAgent = subClient.AsAIAgentWithAgentHooks(new AgentHooksOptions(subGuard));
         var subTool = AIFunctionFactory.Create(
             async () => (await subAgent.RunAsync(UserMessage("inner"))).Text, "ask_sub_agent");
 
@@ -677,7 +677,7 @@ public class AgentHooksEnforcementTests
             .EnqueueFunctionCall("call-1", "ask_sub_agent", [])
             .EnqueueText("outer done");
         var outerGuard = new AllowGuard();
-        var outerAgent = outerClient.CreateAIAgentWithAgentHooks(
+        var outerAgent = outerClient.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(outerGuard), AgentOptionsWithTools(subTool));
 
         // Act

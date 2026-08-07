@@ -68,7 +68,19 @@ namespace Microsoft.Agents.AI.AgentHooks;
 /// enforcement boundary (outer position is outer trust — the final <c>output</c> point
 /// still guards whatever egresses); decorators applied to the <em>supplied</em> chat
 /// client run inside it, below the verdicts. Install exactly one enforcement per agent:
-/// nesting one guarded agent's seams inside another fails closed.
+/// nesting one guarded agent's seams inside another fails closed, a supplied client that
+/// already contains a function-invocation loop is rejected (it would execute tools below
+/// the verdicts), and per-run <see cref="ChatClientAgentRunOptions.ChatClientFactory"/>
+/// callbacks are rejected on guarded agents (they would replace the guarded pipeline).
+/// </para>
+/// <para>
+/// Observability note: the agent's built-in deferred-OpenTelemetry decorator sits above
+/// the enforcement's chat seam, so when sensitive-data telemetry is enabled its
+/// request-side spans capture the request content <em>before</em> any
+/// <c>pre_model_call</c> transform is applied (an observer channel inside the
+/// enforcement boundary, analogous to outer-position middleware in the Python feature).
+/// Response-side telemetry observes only verdicted content; a denied call surfaces as an
+/// error span with no response content.
 /// </para>
 /// <para>
 /// Session scoping: by default each agent run is one agent-hooks session (fresh emitter
@@ -96,7 +108,7 @@ public static class AgentHooksChatClientExtensions
     /// <returns>The enforced agent.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="chatClient"/> or <paramref name="hooksOptions"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="hooksOptions"/> has no interceptors.</exception>
-    public static AIAgent CreateAIAgentWithAgentHooks(
+    public static AIAgent AsAIAgentWithAgentHooks(
         this IChatClient chatClient,
         AgentHooksOptions hooksOptions,
         ChatClientAgentOptions? agentOptions = null,
@@ -141,7 +153,7 @@ public static class AgentHooksChatClientExtensions
     /// <param name="services">Optional service provider passed through to the agent.</param>
     /// <returns>The enforced agent.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="chatClient"/>, <paramref name="emitter"/> or <paramref name="builder"/> is <see langword="null"/>.</exception>
-    public static AIAgent CreateAIAgentWithAgentHooks(
+    public static AIAgent AsAIAgentWithAgentHooks(
         this IChatClient chatClient,
         InterceptionEmitter emitter,
         AgentContextBuilder builder,
@@ -165,17 +177,43 @@ public static class AgentHooksChatClientExtensions
     private static AgentHooksAgent Compose(
         IChatClient chatClient, AgentHooksConfiguration configuration, ChatClientAgentOptions? agentOptions, IServiceProvider? services)
     {
+        if (chatClient.GetService<FunctionInvokingChatClient>() is not null)
+        {
+            // A supplied client that already contains a function-invocation loop would
+            // sit BELOW the enforcement's chat seam, inverting the seam order: tools
+            // would execute before any post_model_call verdict could deny the
+            // tool-calling response, and the function seam would never see them.
+            throw new ArgumentException(
+                "The chat client supplied to the agent-hooks factory must not already contain a " +
+                $"{nameof(FunctionInvokingChatClient)}: it would execute tools below the enforcement's chat seam, " +
+                "before any post_model_call verdict and outside the tool seam. Supply the raw chat client instead — " +
+                "the agent installs its own function-invocation loop above the enforcement.",
+                nameof(chatClient));
+        }
+
         var options = agentOptions?.Clone() ?? new ChatClientAgentOptions();
         bool perServiceCallPersistence = options.RequirePerServiceCallChatHistoryPersistence;
 
         // Durability gating: wrap the durable-write providers so end-of-run writes defer
         // behind the output verdict. The wrappers belong to this composition only, so
         // other agents sharing the same underlying providers are unaffected.
-        if (options.ChatHistoryProvider is not null)
+        if (options.ChatHistoryProvider is null)
         {
-            options.ChatHistoryProvider = new AgentHooksGatingChatHistoryProvider(
-                options.ChatHistoryProvider, configuration, perServiceCallPersistence);
+            // With no provider configured, the agent creates a default
+            // InMemoryChatHistoryProvider internally — which this factory would never
+            // see, so denied output would become durable session history on the
+            // zero-config path. Materialize the default here and gate it. An explicitly
+            // configured provider changes the agent's conflict handling for
+            // service-managed history (it warns/throws by default), so the conflict
+            // flags are set to mimic the implicit default: silently disengage.
+            options.ChatHistoryProvider = new InMemoryChatHistoryProvider();
+            options.WarnOnChatHistoryProviderConflict = false;
+            options.ThrowOnChatHistoryProviderConflict = false;
+            options.ClearOnChatHistoryProviderConflict = true;
         }
+
+        options.ChatHistoryProvider = new AgentHooksGatingChatHistoryProvider(
+            options.ChatHistoryProvider, configuration, perServiceCallPersistence);
 
         if (options.AIContextProviders is not null)
         {

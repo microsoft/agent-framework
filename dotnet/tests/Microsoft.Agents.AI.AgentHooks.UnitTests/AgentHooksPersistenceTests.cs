@@ -24,7 +24,7 @@ public class AgentHooksPersistenceTests
         // Arrange
         var provider = new RecordingHistoryProvider();
         var client = new MockChatClient().EnqueueText("secret");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, Verdict.Deny("egress_blocked"))),
             new ChatClientAgentOptions { ChatHistoryProvider = provider });
         var session = await agent.CreateSessionAsync();
@@ -58,7 +58,7 @@ public class AgentHooksPersistenceTests
         var provider = new RecordingHistoryProvider();
         var client = new MockChatClient().EnqueueText("raw output");
         var transform = TransformTarget(new JsonObject { ["content"] = "[final]" });
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, transform)),
             new ChatClientAgentOptions { ChatHistoryProvider = provider });
         var session = await agent.CreateSessionAsync();
@@ -85,7 +85,7 @@ public class AgentHooksPersistenceTests
         // Arrange
         var provider = new RecordingHistoryProvider();
         var client = new MockChatClient().EnqueueText("fine");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new AllowGuard()),
             new ChatClientAgentOptions { ChatHistoryProvider = provider });
         var session = await agent.CreateSessionAsync();
@@ -105,7 +105,7 @@ public class AgentHooksPersistenceTests
         // Arrange
         var contextProvider = new RecordingContextProvider();
         var client = new MockChatClient().EnqueueText("secret");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, Verdict.Deny("no"))),
             new ChatClientAgentOptions { AIContextProviders = [contextProvider] });
         var session = await agent.CreateSessionAsync();
@@ -124,7 +124,7 @@ public class AgentHooksPersistenceTests
         var contextProvider = new RecordingContextProvider();
         var client = new MockChatClient().EnqueueText("raw");
         var transform = TransformTarget(new JsonObject { ["content"] = "[final]" });
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, transform)),
             new ChatClientAgentOptions { AIContextProviders = [contextProvider] });
         var session = await agent.CreateSessionAsync();
@@ -148,7 +148,7 @@ public class AgentHooksPersistenceTests
         var options = AgentOptionsWithTools(WeatherTool());
         options.ChatHistoryProvider = provider;
         options.RequirePerServiceCallChatHistoryPersistence = true;
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, Verdict.Deny("egress_blocked"))),
             options);
         var session = await agent.CreateSessionAsync();
@@ -173,7 +173,7 @@ public class AgentHooksPersistenceTests
             ChatHistoryProvider = provider,
             RequirePerServiceCallChatHistoryPersistence = true,
         };
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.PostModelCall, Verdict.Deny("bad_response"))),
             options);
         var session = await agent.CreateSessionAsync();
@@ -197,7 +197,7 @@ public class AgentHooksPersistenceTests
         var options = AgentOptionsWithTools(WeatherTool());
         options.ChatHistoryProvider = provider;
         options.RequirePerServiceCallChatHistoryPersistence = true;
-        var agent = client.CreateAIAgentWithAgentHooks(new AgentHooksOptions(new AllowGuard()), options);
+        var agent = client.AsAIAgentWithAgentHooks(new AgentHooksOptions(new AllowGuard()), options);
         var session = await agent.CreateSessionAsync();
 
         // Act
@@ -218,7 +218,7 @@ public class AgentHooksPersistenceTests
         // a guarded outer agent whose output is denied.
         var subProvider = new RecordingHistoryProvider();
         var subClient = new MockChatClient().EnqueueText("sub answer");
-        var subAgent = subClient.CreateAIAgentWithAgentHooks(
+        var subAgent = subClient.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new AllowGuard()),
             new ChatClientAgentOptions { ChatHistoryProvider = subProvider });
         var subTool = AIFunctionFactory.Create(
@@ -235,7 +235,7 @@ public class AgentHooksPersistenceTests
             .EnqueueText("outer secret");
         var outerOptions = AgentOptionsWithTools(subTool);
         outerOptions.ChatHistoryProvider = outerProvider;
-        var outerAgent = outerClient.CreateAIAgentWithAgentHooks(
+        var outerAgent = outerClient.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, Verdict.Deny("egress_blocked"))),
             outerOptions);
         var outerSession = await outerAgent.CreateSessionAsync();
@@ -268,7 +268,7 @@ public class AgentHooksPersistenceTests
         // options would bypass the construction-time wrapper; the agent seam wraps it.
         var overrideProvider = new RecordingHistoryProvider();
         var client = new MockChatClient().EnqueueText("secret");
-        var agent = client.CreateAIAgentWithAgentHooks(
+        var agent = client.AsAIAgentWithAgentHooks(
             new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, Verdict.Deny("egress_blocked"))));
         var session = await agent.CreateSessionAsync();
         var runOptions = new ChatClientAgentRunOptions

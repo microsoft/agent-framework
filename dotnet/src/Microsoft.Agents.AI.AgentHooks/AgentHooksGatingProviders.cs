@@ -92,8 +92,17 @@ internal sealed class AgentHooksGatingChatHistoryProvider : ChatHistoryProvider
     {
         if (context.InvokeException is not null)
         {
-            // Failure notifications are content-free control flow (the default provider
-            // stores nothing for them); they pass through so providers can clean up.
+            // Failure notifications are cleanup control flow (the default provider
+            // stores nothing for them) and pass through — except once a run-level deny
+            // or halt is standing: the notification carries the denied turn's request
+            // messages, which must not reach provider code at all (fail closed).
+            var state = AgentHooksRunState.Current;
+            if (state is not null && ReferenceEquals(state.Configuration, this._configuration) &&
+                (state.Denied || state.Halted is not null))
+            {
+                return default;
+            }
+
             return this._inner.InvokedAsync(context, cancellationToken);
         }
 

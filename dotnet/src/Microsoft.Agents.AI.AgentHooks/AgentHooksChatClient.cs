@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
-using AgentHooks;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.AgentHooks;
@@ -111,30 +110,39 @@ internal sealed class AgentHooksChatClient : DelegatingChatClient
         AgentHooksRunState state, string modelId, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
     {
         List<ChatMessage> messageList = [.. messages];
-        var before = ModelRequestCodec.ToWire(messageList);
-        EmitOutcome outcome;
         try
         {
-            outcome = await state.Emitter.EmitAsync(state.Builder.PreModelCall(modelId, before), cancellationToken).ConfigureAwait(false);
+            // Projection and write-back run inside the guarded block: a failure there is
+            // an enforcement-layer failure, so this run's gated persistence is refused
+            // (fail closed) before the exception fails the run.
+            var before = ModelRequestCodec.ToWire(messageList);
+            var outcome = await state.Emitter.EmitAsync(state.Builder.PreModelCall(modelId, before), cancellationToken).ConfigureAwait(false);
+            return ModelRequestCodec.WriteBack(messageList, before, outcome.Target) ?? messageList;
         }
-        catch (InterceptionBlockedException)
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
         {
             state.Denied = true;
             throw;
         }
-
-        return ModelRequestCodec.WriteBack(messageList, before, outcome.Target) ?? messageList;
     }
 
     /// <summary>Emit <c>post_model_call</c> over the assembled response; apply transforms. Returns whether the response changed.</summary>
     private static async Task<bool> EmitPostModelCallAsync(
         AgentHooksRunState state, string modelId, ChatResponse response, CancellationToken cancellationToken)
     {
-        var before = ModelResponseCodec.ToWire(response);
-        EmitOutcome outcome;
         try
         {
-            outcome = await state.Emitter.EmitAsync(
+            // Projection and write-back run inside the guarded block (see
+            // EmitPreModelCallAsync). §6.1 on deny: the denied response must not be
+            // incorporated; downstream persistence (the per-service-call persister sits
+            // above this seam) never runs, and any later gated persist for this run is
+            // refused via the denied flag.
+            var before = ModelResponseCodec.ToWire(response);
+            var outcome = await state.Emitter.EmitAsync(
                 state.Builder.PostModelCall(
                     response.ModelId ?? modelId,
                     before["content"]?.DeepClone(),
@@ -143,16 +151,16 @@ internal sealed class AgentHooksChatClient : DelegatingChatClient
                     Wire.UsageToWire(response.Usage),
                     response.ResponseId),
                 cancellationToken).ConfigureAwait(false);
+            return ModelResponseCodec.WriteBack(response, before, outcome.Target);
         }
-        catch (InterceptionBlockedException)
+        catch (OperationCanceledException)
         {
-            // §6.1: the denied response must not be incorporated; downstream persistence
-            // (the per-service-call persister sits above this seam) never runs, and any
-            // later gated persist for this run is refused via the denied flag.
+            throw;
+        }
+        catch (Exception)
+        {
             state.Denied = true;
             throw;
         }
-
-        return ModelResponseCodec.WriteBack(response, before, outcome.Target);
     }
 }
