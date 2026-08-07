@@ -106,9 +106,13 @@ class RedisHistoryProvider(HistoryProvider):
         else:
             self._redis_client = redis.from_url(redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
 
+    # Unit separator: source ids and session ids are opaque strings and can
+    # legitimately contain ':', which would make colon-joined keys ambiguous.
+    _KEY_SEP = "\x1f"
+
     def _redis_key(self, session_id: str | None) -> str:
         """Get the Redis key for a given session's messages."""
-        return f"{self.key_prefix}:{session_id or 'default'}"
+        return self._KEY_SEP.join([self.key_prefix, self.source_id, session_id or "default"])
 
     async def get_messages(
         self,
