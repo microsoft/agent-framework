@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import random
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import asdict, dataclass, is_dataclass
@@ -620,6 +621,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
 
             async for update in run_stream:
+                if context.shutdown.is_set():
+                    await context.exit_for_recovery()
+                    return
                 for content in update.contents:
                     for event in tracker.handle(content):
                         yield event
@@ -629,6 +633,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         ):
                             yield item
                         tracker.needs_async = False
+
+                if random.random() < 0.3:
+                    context.shutdown.set()
 
             # Close any remaining active builder
             for event in tracker.close():
