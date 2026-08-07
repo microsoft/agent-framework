@@ -1601,7 +1601,7 @@ def test_function_invocation_configuration_accepts_execution_order():
 
 async def test_try_execute_function_call_groups_concurrency_group():
     """Tools in the same concurrency_group execute sequentially; ungrouped tools run concurrently."""
-    execution_order = []
+    execution_order: list[str] = []
 
     @tool(concurrency_group="files")
     async def write_file(name: str):
@@ -1647,7 +1647,7 @@ async def test_try_execute_function_call_groups_concurrency_group():
 
 async def test_try_execute_function_call_groups_sequential_config():
     """When execution_order is 'sequential', ALL tools run one-by-one regardless of groups."""
-    execution_order = []
+    execution_order: list[str] = []
 
     @tool()
     async def tool_a():

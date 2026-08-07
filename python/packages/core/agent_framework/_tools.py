@@ -1802,7 +1802,8 @@ async def _try_execute_function_call_groups(
     has_declaration_only_call = False
     # A user-input pause takes precedence over unknown-call termination in mixed batches.
     for function_call in actionable_calls:
-        function_name = function_call.name
+        function_name = _underlying_function_call(function_call).name
+
         logger.debug(
             "Checking function call: type=%s, name=%s, in approval_tools=%s",
             function_call.type,
@@ -1937,9 +1938,11 @@ async def _try_execute_function_call_groups(
         group_key: str | None = None
 
         if execution_order == "parallel":
-            tool = tool_map.get(function_call.name)
-            if tool is not None:
-                group_key = getattr(tool, "concurrency_group", None)
+            tool_name = _underlying_function_call(function_call).name
+            if tool_name is not None:
+                tool = tool_map.get(tool_name)
+                if tool is not None:
+                    group_key = getattr(tool, "concurrency_group", None)
 
         if group_key is None:
             group_key = "__sequential_all__" if execution_order == "sequential" else f"__ungrouped_{idx}"
@@ -2012,6 +2015,11 @@ async def _execute_function_calls(
     invocation_session: AgentSession | None = None,
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
 ) -> _FunctionExecutionBatch:
+
+    run_config = cast("FunctionInvocationConfiguration", dict(config) if config else {})
+    if custom_args and "tool_execution_order" in custom_args:
+        run_config["tool_execution_order"] = custom_args["tool_execution_order"]
+
     tools = _extract_tools(options)
     if not tools:
         return _FunctionExecutionBatch(result_groups=[])
@@ -2021,7 +2029,7 @@ async def _execute_function_calls(
         tools=tools,
         invocation_session=invocation_session,
         middleware_pipeline=middleware_pipeline,
-        config=config,
+        config=run_config,
     )
     return _FunctionExecutionBatch(
         result_groups=result_groups,
@@ -3725,26 +3733,22 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         raw_session = request_kwargs.get("session")
         invocation_session = raw_session if isinstance(raw_session, _AgentSession) else None
 
-        # Give the loop private mutable options and one shared run-local tool list for progressive tool changes.
-        # Make options mutable so we can update conversation_id during function invocation loop
-        mutable_options: dict[str, Any] = dict(options) if options else {}
-
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
-        request_config = dict(self.function_invocation_configuration)
-        if tool_exec_order := mutable_options.pop("tool_execution_order", None):
-            request_config["tool_execution_order"] = tool_exec_order
+        options = dict(options) if options else {}
+
+        if tool_exec_order := options.pop("tool_execution_order", None):
+            additional_function_arguments["tool_execution_order"] = tool_exec_order
+
+        mutable_options: dict[str, Any] = dict(options)
 
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
-            config=request_config,
+            config=self.function_invocation_configuration,
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
         )
 
-        # Give the loop private mutable options and one shared run-local tool list for progressive tool changes.
-        # Make options mutable so we can update conversation_id during function invocation loop
-        mutable_options: dict[str, Any] = dict(options) if options else {}
         # Remove additional_function_arguments from options passed to underlying chat client
         # It's for tool invocation only and not recognized by chat service APIs
         mutable_options.pop("additional_function_arguments", None)
