@@ -90,9 +90,12 @@ class MiddlewareFailure(MiddlewareException):
     running — appropriate for recoverable tool failures, but fail-open for enforcement
     layers and guardrails. ``MiddlewareFailure`` is the loop's explicit fail-closed
     escape: it is never converted into a tool result, the current batch of concurrent
-    tool calls is cancelled, no further tool executes, and the exception propagates to
-    the caller of :meth:`Agent.run` (for streaming runs, it is raised when the stream
-    is consumed).
+    tool calls is cancelled, no further tool call starts, and the exception propagates
+    to the caller of :meth:`Agent.run` (for streaming runs, it is raised when the
+    stream is consumed). Cancellation is cooperative: an async sibling stops at its
+    next suspension point, while a synchronous tool body already executing in a worker
+    thread cannot be interrupted and may still complete its side effects — its result
+    is discarded either way and never reaches the transcript, the model, or history.
 
     Agent and chat middleware do not need a dedicated signal — every exception they
     raise already propagates to the caller — and ``MiddlewareFailure`` behaves the same

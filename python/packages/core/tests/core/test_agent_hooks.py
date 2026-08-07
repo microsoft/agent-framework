@@ -745,6 +745,40 @@ async def test_interceptor_crash_at_tool_seam_fails_closed_streaming(chat_client
 
 
 @requires_sdk
+async def test_tool_seam_block_exception_chain_is_acyclic(chat_client_base: MockBaseChatClient) -> None:
+    # Re-raising the InterceptionBlocked with the transport wrapper's back-links
+    # intact would make the two exceptions each other's cause/context — a chain
+    # cycle every __cause__/__context__ walker would have to guard against. The
+    # unwrap must detach the wrapper first, keeping both exceptions visible in a
+    # finite traceback.
+    import traceback
+
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([CrashingGuard("post_tool_call")])],
+    )
+
+    with pytest.raises(InterceptionBlocked) as exc_info:
+        await agent.run("get the weather")
+
+    block = exc_info.value
+    seen: set[int] = set()
+    node: BaseException | None = block
+    while node is not None:
+        assert id(node) not in seen, "exception chain contains a cycle"
+        seen.add(id(node))
+        # Follow the chain the way traceback rendering does.
+        node = node.__cause__ if (node.__cause__ is not None or node.__suppress_context__) else node.__context__
+
+    formatted = "".join(traceback.format_exception(type(block), block, block.__traceback__))
+    assert "InterceptionBlocked" in formatted
+    # The loop-transport wrapper stays visible as context, acyclically.
+    assert "failed closed" in formatted
+
+
+@requires_sdk
 async def test_third_party_middleware_failure_is_bracketed_and_propagates(
     chat_client_base: MockBaseChatClient,
 ) -> None:

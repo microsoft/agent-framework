@@ -943,8 +943,20 @@ def _reraise_tool_seam_block(failure: MiddlewareFailure) -> NoReturn:
     """
     from agent_hooks import InterceptionBlocked
 
-    if isinstance(failure, _ToolSeamBlockFailure) and isinstance(failure.__cause__, InterceptionBlocked):
-        raise failure.__cause__ from failure
+    block = failure.__cause__
+    if isinstance(failure, _ToolSeamBlockFailure) and isinstance(block, InterceptionBlocked):
+        # Detach the transport wrapper's back-links (both were set to the block when
+        # _maybe_halt raised the wrapper from it) before re-raising: re-raising the
+        # block while they are intact would make the two exceptions each other's
+        # cause/context — a chain cycle that every consumer walking
+        # __cause__/__context__ would have to guard against. The bare raise below
+        # records the wrapper as the block's __context__ instead (truthful: the block
+        # is re-raised while the wrapper is being handled), keeping both exceptions
+        # visible in tracebacks, acyclically.
+        failure.__cause__ = None
+        if failure.__context__ is block:
+            failure.__context__ = None
+        raise block
     raise failure
 
 
