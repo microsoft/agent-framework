@@ -15,6 +15,12 @@ using Microsoft.Extensions.VectorData;
 var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 var embeddingDeploymentName = Environment.GetEnvironmentVariable("FOUNDRY_EMBEDDING_MODEL") ?? "text-embedding-3-large";
+var embeddingDimensions = 3072;
+if (Environment.GetEnvironmentVariable("FOUNDRY_EMBEDDING_DIMENSIONS") is string embeddingDimensionsValue &&
+    (!int.TryParse(embeddingDimensionsValue, out embeddingDimensions) || embeddingDimensions <= 0))
+{
+    throw new InvalidOperationException("FOUNDRY_EMBEDDING_DIMENSIONS must be a positive integer.");
+}
 var cosmosEndpoint = Environment.GetEnvironmentVariable("COSMOS_ENDPOINT") ?? throw new InvalidOperationException("COSMOS_ENDPOINT is not set.");
 var cosmosDatabaseName = Environment.GetEnvironmentVariable("COSMOS_DATABASE_NAME") ?? "agent-memory";
 
@@ -45,6 +51,8 @@ VectorStore vectorStore = new CosmosNoSqlVectorStore(
             .AsIEmbeddingGenerator(),
     });
 
+var userId = $"sample-{Guid.NewGuid():N}";
+
 // Create the agent and add the ChatHistoryMemoryProvider to store chat messages in Cosmos DB.
 AIAgent agent = aiProjectClient
     .AsAIAgent(new ChatClientAgentOptions
@@ -54,18 +62,18 @@ AIAgent agent = aiProjectClient
         AIContextProviders = [new ChatHistoryMemoryProvider(
             vectorStore,
             collectionName: "chathistory",
-            vectorDimensions: 3072,
+            vectorDimensions: embeddingDimensions,
             // Callback to configure the initial state of the ChatHistoryMemoryProvider.
             // The ChatHistoryMemoryProvider stores its state in the AgentSession and this callback
             // will be called whenever the ChatHistoryMemoryProvider cannot find existing state in the session,
             // typically the first time it is used with a new session.
-            session => new ChatHistoryMemoryProvider.State(
+            _ => new ChatHistoryMemoryProvider.State(
                 // Configure the scope values under which chat messages will be stored.
-                // In this case, we are using a fixed user ID and a unique session ID for each new session.
-                storageScope: new() { UserId = "UID1", SessionId = Guid.NewGuid().ToString() },
+                // In this case, we are using a per-run user ID and a unique session ID for each new session.
+                storageScope: new() { UserId = userId, SessionId = Guid.NewGuid().ToString("N") },
                 // Configure the scope which would be used to search for relevant prior messages.
                 // In this case, we are searching for any messages for the user across all sessions.
-                searchScope: new() { UserId = "UID1" }))]
+                searchScope: new() { UserId = userId }))]
     });
 
 // Start a new session for the agent conversation.

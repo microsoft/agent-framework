@@ -29,6 +29,7 @@ Set the following environment variables:
 | `COSMOS_ENDPOINT` | Azure Cosmos DB account endpoint | *(required)* |
 | `FOUNDRY_MODEL` | Chat model deployment name | `gpt-5.4-mini` |
 | `FOUNDRY_EMBEDDING_MODEL` | Embedding model deployment name | `text-embedding-3-large` |
+| `FOUNDRY_EMBEDDING_DIMENSIONS` | Number of dimensions produced by the embedding deployment | `3072` |
 | `COSMOS_DATABASE_NAME` | Database used to store agent memory | `agent-memory` |
 
 ## Run the Sample
@@ -37,4 +38,4 @@ Set the following environment variables:
 dotnet run
 ```
 
-The first session stores the user's preference for pirate jokes. The second session uses a different `AgentSession` but the same user search scope, allowing the agent to retrieve that preference from Azure Cosmos DB.
+The first session stores the user's preference for pirate jokes. The second session uses a different `AgentSession` but the same per-run user search scope, allowing the agent to retrieve that preference from Azure Cosmos DB without recalling data from earlier sample runs.
