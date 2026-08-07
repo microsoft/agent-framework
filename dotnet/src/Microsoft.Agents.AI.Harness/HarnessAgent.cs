@@ -24,7 +24,7 @@ namespace Microsoft.Agents.AI;
 /// only need to configure the parts they want to customize.
 /// </para>
 /// <para>
-/// <strong>Chat client pipeline (inner to outer):</strong>
+/// <strong>Chat client pipeline (outer to inner):</strong>
 /// <list type="number">
 /// <item><description><see cref="FunctionInvokingChatClient"/> — automatic function/tool invocation with configurable iteration limits.</description></item>
 /// <item><description><see cref="MessageInjectingChatClient"/> — allows external code to inject messages into the conversation mid-stream (e.g., for user interrupts).</description></item>
