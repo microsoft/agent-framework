@@ -38,7 +38,7 @@
     <PackageVersion Include="Google.GenAI" Version="1.6.0" />
     <PackageVersion Include="Mscc.GenerativeAI.Microsoft" Version="2.9.3" />
     <!-- Microsoft.Azure.* -->
-    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.54.0" />
+    <PackageVersion Include="Microsoft.Azure.Cosmos" Version="3.61.0" />
     <!-- Newtonsoft.Json -->
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.4" />
     <!-- System.* -->
@@ -104,6 +104,7 @@
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.7.0" />
     <!-- Vector Stores -->
+    <PackageVersion Include="CommunityToolkit.VectorData.CosmosNoSql" Version="1.0.0" />
     <PackageVersion Include="CommunityToolkit.VectorData.InMemory" Version="1.0.0" />
     <PackageVersion Include="CommunityToolkit.VectorData.Qdrant" Version="1.0.0" />
     <!-- Agent SDKs -->
