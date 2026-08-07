@@ -323,7 +323,9 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - An ordinary exception raised by function middleware or a tool body becomes one terminal error `function_result`
   and the loop continues; `MiddlewareFailure` is the loop's only fail-closed escape: it is never converted into a
   tool result, the in-flight parallel batch is cancelled, no further tool executes, no further model call is made,
-  and the exception propagates to the caller (for streaming runs, when the stream is consumed).
+  and the exception propagates to the caller (for streaming runs, when the stream is consumed). Middleware must not
+  catch `MiddlewareFailure` — swallowing it converts a fail-closed abort back into a running, possibly unguarded
+  loop.
 - Parallel calls retain model order in the returned transcript.
 - Reused `call_id` values are correlated by logical occurrence, not one global value per id.
 - A completed function call/result pair is inert on later turns.
