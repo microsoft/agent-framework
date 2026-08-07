@@ -539,21 +539,45 @@ internal static class ModelResponseCodec
             throw new AgentHooksWriteBackException("agent-hooks post_model_call transform must keep tool_calls a list.");
         }
 
-        List<JsonObject> wireCalls = [];
+        // Validate the complete shape up front, before any reconciliation: every call —
+        // kept or added — must carry a non-empty string id, a non-empty string name and
+        // object-valued args, and ids must be unique (duplicates would silently collapse
+        // during reconciliation). An invalid shape fails closed rather than becoming a
+        // malformed native call.
+        List<(string Id, string Name, JsonObject Args)> wireCalls = [];
+        Dictionary<string, (string Name, JsonObject Args)> callsById = [];
         foreach (var item in callsArray)
         {
-            if (item is not JsonObject callObject || !callObject.ContainsKey("id") || !callObject.ContainsKey("name"))
+            if (item is not JsonObject callObject)
             {
-                throw new AgentHooksWriteBackException("agent-hooks post_model_call transform produced a tool call without id/name.");
+                throw new AgentHooksWriteBackException("agent-hooks post_model_call transform produced a tool call that is not an object.");
             }
 
-            wireCalls.Add(callObject);
-        }
+            if ((callObject["id"] as JsonValue)?.TryGetValue(out string? id) is not true || string.IsNullOrEmpty(id))
+            {
+                throw new AgentHooksWriteBackException(
+                    "agent-hooks post_model_call transform must give each tool call a non-empty string id.");
+            }
 
-        Dictionary<string, JsonObject> callsById = [];
-        foreach (var call in wireCalls)
-        {
-            callsById[(call["id"] as JsonValue)?.GetValue<string>() ?? string.Empty] = call;
+            if ((callObject["name"] as JsonValue)?.TryGetValue(out string? name) is not true || string.IsNullOrEmpty(name))
+            {
+                throw new AgentHooksWriteBackException(
+                    "agent-hooks post_model_call transform must keep each tool call's name a non-empty string.");
+            }
+
+            if (callObject["args"] is not JsonObject args)
+            {
+                throw new AgentHooksWriteBackException(
+                    "agent-hooks post_model_call transform must keep each tool call's args an object.");
+            }
+
+            if (!callsById.TryAdd(id!, (name!, args)))
+            {
+                throw new AgentHooksWriteBackException(
+                    "agent-hooks post_model_call transform produced two tool calls with the same id.");
+            }
+
+            wireCalls.Add((id!, name!, args));
         }
 
         HashSet<string> consumed = [];
@@ -576,21 +600,9 @@ internal static class ModelResponseCodec
                 }
 
                 consumed.Add(call.CallId ?? string.Empty);
-                if ((wire["name"] as JsonValue)?.TryGetValue(out string? wireName) is not true || string.IsNullOrEmpty(wireName))
+                if (wire.Name != call.Name || !Wire.WireEquals(Wire.ArgumentsToWire(call.Arguments), wire.Args))
                 {
-                    throw new AgentHooksWriteBackException(
-                        "agent-hooks post_model_call transform must keep each tool call's name a non-empty string.");
-                }
-
-                if (wire["args"] is not JsonObject wireArgs)
-                {
-                    throw new AgentHooksWriteBackException(
-                        "agent-hooks post_model_call transform must keep each tool call's args an object.");
-                }
-
-                if (wireName != call.Name || !Wire.WireEquals(Wire.ArgumentsToWire(call.Arguments), wireArgs))
-                {
-                    kept.Add(new FunctionCallContent(call.CallId ?? string.Empty, wireName!, WireArgsToNative(wireArgs)));
+                    kept.Add(new FunctionCallContent(call.CallId ?? string.Empty, wire.Name, WireArgsToNative(wire.Args)));
                     changed = true;
                 }
                 else
@@ -606,14 +618,11 @@ internal static class ModelResponseCodec
         }
 
         List<AIContent> added = [];
-        foreach (var call in wireCalls)
+        foreach (var (id, name, args) in wireCalls)
         {
-            string id = (call["id"] as JsonValue)?.GetValue<string>() ?? string.Empty;
             if (!consumed.Contains(id))
             {
-                string name = (call["name"] as JsonValue)?.GetValue<string>() ?? string.Empty;
-                var args = call["args"] as JsonObject;
-                added.Add(new FunctionCallContent(id, name, args is null ? null : WireArgsToNative(args)));
+                added.Add(new FunctionCallContent(id, name, WireArgsToNative(args)));
                 changed = true;
             }
         }

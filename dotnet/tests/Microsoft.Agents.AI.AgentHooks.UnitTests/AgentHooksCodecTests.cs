@@ -121,6 +121,67 @@ public class AgentHooksCodecTests
         Assert.Contains("hosted_tool", wire["content"]?.ToJsonString(), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("""[{"id":"","name":"tool","args":{}}]""")] // empty id
+    [InlineData("""[{"id":1,"name":"tool","args":{}}]""")] // non-string id
+    [InlineData("""[{"name":"tool","args":{}}]""")] // missing id
+    [InlineData("""[{"id":"c1","name":"","args":{}}]""")] // empty name
+    [InlineData("""[{"id":"c1","args":{}}]""")] // missing name
+    [InlineData("""[{"id":"c1","name":"tool"}]""")] // missing args
+    [InlineData("""[{"id":"c1","name":"tool","args":"nope"}]""")] // non-object args
+    [InlineData("""[{"id":"c1","name":"a","args":{}},{"id":"c1","name":"b","args":{}}]""")] // duplicate ids
+    public void ToolCallTransformValidationFailsClosedOnMalformedShapes(string toolCallsJson)
+    {
+        // Arrange: a transform that adds/reshapes tool calls with an invalid shape must
+        // fail closed instead of producing malformed native calls.
+        var response = new ChatResponse(new ChatMessage(ChatRole.Assistant, "text"));
+        var before = ModelResponseCodec.ToWire(response);
+        var after = (JsonObject)before.DeepClone();
+        after["tool_calls"] = JsonNode.Parse(toolCallsJson);
+
+        // Act / Assert
+        _ = Assert.Throws<AgentHooksWriteBackException>(() => ModelResponseCodec.WriteBack(response, before, after));
+    }
+
+    [Fact]
+    public void MessageListWriteBackDefaultsMissingRoleToUserMatchingPython()
+    {
+        // Arrange: the merged Python codec defaults a missing per-message role to "user"
+        // in message-list write-backs (str(item.get("role") or "user")); this port
+        // mirrors that documented behavior exactly.
+        List<ChatMessage> originals = [new ChatMessage(ChatRole.User, "original")];
+        List<JsonObject> before = [.. originals.Select(Wire.MessageToWire)];
+        var after = new JsonArray(new JsonObject { ["content"] = "rewritten" });
+
+        // Act
+        var result = Wire.WriteBackMessageList(originals, before, after, "test");
+
+        // Assert: the role-less entry adopted the user default, so the original user
+        // message was mutated in place rather than replaced.
+        Assert.Same(originals[0], Assert.Single(result));
+        Assert.Equal("rewritten", result[0].Text);
+        Assert.Equal(ChatRole.User, result[0].Role);
+    }
+
+    [Fact]
+    public void ResponseContentWriteBackDefaultsMissingRoleToAssistantMatchingPython()
+    {
+        // Arrange: the merged Python response codec defaults a missing role to
+        // "assistant" (str(wire_message.get("role") or "assistant")); mirrored here.
+        var response = new ChatResponse(new ChatMessage(ChatRole.Assistant, "original"));
+        var before = ModelResponseCodec.ToWire(response);
+        var after = (JsonObject)before.DeepClone();
+        after["content"] = new JsonArray(new JsonObject { ["content"] = "rewritten" });
+
+        // Act
+        _ = ModelResponseCodec.WriteBack(response, before, after);
+
+        // Assert
+        var message = Assert.Single(response.Messages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        Assert.Equal("rewritten", message.Text);
+    }
+
     [Fact]
     public void ToolResultCodecUntouchedTargetKeepsOriginalIdentity()
     {

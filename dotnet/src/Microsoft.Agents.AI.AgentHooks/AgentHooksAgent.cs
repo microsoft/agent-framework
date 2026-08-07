@@ -141,7 +141,7 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
             // No-divergence rule: a transformed output re-derives the released updates
             // from the verdicted response, so streamed egress can never diverge from the
             // verdicted content.
-            return transformed ? response.ToAgentResponseUpdates() : buffered;
+            return transformed ? RederiveUpdates(response) : buffered;
         }
         catch (InterceptionBlockedException)
         {
@@ -165,6 +165,28 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
             await this.EmitShutdownAsync(state, shutdownReason).ConfigureAwait(false);
             AgentHooksRunState.Current = previous;
         }
+    }
+
+    /// <summary>
+    /// Re-derive stream updates from the (transformed) verdicted response, preserving the
+    /// response-level metadata that <see cref="AgentResponse.ToAgentResponseUpdates"/>
+    /// does not project — currently the <see cref="AgentResponse.ContinuationToken"/>,
+    /// without which a transformed streaming background response could not be resumed.
+    /// </summary>
+    internal static IReadOnlyList<AgentResponseUpdate> RederiveUpdates(AgentResponse response)
+    {
+        var updates = response.ToAgentResponseUpdates();
+        if (response.ContinuationToken is { } continuationToken)
+        {
+            if (updates.Length == 0)
+            {
+                updates = [new AgentResponseUpdate { AgentId = response.AgentId, ResponseId = response.ResponseId }];
+            }
+
+            updates[^1].ContinuationToken = continuationToken;
+        }
+
+        return updates;
     }
 
     private AgentHooksRunState CreateRunState()
@@ -286,7 +308,7 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
             return null;
         }
 
-        if (options is ChatClientAgentRunOptions { ChatClientFactory: not null })
+        if (options is ChatClientAgentRunOptions { ChatClientFactory: { } factory } && !IsFrameworkFunctionMiddlewareFactory(factory))
         {
             throw new InvalidOperationException(
                 $"A per-run {nameof(ChatClientAgentRunOptions.ChatClientFactory)} is not supported on an " +
@@ -298,13 +320,18 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
         bool wrapBase = HasUnwrappedProviderOverride(options.AdditionalProperties);
         bool wrapChat = options is ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } chatProperties } &&
             HasUnwrappedProviderOverride(chatProperties);
-        if (!wrapBase && !wrapChat)
+        if (!wrapBase && !wrapChat && options is not ChatClientAgentRunOptions)
         {
             return options;
         }
 
         // Copy-on-write: Clone() deep-copies both dictionaries, so the caller's options
-        // are never mutated.
+        // are never mutated. Chat-typed options are ALWAYS cloned, even when nothing
+        // needs wrapping: the framework's function-invocation middleware (including this
+        // composition's own tool seam) chains its factory onto the options instance it
+        // receives in place, so forwarding the caller's instance would leak that factory
+        // into it — reusing the same options for a second run would then trip the
+        // rejection above, and concurrent reuse would race.
         var cloned = options.Clone();
         this.WrapProviderOverride(cloned.AdditionalProperties);
         if (cloned is ChatClientAgentRunOptions clonedChatOptions)
@@ -313,6 +340,40 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
         }
 
         return cloned;
+    }
+
+    /// <summary>
+    /// Whether a per-run chat-client factory was installed by the framework's own
+    /// function-invocation middleware (an agent decorator composed outside this agent).
+    /// </summary>
+    /// <remarks>
+    /// That factory wraps the pipeline it is given (it only rewrites the run's tools to
+    /// add the middleware bracket), so the enforcement seams below stay intact — outer
+    /// position is outer trust, exactly like any other decorator on the returned agent.
+    /// A caller-supplied factory chained through it is still rejected by walking the
+    /// chain. The type check is intentionally narrow: anything unrecognized stays
+    /// rejected (fail closed).
+    /// </remarks>
+    private static bool IsFrameworkFunctionMiddlewareFactory(Func<IChatClient, IChatClient>? factory)
+    {
+        while (factory is not null)
+        {
+            if (factory.Method.DeclaringType?.FullName?.StartsWith(
+                    "Microsoft.Agents.AI.FunctionInvocationDelegatingAgent", StringComparison.Ordinal) is not true)
+            {
+                return false;
+            }
+
+            // The framework middleware chains any pre-existing factory into its closure;
+            // walk it so a caller-supplied factory cannot ride in unnoticed.
+            factory = factory.Target?.GetType()
+                .GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)
+                .Where(field => field.FieldType == typeof(Func<IChatClient, IChatClient>))
+                .Select(field => (Func<IChatClient, IChatClient>?)field.GetValue(factory.Target))
+                .FirstOrDefault(value => value is not null);
+        }
+
+        return true;
     }
 
     private static bool HasUnwrappedProviderOverride(AdditionalPropertiesDictionary? properties) =>

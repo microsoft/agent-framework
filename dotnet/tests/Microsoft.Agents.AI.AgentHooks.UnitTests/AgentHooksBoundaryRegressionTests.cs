@@ -159,6 +159,98 @@ public class AgentHooksBoundaryRegressionTests
     }
 
     [Fact]
+    public async Task ReusedRunOptionsAcrossSequentialRunsWorkAsync()
+    {
+        // Arrange: the framework's function-invocation middleware chains its factory
+        // onto the options instance it receives; forwarding the caller's instance would
+        // leak that factory into it and trip the rejection on the second run.
+        var client = new MockChatClient().EnqueueText("one").EnqueueText("two");
+        var agent = client.AsAIAgentWithAgentHooks(new AgentHooksOptions(new AllowGuard()));
+        var runOptions = new ChatClientAgentRunOptions();
+
+        // Act
+        var first = await agent.RunAsync(UserMessage("a"), null, runOptions);
+        var second = await agent.RunAsync(UserMessage("b"), null, runOptions);
+
+        // Assert: both runs succeed and the caller's options were never mutated.
+        Assert.Equal("one", first.Text);
+        Assert.Equal("two", second.Text);
+        Assert.Null(runOptions.ChatClientFactory);
+    }
+
+    [Fact]
+    public async Task OuterFunctionMiddlewareCompositionIsSupportedAsync()
+    {
+        // Arrange: the framework's function-invocation middleware composed OUTSIDE the
+        // guarded agent (outer position, outer trust). Its per-run factory wraps the
+        // guarded pipeline instead of replacing it, so it must be allowed — and the
+        // enforcement's own tool seam must still bracket the invocation.
+        bool outerMiddlewareSaw = false;
+        var client = new MockChatClient()
+            .EnqueueFunctionCall("call-1", "get_weather", new() { ["location"] = "Paris" })
+            .EnqueueText("done");
+        var guard = new AllowGuard();
+        var guarded = client.AsAIAgentWithAgentHooks(new AgentHooksOptions(guard), AgentOptionsWithTools(WeatherTool()));
+        var composed = new AIAgentBuilder(guarded)
+            .Use(async (agent, context, next, cancellationToken) =>
+            {
+                outerMiddlewareSaw = true;
+                return await next(context, cancellationToken);
+            })
+            .Build();
+
+        // Act
+        var response = await composed.RunAsync(UserMessage("weather?"));
+
+        // Assert
+        Assert.Equal("done", response.Text);
+        Assert.True(outerMiddlewareSaw);
+        Assert.Contains("pre_tool_call", guard.Points);
+        Assert.Contains("post_tool_call", guard.Points);
+    }
+
+    [Fact]
+    public async Task CallerFactorySmuggledThroughOuterFunctionMiddlewareIsRejectedAsync()
+    {
+        // Arrange: a caller-supplied ChatClientFactory hidden behind the framework's
+        // outer function-invocation middleware (which chains pre-existing factories into
+        // its own) must still be rejected — the chain is walked.
+        var client = new MockChatClient().EnqueueText("never");
+        var bypassClient = new MockChatClient().EnqueueText("bypassed");
+        var guarded = client.AsAIAgentWithAgentHooks(new AgentHooksOptions(new AllowGuard()));
+        var composed = new AIAgentBuilder(guarded)
+            .Use((agent, context, next, cancellationToken) => next(context, cancellationToken))
+            .Build();
+        var runOptions = new ChatClientAgentRunOptions { ChatClientFactory = _ => bypassClient };
+
+        // Act / Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => composed.RunAsync(UserMessage("hi"), null, runOptions));
+        Assert.Contains("ChatClientFactory", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, bypassClient.CallCount);
+    }
+
+    [Fact]
+    public void RederivedUpdatesPreserveTheContinuationToken()
+    {
+        // Arrange: a (transformed) background streaming response carries a continuation
+        // token that ToAgentResponseUpdates() does not project.
+        var token = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 });
+        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, "[final]")) { ContinuationToken = token };
+
+        // Act
+        var updates = AgentHooksAgent.RederiveUpdates(response);
+
+        // Assert: the token rides the last released update, so the response remains resumable.
+        Assert.Same(token, updates[^1].ContinuationToken);
+
+        // And a message-less response still releases a metadata-only update carrying it.
+        var empty = new AgentResponse { ContinuationToken = token };
+        var emptyUpdates = AgentHooksAgent.RederiveUpdates(empty);
+        Assert.Same(token, Assert.Single(emptyUpdates).ContinuationToken);
+    }
+
+    [Fact]
     public async Task PerRunChatClientFactoryIsRejectedAsync()
     {
         // Arrange: a per-run ChatClientFactory would swap out the guarded pipeline (and
