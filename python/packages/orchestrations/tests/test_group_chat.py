@@ -20,6 +20,7 @@ from agent_framework import (
     WorkflowRunState,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
+from agent_framework._workflows._message_utils import normalize_messages_input
 from agent_framework.orchestrations import (
     AgentRequestInfoResponse,
     GroupChatBuilder,
@@ -1122,7 +1123,7 @@ class RecordingStubAgent(BaseAgent):
         session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Any:
-        normalized = list(cast(Sequence[Message], messages)) if messages else []
+        normalized = normalize_messages_input(messages)
         self.received_messages.append(normalized)
         if not normalized:
             raise ValueError("At least one message is required when starting a new task (no continuation_token).")
