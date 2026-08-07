@@ -128,6 +128,12 @@ internal sealed class CreateResponse
     public int? MaxToolCalls { get; init; }
 
     /// <summary>
+    /// Whether to return log probabilities of the output tokens.
+    /// </summary>
+    [JsonPropertyName("logprobs")]
+    public bool? Logprobs { get; init; }
+
+    /// <summary>
     /// An integer between 0 and 20 specifying the number of most likely tokens to return at each token position.
     /// </summary>
     [JsonPropertyName("top_logprobs")]

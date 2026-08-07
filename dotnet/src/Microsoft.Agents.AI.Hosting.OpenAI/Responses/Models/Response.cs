@@ -229,6 +229,12 @@ internal sealed record Response
     public int? MaxToolCalls { get; init; }
 
     /// <summary>
+    /// Whether log probabilities were requested for the output tokens.
+    /// </summary>
+    [JsonPropertyName("logprobs")]
+    public bool? Logprobs { get; init; }
+
+    /// <summary>
     /// An integer between 0 and 20 specifying the number of most likely tokens to return at each token position.
     /// </summary>
     [JsonPropertyName("top_logprobs")]
