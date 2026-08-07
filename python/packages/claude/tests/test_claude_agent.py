@@ -630,6 +630,37 @@ class TestClaudeAgentSessionManagement:
         with pytest.raises(AgentInvalidRequestException, match="single Claude conversation"):
             await agent._acquire_client(agent.create_session())  # type: ignore[reportPrivateUsage]
 
+    async def test_injected_client_allows_reconstructed_same_conversation(self) -> None:
+        """A reconstructed session with the same provider id may reuse the injected client."""
+        injected = self._make_mock_client()
+        agent = ClaudeAgent(client=injected)
+
+        # First run binds the injected client and the session gains a provider id.
+        first = agent.create_session()
+        await agent._acquire_client(first)  # type: ignore[reportPrivateUsage]
+        first.service_session_id = "provider-conversation-1"
+
+        # A new AgentSession (fresh session_id) that targets the same conversation
+        # continues rather than raising.
+        restored = agent.get_session(service_session_id="provider-conversation-1")
+        assert restored.session_id != first.session_id
+        client, owns = await agent._acquire_client(restored)  # type: ignore[reportPrivateUsage]
+        assert client is injected
+        assert owns is False
+
+    async def test_injected_client_rejects_different_conversation(self) -> None:
+        """A session targeting a different provider conversation is rejected."""
+        injected = self._make_mock_client()
+        agent = ClaudeAgent(client=injected)
+
+        first = agent.create_session()
+        await agent._acquire_client(first)  # type: ignore[reportPrivateUsage]
+        first.service_session_id = "provider-conversation-1"
+
+        other = agent.get_session(service_session_id="provider-conversation-2")
+        with pytest.raises(AgentInvalidRequestException, match="single Claude conversation"):
+            await agent._acquire_client(other)  # type: ignore[reportPrivateUsage]
+
     async def test_injected_client_reused_across_runs_without_session(self) -> None:
         """No-session runs on an injected client share its one bound conversation."""
         injected = self._make_mock_client()

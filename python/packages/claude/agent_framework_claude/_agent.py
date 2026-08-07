@@ -478,13 +478,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         conversation, so obtaining it is an isolation decision, not just a
         connection optimization. When a client was injected at construction, that
         single conversation is bound to the first session that uses it and reused
-        for that session's runs; a different session is rejected because one
-        injected conversation cannot be shared across sessions without leaking
-        context. Otherwise a fresh client scoped to this run is created and
-        connected, resuming the session's provider conversation when it already
-        carries one. Binding the client to the run rather than to shared agent
-        state keeps distinct sessions isolated even when they run concurrently
-        against the same agent instance.
+        only for that same conversation; a session that targets a different
+        conversation is rejected because one injected conversation cannot be
+        shared without leaking context. Otherwise a fresh client scoped to this
+        run is created and connected, resuming the session's provider conversation
+        when it already carries one. Binding the client to the run rather than to
+        shared agent state keeps distinct sessions isolated even when they run
+        concurrently against the same agent instance.
 
         Args:
             session: The active session for this run.
@@ -497,19 +497,20 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         Raises:
             AgentException: If the client fails to connect.
             AgentInvalidRequestException: If an injected client is reused with a
-                different session than the one it is bound to.
+                session that targets a different conversation than the one it is
+                bound to.
         """
         if self._client is not None and not self._owns_client:
             # Injected client: a single caller-managed conversation. Bind it to
-            # the first session and refuse to let another session reuse it.
+            # the first session and refuse to let a different conversation reuse it.
             if self._injected_session is None:
                 self._injected_session = session
-            elif self._injected_session.session_id != session.session_id:
+            elif not self._injected_session_matches(session):
                 raise AgentInvalidRequestException(
                     "An injected ClaudeSDKClient represents a single Claude conversation and is "
-                    "bound to one session; it cannot be reused with a different session. Omit "
-                    "`client=` so each run gets its own isolated client, or use a separate "
-                    "ClaudeAgent per session."
+                    "bound to one session; it cannot be reused with a session that targets a "
+                    "different conversation. Omit `client=` so each run gets its own isolated "
+                    "client, or use a separate ClaudeAgent per session."
                 )
             await self._connect_injected_client()
             return self._client, False
@@ -521,6 +522,31 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         except Exception as ex:
             raise AgentException(f"Failed to start Claude SDK client: {ex}") from ex
         return client, True
+
+    def _injected_session_matches(self, session: AgentSession) -> bool:
+        """Whether ``session`` targets the conversation the injected client is bound to.
+
+        The isolation boundary for an injected client is the Claude conversation,
+        identified by ``service_session_id`` -- not the framework-local
+        ``session_id``. A reconstructed session (for example one from
+        ``get_session(service_session_id=...)``) carries a fresh ``session_id`` but
+        the same provider conversation id, so it legitimately continues the bound
+        conversation. When the incoming session has no provider id yet, fall back
+        to the local ``session_id`` so two distinct unbound sessions cannot share
+        the client.
+
+        Args:
+            session: The session requesting the injected client.
+
+        Returns:
+            True if the session may reuse the injected client, False otherwise.
+        """
+        bound = self._injected_session
+        if bound is None or bound is session:
+            return True
+        if session.service_session_id is not None:
+            return bound.service_session_id == session.service_session_id
+        return bound.session_id == session.session_id
 
     def _prepare_client_options(self, resume_session_id: str | None = None) -> SDKOptions:
         """Prepare SDK options for client initialization.
