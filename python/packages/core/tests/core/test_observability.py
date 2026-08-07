@@ -3189,14 +3189,14 @@ def test_configure_providers_with_log_exporters_attaches_root_handler(monkeypatc
     """Test _configure_providers attaches the OpenTelemetry handler to the root logger."""
     from unittest.mock import patch
 
-    from opentelemetry.sdk._logs import LoggingHandler
-    from opentelemetry.sdk._logs.export import LogExportResult, LogRecordExporter
+    from opentelemetry.sdk._logs import LoggingHandler, ReadableLogRecord
+    from opentelemetry.sdk._logs.export import LogRecordExporter, LogRecordExportResult
 
     from agent_framework.observability import ObservabilitySettings
 
     class _LogExporter(LogRecordExporter):
-        def export(self, batch):
-            return LogExportResult.SUCCESS
+        def export(self, batch: Sequence[ReadableLogRecord]) -> LogRecordExportResult:
+            return LogRecordExportResult.SUCCESS
 
         def shutdown(self) -> None:
             return None
