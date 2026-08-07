@@ -31,6 +31,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Deliberately NOT part of `all`: the agent-hooks enforcement middleware is an
+# explicitly opt-in experimental feature.
+agent-hooks = [
+    "agent-hooks-sdk>=0.1.0a4,<0.2",
+]
 all = [
     "mcp>=1.24.0,<2",
     "agent-framework-a2a",

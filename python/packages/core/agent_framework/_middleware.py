@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import logging
 import sys
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, cast, overload
 
@@ -24,6 +25,8 @@ from ._types import (
 )
 from .exceptions import MiddlewareException
 
+logger = logging.getLogger(__name__)
+
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
@@ -38,7 +41,7 @@ if TYPE_CHECKING:
 
     from ._agents import SupportsAgentRun
     from ._compaction import CompactionStrategy, TokenizerProtocol
-    from ._sessions import AgentSession
+    from ._sessions import AgentSession, _RunPersistenceGate  # pyright: ignore[reportPrivateUsage]
     from ._tools import FunctionTool, ToolTypes
     from ._types import ChatOptions
 
@@ -199,6 +202,11 @@ class AgentContext:
         self.stream_transform_hooks = list(stream_transform_hooks or [])
         self.stream_result_hooks = list(stream_result_hooks or [])
         self.stream_cleanup_hooks = list(stream_cleanup_hooks or [])
+        # Set by egress-enforcement middleware (agent-hooks): the run-persistence gate
+        # covering this pipeline's run. The final handler offers it for adoption by
+        # the run it starts (see _sessions._offer_run_persistence_gate_claim), so the
+        # gate binds to that run's identity and never to middleware-initiated runs.
+        self._run_persistence_gate: _RunPersistenceGate | None = None
 
 
 class FunctionInvocationContext:
@@ -668,6 +676,81 @@ ChatAndFunctionMiddlewareTypes: TypeAlias = (
     FunctionMiddleware | FunctionMiddlewareCallable | ChatMiddleware | ChatMiddlewareCallable
 )
 
+
+@experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
+class MiddlewareBundle:
+    """An indivisible group of middleware that forms one coherent feature.
+
+    Some features (for example the agent-hooks enforcement middleware) consist of
+    several middleware objects that only uphold their contract when installed
+    together. A bundle carries those objects as one opaque unit: pass the bundle
+    itself (agent-level ``Agent(middleware=[...])`` or per-run
+    ``agent.run(middleware=[...])``), and :func:`categorize_middleware` splits its
+    members into their agent/function/chat categories while the bundle guarantees
+    the members cannot be installed partially — it is deliberately not a sequence,
+    so it cannot be unpacked or sliced. Middleware seams that install only some
+    categories (chat-client seams install chat and function middleware only)
+    enforce the same guarantee by raising ``MiddlewareException`` when a bundle
+    member falls into a category they cannot install, instead of silently dropping
+    that member.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Agent
+
+            bundle = create_some_feature_middleware(...)
+            agent = Agent(client=client, middleware=[bundle, my_other_middleware])
+    """
+
+    def __init__(
+        self,
+        middleware: Sequence[
+            AgentMiddleware
+            | AgentMiddlewareCallable
+            | FunctionMiddleware
+            | FunctionMiddlewareCallable
+            | ChatMiddleware
+            | ChatMiddlewareCallable
+        ],
+    ) -> None:
+        """Initialize the bundle.
+
+        Args:
+            middleware: The middleware objects that belong together. Order is
+                preserved when the bundle is expanded into the run's pipelines.
+                Every member must be categorizable by the framework's own rules
+                (an agent/function/chat middleware instance, or a callable with a
+                recognizable middleware signature); nested bundles are rejected.
+
+        Raises:
+            MiddlewareException: If a member is a nested bundle or cannot be
+                categorized as agent, function, or chat middleware.
+        """
+        members = tuple(middleware)
+        for member in members:
+            if isinstance(member, MiddlewareBundle):
+                raise MiddlewareException(
+                    "MiddlewareBundle members must be middleware objects; nesting a "
+                    "MiddlewareBundle inside another bundle is not supported."
+                )
+            if isinstance(member, (AgentMiddleware, FunctionMiddleware, ChatMiddleware)):
+                continue
+            if callable(member):
+                # Raises MiddlewareException when the callable's category cannot be
+                # determined — the same validation categorize_middleware applies.
+                _determine_middleware_type(member)
+                continue
+            raise MiddlewareException(
+                f"MiddlewareBundle members must be agent, function, or chat middleware; got {type(member).__name__}."
+            )
+        self._middleware = members
+
+    def __repr__(self) -> str:
+        members = ", ".join(type(middleware).__name__ for middleware in self._middleware)
+        return f"{type(self).__name__}({members})"
+
+
 # Type alias for all middleware types
 MiddlewareTypes: TypeAlias = (
     AgentMiddleware
@@ -676,6 +759,7 @@ MiddlewareTypes: TypeAlias = (
     | FunctionMiddlewareCallable
     | ChatMiddleware
     | ChatMiddlewareCallable
+    | MiddlewareBundle
 )
 
 
@@ -842,6 +926,16 @@ class BaseMiddlewarePipeline(ABC):
             self._middleware.append(middleware)
         elif callable(middleware):
             self._middleware.append(MiddlewareWrapper(middleware))  # type: ignore[arg-type]
+        else:
+            # Preserve the long-standing lenient behavior (do not fail the run), but
+            # never skip silently: an unrecognized object here means middleware the
+            # caller supplied will not execute.
+            logger.warning(
+                "Ignoring unrecognized middleware of type %s: it is neither a %s nor a callable "
+                "and will not be executed.",
+                type(middleware).__name__,
+                expected_type.__name__,
+            )
 
 
 class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
@@ -1266,7 +1360,7 @@ class AgentMiddlewareLayer:
     def __init__(
         self,
         *args: Any,
-        middleware: Sequence[MiddlewareTypes] | None = None,
+        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> None:
         middleware_list = categorize_middleware(middleware)
@@ -1297,7 +1391,7 @@ class AgentMiddlewareLayer:
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        middleware: Sequence[MiddlewareTypes] | None = None,
+        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
@@ -1313,7 +1407,7 @@ class AgentMiddlewareLayer:
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        middleware: Sequence[MiddlewareTypes] | None = None,
+        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1329,7 +1423,7 @@ class AgentMiddlewareLayer:
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        middleware: Sequence[MiddlewareTypes] | None = None,
+        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1344,7 +1438,7 @@ class AgentMiddlewareLayer:
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        middleware: Sequence[MiddlewareTypes] | None = None,
+        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1353,12 +1447,13 @@ class AgentMiddlewareLayer:
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """MiddlewareTypes-enabled unified run method."""
-        # Re-categorize self.middleware at runtime to support dynamic changes
-        base_middleware_attr = getattr(self, "middleware", None)
-        base_middleware: Sequence[MiddlewareTypes] = (
-            cast(Sequence[MiddlewareTypes], base_middleware_attr) if isinstance(base_middleware_attr, Sequence) else []
+        # Re-categorize self.middleware at runtime to support dynamic changes. The raw
+        # attribute is passed straight through: categorize_middleware owns the rule
+        # that a bare single source (one middleware object or a MiddlewareBundle
+        # assigned directly to the attribute) is one element — never silently dropped.
+        base_middleware_list = categorize_middleware(
+            cast("MiddlewareTypes | Sequence[MiddlewareTypes] | None", getattr(self, "middleware", None))
         )
-        base_middleware_list = categorize_middleware(base_middleware)
         run_middleware_list = categorize_middleware(middleware)
         pipeline = self._get_agent_middleware_pipeline([*base_middleware_list["agent"], *run_middleware_list["agent"]])
 
@@ -1431,6 +1526,12 @@ class AgentMiddlewareLayer:
     def _middleware_handler(
         self, context: AgentContext
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        from ._sessions import _offer_run_persistence_gate_claim  # pyright: ignore[reportPrivateUsage]
+
+        # The final handler starts the run this pipeline (and any egress gate on the
+        # context) covers. Offer the gate for adoption by that run — always, so a
+        # gate-less pipeline also clears any stale ticket at this boundary.
+        _offer_run_persistence_gate_claim(context._run_persistence_gate, self)  # pyright: ignore[reportPrivateUsage]
         return super().run(  # type: ignore[misc, no-any-return]
             context.messages,
             stream=context.stream,
@@ -1521,47 +1622,112 @@ class MiddlewareDict(TypedDict):
     chat: list[ChatMiddleware | ChatMiddlewareCallable]
 
 
+def _as_middleware_list(
+    source: MiddlewareTypes | Sequence[MiddlewareTypes] | None,
+) -> list[MiddlewareTypes]:
+    """Normalize one middleware source into a list — the bare-source rule's single owner.
+
+    ``None`` is empty; a sequence (never str/bytes) is taken element-wise; any other
+    bare source — a single middleware object or a :class:`MiddlewareBundle`, which is
+    deliberately not a sequence — is one element. The ``None`` check is deliberate
+    (not truthiness): a bare middleware object with a falsy ``__bool__``/``__len__``
+    still counts as one element, never silently dropped.
+    """
+    if source is None:
+        return []
+    if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
+        return list(cast("Sequence[MiddlewareTypes]", source))
+    return [cast("MiddlewareTypes", source)]
+
+
 def categorize_middleware(
     *middleware_sources: MiddlewareTypes | Sequence[MiddlewareTypes] | None,
+    supported_categories: Collection[str] | None = None,
 ) -> MiddlewareDict:
     """Categorize middleware from multiple sources into agent, function, and chat types.
 
     Args:
         *middleware_sources: Variable number of middleware sources to categorize.
+            A bare (non-sequence) source — a single middleware object or a
+            :class:`MiddlewareBundle` — is treated as a one-element list
+            (normalization is owned by :func:`_as_middleware_list`).
+
+    Keyword Args:
+        supported_categories: The categories the call site actually installs, e.g.
+            ``("chat", "function")`` at chat-client seams. When provided, middleware
+            that categorizes outside these is not returned: a bare middleware object
+            is skipped with a warning (mirroring pipeline registration's leniency),
+            while a :class:`MiddlewareBundle` member raises ``MiddlewareException`` —
+            a bundle is indivisible, so dropping one member would silently install a
+            partial feature. ``None`` (default) supports every category.
 
     Returns:
         Dict with keys "agent", "function", "chat" containing lists of categorized middleware.
+
+    Raises:
+        MiddlewareException: If a bundle member falls outside ``supported_categories``.
     """
     result: MiddlewareDict = {"agent": [], "function": [], "chat": []}
 
-    # Merge all middleware sources into a single list
+    # Merge all middleware sources into a single list (bare-source normalization is
+    # owned by _as_middleware_list).
     all_middleware: list[Any] = []
     for source in middleware_sources:
-        if source:
-            if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
-                all_middleware.extend(source)  # type: ignore
-            else:
-                all_middleware.append(source)
+        all_middleware.extend(_as_middleware_list(source))
+
+    # Expand bundles first: a bundle's members are categorized individually (in
+    # order) but travel as one unit, so a feature spanning several categories can
+    # never be partially installed. Membership is remembered so an unsupported
+    # category can fail loudly for bundle members below.
+    expanded_middleware: list[Any] = []
+    bundle_member_ids: set[int] = set()
+    for middleware in all_middleware:
+        if isinstance(middleware, MiddlewareBundle):
+            members = middleware._middleware  # pyright: ignore[reportPrivateUsage]
+            bundle_member_ids.update(id(member) for member in members)
+            expanded_middleware.extend(members)
+        else:
+            expanded_middleware.append(middleware)
+    all_middleware = expanded_middleware
 
     # Categorize each middleware item
     for middleware in all_middleware:
+        category: Literal["agent", "function", "chat"]
         if isinstance(middleware, AgentMiddleware):
-            result["agent"].append(middleware)
+            category = "agent"
         elif isinstance(middleware, FunctionMiddleware):
-            result["function"].append(middleware)
+            category = "function"
         elif isinstance(middleware, ChatMiddleware):
-            result["chat"].append(middleware)
+            category = "chat"
         elif callable(middleware):
             # Always call _determine_middleware_type to ensure proper validation
             middleware_type = _determine_middleware_type(middleware)
             if middleware_type == MiddlewareType.AGENT:
-                result["agent"].append(middleware)  # type: ignore
+                category = "agent"
             elif middleware_type == MiddlewareType.FUNCTION:
-                result["function"].append(middleware)  # type: ignore
-            elif middleware_type == MiddlewareType.CHAT:
-                result["chat"].append(middleware)  # type: ignore
+                category = "function"
+            else:
+                category = "chat"
         else:
             # Fallback to agent middleware for unknown types
-            result["agent"].append(middleware)
+            category = "agent"
+        if supported_categories is not None and category not in supported_categories:
+            supported_text = ", ".join(sorted(supported_categories))
+            if id(middleware) in bundle_member_ids:
+                raise MiddlewareException(
+                    f"MiddlewareBundle member {type(middleware).__name__} is {category} middleware, but this "
+                    f"middleware seam supports only {supported_text} middleware. A bundle is one indivisible "
+                    "feature and cannot be partially installed; pass the bundle to the agent instead "
+                    "(Agent(middleware=[...]) or agent.run(middleware=[...]))."
+                )
+            logger.warning(
+                "Ignoring %s middleware of type %s: this middleware seam supports only %s middleware "
+                "and it will not be executed.",
+                category,
+                getattr(middleware, "__name__", type(middleware).__name__),
+                supported_text,
+            )
+            continue
+        result[category].append(cast("Any", middleware))
 
     return result

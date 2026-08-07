@@ -145,6 +145,7 @@ dev = [
     { name = "zuban" },
 ]
 test = [
+    { name = "agent-hooks-sdk" },
     { name = "azure-monitor-opentelemetry" },
     { name = "mcp", extra = ["ws"] },
 ]
@@ -175,6 +176,7 @@ dev = [
     { name = "zuban", specifier = "==0.9.0" },
 ]
 test = [
+    { name = "agent-hooks-sdk", specifier = ">=0.1.0a4,<0.2" },
     { name = "azure-monitor-opentelemetry" },
     { name = "mcp", extras = ["ws"] },
 ]
@@ -419,6 +421,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+agent-hooks = [
+    { name = "agent-hooks-sdk" },
+]
 all = [
     { name = "agent-framework-a2a" },
     { name = "agent-framework-ag-ui" },
@@ -490,6 +495,7 @@ requires-dist = [
     { name = "agent-framework-purview", marker = "extra == 'all'", editable = "packages/purview" },
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
     { name = "agent-framework-tools", marker = "extra == 'all'", editable = "packages/tools" },
+    { name = "agent-hooks-sdk", marker = "extra == 'agent-hooks'", specifier = ">=0.1.0a4,<0.2" },
     { name = "mcp", marker = "extra == 'all'", specifier = ">=1.24.0,<2" },
     { name = "msgspec", specifier = ">=0.20.0,<0.22" },
     { name = "opentelemetry-api", specifier = ">=1.39.0,<2" },
@@ -497,7 +503,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1,<2" },
     { name = "typing-extensions", specifier = ">=4.15.0,<5" },
 ]
-provides-extras = ["all"]
+provides-extras = ["agent-hooks", "all"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "azure-ai-agentserver-core", specifier = ">=2.0.0b7,<3" }]
@@ -1002,6 +1008,20 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "psutil", specifier = ">=5.9" },
+]
+
+[[package]]
+name = "agent-hooks-sdk"
+version = "0.1.0a4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/9b/07e9e54941ce60991ce8ba00fe9dc38ea96d885b38a86cd944a409cd7772/agent_hooks_sdk-0.1.0a4.tar.gz", hash = "sha256:e3affd44d7779b8254fd5142f7d41648e48d3d4646acc94b07a28d13c5c07b1d", size = 173745, upload-time = "2026-07-30T02:11:22.235Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/f8/5d27dd5a784c7037cbdd23f8ae7982354440a333e9433b19ea02bf8a0ca3/agent_hooks_sdk-0.1.0a4-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:793cf357413546ddc74c62dac10bf62c05a0ffe69009871fd3484105995a13b7", size = 599140, upload-time = "2026-08-05T05:06:39.637Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/82/2f1d273fc4abd882b8a82c0c65574a0bf56c7181bc1a6be52b2bd58d880b/agent_hooks_sdk-0.1.0a4-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:7299cfd93ed455f0bcbfafb759040500e2920c6547fb6d8829f792307d58a6d4", size = 570698, upload-time = "2026-08-05T05:06:40.906Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/4c/26c71782f12e691958dcb59d530c5a17e8efe4651af3085c52db578e56f9/agent_hooks_sdk-0.1.0a4-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:fa51c408f29fa907be33e8a542f1025b2a92ccce0ccad0a362c299b6cb6dfdd4", size = 626367, upload-time = "2026-08-05T05:06:42.221Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/93/bce858a4e83480373eb55e2923657126e0e736b152f814fcf035b293e3e6/agent_hooks_sdk-0.1.0a4-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:ed556c2d020fffe371eda8055950f7b42c22eee16f3c3ef1dcf1f4ba5704320e", size = 649044, upload-time = "2026-08-05T05:06:43.492Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/07/dc7f4e7a53c208ba35fcf0bd0208cf77a1e84ffd7a42d2a61c6e9faf274b/agent_hooks_sdk-0.1.0a4-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:86f5ff8e0c1201a61b113026c688fc98ea590b10f8bbc5ccfa6ac289fdec037d", size = 634247, upload-time = "2026-07-30T02:11:20.497Z" },
+    { url = "https://files.pythonhosted.org/packages/34/2f/35caaffec73e0e60829a2ec255da1bfc7fe9564876b97eaa4a063327fd93/agent_hooks_sdk-0.1.0a4-cp310-abi3-win_amd64.whl", hash = "sha256:5e1cd64e3ef9c7447cb56a615f79747b7aa42a0065c8a2c5f0b2ae7f0447c908", size = 479900, upload-time = "2026-08-05T05:06:44.898Z" },
 ]
 
 [[package]]
