@@ -21,7 +21,7 @@ from .._types import ResponseStream
 from ..exceptions import WorkflowException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage
-from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
+from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
     EdgeGroup,
     FanOutEdgeGroup,
@@ -35,7 +35,7 @@ from ._events import (
 from ._executor import Executor
 from ._model_utils import DictConvertible
 from ._runner import RunnerImpl
-from ._runner_context import RunnerContext
+from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
 from ._validation import ValidationTypeEnum, WorkflowValidationError
@@ -299,6 +299,8 @@ class Workflow(DictConvertible):
             start_executor: The starting executor for the workflow.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
+                The first iteration is the initial run of the start executor, and each subsequent
+                iteration is a superstep.
             name: A human-readable name for the workflow. This can be used to identify the workflow in
                 checkpoints, and telemetry. If the workflow is built using WorkflowBuilder, this will be the
                 name of the builder. This name should be unique across different workflow definitions for
@@ -654,15 +656,28 @@ class Workflow(DictConvertible):
 
         # Handle initial message
         elif message is not None:
-            executor = self.get_start_executor()
-            await executor.execute(
-                message,
-                [self.__class__.__name__],
-                self._runner.state,
-                self._runner.context,
-                trace_contexts=None,
-                source_span_ids=None,
+            # Seed the initial input through the start executor's internal self-edge. If the caller
+            # passed a WorkflowMessage, unwrap it so we don't double-wrap.
+            start_id = self.start_executor_id
+            data = message.data if isinstance(message, WorkflowMessage) else message
+            entry_message = WorkflowMessage(
+                data=data,
+                source_id=INTERNAL_SOURCE_ID(start_id),
+                target_id=start_id,
             )
+
+            # Ensure that the start executor can handle the input type.
+            start_executor = self.get_start_executor()
+            if not start_executor.can_handle(entry_message):
+                raise RuntimeError(
+                    f"Start executor '{start_id}' cannot handle input of type '{type(data).__name__}'. "
+                    f"Expected input types: {start_executor.input_types}."
+                )
+
+            await self._runner.context.send_message(entry_message)
+            # Record the entry checkpoint capturing the seeded input before any
+            # executor runs. The runner only checkpoints after each superstep.
+            await self._runner.create_checkpoint_if_enabled()
 
     @overload
     def run(
@@ -814,10 +829,9 @@ class Workflow(DictConvertible):
             # runner context has fully drained from any prior run. If it still
             # has in-flight executor messages, the prior run didn't complete -
             # the caller must either resume from a checkpoint or wait for the
-            # prior run to drain. (Pending request_info events are intentionally
-            # NOT blocked here: a follow-up run with message=... is the normal
-            # way to deliver a response to those pending requests, e.g. via
-            # WorkflowAgent._process_pending_requests.)
+            # prior run to drain. Pending request_info events are intentionally
+            # NOT blocked here (they are answered via a follow-up ``responses=...``
+            # run); the warning below surfaces the abandon/overwrite cases instead.
             # NOTE: _validate_run_params already enforces that ``message`` is
             # mutually exclusive with both ``checkpoint_id`` and ``responses``,
             # so we don't need to re-check those here.
@@ -829,6 +843,33 @@ class Workflow(DictConvertible):
                     "Workflows that need to recover from a mid-run failure must use "
                     "checkpointing; there is no in-process recovery path."
                 )
+
+            # Warn (but don't block) when a fresh message or a checkpoint restore begins while the
+            # workflow still has pending request_info events from an unfinished request/response
+            # cycle. A fresh ``message`` does NOT drop those pending requests - they remain pending and
+            # can still be answered later - but the new run advances executor and shared state, so when
+            # a response for an earlier request eventually arrives the workflow may have moved on,
+            # yielding inconsistent results. A ``checkpoint_id`` restore instead replaces the context's
+            # pending requests with the checkpoint's state. Delivering ``responses`` is the normal way to
+            # answer pending requests and is intentionally not warned. Mirrors the WorkflowExecutor
+            # warning for overlapping sub-workflow executions.
+            if message is not None or checkpoint_id is not None:
+                pending_request_info_events = await self._runner.context.get_pending_request_info_events()
+                if pending_request_info_events:
+                    logger.warning(
+                        "Workflow %s received %s while %d request_info event(s) are still pending from an "
+                        "unfinished request/response cycle; %s. Deliver responses (responses=...) to complete "
+                        "the pending cycle before starting new input.",
+                        self.id,
+                        "a fresh message" if message is not None else "a checkpoint restore",
+                        len(pending_request_info_events),
+                        (
+                            "those requests remain pending, but this run advances executor and shared state, "
+                            "so a response that arrives later may apply to a workflow that has moved on"
+                            if message is not None
+                            else "those pending requests will be overwritten by the checkpoint's state"
+                        ),
+                    )
 
             initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
 
@@ -992,6 +1033,12 @@ class Workflow(DictConvertible):
             self._runner.context.send_request_info_response(request_id, response)
             for request_id, response in coerced_responses.items()
         ])
+
+        # Record a response-entry checkpoint capturing the delivered responses in-flight, before the
+        # runner processes them in the next superstep. This mirrors the initial-message entry
+        # checkpoint so a human-in-the-loop continuation is fully replayable: resuming from this
+        # checkpoint re-delivers the responses and replays the superstep that consumes them.
+        await self._runner.create_checkpoint_if_enabled()
 
     def _get_executor_by_id(self, executor_id: str) -> Executor:
         """Get an executor by its ID.

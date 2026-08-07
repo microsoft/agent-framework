@@ -43,9 +43,11 @@ from fastapi import FastAPI
 from agent_framework import WorkflowBuilder, WorkflowContext, executor
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
+
 @executor(id="start")
 async def start(message: str, ctx: WorkflowContext) -> None:
     await ctx.yield_output(f"Workflow received: {message}")
+
 
 workflow = WorkflowBuilder(start_executor=start).build()
 
@@ -62,9 +64,11 @@ from fastapi import FastAPI
 from agent_framework import Workflow, WorkflowBuilder
 from agent_framework.ag_ui import AgentFrameworkWorkflow, add_agent_framework_fastapi_endpoint
 
+
 def build_workflow_for_thread(thread_id: str) -> Workflow:
     # Build a fresh workflow instance for each thread id.
     return WorkflowBuilder(start_executor=...).build()
+
 
 app = FastAPI()
 thread_scoped_workflow = AgentFrameworkWorkflow(
@@ -80,6 +84,7 @@ add_agent_framework_fastapi_endpoint(app, thread_scoped_workflow, "/")
 import asyncio
 from agent_framework.ag_ui import AGUIChatClient
 
+
 async def main():
     async with AGUIChatClient(endpoint="http://localhost:8000/") as client:
         # Stream responses
@@ -88,6 +93,7 @@ async def main():
                 if content.type == "text" and content.text:
                     print(content.text, end="", flush=True)
         print()
+
 
 asyncio.run(main())
 ```
@@ -106,6 +112,7 @@ Use `state_update` when a backend tool needs to send different payloads to the m
 ```python
 from agent_framework import Content, tool
 from agent_framework.ag_ui import state_update
+
 
 @tool
 async def get_weather(city: str) -> Content:
@@ -256,10 +263,12 @@ from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 EXPECTED_API_KEY = os.environ.get("AG_UI_API_KEY")
 
+
 async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None:
     """Verify the API key provided in the request header."""
     if not api_key or api_key != EXPECTED_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
 
 # Create agent and app
 agent = Agent(name="my_agent", instructions="...", client=...)
@@ -335,7 +344,10 @@ A frontend can then hydrate the latest stored snapshot for the scoped thread:
 
 Endpoint configuration requires `snapshot_scope_resolver` whenever a snapshot store is configured, including when
 the store is already set on a pre-wrapped `AgentFrameworkAgent` or `AgentFrameworkWorkflow`. The resolver returns
-the application-defined Snapshot Scope used with the AG-UI Thread id as the storage key.
+the application-defined Snapshot Scope used with the AG-UI Thread id as the storage key. When using
+`AgentFrameworkWorkflow(workflow_factory=...)`, the same resolver also scopes the in-memory workflow cache even
+without a snapshot store; provide it in multi-user deployments so two users who submit the same `threadId` do not
+share a live `Workflow` instance.
 
 For hosted agents, request Shared State is also available through `AgentSession.state` during that run, whether or
 not snapshot persistence is configured. Request values are untrusted per-run context: they overlay ordinary restored

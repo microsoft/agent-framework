@@ -35,8 +35,10 @@ from typing import Annotated, Any, ClassVar, cast
 from pydantic import BaseModel, Field
 
 from .._feature_stage import ExperimentalFeature, experimental
+from .._filesystem import is_link_or_reparse_point
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import ApprovalMode, tool
 from .._types import Content
 
@@ -856,10 +858,9 @@ class FileSystemAgentFileStore(AgentFileStore):
         """Reject any segment between the root and ``candidate`` that is a symlink/reparse point.
 
         Walks each ancestor down from the root on the *unresolved* candidate so
-        ``Path.is_symlink`` observes the on-disk entries instead of their
-        canonical targets. Stops once a segment does not exist on disk so write
-        scenarios remain allowed. ``Path.is_symlink`` detects both POSIX
-        symlinks and Windows reparse points (junctions).
+        ``Path.lstat`` observes the on-disk entries instead of their canonical
+        targets. Stops once a segment does not exist on disk so write scenarios
+        remain allowed.
         """
         try:
             relative_parts = candidate.relative_to(self._root_path).parts
@@ -873,18 +874,19 @@ class FileSystemAgentFileStore(AgentFileStore):
         for segment in relative_parts:
             current = current / segment
             try:
-                is_link = current.is_symlink()
+                is_link = is_link_or_reparse_point(current)
+            except FileNotFoundError:
+                break
             except OSError as exc:
                 # Fail closed: if we cannot verify whether a segment is a
                 # symlink/reparse point we refuse the operation rather than
                 # silently allow access that may escape the root.
+                probed_path = current.relative_to(self._root_path).as_posix()
                 raise ValueError(
-                    f"Invalid path: unable to verify whether '{segment}' is a symbolic link or reparse point."
+                    f"Invalid path: unable to verify whether {probed_path!r} is a symbolic link or reparse point."
                 ) from exc
             if is_link:
                 raise ValueError("Invalid path: the resolved path contains a symbolic link or reparse point.")
-            if not current.exists():
-                break
 
     async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
@@ -908,9 +910,9 @@ class FileSystemAgentFileStore(AgentFileStore):
             flags |= os.O_TRUNC
         else:
             flags |= os.O_EXCL
-        # ``O_NOFOLLOW`` is POSIX-only; on Windows ``Path.is_symlink`` /
-        # reparse-point detection in :meth:`_throw_if_contains_symlink` is the
-        # only line of defence for the leaf segment.
+        # ``O_NOFOLLOW`` is POSIX-only; on Windows the lstat/reparse-point
+        # detection in :meth:`_throw_if_contains_symlink` is the only line of
+        # defence for the leaf segment.
         nofollow = getattr(os, "O_NOFOLLOW", 0)
         flags |= nofollow
         try:
@@ -985,7 +987,12 @@ class FileSystemAgentFileStore(AgentFileStore):
         directories: list[FileStoreEntry] = []
         files: list[FileStoreEntry] = []
         for entry in full_dir.iterdir():
-            if entry.is_symlink():
+            try:
+                is_link = is_link_or_reparse_point(entry)
+            except OSError:
+                # Fail closed when an entry cannot be inspected.
+                continue
+            if is_link:
                 continue
             if entry.is_dir():
                 directories.append(FileStoreEntry(entry.name, FileStoreEntry.DIRECTORY))
@@ -1039,7 +1046,12 @@ class FileSystemAgentFileStore(AgentFileStore):
         while directories:
             current = directories.pop()
             for entry in current.iterdir():
-                if entry.is_symlink():
+                try:
+                    is_link = is_link_or_reparse_point(entry)
+                except OSError:
+                    # Fail closed when an entry cannot be inspected.
+                    continue
+                if is_link:
                     continue
                 if entry.is_dir():
                     if recursive:
@@ -1428,6 +1440,7 @@ class FileAccessProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject file-access tools and instructions before the model runs."""
+        mark_feature_used(FeatureIndex.CORE_FILE_ACCESS_PROVIDER)
         readonly_approval: ApprovalMode = "never_require" if self.disable_readonly_tool_approval else "always_require"
         write_approval: ApprovalMode = "never_require" if self.disable_write_tool_approval else "always_require"
 

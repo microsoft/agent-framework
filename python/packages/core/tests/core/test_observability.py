@@ -164,6 +164,10 @@ def mock_chat_client():
     """Create a mock chat client for testing."""
 
     class MockChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def __init__(self) -> None:
+            super().__init__()
+            self.observed_options: list[dict[str, Any]] = []
+
         def service_url(self):
             return "https://test.example.com"
 
@@ -175,6 +179,7 @@ def mock_chat_client():
             options: Mapping[str, Any],
             **kwargs: Any,  # type: ignore[override]
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            self.observed_options.append(dict(options))
             if stream:
                 return self._get_streaming_response(messages=messages, options=options, **kwargs)
 
@@ -205,6 +210,61 @@ def mock_chat_client():
             return ResponseStream(_stream(), finalizer=_finalize)
 
     return MockChatClient
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_chat_telemetry_conversation_override_is_scoped_and_telemetry_only(
+    mock_chat_client: Any,
+    span_exporter: InMemorySpanExporter,
+    stream: bool,
+) -> None:
+    """An application conversation id changes telemetry without changing provider options."""
+    from agent_framework.observability import (
+        _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test message"])]
+    provider_options = {
+        "model": "Test",
+        "conversation_id": "provider-conversation",
+        "metadata": {"sentinel": "unchanged"},
+    }
+    expected_options = {
+        "model": "Test",
+        "conversation_id": "provider-conversation",
+        "metadata": {"sentinel": "unchanged"},
+    }
+
+    async def invoke() -> None:
+        if stream:
+            response_stream = client.get_response(messages=messages, stream=True, options=provider_options)
+            async for _ in response_stream:
+                pass
+            await response_stream.get_final_response()
+            return
+        await client.get_response(messages=messages, stream=False, options=provider_options)
+
+    span_exporter.clear()
+    with _use_telemetry_conversation_id("application-thread"):
+        await invoke()
+
+    assert provider_options == expected_options
+    assert client.observed_options == [expected_options]
+    scoped_spans = span_exporter.get_finished_spans()
+    assert len(scoped_spans) == 1
+    assert scoped_spans[0].attributes is not None
+    assert scoped_spans[0].attributes.get(OtelAttr.CONVERSATION_ID) == "application-thread"
+
+    span_exporter.clear()
+    await invoke()
+
+    assert provider_options == expected_options
+    assert client.observed_options == [expected_options, expected_options]
+    unscoped_spans = span_exporter.get_finished_spans()
+    assert len(unscoped_spans) == 1
+    assert unscoped_spans[0].attributes is not None
+    assert unscoped_spans[0].attributes.get(OtelAttr.CONVERSATION_ID) != "application-thread"
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
@@ -602,10 +662,40 @@ def mock_chat_agent():
                 finalizer=AgentResponse.from_updates,
             )
 
-    class MockChatClientAgent(AgentTelemetryLayer, _MockChatClientAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
+    class MockChatClientAgent(AgentTelemetryLayer, _MockChatClientAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]  # ty: ignore[invalid-method-override]
         pass
 
     return MockChatClientAgent
+
+
+async def test_agent_telemetry_conversation_override_is_scoped(
+    mock_chat_agent: SupportsAgentRun,
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    """An application-managed conversation id overrides provider continuation for one run only."""
+    from agent_framework import AgentSession
+    from agent_framework.observability import (
+        _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    agent = mock_chat_agent()  # type: ignore[operator]  # pyrefly: ignore[not-callable]  # ty: ignore[call-non-callable]
+    session = AgentSession(service_session_id="provider-conversation")
+    span_exporter.clear()
+
+    with _use_telemetry_conversation_id("application-thread"):
+        await agent.run("First turn", session=session)
+    await agent.run("Second turn", session=session)
+
+    spans = span_exporter.get_finished_spans()
+    conversation_ids = []
+    for span in spans:
+        assert span.attributes is not None
+        conversation_ids.append(span.attributes.get(OtelAttr.CONVERSATION_ID))
+
+    assert conversation_ids == [
+        "application-thread",
+        "provider-conversation",
+    ]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
@@ -2081,6 +2171,46 @@ def test_create_workflow_span(span_exporter):
     assert spans[0].attributes["key"] == "value"
 
 
+def test_create_workflow_span_uses_scoped_conversation_id(span_exporter: InMemorySpanExporter) -> None:
+    """An ambient conversation id is applied only within its workflow execution scope."""
+    from agent_framework.observability import (
+        OtelAttr,
+        _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
+        create_workflow_span,
+    )
+
+    span_exporter.clear()  # type: ignore[attr-defined]
+    with _use_telemetry_conversation_id("application-thread"):
+        with create_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN):
+            pass
+        with create_workflow_span(
+            OtelAttr.WORKFLOW_RUN_SPAN,
+            attributes={OtelAttr.CONVERSATION_ID: "explicit-thread"},
+        ):
+            pass
+        with create_workflow_span(OtelAttr.MESSAGE_SEND_SPAN):
+            pass
+    with create_workflow_span(OtelAttr.WORKFLOW_RUN_SPAN):
+        pass
+
+    spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
+    workflow_spans = [span for span in spans if span.name == OtelAttr.WORKFLOW_RUN_SPAN]
+    assert len(workflow_spans) == 3
+    ambient_attributes = workflow_spans[0].attributes
+    explicit_attributes = workflow_spans[1].attributes
+    unscoped_attributes = workflow_spans[2].attributes
+    assert ambient_attributes is not None
+    assert explicit_attributes is not None
+    assert unscoped_attributes is not None
+    assert ambient_attributes[OtelAttr.CONVERSATION_ID] == "application-thread"
+    assert explicit_attributes[OtelAttr.CONVERSATION_ID] == "explicit-thread"
+    assert OtelAttr.CONVERSATION_ID not in unscoped_attributes
+    message_send_span = next(span for span in spans if span.name == OtelAttr.MESSAGE_SEND_SPAN)
+    message_send_attributes = message_send_span.attributes
+    assert message_send_attributes is not None
+    assert OtelAttr.CONVERSATION_ID not in message_send_attributes
+
+
 def test_create_processing_span(span_exporter):
     """Test create_processing_span creates a span with correct attributes."""
     from agent_framework.observability import OtelAttr, create_processing_span
@@ -2383,6 +2513,28 @@ def test_get_response_attributes_maps_legacy_usage_keys():
     assert result[OtelAttr.REASONING_OUTPUT_TOKENS] == 34
 
 
+def test_get_response_attributes_maps_openai_cache_write_tokens():
+    """Test _get_response_attributes maps the OpenAI cache write usage key to the OTel attribute."""
+    from unittest.mock import Mock
+
+    from agent_framework.observability import OtelAttr, _get_response_attributes
+
+    response = Mock()
+    response.response_id = None
+    response.finish_reason = None
+    response.raw_representation = None
+    response.usage_details = {
+        "openai.cache_write_tokens": 1024,
+        "openai.cached_input_tokens": 512,
+    }
+
+    attrs: dict[str, Any] = {}
+    result = _get_response_attributes(attrs, response)
+
+    assert result[OtelAttr.CACHE_CREATION_INPUT_TOKENS] == 1024
+    assert result[OtelAttr.CACHE_READ_INPUT_TOKENS] == 512
+
+
 def test_get_response_attributes_capture_usage_false():
     """Test _get_response_attributes skips usage when capture_usage is False."""
     from unittest.mock import Mock
@@ -2587,7 +2739,7 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
 
             yield AgentResponseUpdate(contents=[Content.from_text("Test")], role="assistant")
 
-    class MockAgent(AgentTelemetryLayer, _MockAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
+    class MockAgent(AgentTelemetryLayer, _MockAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]  # ty: ignore[invalid-method-override]
         pass
 
     agent = MockAgent()
@@ -2632,7 +2784,7 @@ async def test_agent_observability_with_exception(span_exporter: InMemorySpanExp
         async def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):
             raise RuntimeError("Agent failed")
 
-    class FailingAgent(AgentTelemetryLayer, _FailingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
+    class FailingAgent(AgentTelemetryLayer, _FailingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]  # ty: ignore[invalid-method-override]
         pass
 
     agent = FailingAgent()
@@ -2697,7 +2849,7 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
                 finalizer=AgentResponse.from_updates,
             )
 
-    class StreamingAgent(AgentTelemetryLayer, _StreamingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
+    class StreamingAgent(AgentTelemetryLayer, _StreamingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]  # ty: ignore[invalid-method-override]
         pass
 
     agent = StreamingAgent()
@@ -2842,7 +2994,7 @@ async def test_agent_streaming_exception(span_exporter: InMemorySpanExporter, en
                 finalizer=AgentResponse.from_updates,
             )
 
-    class FailingStreamingAgent(AgentTelemetryLayer, _FailingStreamingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
+    class FailingStreamingAgent(AgentTelemetryLayer, _FailingStreamingAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]  # ty: ignore[invalid-method-override]
         pass
 
     agent = FailingStreamingAgent()
@@ -2934,7 +3086,7 @@ async def test_agent_when_disabled(span_exporter: InMemorySpanExporter):
 
             yield AgentResponseUpdate(contents=[Content.from_text("test")], role="assistant")
 
-    class TestAgent(AgentTelemetryLayer, _TestAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
+    class TestAgent(AgentTelemetryLayer, _TestAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]  # ty: ignore[invalid-method-override]
         pass
 
     agent = TestAgent()
@@ -2987,7 +3139,7 @@ async def test_agent_streaming_when_disabled(span_exporter: InMemorySpanExporter
         async def _run_stream(self, messages=None, *, session=None, **kwargs):
             yield AgentResponseUpdate(contents=[Content.from_text("test")], role="assistant")
 
-    class TestAgent(AgentTelemetryLayer, _TestAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]
+    class TestAgent(AgentTelemetryLayer, _TestAgent):  # type: ignore[misc]  # pyrefly: ignore[inconsistent-inheritance]  # ty: ignore[invalid-method-override]
         pass
 
     agent = TestAgent()
@@ -5485,7 +5637,7 @@ async def test_agent_streaming_execute_failure_closes_span_and_resets_contextvar
                 raise RuntimeError("execute failed")
             raise NotImplementedError
 
-    class FailingExecuteAgent(AgentTelemetryLayer, _FailingExecuteAgent):  # type: ignore[misc]
+    class FailingExecuteAgent(AgentTelemetryLayer, _FailingExecuteAgent):  # type: ignore[misc]  # ty: ignore[invalid-method-override]
         pass
 
     # Sentinel values to detect that contextvars were reset to their pre-call state.
@@ -5558,7 +5710,7 @@ async def test_agent_run_contextvars_safe_when_awaited_in_different_context(
 
             return _inner()
 
-    class SimpleAgent(AgentTelemetryLayer, _SimpleAgent):  # type: ignore[misc]
+    class SimpleAgent(AgentTelemetryLayer, _SimpleAgent):  # type: ignore[misc]  # ty: ignore[invalid-method-override]
         pass
 
     agent = SimpleAgent()
@@ -5621,7 +5773,7 @@ async def test_agent_run_error_path_contextvars_safe_when_awaited_in_different_c
 
             return _inner()
 
-    class FailingRunAgent(AgentTelemetryLayer, _FailingRunAgent):  # type: ignore[misc]
+    class FailingRunAgent(AgentTelemetryLayer, _FailingRunAgent):  # type: ignore[misc]  # ty: ignore[invalid-method-override]
         pass
 
     agent = FailingRunAgent()
@@ -5692,7 +5844,7 @@ async def test_agent_streaming_contextvars_safe_when_consumed_in_different_conte
                 return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
             raise NotImplementedError
 
-    class StreamingAgent(AgentTelemetryLayer, _StreamingAgent):  # type: ignore[misc]
+    class StreamingAgent(AgentTelemetryLayer, _StreamingAgent):  # type: ignore[misc]  # ty: ignore[invalid-method-override]
         pass
 
     agent = StreamingAgent()

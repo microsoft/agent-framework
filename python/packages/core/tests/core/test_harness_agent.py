@@ -6,11 +6,10 @@ import importlib.util
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
-from agent_framework_tools.shell import ShellResult
 
 from agent_framework import (
     AgentSession,
@@ -39,6 +38,9 @@ from agent_framework._harness._agent import DEFAULT_HARNESS_INSTRUCTIONS, _assem
 from agent_framework._harness._mode import AgentModeProvider
 from agent_framework._sessions import ContextProvider, PerServiceCallHistoryPersistingMiddleware
 from agent_framework._tools import FunctionInvocationLayer
+
+if TYPE_CHECKING:
+    from agent_framework_tools.shell import ShellResult
 
 
 class _FakeChatClient(BaseChatClient[ChatOptions[Any]]):
@@ -867,6 +869,8 @@ class _FakeShellTool:
         pass
 
     async def run(self, command: str, *, timeout: float | None = None) -> ShellResult:
+        from agent_framework_tools.shell import ShellResult
+
         return ShellResult(stdout="", stderr="", exit_code=0, duration_ms=0)
 
     async def __aenter__(self) -> _FakeShellTool:

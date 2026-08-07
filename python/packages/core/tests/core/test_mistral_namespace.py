@@ -11,9 +11,13 @@ import agent_framework.mistral as mistral
 def test_mistral_namespace_dir_lists_lazy_exports() -> None:
     names = dir(mistral)
     for expected in (
+        "MistralChatClient",
+        "MistralChatOptions",
         "MistralEmbeddingClient",
         "MistralEmbeddingOptions",
         "MistralEmbeddingSettings",
+        "MistralSettings",
+        "RawMistralChatClient",
     ):
         assert expected in names
 

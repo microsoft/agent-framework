@@ -23,10 +23,27 @@ from agent_framework_azure_cosmos_memory._context_provider import (
     DEFAULT_CONTEXT_PROMPT,
     CosmosMemoryContextProvider,
 )
+from agent_framework_azure_cosmos_memory._feature_usage import FeatureIndex
 
 # The provider methods accept an ``agent`` implementing ``SupportsAgentRun`` but never
 # use it in these tests, so a typed ``None`` stub keeps the call sites clean.
 _STUB_AGENT: Any = None
+
+
+async def test_before_run_marks_cosmos_memory_used_before_empty_return() -> None:
+    provider = object.__new__(CosmosMemoryContextProvider)
+    context = MagicMock(spec=SessionContext)
+    context.input_messages = []
+
+    with patch("agent_framework_azure_cosmos_memory._context_provider.mark_feature_used") as mark_feature_used:
+        await provider.before_run(
+            agent=_STUB_AGENT,
+            session=MagicMock(spec=AgentSession),
+            context=context,
+            state={},
+        )
+
+    mark_feature_used.assert_called_once_with(FeatureIndex.AZURE_COSMOS_MEMORY)
 
 
 @pytest.fixture

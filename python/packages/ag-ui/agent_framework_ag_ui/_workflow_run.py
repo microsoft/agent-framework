@@ -9,6 +9,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from functools import partial
 from typing import Any, cast, get_args, get_origin
 
 from ag_ui.core import (
@@ -25,6 +26,9 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, Workflow, WorkflowRunState
+from agent_framework.observability import (
+    _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ._message_adapters import normalize_agui_input_messages
 from ._run_common import (
@@ -33,6 +37,7 @@ from ._run_common import (
     _close_reasoning_block,
     _emit_content,
     _extract_resume_payload,
+    _iterate_with_context,
     _normalize_resume_interrupts,
     _resume_contract_error,
 )
@@ -777,7 +782,8 @@ async def run_workflow_stream(
     workflow: Workflow,
 ) -> AsyncGenerator[BaseEvent]:
     """Run a Workflow and emit AG-UI protocol events."""
-    thread_id = input_data.get("thread_id") or input_data.get("threadId") or str(uuid.uuid4())
+    supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
+    thread_id = supplied_thread_id or str(uuid.uuid4())
     run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
     available_interrupts = input_data.get("available_interrupts") or input_data.get("availableInterrupts")
     if available_interrupts:
@@ -890,12 +896,15 @@ async def run_workflow_stream(
             fwd_kwargs = {}
 
     try:
-        if responses:
-            event_stream = workflow.run(responses=responses, stream=True, **fwd_kwargs)
-        else:
-            event_stream = workflow.run(message=messages, stream=True, **fwd_kwargs)
+        telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
+        telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
+        with telemetry_context():
+            if responses:
+                event_stream = workflow.run(responses=responses, stream=True, **fwd_kwargs)
+            else:
+                event_stream = workflow.run(message=messages, stream=True, **fwd_kwargs)
 
-        async for event in event_stream:
+        async for event in _iterate_with_context(event_stream, telemetry_context):
             event_type = getattr(event, "type", None)
 
             if event_type == "started":
@@ -922,6 +931,10 @@ async def run_workflow_stream(
                 else:
                     state_value = str(getattr(state, "value", state))
                 if state_value in _TERMINAL_STATES and not terminal_emitted:
+                    # Close any open assistant text message before the terminal event so
+                    # RUN_FINISHED is always the last emitted event.
+                    for end_event in _drain_open_message():
+                        yield end_event
                     if not interrupts:
                         interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
                     yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)

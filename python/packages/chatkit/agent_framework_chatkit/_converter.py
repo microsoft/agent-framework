@@ -11,6 +11,7 @@ from agent_framework import (
     Content,
     Message,
 )
+from agent_framework._telemetry import mark_feature_used
 from chatkit.types import (
     AssistantMessageItem,
     Attachment,
@@ -29,6 +30,8 @@ from chatkit.types import (
     WidgetItem,
     WorkflowItem,
 )
+
+from ._feature_usage import FeatureIndex
 
 logger = logging.getLogger(__name__)
 
@@ -610,4 +613,5 @@ async def simple_to_agent_input(thread_items: Sequence[ThreadItem] | ThreadItem)
             # Convert multiple items
             messages = await simple_to_agent_input([user_message_item, assistant_message_item, task_item])
     """
+    mark_feature_used(FeatureIndex.CHATKIT)
     return await _DEFAULT_CONVERTER.to_agent_input(thread_items)

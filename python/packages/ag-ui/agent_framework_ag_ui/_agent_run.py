@@ -9,7 +9,9 @@ import json
 import logging
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncIterable, Awaitable, Mapping
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from dataclasses import dataclass, field
+from functools import partial
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from ag_ui.core import (
@@ -40,40 +42,48 @@ from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework._tools import (
     _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY,  # type: ignore
     _collect_approval_responses,  # type: ignore
+    _get_tool_map,  # type: ignore
+    _is_hosted_tool_approval,  # type: ignore
     _replace_approval_contents_with_results,  # type: ignore
     _TOOL_APPROVAL_STATE_KEY,  # type: ignore
-    _try_execute_function_calls,  # type: ignore
+    _try_execute_function_call_groups,  # type: ignore
     normalize_function_invocation_configuration,
 )
 from agent_framework._types import ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
+from agent_framework.observability import (
+    _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
 from ._message_adapters import normalize_agui_input_messages
-from ._orchestration._predictive_state import PredictiveStateHandler
-from ._orchestration._tooling import collect_server_tools, merge_tools, register_additional_client_tools
+from ._predictive_state import PredictiveStateHandler
+from ._tooling import collect_server_tools, merge_tools, register_additional_client_tools
 from ._run_common import (
     FlowState,
     _approval_interrupt_for_function_call,  # type: ignore
     _approval_steps_response_schema,  # type: ignore
     _build_run_finished_event,  # type: ignore
+    _cancelled_resume_interrupt_ids,  # type: ignore
     _close_reasoning_block,  # type: ignore
     _emit_content,  # type: ignore
     _extract_resume_payload,  # type: ignore
     _extract_tool_result_display,  # type: ignore
     _has_only_tool_calls,  # type: ignore
+    _iterate_with_context,  # type: ignore
     _normalize_resume_interrupts,  # type: ignore
     _reconstruct_messages_from_thread_snapshot,  # type: ignore
     _resume_contract_error,  # type: ignore
     _resolve_ui_payload,  # type: ignore
     _stringify_tool_result,  # type: ignore
+    _track_tool_call_segment,  # type: ignore
 )
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
     AGUIThreadSnapshot,
-    _clear_thread_snapshot_interrupt,
 )
+from ._snapshot_session import ThreadSnapshotSession, _event_messages_to_snapshot_dicts
 from ._utils import (
     canonical_function_arguments,
     convert_agui_tools_to_agent_framework,
@@ -94,6 +104,239 @@ logger = logging.getLogger(__name__)
 # Keys that are internal to AG-UI orchestration and should not be passed to chat clients
 AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state", "forwarded_props"}
 _COLLECTED_APPROVAL_RESPONSES_KEY = "collected_approval_responses"
+
+
+@dataclass
+class _LocalApprovalOccurrence:
+    """One local function-call occurrence tracked across AG-UI replay."""
+
+    call_id: str
+    name: str | None
+    arguments: str | None
+    approval_ids: set[str] = field(default_factory=set)
+    terminal_result_content_ids: set[int] = field(default_factory=set)
+    closed: bool = False
+
+
+def _local_approval_content_ids_to_remove(
+    messages: Sequence[Message],
+    *,
+    pending_response_content_ids: set[int] | None = None,
+) -> tuple[set[int], set[int]]:
+    """Find local approval controls and untrusted terminal results to remove.
+
+    A terminal result in a client request is not evidence that the occurrence
+    currently awaiting a server-side approval already executed. When the
+    response belongs to a registered pending approval, the result is removed
+    and the response remains available for static execution. Results in the
+    default path retain the historical replay behavior.
+    """
+    occurrences_by_call_id: dict[str, list[_LocalApprovalOccurrence]] = {}
+    occurrences_by_approval_id: dict[str, list[_LocalApprovalOccurrence]] = {}
+    response_occurrence_by_approval_id: dict[str, _LocalApprovalOccurrence] = {}
+    response_content_id_by_approval_id: dict[str, int] = {}
+    response_occurrences: dict[int, _LocalApprovalOccurrence] = {}
+    duplicate_response_content_ids: set[int] = set()
+    untrusted_result_content_ids: set[int] = set()
+
+    def add_occurrence(function_call: Content, *, closed: bool = False) -> _LocalApprovalOccurrence | None:
+        if function_call.call_id is None:
+            return None
+        occurrence = _LocalApprovalOccurrence(
+            call_id=function_call.call_id,
+            name=function_call.name,
+            arguments=canonical_function_arguments(function_call),
+            closed=closed,
+        )
+        occurrences_by_call_id.setdefault(function_call.call_id, []).append(occurrence)
+        return occurrence
+
+    def matching_occurrence(
+        candidates: Sequence[_LocalApprovalOccurrence],
+        function_call: Content,
+        *,
+        require_open: bool = False,
+        require_unbound: bool = False,
+        newest_first: bool = True,
+        prefer_open: bool = False,
+    ) -> _LocalApprovalOccurrence | None:
+        ordered = reversed(candidates) if newest_first else iter(candidates)
+        eligible = [
+            occurrence
+            for occurrence in ordered
+            if (not require_open or not occurrence.closed) and (not require_unbound or not occurrence.approval_ids)
+        ]
+        arguments = canonical_function_arguments(function_call)
+        if prefer_open:
+            exact_open = next(
+                (
+                    occurrence
+                    for occurrence in eligible
+                    if not occurrence.closed
+                    and occurrence.name == function_call.name
+                    and occurrence.arguments == arguments
+                ),
+                None,
+            )
+            if exact_open is not None:
+                return exact_open
+            if open_occurrence := next((occurrence for occurrence in eligible if not occurrence.closed), None):
+                return open_occurrence
+        exact = next(
+            (
+                occurrence
+                for occurrence in eligible
+                if occurrence.name == function_call.name and occurrence.arguments == arguments
+            ),
+            None,
+        )
+        return exact or next(iter(eligible), None)
+
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_call":
+                add_occurrence(content)
+                continue
+
+            if content.type == "function_approval_request":
+                function_call = content.function_call
+                if function_call is None or function_call.call_id is None or content.id is None:
+                    continue
+                candidates = occurrences_by_call_id.get(function_call.call_id, [])
+                occurrence = matching_occurrence(
+                    candidates,
+                    function_call,
+                    require_open=True,
+                    require_unbound=True,
+                    newest_first=False,
+                ) or add_occurrence(function_call)
+                if occurrence is not None:
+                    occurrence.approval_ids.add(content.id)
+                    occurrences_by_approval_id.setdefault(content.id, []).append(occurrence)
+                continue
+
+            if content.type == "function_approval_response":
+                if _is_hosted_tool_approval(content):
+                    continue
+                function_call = content.function_call
+                if function_call is None or function_call.call_id is None:
+                    continue
+                previous_occurrence = response_occurrence_by_approval_id.get(content.id or "")
+                request_occurrences = occurrences_by_approval_id.get(content.id or "", [])
+                is_pending_response = (
+                    pending_response_content_ids is not None and id(content) in pending_response_content_ids
+                )
+                request_occurrence = matching_occurrence(
+                    request_occurrences,
+                    function_call,
+                    prefer_open=not is_pending_response,
+                )
+                call_occurrence = matching_occurrence(
+                    occurrences_by_call_id.get(function_call.call_id, []),
+                    function_call,
+                    prefer_open=not is_pending_response,
+                )
+                occurrence = (
+                    call_occurrence
+                    if call_occurrence is not None
+                    and not call_occurrence.closed
+                    and (request_occurrence is None or request_occurrence.closed)
+                    else request_occurrence or call_occurrence
+                )
+                if occurrence is None:
+                    occurrence = add_occurrence(function_call)
+                if previous_occurrence is not None and occurrence is previous_occurrence:
+                    previous_content_id = response_content_id_by_approval_id.get(content.id or "")
+                    if previous_content_id is not None:
+                        duplicate_response_content_ids.add(previous_content_id)
+                if content.id is not None and occurrence is not None:
+                    occurrence.approval_ids.add(content.id)
+                    response_occurrence_by_approval_id[content.id] = occurrence
+                    response_content_id_by_approval_id[content.id] = id(content)
+                if occurrence is not None:
+                    response_occurrences[id(content)] = occurrence
+                continue
+
+            if content.call_id is None:
+                continue
+            is_terminal_result = content.type == "function_result" and not (
+                isinstance(content.result, str) and "[APPROVAL_PENDING]" in content.result
+            )
+            is_follow_up_request = content.user_input_request and content.type not in {
+                "function_approval_request",
+                "function_approval_response",
+            }
+            if not (is_terminal_result or is_follow_up_request):
+                continue
+            occurrence = next(
+                (candidate for candidate in occurrences_by_call_id.get(content.call_id, []) if not candidate.closed),
+                None,
+            )
+            if occurrence is None:
+                occurrence = _LocalApprovalOccurrence(
+                    call_id=content.call_id,
+                    name=None,
+                    arguments=None,
+                )
+                occurrences_by_call_id.setdefault(content.call_id, []).append(occurrence)
+            occurrence.terminal_result_content_ids.add(id(content))
+            occurrence.closed = True
+
+    if pending_response_content_ids:
+        for response_content_id, occurrence in response_occurrences.items():
+            if response_content_id not in pending_response_content_ids:
+                continue
+            # A client-supplied result cannot close the server-owned pending
+            # occurrence. Remove it before static execution so it cannot be
+            # mistaken for the result produced by the approved local tool.
+            untrusted_result_content_ids.update(occurrence.terminal_result_content_ids)
+            occurrence.closed = False
+
+    return (
+        duplicate_response_content_ids
+        | {content_id for content_id, occurrence in response_occurrences.items() if occurrence.closed},
+        untrusted_result_content_ids,
+    )
+
+
+def _local_approval_response_content_ids_to_remove(messages: Sequence[Message]) -> set[int]:
+    """Find completed and duplicate local approval responses by call occurrence."""
+    response_content_ids, _ = _local_approval_content_ids_to_remove(messages)
+    return response_content_ids
+
+
+def _filter_local_approval_responses_for_provider(
+    messages: Sequence[Message],
+    *,
+    pending_response_content_ids: set[int] | None = None,
+) -> list[Message]:
+    """Remove completed local approval controls from AG-UI provider input.
+
+    A matching terminal result only closes a local response when it is not part
+    of a server-registered pending approval occurrence. Client-authored results
+    for a still-pending occurrence are removed before execution, while hosted-
+    service responses remain provider protocol data.
+    """
+    response_content_ids_to_remove, untrusted_result_content_ids = _local_approval_content_ids_to_remove(
+        messages,
+        pending_response_content_ids=pending_response_content_ids,
+    )
+    response_content_ids_to_remove.update(untrusted_result_content_ids)
+
+    filtered_messages: list[Message] = []
+    for message in messages:
+        filtered_contents = [
+            content for content in message.contents if id(content) not in response_content_ids_to_remove
+        ]
+        if len(filtered_contents) == len(message.contents):
+            filtered_messages.append(message)
+            continue
+        if not filtered_contents:
+            continue
+        filtered_message = copy.copy(message)
+        filtered_message.contents = filtered_contents
+        filtered_messages.append(filtered_message)
+    return filtered_messages
 
 
 def _build_safe_metadata(thread_metadata: dict[str, Any] | None) -> dict[str, Any]:
@@ -446,9 +689,10 @@ class _PendingApproval(TypedDict):
 
 
 class _PendingApprovalWithSiblings(_PendingApproval, total=False):
-    """Pending approval details including hidden already-approved sibling calls."""
+    """Pending approval details including sibling calls and trusted hosted metadata."""
 
     already_approved_requests: list[dict[str, Any]]
+    server_label: str
 
 
 PendingApprovalEntry = _PendingApprovalWithSiblings | str
@@ -467,6 +711,7 @@ def _make_pending_approval_entry(
     request_id: str | None = None,
     interrupt_id: str | None = None,
     already_approved_requests: list[dict[str, Any]] | None = None,
+    server_label: str | None = None,
 ) -> _PendingApprovalWithSiblings:
     entry: _PendingApprovalWithSiblings = {
         "name": name,
@@ -476,6 +721,8 @@ def _make_pending_approval_entry(
     }
     if already_approved_requests:
         entry["already_approved_requests"] = already_approved_requests
+    if server_label:
+        entry["server_label"] = server_label
     return entry
 
 
@@ -506,6 +753,19 @@ def _pending_approval_already_approved_requests(entry: PendingApprovalEntry) -> 
     if isinstance(entry, str):
         return []
     return list(entry.get("already_approved_requests", []))
+
+
+def _pending_approval_server_label(entry: PendingApprovalEntry) -> str | None:
+    if isinstance(entry, str):
+        return None
+    return entry.get("server_label")
+
+
+def _function_call_server_label(function_call: Content | None) -> str | None:
+    if function_call is None:
+        return None
+    server_label = function_call.additional_properties.get("server_label")
+    return server_label if isinstance(server_label, str) and server_label else None
 
 
 def _stored_already_approved_requests_for_visible_approval(
@@ -640,6 +900,7 @@ def _register_server_generated_approval_response(
         canonical_function_arguments(response.function_call),
         request_id=str(response.id) if response.id else None,
         interrupt_id=str(response.function_call.call_id) if response.function_call.call_id else None,
+        server_label=_function_call_server_label(response.function_call),
     )
     _register_pending_approval_entry(
         pending_approvals,
@@ -773,18 +1034,6 @@ def _approval_state_tool_call_ids(
     return call_ids
 
 
-def _cancelled_resume_interrupt_ids(resume_payload: Any) -> set[str]:
-    """Return cancelled canonical resume interrupt ids."""
-    interrupt_ids: set[str] = set()
-    for interrupt in _normalize_resume_interrupts(resume_payload):
-        if interrupt.get("status") != "cancelled":
-            continue
-        interrupt_id = interrupt.get("id")
-        if interrupt_id:
-            interrupt_ids.add(str(interrupt_id))
-    return interrupt_ids
-
-
 def _tool_approval_state_exists_for_cancelled_resume(
     resume_payload: Any,
     approval_state_store: InMemoryAGUIApprovalStateStore | None,
@@ -878,6 +1127,7 @@ def _register_pending_approval(
     request_id: str,
     interrupt_id: str | None,
     already_approved_requests: list[dict[str, Any]] | None = None,
+    server_label: str | None = None,
 ) -> None:
     """Register one pending approval under each distinct thread identity."""
     keys = list(
@@ -897,6 +1147,7 @@ def _register_pending_approval(
         request_id=request_id,
         interrupt_id=interrupt_id,
         already_approved_requests=already_approved_requests,
+        server_label=server_label,
     )
     for key in keys:
         registry[key] = entry
@@ -1103,6 +1354,18 @@ def _canonical_approval_resume_messages(
         pending_arguments = _pending_approval_arguments(pending_entry)
         original_arguments = _parse_json_object(pending_arguments) or {}
         edited_arguments = {key: value for key, value in payload.items() if key not in {"accepted", "approved"}}
+        if edited_arguments and _pending_approval_server_label(pending_entry):
+            return (
+                [],
+                handled_ids,
+                cancelled_ids,
+                RunErrorEvent(
+                    message=(
+                        f"Hosted approval resume for interruptId '{interrupt_id}' does not support edited arguments."
+                    ),
+                    code="APPROVAL_RESUME_INVALID_RESPONSE",
+                ),
+            )
         if not set(edited_arguments).issubset(set(original_arguments)):
             return (
                 [],
@@ -1162,6 +1425,7 @@ def _canonical_approval_resume_messages(
                 canonical_function_arguments(function_call),
                 request_id=str(response.id) if response.id else None,
                 interrupt_id=str(function_call.call_id) if function_call.call_id else None,
+                server_label=_function_call_server_label(function_call),
             )
             _register_pending_approval_entry(
                 pending_approvals,
@@ -1207,6 +1471,7 @@ async def _resolve_approval_responses(
     run_kwargs: dict[str, Any],
     pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] | None = None,
     thread_id: str = "",
+    validated_approved_responses: list[Content] | None = None,
 ) -> list[Content]:
     """Execute approved function calls and replace approval content with results.
 
@@ -1223,6 +1488,9 @@ async def _resolve_approval_responses(
             When provided, every approval response is validated against this
             registry to prevent bypass, function name spoofing, and replay.
         thread_id: The conversation thread ID used to scope registry keys.
+        validated_approved_responses: Optional collector for validated local
+            approval responses, including controls removed because the matching
+            call occurrence already has a terminal result.
 
     Returns:
         List of approved function_result Content objects only (empty if no
@@ -1230,86 +1498,182 @@ async def _resolve_approval_responses(
         but are *not* included in the return value because they should not
         be emitted as TOOL_CALL_RESULT events.
     """
-    fcc_todo = _collect_approval_responses(messages)
-    if not fcc_todo:
-        return []
+    approval_responses: list[Content] = []
+    responses_by_id: dict[str, list[Content]] = {}
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_approval_response" and content.id is not None:
+                approval_responses.append(content)
+                responses_by_id.setdefault(content.id, []).append(content)
 
-    approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
-    rejected_responses = [resp for resp in fcc_todo.values() if not resp.approved]
+    valid_response_content_ids: set[int] | None = None
+    pending_local_response_content_ids: set[int] | None = None
+    response_content_ids_to_strip: set[int] = set()
+    if pending_approvals is not None:
+        valid_response_content_ids = set()
+        pending_local_response_content_ids = set()
 
-    # Validate every approval response (approved AND rejected) against the
-    # pending approvals registry.  Invalid responses are stripped from messages
-    # entirely — not converted to rejection results, which would inject
-    # attacker-controlled content into the LLM conversation.
-    if pending_approvals is not None and (approved_responses or rejected_responses):
-        validated: list[Any] = []
-        validated_rejected: list[Any] = []
-        invalid_ids: set[str] = set()
-        for resp in approved_responses + rejected_responses:
-            resp_id = resp.id or ""
-            resp_name = resp.function_call.name if resp.function_call else None
+        def matches_pending_entry(candidate: PendingApprovalEntry | None, expected: PendingApprovalEntry) -> bool:
+            if isinstance(candidate, str) and isinstance(expected, str):
+                return candidate == expected
+            return candidate is expected
+
+        pending_response_groups: dict[tuple[str, object], tuple[PendingApprovalEntry, list[Content]]] = {}
+        for response in approval_responses:
+            resp_id = response.id
+            if resp_id is None:
+                continue
             registry_key = _pending_approval_key(thread_id, resp_id)
+            id_entry = pending_approvals.get(registry_key)
+            function_call_id = response.function_call.call_id if response.function_call else None
+            call_registry_key = (
+                _pending_approval_key(thread_id, function_call_id) if function_call_id is not None else None
+            )
+            call_entry = pending_approvals.get(call_registry_key) if call_registry_key is not None else None
+            pending_entry = id_entry or call_entry
+            if pending_entry is None:
+                if not _is_hosted_tool_approval(response):
+                    logger.warning(
+                        "Rejected approval response id=%s: no matching pending approval request",
+                        resp_id,
+                    )
+                    response_content_ids_to_strip.add(id(response))
+                continue
 
-            if registry_key not in pending_approvals:
+            group_key: tuple[str, object]
+            if isinstance(pending_entry, str):
+                group_key = ("legacy", call_registry_key if call_entry is not None else registry_key)
+            else:
+                group_key = ("entry", id(pending_entry))
+            group = pending_response_groups.get(group_key)
+            if group is None:
+                pending_response_groups[group_key] = (pending_entry, [response])
+            else:
+                group[1].append(response)
+
+        for pending_entry, responses in pending_response_groups.values():
+            pending_name = _pending_approval_name(pending_entry)
+            # The canonical AG-UI approval id may be the provider call id, which can
+            # be reused by a later call occurrence, while provider request ids may
+            # alias that same pending entry. Only the latest response across every
+            # trusted alias can answer the current entry; earlier responses are
+            # stale replay controls and must not authorize a malformed fresh one.
+            primary_response = responses[-1]
+            response_content_ids_to_strip.update(id(response) for response in responses[:-1])
+            resp_id = primary_response.id
+            registry_key = _pending_approval_key(thread_id, resp_id) if resp_id is not None else None
+            id_entry = pending_approvals.get(registry_key) if registry_key is not None else None
+            if not matches_pending_entry(id_entry, pending_entry):
                 logger.warning(
                     "Rejected approval response id=%s: no matching pending approval request",
                     resp_id,
                 )
-                invalid_ids.add(resp_id)
+                response_content_ids_to_strip.add(id(primary_response))
                 continue
-
-            pending_entry = pending_approvals[registry_key]
-            pending_name = _pending_approval_name(pending_entry)
-            if resp_name != pending_name:
+            function_call_id = primary_response.function_call.call_id if primary_response.function_call else None
+            call_registry_key = (
+                _pending_approval_key(thread_id, function_call_id) if function_call_id is not None else None
+            )
+            call_entry = pending_approvals.get(call_registry_key) if call_registry_key is not None else None
+            if not isinstance(pending_entry, str) and not matches_pending_entry(call_entry, pending_entry):
+                logger.warning(
+                    "Rejected approval response id=%s: function call id mismatch (response=%s)",
+                    resp_id,
+                    function_call_id,
+                )
+                response_content_ids_to_strip.add(id(primary_response))
+                continue
+            response_name = primary_response.function_call.name if primary_response.function_call else None
+            if response_name != pending_name:
                 logger.warning(
                     "Rejected approval response id=%s: function name mismatch (response=%s, pending=%s)",
                     resp_id,
-                    resp_name,
+                    response_name,
                     pending_name,
                 )
-                invalid_ids.add(resp_id)
+                response_content_ids_to_strip.add(id(primary_response))
                 continue
-
             pending_arguments = _pending_approval_arguments(pending_entry)
-            response_arguments = canonical_function_arguments(resp.function_call)
+            response_arguments = canonical_function_arguments(primary_response.function_call)
             if not _approval_arguments_match_pending(pending_arguments, response_arguments):
-                logger.warning(
-                    "Rejected approval response id=%s: function arguments mismatch",
-                    resp_id,
-                )
-                invalid_ids.add(resp_id)
+                logger.warning("Rejected approval response id=%s: function arguments mismatch", resp_id)
+                response_content_ids_to_strip.add(id(primary_response))
                 continue
 
-            # Valid — consume entry to prevent replay
+            server_label = _pending_approval_server_label(pending_entry)
+            if primary_response.function_call is not None:
+                if server_label:
+                    primary_response.function_call.additional_properties["server_label"] = server_label
+                else:
+                    primary_response.function_call.additional_properties.pop("server_label", None)
+            valid_response_content_ids.add(id(primary_response))
+            if not server_label:
+                pending_local_response_content_ids.add(id(primary_response))
             _consume_pending_approval_entry(
                 pending_approvals,
                 thread_id,
                 pending_entry,
                 resp_id,
-                resp.function_call.call_id if resp.function_call else None,
+                primary_response.function_call.call_id if primary_response.function_call else None,
             )
-            if resp.approved:
-                validated.append(resp)
-            else:
-                validated_rejected.append(resp)
+            if validated_approved_responses is not None and primary_response.approved and not server_label:
+                validated_approved_responses.append(primary_response)
+    elif validated_approved_responses is not None:
+        validated_approved_responses.extend(
+            responses[-1]
+            for responses in responses_by_id.values()
+            if responses[-1].approved and not _is_hosted_tool_approval(responses[-1])
+        )
 
-        # Strip invalid approval responses from messages and fcc_todo so
-        # _replace_approval_contents_with_results never sees them.
-        if invalid_ids:
-            for inv_id in invalid_ids:
-                fcc_todo.pop(inv_id, None)
-            for msg in messages:
-                msg.contents = [
-                    c for c in msg.contents if not (c.type == "function_approval_response" and c.id in invalid_ids)
-                ]
+    if response_content_ids_to_strip:
+        filtered_messages: list[Message] = []
+        for message in messages:
+            filtered_contents = [
+                content for content in message.contents if id(content) not in response_content_ids_to_strip
+            ]
+            if len(filtered_contents) == len(message.contents):
+                filtered_messages.append(message)
+                continue
+            if not filtered_contents:
+                continue
+            message.contents = filtered_contents
+            filtered_messages.append(message)
+        messages[:] = filtered_messages
 
-        approved_responses = validated
-        rejected_responses = validated_rejected
+    # A replayed terminal result can precede the synthesized approval response.
+    # Remove completed controls before static execution, but do not let an
+    # untrusted result in a still-pending server occurrence suppress execution.
+    # Collapse duplicate responses for the same approval occurrence to one.
+    messages[:] = _filter_local_approval_responses_for_provider(
+        messages,
+        pending_response_content_ids=pending_local_response_content_ids,
+    )
 
-    approved_function_results: list[Any] = []
+    fcc_todo = _collect_approval_responses(messages)
+    if valid_response_content_ids is not None:
+        fcc_todo = {
+            response_id: response
+            for response_id, response in fcc_todo.items()
+            if id(response) in valid_response_content_ids
+        }
+    if not fcc_todo:
+        return []
 
-    # Execute approved tool calls
-    if approved_responses and tools:
+    approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
+
+    approved_function_result_groups: list[list[Content]] = []
+
+    # Partition approved responses into static (execute now) and deferred (execute during run)
+    tool_map = _get_tool_map(tools) if tools else {}
+    static_approved: list[Content] = []
+
+    for approval in approved_responses:
+        tool_name = approval.function_call.name if approval.function_call else None
+        if tool_name in tool_map and not _is_hosted_tool_approval(approval):
+            static_approved.append(approval)
+
+    # Execute only statically-available approved tool calls
+    if static_approved and tools:
         client = getattr(agent, "client", None)
         config = normalize_function_invocation_configuration(getattr(client, "function_invocation_configuration", None))
         middleware_pipeline = FunctionMiddlewarePipeline(
@@ -1319,36 +1683,31 @@ async def _resolve_approval_responses(
         # Filter out AG-UI-specific kwargs that should not be passed to tool execution
         tool_kwargs = {k: v for k, v in run_kwargs.items() if k != "options"}
         try:
-            results, _ = await _try_execute_function_calls(
+            approved_function_result_groups, _ = await _try_execute_function_call_groups(
                 custom_args=tool_kwargs,
-                attempt_idx=0,
-                function_calls=approved_responses,
+                function_calls=static_approved,
                 tools=tools,
                 middleware_pipeline=middleware_pipeline,
                 config=config,
             )
-            approved_function_results = list(results)
         except Exception as e:
             logger.exception("Failed to execute approved tool calls; injecting error results: %s", e)
-            approved_function_results = []
+            approved_function_result_groups = []
 
-    # Build results for approved responses (used for TOOL_CALL_RESULT event emission)
+    # Normalize one group per static approval and collect only terminal results for TOOL_CALL_RESULT events.
+    # Deferred provider-injected approvals are left in messages for ToolApprovalMiddleware to process.
+    replacement_groups: list[list[Content]] = []
     approved_results: list[Content] = []
-    for idx, approval in enumerate(approved_responses):
-        if (
-            idx < len(approved_function_results)
-            and getattr(approved_function_results[idx], "type", None) == "function_result"
-        ):
-            approved_results.append(approved_function_results[idx])
-            continue
-        # Get call_id from function_call if present, otherwise use approval.id
-        func_call = approval.function_call
-        call_id = (func_call.call_id if func_call else None) or approval.id or ""
-        approved_results.append(
-            Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")
-        )
+    for idx, approval in enumerate(static_approved):
+        result_group = approved_function_result_groups[idx] if idx < len(approved_function_result_groups) else []
+        if not result_group:
+            func_call = approval.function_call
+            call_id = (func_call.call_id if func_call else None) or approval.id or ""
+            result_group = [Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")]
+        replacement_groups.append(result_group)
+        approved_results.extend(content for content in result_group if content.type == "function_result")
 
-    _replace_approval_contents_with_results(messages, fcc_todo, approved_results)
+    _replace_approval_contents_with_results(messages, fcc_todo, replacement_groups)
 
     # Post-process: Convert user messages with function_result content to proper tool messages.
     # After _replace_approval_contents_with_results, approved tool calls have their results
@@ -1401,6 +1760,39 @@ def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
     messages[:] = result
 
 
+def _confirm_changes_target_call_id(
+    snapshot_messages: list[dict[str, Any]],
+    confirm_call_id: str,
+    approval_payload: Mapping[str, Any],
+) -> str | None:
+    explicit_call_id = approval_payload.get("function_call_id")
+    if explicit_call_id:
+        return str(explicit_call_id)
+
+    for snapshot_message in snapshot_messages:
+        if normalize_agui_role(snapshot_message.get("role", "")) != "assistant":
+            continue
+        tool_calls = snapshot_message.get("tool_calls") or snapshot_message.get("toolCalls")
+        if not isinstance(tool_calls, list):
+            continue
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, Mapping) or str(tool_call.get("id") or "") != confirm_call_id:
+                continue
+            function = tool_call.get("function")
+            if not isinstance(function, Mapping) or function.get("name") != "confirm_changes":
+                return None
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    return None
+            if isinstance(arguments, Mapping) and arguments.get("function_call_id"):
+                return str(arguments["function_call_id"])
+            return None
+    return None
+
+
 def _clean_resolved_approvals_from_snapshot(
     snapshot_messages: list[dict[str, Any]],
     resolved_messages: list[Message],
@@ -1434,9 +1826,6 @@ def _clean_resolved_approvals_from_snapshot(
                 )
                 result_by_call_id[str(content.call_id)] = result_text
 
-    if not result_by_call_id:
-        return
-
     for snap_msg in snapshot_messages:
         if normalize_agui_role(snap_msg.get("role", "")) != "tool":
             continue
@@ -1455,12 +1844,25 @@ def _clean_resolved_approvals_from_snapshot(
         # Find matching tool result by toolCallId
         tool_call_id = snap_msg.get("toolCallId") or snap_msg.get("tool_call_id") or ""
         replacement = result_by_call_id.get(str(tool_call_id))
-        if replacement is not None:
-            snap_msg["content"] = replacement
-            logger.info(
-                "Replaced approval payload in snapshot for tool_call_id=%s with actual result",
-                tool_call_id,
+        if replacement is None:
+            target_call_id = _confirm_changes_target_call_id(
+                snapshot_messages,
+                str(tool_call_id),
+                parsed,
             )
+            if target_call_id is None:
+                continue
+            if parsed.get("accepted"):
+                replacement = result_by_call_id.get(target_call_id)
+                if replacement is None:
+                    continue
+            else:
+                replacement = "Changes declined."
+        snap_msg["content"] = replacement
+        logger.info(
+            "Replaced approval payload in snapshot for tool_call_id=%s with resolved content",
+            tool_call_id,
+        )
 
 
 def _snapshot_tool_call_ids(message: Mapping[str, Any]) -> list[str]:
@@ -1529,12 +1931,71 @@ def _merge_resolved_approval_results_into_snapshot(
     snapshot_messages[:] = merged_messages
 
 
+def _append_segmented_snapshot_messages(flow: FlowState, all_messages: list[dict[str, Any]]) -> None:
+    """Append this turn's messages in the order the model emitted them.
+
+    Segments tracked during streaming record whether text came before or after
+    tool calls (issue #7223); tool results still follow the tool-call message
+    they answer. Anything not covered by segment tracking falls back to the
+    legacy grouping so no content is dropped.
+    """
+    text_message_ids = {segment["id"] for segment in flow.snapshot_segments if segment["kind"] == "text"}
+    # A tool-only opening message (TextMessageStart with no text segment) lets
+    # the first tool-call message reuse the streamed message id, matching the
+    # legacy layout; every other tool message gets a fresh id.
+    tool_open_id = flow.message_id if flow.message_id and flow.message_id not in text_message_ids else None
+    emitted_call_ids: set[str] = set()
+
+    for segment in flow.snapshot_segments:
+        kind = segment["kind"]
+        if kind == "text":
+            if segment["text"]:
+                all_messages.append({"id": segment["id"], "role": "assistant", "content": segment["text"]})
+        elif kind == "tool_calls":
+            calls = [
+                flow.tool_calls_by_id[call_id] for call_id in segment["call_ids"] if call_id in flow.tool_calls_by_id
+            ]
+            if not calls:
+                continue
+            message_id = tool_open_id or generate_event_id()
+            tool_open_id = None
+            all_messages.append({"id": message_id, "role": "assistant", "tool_calls": [call.copy() for call in calls]})
+            # Only mark the calls we actually emitted; a stale segment id that
+            # never made it into tool_calls_by_id must stay eligible for the
+            # leftover path below rather than vanishing silently.
+            emitted_ids = {call["id"] for call in calls}
+            emitted_call_ids.update(emitted_ids)
+            all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") in emitted_ids)
+        elif kind == "reasoning":
+            all_messages.extend(entry for entry in flow.reasoning_messages if entry.get("id") == segment["id"])
+
+    leftover_calls = [tc for tc in flow.pending_tool_calls if tc.get("id") not in emitted_call_ids]
+    if leftover_calls:
+        leftover_ids = {cid for call in leftover_calls if (cid := call.get("id")) is not None}
+        all_messages.append(
+            {
+                "id": tool_open_id or generate_event_id(),
+                "role": "assistant",
+                "tool_calls": [call.copy() for call in leftover_calls],
+            }
+        )
+        # Their results ride along too; without this they would be marked
+        # emitted above and then excluded from the final append below.
+        all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") in leftover_ids)
+        emitted_call_ids.update(leftover_ids)
+    all_messages.extend(result for result in flow.tool_results if result.get("toolCallId") not in emitted_call_ids)
+
+
 def _build_messages_snapshot(
     flow: FlowState,
     snapshot_messages: list[dict[str, Any]],
 ) -> MessagesSnapshotEvent:
     """Build MessagesSnapshotEvent from current flow state."""
     all_messages = list(snapshot_messages)
+
+    if flow.snapshot_segments:
+        _append_segmented_snapshot_messages(flow, all_messages)
+        return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
 
     # Add assistant message with tool calls only (no content)
     if flow.pending_tool_calls:
@@ -1571,14 +2032,6 @@ def _build_messages_snapshot(
     return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
 
 
-def _event_messages_to_snapshot_dicts(messages: list[Any]) -> list[dict[str, Any]]:
-    """Convert AG-UI message event models back to plain snapshot dictionaries."""
-    safe_messages = make_json_safe(messages)
-    if not isinstance(safe_messages, list):
-        return []
-    return [cast(dict[str, Any], message) for message in safe_messages if isinstance(message, dict)]
-
-
 def _text_events_to_snapshot_messages(events: list[BaseEvent]) -> list[dict[str, Any]]:
     """Convert streamed text-message events into snapshot message dictionaries."""
     messages: list[dict[str, Any]] = []
@@ -1593,67 +2046,6 @@ def _text_events_to_snapshot_messages(events: list[BaseEvent]) -> list[dict[str,
             if open_message is not None:
                 open_message["content"] = f"{open_message['content']}{event.delta}"
     return [message for message in messages if message.get("content")]
-
-
-async def _hydrate_thread_snapshot(
-    *,
-    config: AgentConfig,
-    scope: str,
-    thread_id: str,
-    run_id: str,
-) -> AsyncGenerator[BaseEvent]:
-    """Replay the latest stored AG-UI Thread Snapshot without invoking the agent."""
-    yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
-    if config.snapshot_store is None:
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
-        return
-
-    snapshot = await config.snapshot_store.get(scope=scope, thread_id=thread_id)
-    if snapshot is None:
-        yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
-        return
-
-    if snapshot.state is not None:
-        yield StateSnapshotEvent(snapshot=snapshot.state)
-    if snapshot.messages:
-        yield MessagesSnapshotEvent(messages=snapshot.messages)  # type: ignore[arg-type]
-    yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=snapshot.interrupt)
-
-
-async def _save_thread_snapshot(
-    *,
-    config: AgentConfig,
-    scope: str | None,
-    thread_id: str,
-    messages: list[dict[str, Any]],
-    state: dict[str, Any] | None,
-    interrupt: list[dict[str, Any]] | None,
-    session_state: dict[str, Any] | None,
-) -> None:
-    """Save the latest AG-UI Thread Snapshot when persistence is configured."""
-    if config.snapshot_store is None or scope is None:
-        return
-
-    try:
-        await config.snapshot_store.save(
-            scope=scope,
-            thread_id=thread_id,
-            snapshot=AGUIThreadSnapshot(
-                messages=messages,
-                state=state,
-                interrupt=interrupt,
-                session_state=session_state,
-            ),
-        )
-    except Exception:
-        # The run itself already streamed successfully; a transient store failure
-        # must not surface as RUN_ERROR for a completed run. The previous snapshot
-        # stays available for hydration.
-        logger.exception(
-            "Failed to save AG-UI Thread Snapshot for scope=%s thread_id=%s; keeping previous snapshot.",
-            scope,
-            thread_id,
-        )
 
 
 def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThreadSnapshot | None) -> None:
@@ -1767,8 +2159,10 @@ async def run_agent_stream(
         AG-UI events
     """
     # Parse IDs
-    thread_id = input_data.get("thread_id") or input_data.get("threadId") or str(uuid.uuid4())
-    run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
+    supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
+    supplied_run_id = input_data.get("run_id") or input_data.get("runId")
+    thread_id = supplied_thread_id or str(uuid.uuid4())
+    run_id = supplied_run_id or str(uuid.uuid4())
     snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
     approval_scope = cast(str | None, input_data.get(_APPROVAL_SCOPE_INPUT_KEY))
     approval_thread_id = approval_state_thread_id(scope=approval_scope, thread_id=thread_id)
@@ -1780,50 +2174,38 @@ async def run_agent_stream(
     available_interrupts = input_data.get("available_interrupts") or input_data.get("availableInterrupts")
     raw_messages: list[dict[str, Any]] = input_data.get("messages", []) or []
     resume_payload = _extract_resume_payload(input_data)
-    if config.snapshot_store is not None and snapshot_scope is not None and not raw_messages and resume_payload is None:
-        async for event in _hydrate_thread_snapshot(
-            config=config,
-            scope=snapshot_scope,
-            thread_id=thread_id,
-            run_id=run_id,
-        ):
+    snapshot_session = await ThreadSnapshotSession.open(
+        store=config.snapshot_store,
+        scope=snapshot_scope,
+        thread_id=thread_id,
+    )
+    if snapshot_session.enabled and not raw_messages and resume_payload is None:
+        async for event in snapshot_session.hydrate_events(run_id=run_id):
             yield event
         return
 
-    stored_snapshot: AGUIThreadSnapshot | None = None
+    stored_snapshot = snapshot_session.stored
     stored_pending_approval_interrupt_ids: set[str] = set()
     seeded_resume_from_snapshot = False
-    if config.snapshot_store is not None and snapshot_scope is not None:
-        stored_snapshot = await config.snapshot_store.get(scope=snapshot_scope, thread_id=thread_id)
-        if stored_snapshot is not None:
-            stored_pending_approval_interrupt_ids = _stored_pending_approval_interrupt_ids(stored_snapshot.interrupt)
-        if stored_snapshot is not None and resume_payload is not None and stored_pending_approval_interrupt_ids:
-            raw_messages = [copy.deepcopy(message) for message in stored_snapshot.messages] + raw_messages
+    if stored_snapshot is not None:
+        stored_pending_approval_interrupt_ids = _stored_pending_approval_interrupt_ids(stored_snapshot.interrupt)
+        if resume_payload is not None and stored_pending_approval_interrupt_ids:
+            raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
             seeded_resume_from_snapshot = True
-        elif stored_snapshot is not None:
+        else:
             raw_messages = _reconstruct_messages_from_thread_snapshot(
                 stored_messages=stored_snapshot.messages,
                 incoming_messages=raw_messages,
                 stored_interrupt=stored_snapshot.interrupt,
             )
 
-    # Initialize flow state with stored state plus request-provided overrides.
+    # Initialize flow state with stored state plus request-provided overrides;
+    # endpoint-deferred defaults apply only to keys missing from both.
     flow = FlowState()
-    request_state = input_data.get("state")
-    if stored_snapshot is not None and stored_snapshot.state is not None:
-        flow.current_state = dict(stored_snapshot.state)
-        if isinstance(request_state, dict):
-            flow.current_state.update(request_state)
-    elif isinstance(request_state, dict):
-        flow.current_state = dict(request_state)
-
-    # Apply endpoint-deferred defaults only for keys missing from both the stored
-    # snapshot state and the request state, so defaults never reset persisted state.
-    deferred_default_state = cast(dict[str, Any] | None, input_data.get(_DEFAULT_STATE_INPUT_KEY))
-    if deferred_default_state:
-        for key, value in deferred_default_state.items():
-            if key not in flow.current_state:
-                flow.current_state[key] = copy.deepcopy(value)
+    flow.current_state = snapshot_session.effective_state(
+        request_state=input_data.get("state"),
+        deferred_defaults=cast(dict[str, Any] | None, input_data.get(_DEFAULT_STATE_INPUT_KEY)),
+    )
 
     # Apply schema defaults for missing state keys
     if state_schema:
@@ -1863,13 +2245,7 @@ async def run_agent_stream(
         if should_clear_tool_approval_state:
             _clear_tool_approval_state(approval_state_store, approval_thread_id)
         if resume_error_code == "APPROVAL_RESUME_CANCELLED":
-            if config.snapshot_store is not None and snapshot_scope is not None:
-                await _clear_thread_snapshot_interrupt(
-                    snapshot_store=config.snapshot_store,
-                    scope=snapshot_scope,
-                    thread_id=thread_id,
-                    interrupt_ids=cancelled_resume_ids or None,
-                )
+            await snapshot_session.clear_interrupts(interrupt_ids=cancelled_resume_ids or None)
         yield resume_error
         return
     resume_messages = _resume_to_tool_messages(resume_payload, exclude_interrupt_ids=handled_resume_ids)
@@ -1911,7 +2287,6 @@ async def run_agent_stream(
 
     # Create session (with service session support)
     if config.use_service_session:
-        supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
         session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
     else:
         session = AgentSession(session_id=thread_id)
@@ -1957,8 +2332,15 @@ async def run_agent_stream(
     # This must happen before running the agent so it sees the tool results
     tools_for_execution = tools if tools is not None else server_tools
     messages.extend(_pop_collected_tool_approval_response_messages(session, pending_approvals, approval_thread_id))
+    validated_approved_responses: list[Content] = []
     resolved_approval_results = await _resolve_approval_responses(
-        messages, tools_for_execution, agent, run_kwargs, pending_approvals, approval_thread_id
+        messages,
+        tools_for_execution,
+        agent,
+        run_kwargs,
+        pending_approvals,
+        approval_thread_id,
+        validated_approved_responses,
     )
 
     # Defense-in-depth: replace approval payloads in snapshot with actual tool results
@@ -1968,7 +2350,10 @@ async def run_agent_stream(
         _merge_resolved_approval_results_into_snapshot(snapshot_messages, messages)
 
     # Feature #3: Emit StateSnapshotEvent for approved state-changing tools before agent runs
-    approved_state_updates = _extract_approved_state_updates(messages, predictive_handler)
+    approved_state_updates = _extract_approved_state_updates(
+        [Message(role="user", contents=validated_approved_responses)],
+        predictive_handler,
+    )
     approved_state_snapshot_emitted = False
     if approved_state_updates:
         flow.current_state.update(approved_state_updates)
@@ -1986,14 +2371,11 @@ async def run_agent_stream(
         # Persist the completed confirmation turn with interrupt=None so hydration
         # does not replay the stale pending interrupt after the user responded.
         persisted_messages = snapshot_messages + _text_events_to_snapshot_messages(confirmation_events)
-        if resume_payload is not None and stored_snapshot is not None and not seeded_resume_from_snapshot:
+        if resume_payload is not None and not seeded_resume_from_snapshot:
             # Generic resume requests carry only the synthesized response, so prepend
             # stored history unless this run already seeded raw messages from it.
-            persisted_messages = [copy.deepcopy(message) for message in stored_snapshot.messages] + persisted_messages
-        await _save_thread_snapshot(
-            config=config,
-            scope=snapshot_scope,
-            thread_id=thread_id,
+            persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
+        await snapshot_session.save(
             messages=persisted_messages,
             state=cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None,
             interrupt=None,
@@ -2014,23 +2396,34 @@ async def run_agent_stream(
 
     # Stream from agent - emit RunStarted after first update to get service IDs
     run_started_emitted = False
+    provider_thread_id: str | None = None
     all_updates: list[Any] = []  # Collect for structured output processing
     latest_state_snapshot: dict[str, Any] | None = (
         cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None
     )
-    response_stream = agent.run(messages, stream=True, **run_kwargs)
-    stream = await _normalize_response_stream(response_stream)
-    async for update in stream:
+    # Agent middleware can defer the inner run until streaming begins, so the
+    # telemetry override must cover construction, stream resolution, and every pull.
+    telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
+    telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
+    with telemetry_context():
+        response_stream = agent.run(messages, stream=True, **run_kwargs)
+        stream = await _normalize_response_stream(response_stream)
+
+    async for update in _iterate_with_context(stream, telemetry_context):
         # Collect updates for structured output processing
         if response_format is not None:
             all_updates.append(update)
 
-        # Update IDs from service response on first update and emit RunStarted
+        # Use service-generated IDs only when the AG-UI request omitted them. Client-supplied
+        # IDs remain authoritative for lifecycle correlation and thread-scoped persistence.
         if not run_started_emitted:
             conv_id = get_conversation_id_from_update(update)
             if conv_id:
+                provider_thread_id = conv_id
+            if supplied_thread_id is None and conv_id:
                 thread_id = conv_id
-            if update.response_id:
+                snapshot_session.rebind_thread_id(thread_id)
+            if supplied_run_id is None and update.response_id:
                 run_id = update.response_id
             # NOW emit RunStarted with proper IDs
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
@@ -2070,7 +2463,10 @@ async def run_agent_stream(
             if content_type == "function_approval_request" and pending_approvals is not None:
                 if content.id and content.function_call and content.function_call.name:
                     canonical_interrupt_id = content.function_call.call_id or content.id
-                    provider_approval_thread_id = approval_state_thread_id(scope=approval_scope, thread_id=thread_id)
+                    provider_approval_thread_id = approval_state_thread_id(
+                        scope=approval_scope,
+                        thread_id=provider_thread_id or thread_id,
+                    )
                     _register_pending_approval(
                         pending_approvals,
                         [approval_thread_id, provider_approval_thread_id],
@@ -2083,6 +2479,7 @@ async def run_agent_stream(
                             str(content.id),
                             str(canonical_interrupt_id) if canonical_interrupt_id else None,
                         ),
+                        server_label=_function_call_server_label(content.function_call),
                     )
                     # Evict oldest entries if the registry exceeds a safe bound (LRU)
                     _evict_oldest_approvals(pending_approvals, max_size=10_000)
@@ -2239,6 +2636,7 @@ async def run_agent_stream(
                         flow.pending_tool_calls.append(confirm_entry)
                         flow.tool_calls_by_id[confirm_id] = confirm_entry
                         flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
+                        _track_tool_call_segment(flow, confirm_id)
                         flow.waiting_for_approval = True
                         flow.interrupts.append(
                             _approval_interrupt_for_function_call(
@@ -2288,14 +2686,11 @@ async def run_agent_stream(
     # Always emit RunFinished - confirm_changes tool call is complete (Start -> Args -> End)
     # The UI will show confirmation dialog and send a new request when user responds
     persisted_messages = latest_messages_snapshot
-    if resume_payload is not None and stored_snapshot is not None and not seeded_resume_from_snapshot:
+    if resume_payload is not None and not seeded_resume_from_snapshot:
         # Generic resume requests carry only the synthesized response, so prepend
         # stored history unless this run already seeded raw messages from it.
-        persisted_messages = [copy.deepcopy(message) for message in stored_snapshot.messages] + persisted_messages
-    await _save_thread_snapshot(
-        config=config,
-        scope=snapshot_scope,
-        thread_id=thread_id,
+        persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
+    await snapshot_session.save(
         messages=persisted_messages,
         state=latest_state_snapshot,
         interrupt=flow.interrupts or None,

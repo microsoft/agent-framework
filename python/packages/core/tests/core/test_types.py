@@ -571,6 +571,15 @@ def test_function_call_content_add_merging_and_errors():
     c = a + b
     assert c.informational_only is True
 
+    # control metadata is preserved when a metadata-only update follows argument chunks
+    metadata = Content.from_function_call(call_id="1", name="f", arguments=None)
+    metadata.id = "1"
+    metadata.user_input_request = True
+    c = c + metadata
+    assert c.arguments == '{"x":1}'
+    assert c.id == "1"
+    assert c.user_input_request is True
+
     # incompatible argument types
     a = Content.from_function_call(call_id="1", name="f", arguments="abc")
     b = Content.from_function_call(call_id="1", name="f", arguments={"y": 2})

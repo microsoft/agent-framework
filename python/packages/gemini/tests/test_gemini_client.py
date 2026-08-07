@@ -14,8 +14,10 @@ import pytest
 from agent_framework import Agent, Content, FunctionTool, Message
 from google.genai import types
 from pydantic import BaseModel
+from typing_extensions import NotRequired, TypedDict
 
 from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
+from agent_framework_gemini._feature_usage import FeatureIndex
 
 
 def _has_gemini_integration_credentials() -> bool:
@@ -39,6 +41,12 @@ skip_if_no_credentials = pytest.mark.skipif(
 )
 
 _TEST_MODEL = os.getenv("GOOGLE_MODEL") or os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+
+
+class _ToolListItem(TypedDict):
+    title: str
+    description: NotRequired[str]
+
 
 # stub helpers
 
@@ -362,8 +370,10 @@ async def test_get_response_returns_text() -> None:
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hello!")]))
 
-    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+    with patch("agent_framework_gemini._chat_client.mark_feature_used") as mark_feature_used:
+        response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
 
+    mark_feature_used.assert_called_once_with(FeatureIndex.GEMINI)
     assert response.messages[0].text == "Hello!"
 
 
@@ -704,8 +714,8 @@ async def test_non_function_result_content_in_tool_message_is_skipped() -> None:
 # thinking parts
 
 
-async def test_thinking_parts_are_silently_skipped() -> None:
-    """Excludes thought-summary parts from ChatResponse.contents, returning only the final answer."""
+async def test_thinking_parts_are_surfaced_as_reasoning() -> None:
+    """Surfaces thought-summary parts as text_reasoning content alongside the final answer."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([
@@ -718,8 +728,26 @@ async def test_thinking_parts_are_silently_skipped() -> None:
         messages=[Message(role="user", contents=[Content.from_text("What is the answer?")])]
     )
 
-    assert len(response.messages[0].contents) == 1
+    contents = response.messages[0].contents
+    assert len(contents) == 2
+    assert contents[0].type == "text_reasoning"
+    assert contents[0].text == "I should think first..."
+    assert contents[1].type == "text"
     assert response.messages[0].text == "The answer is 42."
+
+
+async def test_empty_thinking_part_produces_no_reasoning_content() -> None:
+    """A thought part with no text yields no content rather than empty reasoning."""
+    client, _ = _make_gemini_client()
+
+    contents = client._parse_parts([
+        _make_part(text=None, thought=True),
+        _make_part(text="The answer is 42."),
+    ])
+
+    assert len(contents) == 1
+    assert contents[0].type == "text"
+    assert contents[0].text == "The answer is 42."
 
 
 def test_function_call_part_preserves_thought_signature_from_raw_part() -> None:
@@ -1733,6 +1761,31 @@ async def test_function_tool_converted_to_function_declaration() -> None:
     assert function_declaration.name == "get_weather"
 
 
+async def test_function_tool_json_schema_forwarded_to_parameters_json_schema() -> None:
+    """Forwards full JSON Schema from FunctionTool instead of coercing it into Gemini's Schema subset."""
+
+    def add_items(items: list[_ToolListItem]) -> str:
+        """Add items."""
+        return "ok"
+
+    tool = FunctionTool(name="add_items", func=add_items)
+    schema = tool.parameters()
+    assert "$defs" in schema
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Add items")])],
+        options={"tools": [tool]},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    function_declaration = _first_function_declaration(config)
+    assert function_declaration.parameters is None
+    assert function_declaration.parameters_json_schema == schema
+
+
 async def test_callable_tool_resolved_via_validate_options() -> None:
     """Raw callables passed as tools must be normalized by _validate_options into FunctionTools
     and reach the Gemini config as function declarations.
@@ -1754,6 +1807,63 @@ async def test_callable_tool_resolved_via_validate_options() -> None:
     assert config.tools is not None
     function_declaration = _first_function_declaration(config)
     assert function_declaration.name == "get_weather"
+
+
+async def test_developer_api_mixed_native_and_function_tools_enable_server_side_invocations() -> None:
+    """Enables Gemini Developer API server-side tool invocations when built-ins and function tools are mixed."""
+    tool = _make_dummy_tool()
+    search_tool = GeminiChatClient.get_web_search_tool()
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search and call a tool")])],
+        options={"tools": [search_tool, tool]},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.tool_config is not None
+    assert config.tool_config.include_server_side_tool_invocations is True
+
+
+async def test_developer_api_mixed_native_and_function_tools_preserve_tool_choice() -> None:
+    """Preserves function calling mode while enabling Developer API server-side built-in tool invocations."""
+    tool = _make_dummy_tool()
+    search_tool = GeminiChatClient.get_web_search_tool()
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search and call a tool")])],
+        options={"tools": [search_tool, tool], "tool_choice": "auto"},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    function_calling_config = _function_calling_config(config)
+    assert function_calling_config.mode == "AUTO"
+    assert config.tool_config is not None
+    assert config.tool_config.include_server_side_tool_invocations is True
+
+
+async def test_vertex_ai_mixed_native_and_function_tools_do_not_enable_server_side_invocations() -> None:
+    """Does not set the Developer API-only server-side invocation flag for Vertex AI."""
+    tool = _make_dummy_tool()
+    search_tool = GeminiChatClient.get_web_search_tool()
+    mock = MagicMock()
+    mock._api_client.vertexai = True
+    client = GeminiChatClient(client=mock, model="gemini-2.5-flash")
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search and call a tool")])],
+        options={"tools": [search_tool, tool], "tool_choice": "auto"},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    function_calling_config = _function_calling_config(config)
+    assert function_calling_config.mode == "AUTO"
+    assert config.tool_config is not None
+    assert config.tool_config.include_server_side_tool_invocations is None
 
 
 # _coerce_to_dict

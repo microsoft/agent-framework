@@ -6,9 +6,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Content, Message
 from agent_framework.exceptions import AgentException
-from microsoft_agents.copilotstudio.client import CopilotClient
+from microsoft_agents.copilotstudio.client import ConnectionSettings, CopilotClient
 
 from agent_framework_copilotstudio import CopilotStudioAgent
+from agent_framework_copilotstudio._agent import DEFAULT_READ_BUFSIZE
+from agent_framework_copilotstudio._feature_usage import FeatureIndex
 
 
 def create_async_generator(items: list[Any]) -> Any:
@@ -98,6 +100,55 @@ class TestCopilotStudioAgent:
         assert agent.client == mock_copilot_client
         assert agent.id is not None
 
+    def test_init_applies_default_read_bufsize(self) -> None:
+        """The internally built client raises aiohttp's per-line limit to avoid LineTooLong (issue #7257)."""
+        agent = CopilotStudioAgent(
+            environment_id="env-id",
+            agent_identifier="agent-id",
+            token="fake-token",
+        )
+        assert agent.client.settings.client_session_settings["read_bufsize"] == DEFAULT_READ_BUFSIZE
+
+    def test_init_respects_custom_client_session_settings(self) -> None:
+        """User-provided client_session_settings are honored, and other keys are preserved."""
+        agent = CopilotStudioAgent(
+            environment_id="env-id",
+            agent_identifier="agent-id",
+            token="fake-token",
+            client_session_settings={"read_bufsize": 123, "trust_env": True},
+        )
+        session_settings = agent.client.settings.client_session_settings
+        assert session_settings["read_bufsize"] == 123
+        assert session_settings["trust_env"] is True
+
+    def test_init_injects_default_read_bufsize_into_partial_settings(self) -> None:
+        """When client_session_settings omits read_bufsize, the default is added without dropping other keys."""
+        agent = CopilotStudioAgent(
+            environment_id="env-id",
+            agent_identifier="agent-id",
+            token="fake-token",
+            client_session_settings={"trust_env": True},
+        )
+        session_settings = agent.client.settings.client_session_settings
+        assert session_settings["read_bufsize"] == DEFAULT_READ_BUFSIZE
+        assert session_settings["trust_env"] is True
+
+    def test_init_applies_default_read_bufsize_to_supplied_settings(self) -> None:
+        """When settings (but no client) is supplied, the agent still injects the read_bufsize default."""
+        settings = ConnectionSettings(environment_id="env-id", agent_identifier="agent-id")
+        agent = CopilotStudioAgent(settings=settings, token="fake-token")
+        assert agent.client.settings.client_session_settings["read_bufsize"] == DEFAULT_READ_BUFSIZE
+
+    def test_init_supplied_settings_keep_explicit_read_bufsize(self) -> None:
+        """An explicit read_bufsize on supplied settings is preserved and not overridden by the default."""
+        settings = ConnectionSettings(
+            environment_id="env-id",
+            agent_identifier="agent-id",
+            client_session_settings={"read_bufsize": 42},
+        )
+        agent = CopilotStudioAgent(settings=settings, token="fake-token")
+        assert agent.client.settings.client_session_settings["read_bufsize"] == 42
+
     @patch("agent_framework_copilotstudio._acquire_token.acquire_token")
     def test_init_empty_environment_id(self, mock_acquire_token: MagicMock) -> None:
         mock_acquire_token.return_value = "fake-token"
@@ -136,8 +187,10 @@ class TestCopilotStudioAgent:
         mock_copilot_client.start_conversation.return_value = create_async_generator([conversation_activity])
         mock_copilot_client.ask_question.return_value = create_async_generator([mock_activity])
 
-        response = await agent.run("test message")
+        with patch("agent_framework_copilotstudio._agent.mark_feature_used") as mark_feature_used:
+            response = await agent.run("test message")
 
+        mark_feature_used.assert_called_once_with(FeatureIndex.COPILOTSTUDIO)
         assert isinstance(response, AgentResponse)
         assert len(response.messages) == 1
         content = response.messages[0].contents[0]

@@ -329,6 +329,80 @@ internal static class AgentsSamples
             ],
         },
 
+        new SampleDefinition
+        {
+            Name = "Agent_Step20_DynamicFunctionTools",
+            ProjectPath = "samples/02-agents/Agents/Agent_Step20_DynamicFunctionTools",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            MustContain =
+            [
+                "=== Dynamic Function Tools Sample ===",
+                "=== Non-Streaming Mode ===",
+                "=== Streaming Mode ===",
+                "[User]",
+                "[Agent]",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should show the agent starting with only a RequestTools function and dynamically loading additional tools (weather, time, temperature) as needed.",
+                "The output should contain weather information for Seattle and London, the current time in New York, and a Fahrenheit-to-Celsius temperature conversion.",
+                "The output should demonstrate both non-streaming and streaming modes.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_Step21_ShellWithEnvironment",
+            ProjectPath = "samples/02-agents/Agents/Agent_Step21_ShellWithEnvironment",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            MustContain =
+            [
+                "### Stateless mode",
+                "### Persistent mode",
+                "--- Captured environment snapshot ---",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should show an agent using a shell tool to print the current working directory.",
+                "The output should demonstrate that in stateless mode side effects (such as changing directory) do not carry between calls, while in persistent mode the working directory and an environment variable (DEMO_TOKEN set to 'hello-world') carry across calls.",
+                "The output should include a captured environment snapshot describing the OS, shell, and working directory.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_Step22_AgentMode",
+            ProjectPath = "samples/02-agents/Agents/Agent_Step22_AgentMode",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            SkipReason = "Interactive sample that reads console input in a loop and does not exit on its own.",
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_Step23_TodoList",
+            ProjectPath = "samples/02-agents/Agents/Agent_Step23_TodoList",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            MustContain =
+            [
+                "User:",
+                "Agent:",
+                "--- Current todo list ---",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should show an agent planning a team offsite by breaking the work into a todo list.",
+                "The output should show the todo list being updated as progress is reported (for example marking items complete after the venue is booked and invites are sent) and adjusted when the plan changes to skip catering and add a group hike.",
+                "The current todo list should be printed after each turn, showing item status.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
         // ── AgentSkills ─────────────────────────────────────────────────────
 
         new SampleDefinition
@@ -434,6 +508,28 @@ internal static class AgentsSamples
             RequiredEnvironmentVariables = ["AZURE_OPENAI_ENDPOINT"],
             OptionalEnvironmentVariables = ["AZURE_OPENAI_API_KEY", "FOUNDRY_MODEL", "FOUNDRY_EMBEDDING_MODEL", "NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD"],
             SkipReason = "Requires a running Neo4j instance; standalone sample outside the repo's CPM build.",
+        },
+
+        new SampleDefinition
+        {
+            Name = "AgentWithMemory_Step07_FileMemoryProvider",
+            ProjectPath = "samples/02-agents/AgentWithMemory/AgentWithMemory_Step07_FileMemoryProvider",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL"],
+            MustContain =
+            [
+                "Memory files will be written to:",
+                "=== First conversation ===",
+                "=== Memory files on disk ===",
+                "=== Second conversation (new session) ===",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should acknowledge that the user is vegetarian and travels with a dog, indicating the agent stored these preferences.",
+                "The memory files section should list at least one memory file written by the agent, such as a file about the user's preferences.",
+                "The second conversation should recommend a hotel and a restaurant in Paris that are consistent with the remembered preferences, for example a pet-friendly hotel and a restaurant with vegetarian options, even though it is a new session.",
+                "The output should not contain error messages or stack traces.",
+            ],
         },
 
         // ── AgentWithRAG ────────────────────────────────────────────────────
@@ -758,6 +854,19 @@ internal static class AgentsSamples
             ExpectedOutputDescription =
             [
                 "The output should contain a user prompt and a response listing files in the current directory.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
+        new SampleDefinition
+        {
+            Name = "Agent_With_GitHubCopilot_BYOK",
+            ProjectPath = "samples/02-agents/AgentProviders/github-copilot/Agent_With_GitHubCopilot_BYOK",
+            RequiredEnvironmentVariables = ["BYOK_BASE_URL", "BYOK_API_KEY"],
+            OptionalEnvironmentVariables = ["BYOK_PROVIDER_TYPE", "BYOK_MODEL_ID"],
+            ExpectedOutputDescription =
+            [
+                "The output should contain a user prompt and a response about the benefits of BYOK.",
                 "The output should not contain error messages or stack traces.",
             ],
         },
