@@ -17,6 +17,7 @@ from ag_ui.core import (
     TextMessageEndEvent,
     TextMessageStartEvent,
     ToolCallArgsEvent,
+    ToolCallStartEvent,
 )
 from agent_framework import AgentResponseUpdate, Content, Message, ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
@@ -661,6 +662,24 @@ def test_snapshot_preserves_stream_order_around_tool_results():
     assert kinds[3][1]["id"] != kinds[0][1]["id"]
 
 
+def test_snapshot_reuses_streamed_tool_message_id_after_text():
+    """Tool-call snapshots reuse the stream ID used by the reference client merge."""
+    flow = FlowState()
+    _emit_text(Content.from_text("First, the plan."), flow)
+    tool_events = _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+    tool_start = next(event for event in tool_events if isinstance(event, ToolCallStartEvent))
+    _emit_tool_result(Content.from_function_result(call_id="call_1", result="done"), flow)
+    _emit_text(Content.from_text("And the summary."), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls", "result", "text"]
+    assert tool_start.parent_message_id is not None
+    assert kinds[1][1]["id"] == tool_start.parent_message_id
+    assert kinds[1][1]["id"] != kinds[0][1]["id"]
+
+
 def test_snapshot_tool_only_message_reuses_stream_message_id():
     """Tool-only turns keep the message id the stream opened with."""
     flow = FlowState()
@@ -935,6 +954,26 @@ def test_emit_approval_request_populates_interrupt_metadata():
         "name": "write_doc",
         "arguments": {"content": "x"},
     }
+
+
+def test_emit_approval_request_reuses_confirmation_message_id_in_snapshot():
+    """Confirmation tool events and snapshots share the same message ID."""
+    flow = FlowState()
+    _emit_text(Content.from_text("Before approval."), flow)
+    text_message_id = flow.message_id
+    function_call = Content.from_function_call(call_id="call_123", name="write_doc", arguments={"content": "x"})
+    approval_content = Content.from_function_approval_request(id="approval_1", function_call=function_call)
+
+    events = _emit_approval_request(approval_content, flow)
+    confirm_start = next(
+        event for event in events if isinstance(event, ToolCallStartEvent) and event.tool_call_name == "confirm_changes"
+    )
+    snapshot = _build_messages_snapshot(flow, [])
+    kinds = _snapshot_kinds(snapshot)
+
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls"]
+    assert confirm_start.parent_message_id == kinds[1][1]["id"]
+    assert confirm_start.parent_message_id != text_message_id
 
 
 def test_emit_approval_request_accumulates_multiple_interrupts():
@@ -1583,6 +1622,8 @@ class TestEmitMcpToolCall:
     def test_produces_start_and_args_events(self):
         """MCP tool call emits ToolCallStart + ToolCallArgs events."""
         flow = FlowState()
+        _emit_text(Content.from_text("Before MCP call."), flow)
+        text_message_id = flow.message_id
         content = Content.from_mcp_server_tool_call(
             call_id="mcp_call_1",
             tool_name="search",
@@ -1599,6 +1640,12 @@ class TestEmitMcpToolCall:
         assert events[1].type == "TOOL_CALL_ARGS"
         assert events[1].tool_call_id == "mcp_call_1"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "weather" in events[1].delta  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        snapshot = _build_messages_snapshot(flow, [])
+        kinds = _snapshot_kinds(snapshot)
+        assert [kind for kind, _ in kinds] == ["text", "tool_calls"]
+        assert events[0].parent_message_id == kinds[1][1]["id"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert events[0].parent_message_id != text_message_id  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_tracks_in_flow_state(self):
         """MCP tool call is tracked in flow.pending_tool_calls and tool_calls_by_id."""

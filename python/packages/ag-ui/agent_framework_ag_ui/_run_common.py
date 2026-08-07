@@ -535,12 +535,25 @@ def _text_segment_for(flow: FlowState, message_id: str) -> dict[str, Any] | None
     return None
 
 
-def _track_tool_call_segment(flow: FlowState, tool_call_id: str) -> None:
-    """Record a tool call in the current tool segment, opening one if needed."""
+def _new_tool_call_segment_id(flow: FlowState) -> str:
+    """Allocate an ID that is distinct from any streamed text segment."""
+    text_message_ids = {segment.get("id") for segment in flow.snapshot_segments if segment["kind"] == "text"}
+    if flow.message_id and flow.message_id not in text_message_ids:
+        return flow.message_id
+    return generate_event_id()
+
+
+def _track_tool_call_segment(flow: FlowState, tool_call_id: str) -> str:
+    """Record a tool call and return the message ID used by its stream events."""
+    segment: dict[str, Any]
     if flow.snapshot_segments and flow.snapshot_segments[-1]["kind"] == "tool_calls":
-        flow.snapshot_segments[-1]["call_ids"].append(tool_call_id)
+        segment = flow.snapshot_segments[-1]
+        segment.setdefault("id", _new_tool_call_segment_id(flow))
     else:
-        flow.snapshot_segments.append({"kind": "tool_calls", "call_ids": [tool_call_id]})
+        segment = {"kind": "tool_calls", "id": _new_tool_call_segment_id(flow), "call_ids": []}
+        flow.snapshot_segments.append(segment)
+    segment["call_ids"].append(tool_call_id)
+    return str(segment["id"])
 
 
 def _track_reasoning_segment(flow: FlowState, message_id: str) -> None:
@@ -599,11 +612,12 @@ def _emit_tool_call(
         if predictive_handler:
             predictive_handler.reset_streaming()
 
+        tool_message_id = _track_tool_call_segment(flow, tool_call_id)
         events.append(
             ToolCallStartEvent(
                 tool_call_id=tool_call_id,
                 tool_call_name=content.name,
-                parent_message_id=flow.message_id,
+                parent_message_id=tool_message_id,
             )
         )
 
@@ -614,7 +628,6 @@ def _emit_tool_call(
         }
         flow.pending_tool_calls.append(tool_entry)
         flow.tool_calls_by_id[tool_call_id] = tool_entry
-        _track_tool_call_segment(flow, tool_call_id)
 
     elif tool_call_id:
         flow.tool_call_id = tool_call_id
@@ -871,11 +884,12 @@ def _emit_approval_request(
 
     if require_confirmation:
         confirm_id = generate_event_id()
+        confirm_message_id = _track_tool_call_segment(flow, confirm_id)
         events.append(
             ToolCallStartEvent(
                 tool_call_id=confirm_id,
                 tool_call_name="confirm_changes",
-                parent_message_id=flow.message_id,
+                parent_message_id=confirm_message_id,
             )
         )
         args: dict[str, Any] = {
@@ -896,7 +910,6 @@ def _emit_approval_request(
         flow.pending_tool_calls.append(confirm_entry)
         flow.tool_calls_by_id[confirm_id] = confirm_entry
         flow.tool_calls_ended.add(confirm_id)
-        _track_tool_call_segment(flow, confirm_id)
 
     flow.waiting_for_approval = True
     return events
@@ -933,12 +946,13 @@ def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
     tool_name = content.tool_name or "mcp_tool"
 
     display_name = tool_name
+    tool_message_id = _track_tool_call_segment(flow, tool_call_id)
 
     events.append(
         ToolCallStartEvent(
             tool_call_id=tool_call_id,
             tool_call_name=display_name,
-            parent_message_id=flow.message_id,
+            parent_message_id=tool_message_id,
         )
     )
 
@@ -958,7 +972,6 @@ def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
     }
     flow.pending_tool_calls.append(tool_entry)
     flow.tool_calls_by_id[tool_call_id] = tool_entry
-    _track_tool_call_segment(flow, tool_call_id)
 
     return events
 
