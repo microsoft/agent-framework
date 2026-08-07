@@ -35,7 +35,13 @@ from agent_framework import (
 )
 from agent_framework._sessions import (
     LOCAL_HISTORY_CONVERSATION_ID,
+    _adopt_run_persistence_gate_claim,
+    _defer_run_persistence,
     _filter_approval_control_messages,
+    _offer_run_persistence_gate_claim,
+    _run_identity_scope,
+    _RunPersistenceGate,
+    _suspend_run_persistence_gate,
     is_local_history_conversation_id,
 )
 from agent_framework._telemetry import FeatureIndex
@@ -1658,3 +1664,191 @@ class TestFileHistoryProvider:
         assert not overlap_detected
         loaded = await provider.get_messages(session_id)
         assert [message.text for message in loaded] == ["first", "second"]
+
+
+# ---------------------------------------------------------------------------
+# Run-persistence gate tests
+# ---------------------------------------------------------------------------
+
+
+class TestRunPersistenceGate:
+    """The deferral gate owned by _sessions (used by egress-enforcement middleware)."""
+
+    @staticmethod
+    def _recording_persist(executed: list[str], label: str) -> Callable[[], Awaitable[None]]:
+        async def persist() -> None:
+            executed.append(label)
+
+        return persist
+
+    async def test_gate_defers_and_flush_runs_in_order(self) -> None:
+        executed: list[str] = []
+        gate = _RunPersistenceGate()
+        with gate:
+            assert _defer_run_persistence(self._recording_persist(executed, "a")) is True
+            assert _defer_run_persistence(self._recording_persist(executed, "b")) is True
+            assert executed == []
+        await gate.flush()
+        assert executed == ["a", "b"]
+        # Outside any gate scope, callers persist inline.
+        assert _defer_run_persistence(self._recording_persist(executed, "c")) is False
+
+    async def test_flush_inside_the_scope_raises(self) -> None:
+        # Reset-before-drain by construction: draining while the gate is active would
+        # re-defer re-entrant persistence into a list nobody drains.
+        gate = _RunPersistenceGate()
+        with gate, pytest.raises(RuntimeError, match="still active"):
+            await gate.flush()
+        await gate.flush()  # after exit the same flush is legal
+
+    def test_reentering_an_active_gate_raises(self) -> None:
+        gate = _RunPersistenceGate()
+        with gate, pytest.raises(RuntimeError, match="not re-entrant"), gate:
+            pass
+
+    async def test_gate_can_be_reused_sequentially(self) -> None:
+        # The streaming chat gate enters once around call_next and once around stream
+        # consumption; both sections collect into the same handle.
+        executed: list[str] = []
+        gate = _RunPersistenceGate()
+        with gate:
+            _defer_run_persistence(self._recording_persist(executed, "first"))
+        with gate:
+            _defer_run_persistence(self._recording_persist(executed, "second"))
+        await gate.flush()
+        assert executed == ["first", "second"]
+
+    async def test_drop_discards_deferred_persistence(self) -> None:
+        executed: list[str] = []
+        gate = _RunPersistenceGate()
+        with gate:
+            _defer_run_persistence(self._recording_persist(executed, "denied"))
+        gate.drop()
+        await gate.flush()
+        assert executed == []
+
+    async def test_nested_gates_collect_independently(self) -> None:
+        executed: list[str] = []
+        outer = _RunPersistenceGate()
+        inner = _RunPersistenceGate()
+        with outer:
+            _defer_run_persistence(self._recording_persist(executed, "outer-1"))
+            with inner:
+                _defer_run_persistence(self._recording_persist(executed, "inner"))
+            _defer_run_persistence(self._recording_persist(executed, "outer-2"))
+        await inner.flush()
+        assert executed == ["inner"]
+        await outer.flush()
+        assert executed == ["inner", "outer-1", "outer-2"]
+
+    async def test_suspension_makes_nested_persistence_inline(self) -> None:
+        # The function-invocation layer suspends the gate around tool invocations so
+        # nested agent runs persist inline instead of deferring into the outer gate.
+        executed: list[str] = []
+        gate = _RunPersistenceGate()
+        with gate:
+            with _suspend_run_persistence_gate():
+                assert _defer_run_persistence(self._recording_persist(executed, "nested")) is False
+            assert _defer_run_persistence(self._recording_persist(executed, "own")) is True
+        await gate.flush()
+        assert executed == ["own"]
+
+    async def test_reentrant_persist_during_flush_runs_inline(self) -> None:
+        # Mirrors _run_after_providers: the deferred callable re-checks the gate when
+        # executed. Because flush only runs after the scope was exited, the re-entrant
+        # check finds no gate and the persist runs inline instead of re-deferring.
+        executed: list[str] = []
+        gate = _RunPersistenceGate()
+
+        async def reentrant() -> None:
+            if _defer_run_persistence(reentrant):
+                return
+            executed.append("ran")
+
+        with gate:
+            assert _defer_run_persistence(reentrant) is True
+        await gate.flush()
+        assert executed == ["ran"]
+
+    async def test_bound_gate_defers_only_its_owner_run(self) -> None:
+        executed: list[str] = []
+        gate = _RunPersistenceGate()
+        owner = object()
+        other = object()
+        gate.bind_owner(owner)
+        with gate:
+            with _run_identity_scope(owner):
+                assert _defer_run_persistence(self._recording_persist(executed, "own")) is True
+            with _run_identity_scope(other):
+                # A different (nested or sibling) run's persist runs inline.
+                assert _defer_run_persistence(self._recording_persist(executed, "other")) is False
+            # An identity-less persist under a bound gate comes from a custom-loop
+            # nested run (the owner always carries its identity): inline.
+            assert _defer_run_persistence(self._recording_persist(executed, "identity-less")) is False
+        await gate.flush()
+        assert executed == ["own"]
+
+    async def test_unbound_gate_defers_only_identity_less_persists(self) -> None:
+        # An unbound gate (its run never adopted the claim: a fully custom run loop)
+        # stays fail-closed for identity-less persists — the covered run's own — and
+        # inline for identity-stamped (nested/sibling) runs.
+        executed: list[str] = []
+        gate = _RunPersistenceGate()
+        with gate:
+            assert _defer_run_persistence(self._recording_persist(executed, "custom-own")) is True
+            with _run_identity_scope(object()):
+                assert _defer_run_persistence(self._recording_persist(executed, "stamped-nested")) is False
+        await gate.flush()
+        assert executed == ["custom-own"]
+
+    def test_bind_owner_accepts_every_adopted_identity(self) -> None:
+        # A retrying/fallback middleware re-invokes call_next(): the final handler
+        # re-offers the same gate and each attempt's run adopts it. Every adopted
+        # identity must stay accepted — first-bind-wins would let attempt 2's
+        # persistence run inline ahead of the final verdict (fail-open), and
+        # rebind-replace would flip attempt 1's still-running work to inline.
+        gate = _RunPersistenceGate()
+        first = object()
+        second = object()
+        gate.bind_owner(first)
+        gate.bind_owner(second)
+        assert gate.accepts(first) is True
+        assert gate.accepts(second) is True
+        assert gate.accepts(object()) is False  # other runs still persist inline
+        assert gate.accepts(None) is False  # bound gates reject identity-less persists
+
+    def test_claim_handshake_is_keyed_to_the_agent_instance(self) -> None:
+        gate = _RunPersistenceGate()
+        target = object()
+        stranger = object()
+        identity = object()
+        _offer_run_persistence_gate_claim(gate, target)
+        # A nested or sibling run (a different agent instance) must not claim the gate...
+        _adopt_run_persistence_gate_claim(stranger, object())
+        assert gate.accepts(identity) is False
+        # ...the targeted run does, and adoption consumes the ticket.
+        _adopt_run_persistence_gate_claim(target, identity)
+        assert gate.accepts(identity) is True
+        _adopt_run_persistence_gate_claim(target, object())  # stale ticket is gone
+        assert gate.accepts(identity) is True
+
+    async def test_flush_runs_callables_with_the_gate_context_suspended(self) -> None:
+        # A flushed callable that re-checks the gate (like _run_after_providers) must
+        # run inline even when an enclosing gate is active at flush time: its own
+        # covering verdict already permitted it, so it is never re-deferred.
+        executed: list[str] = []
+        outer = _RunPersistenceGate()
+        inner = _RunPersistenceGate()
+
+        async def reentrant() -> None:
+            if _defer_run_persistence(reentrant):
+                return
+            executed.append("ran-inline")
+
+        with inner:
+            assert _defer_run_persistence(reentrant) is True
+        with outer:  # an enclosing gate is active while the inner gate flushes
+            await inner.flush()
+        assert executed == ["ran-inline"]
+        await outer.flush()
+        assert executed == ["ran-inline"]

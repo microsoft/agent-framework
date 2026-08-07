@@ -123,6 +123,25 @@ class TestHydrateEvents:
         ]
 
 
+class TestRebindThreadId:
+    """A late provider fallback becomes the key for subsequent writes."""
+
+    async def test_save_uses_rebound_thread_id(self) -> None:
+        store = InMemoryAGUIThreadSnapshotStore()
+        session = await ThreadSnapshotSession.open(store=store, scope="user-1", thread_id="generated-thread")
+
+        session.rebind_thread_id("provider-thread")
+        await session.save(
+            messages=[{"id": "m1", "role": "user", "content": "hi"}],
+            state=None,
+            interrupt=None,
+            session_state=None,
+        )
+
+        assert await store.get(scope="user-1", thread_id="generated-thread") is None
+        assert await store.get(scope="user-1", thread_id="provider-thread") is not None
+
+
 class TestEffectiveState:
     """Request values overlay stored values; defaults never reset either."""
 

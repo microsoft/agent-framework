@@ -7,9 +7,10 @@ from __future__ import annotations
 import copy
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from ag_ui.core import (
     BaseEvent,
@@ -32,7 +33,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from agent_framework import Content
+from agent_framework import Content, ResponseStream
 
 from ._predictive_state import PredictiveStateHandler
 from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
@@ -40,8 +41,31 @@ from ._utils import generate_event_id, make_json_safe, normalize_agui_role
 
 logger = logging.getLogger(__name__)
 
+_StreamItemT = TypeVar("_StreamItemT")
+
 # Sentinel for an unset display_result; distinguishes "caller didn't pass" from None/{}/"".
 _UNSET = object()
+
+
+async def _iterate_with_context(
+    stream: AsyncIterable[_StreamItemT],
+    context_factory: Callable[[], AbstractContextManager[Any]],
+) -> AsyncGenerator[_StreamItemT]:
+    """Advance a response stream with a fresh execution context for every pull."""
+    if isinstance(stream, ResponseStream):
+        stream.with_pull_context_manager(context_factory)
+        async for item in stream:
+            yield item
+        return
+
+    stream_iterator = aiter(stream)
+    while True:
+        with context_factory():
+            try:
+                item = await anext(stream_iterator)
+            except StopAsyncIteration:
+                return
+        yield item
 
 
 def _has_only_tool_calls(contents: list[Any]) -> bool:

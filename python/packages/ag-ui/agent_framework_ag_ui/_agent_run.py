@@ -11,6 +11,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from ag_ui.core import (
@@ -50,6 +51,9 @@ from agent_framework._tools import (
 )
 from agent_framework._types import ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
+from agent_framework.observability import (
+    _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
 from ._message_adapters import normalize_agui_input_messages
@@ -66,6 +70,7 @@ from ._run_common import (
     _extract_resume_payload,  # type: ignore
     _extract_tool_result_display,  # type: ignore
     _has_only_tool_calls,  # type: ignore
+    _iterate_with_context,  # type: ignore
     _normalize_resume_interrupts,  # type: ignore
     _reconstruct_messages_from_thread_snapshot,  # type: ignore
     _resume_contract_error,  # type: ignore
@@ -2154,8 +2159,10 @@ async def run_agent_stream(
         AG-UI events
     """
     # Parse IDs
-    thread_id = input_data.get("thread_id") or input_data.get("threadId") or str(uuid.uuid4())
-    run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
+    supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
+    supplied_run_id = input_data.get("run_id") or input_data.get("runId")
+    thread_id = supplied_thread_id or str(uuid.uuid4())
+    run_id = supplied_run_id or str(uuid.uuid4())
     snapshot_scope = cast(str | None, input_data.get(_SNAPSHOT_SCOPE_INPUT_KEY))
     approval_scope = cast(str | None, input_data.get(_APPROVAL_SCOPE_INPUT_KEY))
     approval_thread_id = approval_state_thread_id(scope=approval_scope, thread_id=thread_id)
@@ -2280,7 +2287,6 @@ async def run_agent_stream(
 
     # Create session (with service session support)
     if config.use_service_session:
-        supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
         session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
     else:
         session = AgentSession(session_id=thread_id)
@@ -2390,23 +2396,34 @@ async def run_agent_stream(
 
     # Stream from agent - emit RunStarted after first update to get service IDs
     run_started_emitted = False
+    provider_thread_id: str | None = None
     all_updates: list[Any] = []  # Collect for structured output processing
     latest_state_snapshot: dict[str, Any] | None = (
         cast(dict[str, Any], make_json_safe(flow.current_state)) if flow.current_state else None
     )
-    response_stream = agent.run(messages, stream=True, **run_kwargs)
-    stream = await _normalize_response_stream(response_stream)
-    async for update in stream:
+    # Agent middleware can defer the inner run until streaming begins, so the
+    # telemetry override must cover construction, stream resolution, and every pull.
+    telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
+    telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
+    with telemetry_context():
+        response_stream = agent.run(messages, stream=True, **run_kwargs)
+        stream = await _normalize_response_stream(response_stream)
+
+    async for update in _iterate_with_context(stream, telemetry_context):
         # Collect updates for structured output processing
         if response_format is not None:
             all_updates.append(update)
 
-        # Update IDs from service response on first update and emit RunStarted
+        # Use service-generated IDs only when the AG-UI request omitted them. Client-supplied
+        # IDs remain authoritative for lifecycle correlation and thread-scoped persistence.
         if not run_started_emitted:
             conv_id = get_conversation_id_from_update(update)
             if conv_id:
+                provider_thread_id = conv_id
+            if supplied_thread_id is None and conv_id:
                 thread_id = conv_id
-            if update.response_id:
+                snapshot_session.rebind_thread_id(thread_id)
+            if supplied_run_id is None and update.response_id:
                 run_id = update.response_id
             # NOW emit RunStarted with proper IDs
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
@@ -2446,7 +2463,10 @@ async def run_agent_stream(
             if content_type == "function_approval_request" and pending_approvals is not None:
                 if content.id and content.function_call and content.function_call.name:
                     canonical_interrupt_id = content.function_call.call_id or content.id
-                    provider_approval_thread_id = approval_state_thread_id(scope=approval_scope, thread_id=thread_id)
+                    provider_approval_thread_id = approval_state_thread_id(
+                        scope=approval_scope,
+                        thread_id=provider_thread_id or thread_id,
+                    )
                     _register_pending_approval(
                         pending_approvals,
                         [approval_thread_id, provider_approval_thread_id],
