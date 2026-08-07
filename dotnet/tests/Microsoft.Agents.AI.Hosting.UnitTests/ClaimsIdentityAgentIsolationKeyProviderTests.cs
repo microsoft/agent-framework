@@ -9,9 +9,9 @@ using Moq;
 namespace Microsoft.Agents.AI.Hosting.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="ClaimsIdentityStoreIsolationKeyProvider"/>.
+/// Unit tests for <see cref="ClaimsIdentityAgentIsolationKeyProvider"/>.
 /// </summary>
-public class ClaimsIdentityStoreIsolationKeyProviderTests
+public class ClaimsIdentityAgentIsolationKeyProviderTests
 {
     private const string TestUserId = "test-user-id";
     private const string CustomClaimType = "custom-claim-type";
@@ -21,9 +21,9 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
     private readonly Mock<IHttpContextAccessor> _httpContextAccessorMock;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ClaimsIdentityStoreIsolationKeyProviderTests"/> class.
+    /// Initializes a new instance of the <see cref="ClaimsIdentityAgentIsolationKeyProviderTests"/> class.
     /// </summary>
-    public ClaimsIdentityStoreIsolationKeyProviderTests()
+    public ClaimsIdentityAgentIsolationKeyProviderTests()
     {
         this._httpContextAccessorMock = new Mock<IHttpContextAccessor>();
     }
@@ -37,7 +37,7 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
     public void UsesDefaultOptionsWhenNull()
     {
         // Act & Assert - should not throw
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(this._httpContextAccessorMock.Object, options: null);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(this._httpContextAccessorMock.Object, options: null);
         Assert.NotNull(provider);
     }
 
@@ -48,7 +48,7 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
     public void Constructor_WithNullHttpContextAccessor_DoesNotThrow()
     {
         // Act & Assert - should not throw
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(httpContextAccessor: null);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(httpContextAccessor: null);
         Assert.NotNull(provider);
     }
 
@@ -60,9 +60,9 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
     {
         // Act & Assert
         Assert.Throws<ArgumentNullException>("options.ClaimType", () =>
-            new ClaimsIdentityStoreIsolationKeyProvider(
+            new ClaimsIdentityAgentIsolationKeyProvider(
                 this._httpContextAccessorMock.Object,
-                new ClaimsIdentityStoreIsolationKeyProviderOptions { ClaimType = null! }));
+                new ClaimsIdentityAgentIsolationKeyProviderOptions { ClaimType = null! }));
     }
 
     /// <summary>
@@ -73,9 +73,9 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
     {
         // Act & Assert
         Assert.Throws<ArgumentException>("options.ClaimType", () =>
-            new ClaimsIdentityStoreIsolationKeyProvider(
+            new ClaimsIdentityAgentIsolationKeyProvider(
                 this._httpContextAccessorMock.Object,
-                new ClaimsIdentityStoreIsolationKeyProviderOptions { ClaimType = string.Empty }));
+                new ClaimsIdentityAgentIsolationKeyProviderOptions { ClaimType = string.Empty }));
     }
 
     /// <summary>
@@ -86,27 +86,27 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
     {
         // Act & Assert
         Assert.Throws<ArgumentException>("options.ClaimType", () =>
-            new ClaimsIdentityStoreIsolationKeyProvider(
+            new ClaimsIdentityAgentIsolationKeyProvider(
                 this._httpContextAccessorMock.Object,
-                new ClaimsIdentityStoreIsolationKeyProviderOptions { ClaimType = "   " }));
+                new ClaimsIdentityAgentIsolationKeyProviderOptions { ClaimType = "   " }));
     }
 
     #endregion
 
-    #region GetStoreIsolationKeyAsync Tests
+    #region GetIsolationKeyAsync Tests
 
     /// <summary>
-    /// Verify that GetStoreIsolationKeyAsync extracts the claim value from the default claim type.
+    /// Verify that GetIsolationKeyAsync extracts the claim value from the default claim type.
     /// </summary>
     [Fact]
-    public async Task GetStoreIsolationKeyAsyncExtractsDefaultClaimTypeAsync()
+    public async Task GetIsolationKeyAsyncExtractsDefaultClaimTypeAsync()
     {
         // Arrange
         this.SetupHttpContextWithClaim(ClaimTypes.NameIdentifier, TestUserId);
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(this._httpContextAccessorMock.Object);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(this._httpContextAccessorMock.Object);
 
         // Act
-        string? result = await provider.GetStoreIsolationKeyAsync();
+        string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.Equal(TestUserId, result);
@@ -114,54 +114,54 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
 
     /// <summary>
     /// Verify that the default claim type is the stable, unique NameIdentifier claim rather than the
-    /// non-unique display name claim. This guards against the store-isolation collision described in
+    /// non-unique display name claim. This guards against the resource-isolation collision described in
     /// the security report where two principals sharing the same name claim received the same key.
     /// </summary>
     [Fact]
-    public async Task GetStoreIsolationKeyAsyncIgnoresNameClaimByDefaultAsync()
+    public async Task GetIsolationKeyAsyncIgnoresNameClaimByDefaultAsync()
     {
         // Arrange - only a display-name claim is present; the default provider must not use it.
         this.SetupHttpContextWithClaim(ClaimsIdentity.DefaultNameClaimType, TestUserId);
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(this._httpContextAccessorMock.Object);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(this._httpContextAccessorMock.Object);
 
         // Act
-        string? result = await provider.GetStoreIsolationKeyAsync();
+        string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.Null(result);
     }
 
     /// <summary>
-    /// Verify that GetStoreIsolationKeyAsync uses custom claim type when specified.
+    /// Verify that GetIsolationKeyAsync uses custom claim type when specified.
     /// </summary>
     [Fact]
-    public async Task GetStoreIsolationKeyAsyncUsesCustomClaimTypeAsync()
+    public async Task GetIsolationKeyAsyncUsesCustomClaimTypeAsync()
     {
         // Arrange
         this.SetupHttpContextWithClaim(CustomClaimType, CustomClaimValue);
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(
             this._httpContextAccessorMock.Object,
-            new ClaimsIdentityStoreIsolationKeyProviderOptions { ClaimType = CustomClaimType });
+            new ClaimsIdentityAgentIsolationKeyProviderOptions { ClaimType = CustomClaimType });
 
         // Act
-        string? result = await provider.GetStoreIsolationKeyAsync();
+        string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.Equal(CustomClaimValue, result);
     }
 
     /// <summary>
-    /// Verify that GetStoreIsolationKeyAsync returns null when the specified claim is missing.
+    /// Verify that GetIsolationKeyAsync returns null when the specified claim is missing.
     /// </summary>
     [Fact]
-    public async Task GetStoreIsolationKeyAsyncReturnsNullWhenClaimMissingAsync()
+    public async Task GetIsolationKeyAsyncReturnsNullWhenClaimMissingAsync()
     {
         // Arrange
         this.SetupHttpContextWithClaim("other-claim", "value");
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(this._httpContextAccessorMock.Object);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(this._httpContextAccessorMock.Object);
 
         // Act
-        string? result = await provider.GetStoreIsolationKeyAsync();
+        string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.Null(result);
@@ -171,14 +171,14 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
     /// Verify behavior when HttpContextAccessor returns null HttpContext.
     /// </summary>
     [Fact]
-    public async Task GetStoreIsolationKeyAsyncReturnsNullWhenHttpContextNullAsync()
+    public async Task GetIsolationKeyAsyncReturnsNullWhenHttpContextNullAsync()
     {
         // Arrange
         this._httpContextAccessorMock.Setup(x => x.HttpContext).Returns((HttpContext?)null);
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(this._httpContextAccessorMock.Object);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(this._httpContextAccessorMock.Object);
 
         // Act
-        string? result = await provider.GetStoreIsolationKeyAsync();
+        string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.Null(result);
@@ -188,23 +188,23 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
     /// Verify behavior when HttpContextAccessor itself is null.
     /// </summary>
     [Fact]
-    public async Task GetStoreIsolationKeyAsyncReturnsNullWhenHttpContextAccessorNullAsync()
+    public async Task GetIsolationKeyAsyncReturnsNullWhenHttpContextAccessorNullAsync()
     {
         // Arrange
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(httpContextAccessor: null);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(httpContextAccessor: null);
 
         // Act
-        string? result = await provider.GetStoreIsolationKeyAsync();
+        string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.Null(result);
     }
 
     /// <summary>
-    /// Verify that GetStoreIsolationKeyAsync returns the first matching claim when multiple exist.
+    /// Verify that GetIsolationKeyAsync returns the first matching claim when multiple exist.
     /// </summary>
     [Fact]
-    public async Task GetStoreIsolationKeyAsyncReturnsFirstMatchingClaimAsync()
+    public async Task GetIsolationKeyAsyncReturnsFirstMatchingClaimAsync()
     {
         // Arrange
         const string FirstValue = "first-value";
@@ -223,39 +223,39 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
         };
 
         this._httpContextAccessorMock.Setup(x => x.HttpContext).Returns(httpContext);
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(this._httpContextAccessorMock.Object);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(this._httpContextAccessorMock.Object);
 
         // Act
-        string? result = await provider.GetStoreIsolationKeyAsync();
+        string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.Equal(FirstValue, result);
     }
 
     /// <summary>
-    /// Verify that GetStoreIsolationKeyAsync handles empty claim values.
+    /// Verify that GetIsolationKeyAsync handles empty claim values.
     /// </summary>
     [Fact]
-    public async Task GetStoreIsolationKeyAsyncHandlesEmptyClaimValueAsync()
+    public async Task GetIsolationKeyAsyncHandlesEmptyClaimValueAsync()
     {
         // Arrange
         this.SetupHttpContextWithClaim(ClaimTypes.NameIdentifier, string.Empty);
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(this._httpContextAccessorMock.Object);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(this._httpContextAccessorMock.Object);
 
         // Act
-        string? result = await provider.GetStoreIsolationKeyAsync();
+        string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.Equal(string.Empty, result);
     }
 
     /// <summary>
-    /// Regression test for the store-isolation collision security report: two distinct authenticated
+    /// Regression test for the resource-isolation collision security report: two distinct authenticated
     /// principals that share the same display-name claim but have different stable identifiers and tenants
     /// must produce distinct isolation keys under the default options.
     /// </summary>
     [Fact]
-    public async Task GetStoreIsolationKeyAsyncDistinctForPrincipalsSharingNameClaimAsync()
+    public async Task GetIsolationKeyAsyncDistinctForPrincipalsSharingNameClaimAsync()
     {
         // Arrange - both principals share the same name claim but differ by NameIdentifier and tenant.
         const string CommonName = "John Doe";
@@ -270,14 +270,14 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
             new Claim(ClaimTypes.NameIdentifier, "oid-user-b"),
             new Claim("http://schemas.microsoft.com/identity/claims/tenantid", "tenant-b"));
 
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(this._httpContextAccessorMock.Object);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(this._httpContextAccessorMock.Object);
 
         // Act
         this._httpContextAccessorMock.Setup(x => x.HttpContext).Returns(new DefaultHttpContext { User = principalA });
-        string? principalAKey = await provider.GetStoreIsolationKeyAsync();
+        string? principalAKey = await provider.GetIsolationKeyAsync();
 
         this._httpContextAccessorMock.Setup(x => x.HttpContext).Returns(new DefaultHttpContext { User = principalB });
-        string? principalBKey = await provider.GetStoreIsolationKeyAsync();
+        string? principalBKey = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.Equal("oid-user-a", principalAKey);
@@ -286,12 +286,12 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
     }
 
     /// <summary>
-    /// Verify that GetStoreIsolationKeyAsync returns null when the request's user is not authenticated,
+    /// Verify that GetIsolationKeyAsync returns null when the request's user is not authenticated,
     /// even if a claim of the configured type is present. The provider must not derive an isolation key
     /// from claims on an unauthenticated identity.
     /// </summary>
     [Fact]
-    public async Task GetStoreIsolationKeyAsyncReturnsNullWhenUserNotAuthenticatedAsync()
+    public async Task GetIsolationKeyAsyncReturnsNullWhenUserNotAuthenticatedAsync()
     {
         // Arrange - identity has the claim but no authentication type, so IsAuthenticated is false.
         var claims = new[] { new Claim(ClaimTypes.NameIdentifier, TestUserId) };
@@ -299,10 +299,10 @@ public class ClaimsIdentityStoreIsolationKeyProviderTests
         var principal = new ClaimsPrincipal(unauthenticatedIdentity);
         var httpContext = new DefaultHttpContext { User = principal };
         this._httpContextAccessorMock.Setup(x => x.HttpContext).Returns(httpContext);
-        var provider = new ClaimsIdentityStoreIsolationKeyProvider(this._httpContextAccessorMock.Object);
+        var provider = new ClaimsIdentityAgentIsolationKeyProvider(this._httpContextAccessorMock.Object);
 
         // Act
-        string? result = await provider.GetStoreIsolationKeyAsync();
+        string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.False(unauthenticatedIdentity.IsAuthenticated);
