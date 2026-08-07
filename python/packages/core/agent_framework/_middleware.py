@@ -103,6 +103,10 @@ class MiddlewareFailure(MiddlewareException):
     (optionally substituting a result that still flows back to the caller):
     ``MiddlewareFailure`` produces no result at all.
 
+    Middleware must not catch ``MiddlewareFailure`` (let it propagate through
+    ``call_next()``): swallowing it converts a fail-closed abort back into a running —
+    and possibly unguarded — loop.
+
     Chain the underlying error so it reaches the caller intact:
 
     .. code-block:: python

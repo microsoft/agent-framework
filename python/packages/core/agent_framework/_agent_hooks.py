@@ -915,20 +915,34 @@ def _halt_on_enforcement_failure(exc: BaseException, point: str) -> NoReturn:
     raise MiddlewareFailure(f"agent-hooks {point} enforcement failed: {type(exc).__name__}") from exc
 
 
+class _ToolSeamBlockFailure(MiddlewareFailure):
+    """Private tag for this feature's own tool-seam ``host_error`` halts.
+
+    Only failures raised by :meth:`_AgentHooksFunctionMiddleware._maybe_halt` carry
+    this type, which is what authorizes :func:`_reraise_tool_seam_block` to unwrap
+    the chained :class:`agent_hooks.InterceptionBlocked` at the run boundary. A plain
+    ``MiddlewareFailure`` raised by third-party middleware is never unwrapped — even
+    when its ``__cause__`` happens to be an ``InterceptionBlocked`` — so untrusted
+    code cannot launder a crafted interception record into this feature's deny
+    surface.
+    """
+
+
 def _reraise_tool_seam_block(failure: MiddlewareFailure) -> NoReturn:
     """Surface a tool-seam ``host_error`` block as the block itself at the run boundary.
 
     The tool seam sits behind the function-invocation loop, so its fail-closed halts
     travel as :class:`MiddlewareFailure` (the loop's loud escape) with the triggering
-    exception chained as the cause. When that cause is an
-    :class:`agent_hooks.InterceptionBlocked`, re-raise it so callers see the same deny
-    surface — ``InterceptionBlocked`` carrying the interception record — at every seam
-    (run-, model-, and tool-level). Any other enforcement failure propagates as the
-    :class:`MiddlewareFailure` it already is.
+    exception chained as the cause. When the failure is this feature's own tagged
+    :class:`_ToolSeamBlockFailure`, re-raise its :class:`agent_hooks.InterceptionBlocked`
+    cause so callers see the same deny surface — ``InterceptionBlocked`` carrying the
+    interception record — at every seam (run-, model-, and tool-level). Any other
+    failure (including a third-party ``MiddlewareFailure`` with a crafted
+    ``InterceptionBlocked`` cause) propagates exactly as raised.
     """
     from agent_hooks import InterceptionBlocked
 
-    if isinstance(failure.__cause__, InterceptionBlocked):
+    if isinstance(failure, _ToolSeamBlockFailure) and isinstance(failure.__cause__, InterceptionBlocked):
         raise failure.__cause__ from failure
     raise failure
 
@@ -1363,8 +1377,9 @@ class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddlewar
             # The enforcement layer itself failed (interceptor crash/timeout, invalid
             # context): continuing the loop would run unguarded. Abort the run through
             # the loop's fail-closed escape; the agent middleware re-raises the block
-            # itself to the caller (see _reraise_tool_seam_block).
-            raise MiddlewareFailure(
+            # itself to the caller (the private tag is what authorizes the unwrap —
+            # see _reraise_tool_seam_block).
+            raise _ToolSeamBlockFailure(
                 f"agent-hooks {point} failed closed: {record.verdict.reason}",
             ) from exc
 
