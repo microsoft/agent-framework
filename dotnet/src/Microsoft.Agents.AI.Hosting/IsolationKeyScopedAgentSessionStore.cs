@@ -8,12 +8,12 @@ namespace Microsoft.Agents.AI.Hosting;
 
 /// <summary>
 /// A delegating <see cref="AgentSessionStore"/> that scopes session keys by an isolation key
-/// provided by a <see cref="SessionIsolationKeyProvider"/>, ensuring that sessions are isolated
+/// provided by a <see cref="StoreIsolationKeyProvider"/>, ensuring that sessions are isolated
 /// per logical partition (e.g., user, tenant, or composite key).
 /// </summary>
 public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
 {
-    private readonly SessionIsolationKeyProvider? _keyProvider;
+    private readonly StoreIsolationKeyProvider? _keyProvider;
     private readonly bool _strict;
 
     /// <summary>
@@ -21,7 +21,7 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
     /// </summary>
     /// <param name="innerStore">The underlying <see cref="AgentSessionStore"/> to delegate to.</param>
     /// <param name="keyProvider">
-    /// The <see cref="SessionIsolationKeyProvider"/> used to retrieve the isolation key for the current context.
+    /// The <see cref="StoreIsolationKeyProvider"/> used to retrieve the isolation key for the current context.
     /// </param>
     /// <param name="options">The options for configuring the session store. If null, defaults are used.</param>
     /// <exception cref="ArgumentNullException">
@@ -29,7 +29,7 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
     /// </exception>
     public IsolationKeyScopedAgentSessionStore(
         AgentSessionStore innerStore,
-        SessionIsolationKeyProvider? keyProvider,
+        StoreIsolationKeyProvider? keyProvider,
         IsolationKeyScopedAgentSessionStoreOptions? options = null)
         : base(innerStore)
     {
@@ -51,12 +51,12 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
     private async ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken)
     {
         string? key = this._keyProvider != null
-                    ? await this._keyProvider.GetSessionIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
+                    ? await this._keyProvider.GetStoreIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
                     : null;
 
         if (this._strict && key == null)
         {
-            throw new InvalidOperationException("Session isolation key is required but was not provided by the configured SessionIsolationKeyProvider.");
+            throw new InvalidOperationException("Store isolation key is required but was not provided by the configured StoreIsolationKeyProvider.");
         }
 
         return key;

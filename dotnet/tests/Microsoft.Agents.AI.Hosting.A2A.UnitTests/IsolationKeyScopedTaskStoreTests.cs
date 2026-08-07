@@ -325,10 +325,10 @@ public sealed class IsolationKeyScopedTaskStoreTests
         Assert.Throws<ArgumentNullException>(() => new IsolationKeyScopedTaskStore(null!, null, strict: false));
     }
 
-    private static SessionIsolationKeyProvider CreateKeyProvider(string? key)
+    private static StoreIsolationKeyProvider CreateKeyProvider(string? key)
     {
-        var mock = new Mock<SessionIsolationKeyProvider>();
-        mock.Setup(p => p.GetSessionIsolationKeyAsync(It.IsAny<CancellationToken>()))
+        var mock = new Mock<StoreIsolationKeyProvider>();
+        mock.Setup(p => p.GetStoreIsolationKeyAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(key);
         return mock.Object;
     }

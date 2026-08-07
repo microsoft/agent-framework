@@ -106,7 +106,7 @@ public sealed class A2AServerServiceCollectionExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that when a SessionIsolationKeyProvider is registered, task operations
+    /// Verifies that when a StoreIsolationKeyProvider is registered, task operations
     /// use scoped identifiers (DI wiring test).
     /// </summary>
     [Fact]
@@ -126,9 +126,9 @@ public sealed class A2AServerServiceCollectionExtensionsTests
             .ReturnsAsync(new AgentTask { Id = TaskId, ContextId = $"{IsolationKey}::ctx-1", Status = new global::A2A.TaskStatus { State = TaskState.Completed } });
         services.AddKeyedSingleton(AgentName, mockTaskStore.Object);
 
-        var mockKeyProvider = new Mock<SessionIsolationKeyProvider>();
+        var mockKeyProvider = new Mock<StoreIsolationKeyProvider>();
         mockKeyProvider
-            .Setup(p => p.GetSessionIsolationKeyAsync(It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetStoreIsolationKeyAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(IsolationKey);
         services.AddSingleton(mockKeyProvider.Object);
 
@@ -163,9 +163,9 @@ public sealed class A2AServerServiceCollectionExtensionsTests
             .Setup(s => s.GetTaskAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AgentTask { Id = TaskId, ContextId = $"{IsolationKey}::ctx-1", Status = new global::A2A.TaskStatus { State = TaskState.Completed } });
 
-        var mockKeyProvider = new Mock<SessionIsolationKeyProvider>();
+        var mockKeyProvider = new Mock<StoreIsolationKeyProvider>();
         mockKeyProvider
-            .Setup(p => p.GetSessionIsolationKeyAsync(It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetStoreIsolationKeyAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(IsolationKey);
 
         // Pre-wrap the task store
