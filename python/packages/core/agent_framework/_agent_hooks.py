@@ -1458,7 +1458,7 @@ class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddlewar
                 # A policy deny over an already-errored call changes nothing (the
                 # result is discarded either way); a host error still halts the run.
                 self._maybe_halt(blocked, "post_tool_call")
-            except asyncio.CancelledError:
+            except (MiddlewareTermination, MiddlewareFailure, asyncio.CancelledError):
                 raise
             except BaseException as emit_exc:
                 _halt_on_enforcement_failure(emit_exc, "post_tool_call")
@@ -1483,7 +1483,7 @@ class _AgentHooksFunctionMiddleware(_AgentHooksMiddlewareBase, FunctionMiddlewar
         except InterceptionBlocked as exc:
             # §6.1: the result must be discarded as if the call had errored.
             self._block(context, exc, "post_tool_call")
-        except (MiddlewareTermination, asyncio.CancelledError):
+        except (MiddlewareTermination, MiddlewareFailure, asyncio.CancelledError):
             raise
         except BaseException as exc:
             _halt_on_enforcement_failure(exc, "post_tool_call")

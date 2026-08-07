@@ -2708,5 +2708,128 @@ class TestMiddlewareFailure:
 
         assert chat_client_base.call_count == 0
 
+    async def test_failure_settles_dangling_calls_on_service_conversation(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """A service-managed conversation is settled before the failure propagates.
+
+        The continuation state (``session.service_session_id``) is persisted when the
+        model turn completes — before tool execution — so an aborted batch would leave
+        the hosted thread ending in unresolved function calls, and OpenAI-style
+        continuations reject the next request over such a thread. The loop submits one
+        error ``function_result`` per dangling call (``tool_choice="none"``) and
+        discards the settlement response; the run still fails.
+        """
+        from agent_framework import AgentSession
+
+        requests: list[dict[str, Any]] = []
+
+        class Recorder(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                requests.append({
+                    "contents": [(m.role, [c for c in m.contents]) for m in context.messages],
+                    "conversation_id": (context.options or {}).get("conversation_id"),
+                    "tool_choice": (context.options or {}).get("tool_choice"),
+                })
+                await call_next()
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        tool_turn = _tool_call_response()
+        tool_turn.conversation_id = "conv_123"
+        chat_client_base.run_responses = [tool_turn]
+        session = AgentSession()
+        agent = Agent(client=chat_client_base, middleware=[Enforcement(), Recorder()], tools=[sample_tool_function])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            await agent.run("get the weather", session=session)
+
+        # The continuation state was already durable when the batch failed ...
+        assert session.service_session_id == "conv_123"
+        # ... so the loop settled the thread: one extra request carrying an error
+        # function_result for the dangling call, with tool calling disabled.
+        assert len(requests) == 2
+        settlement = requests[1]
+        assert settlement["conversation_id"] == "conv_123"
+        assert settlement["tool_choice"] == "none"
+        settlement_results = [
+            content
+            for _, contents in settlement["contents"]
+            for content in contents
+            if content.type == "function_result"
+        ]
+        assert [result.call_id for result in settlement_results] == ["call_1"]
+        assert settlement_results[0].exception == "MiddlewareFailure"
+
+    async def test_failure_settles_service_conversation_streaming(self, chat_client_base: "MockBaseChatClient") -> None:
+        """The streaming loop settles a service-managed conversation the same way."""
+        requests: list[dict[str, Any]] = []
+
+        class Recorder(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                requests.append({
+                    "tool_choice": (context.options or {}).get("tool_choice"),
+                    "messages": list(context.messages),
+                })
+                await call_next()
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        chat_client_base.streaming_responses = [
+            [
+                ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                        )
+                    ],
+                    role="assistant",
+                    conversation_id="conv_123",
+                )
+            ]
+        ]
+        agent = Agent(client=chat_client_base, middleware=[Enforcement(), Recorder()], tools=[sample_tool_function])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            async for _ in agent.run("get the weather", stream=True):
+                pass
+
+        assert len(requests) == 2
+        assert requests[1]["tool_choice"] == "none"
+        settlement_results = [
+            content
+            for message in requests[1]["messages"]
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        assert [result.call_id for result in settlement_results] == ["call_1"]
+
+    async def test_failure_without_service_conversation_makes_no_settlement_request(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """No service-managed conversation, no settlement cost: the abort stays at one model call."""
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        chat_client_base.run_responses = [_tool_call_response()]
+        agent = Agent(client=chat_client_base, middleware=[Enforcement()], tools=[sample_tool_function])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            await agent.run("get the weather")
+
+        assert chat_client_base.call_count == 1
+
 
 # endregion
