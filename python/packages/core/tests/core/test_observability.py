@@ -2037,6 +2037,21 @@ def test_make_json_safe_dict_with_non_string_keys():
     assert parsed["str_key"] == "normal"
 
 
+def test_make_json_safe_bytes_are_base64_encoded():
+    """Test make_json_safe converts bytes and bytearray values to base64 strings."""
+    result = make_json_safe({
+        "bytes": b"binary data",
+        "bytearray": bytearray(b"more binary data"),
+        "nested": [b"nested bytes"],
+    })
+
+    assert result == {
+        "bytes": "YmluYXJ5IGRhdGE=",
+        "bytearray": "bW9yZSBiaW5hcnkgZGF0YQ==",
+        "nested": ["bmVzdGVkIGJ5dGVz"],
+    }
+
+
 def test_to_otel_part_function_result():
     """Test _to_otel_part with function_result content."""
     from agent_framework import Content

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import logging
@@ -650,8 +651,9 @@ def make_json_safe(obj: Any) -> Any:
     """Recursively convert an object to a JSON-serializable form.
 
     Handles dataclasses, Pydantic models, objects with ``to_dict``/``dict``/``__dict__``,
-    datetimes, enums, sets, lists, dicts, and primitives.  Falls back to ``str()`` for any remaining
-    non-serializable value so that ``json.dumps`` never raises a ``TypeError``.
+    datetimes, bytes/bytearray (base64), enums, sets, lists, dicts, and primitives. Falls back to
+    ``str()`` for any remaining non-serializable value so that ``json.dumps`` never raises a
+    ``TypeError``.
 
     Args:
         obj: Object to make JSON safe.
@@ -665,6 +667,8 @@ def make_json_safe(obj: Any) -> Any:
         return make_json_safe(obj.value)
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
+    if isinstance(obj, (bytes, bytearray)):
+        return base64.b64encode(bytes(obj)).decode("ascii")
     if is_dataclass(obj) and not isinstance(obj, type):
         return make_json_safe(asdict(obj))
     if type(obj) is dict:
