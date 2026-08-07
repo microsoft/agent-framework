@@ -96,6 +96,10 @@ class MiddlewareFailure(MiddlewareException):
     next suspension point, while a synchronous tool body already executing in a worker
     thread cannot be interrupted and may still complete its side effects — its result
     is discarded either way and never reaches the transcript, the model, or history.
+    On a service-managed conversation (a persisted conversation id), the loop first
+    settles the aborted batch by submitting one error ``function_result`` per dangling
+    call — one extra request whose response is discarded — so the hosted thread is not
+    left with unresolved tool calls that would make the session's next request fail.
 
     Agent and chat middleware do not need a dedicated signal — every exception they
     raise already propagates to the caller — and ``MiddlewareFailure`` behaves the same
