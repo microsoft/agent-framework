@@ -86,6 +86,14 @@ class ThreadSnapshotSession:
         """The snapshot loaded at open, or ``None``."""
         return self._stored
 
+    def rebind_thread_id(self, thread_id: str) -> None:
+        """Use a provider-resolved fallback ID for subsequent snapshot operations.
+
+        Runners call this only when the request omitted its AG-UI Thread ID and
+        the provider supplies the lifecycle fallback after the session opened.
+        """
+        self._thread_id = thread_id
+
     async def hydrate_events(self, *, run_id: str) -> AsyncGenerator[BaseEvent]:
         """Replay the stored snapshot as a complete run without invoking the agent."""
         yield RunStartedEvent(run_id=run_id, thread_id=self._thread_id)
