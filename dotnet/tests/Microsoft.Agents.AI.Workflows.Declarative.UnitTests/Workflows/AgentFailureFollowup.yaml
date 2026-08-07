@@ -1,0 +1,20 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_agent
+      conversationId: =System.ConversationId
+      agent:
+        name: TestAgent
+      input:
+        messages: =[UserMessage(System.LastMessageText)]
+      output:
+        messages: Local.AgentResponse
+
+    - kind: SendActivity
+      id: after_agent
+      activity: AFTER_AGENT

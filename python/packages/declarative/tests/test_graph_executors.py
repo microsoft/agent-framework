@@ -934,6 +934,49 @@ class TestEditTableV2Executor:
         result = state.get("Local.records")
         assert result == [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]
 
+    @pytest.mark.parametrize("item", [False, 0, "", [], {}])
+    async def test_edit_table_v2_add_preserves_falsey_item(self, mock_context, mock_state, item):
+        """Test EditTableV2 preserves a falsey item instead of treating it as missing."""
+        from agent_framework_declarative._workflows._executors_basic import EditTableV2Executor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+        state.set("Local.items", [True])
+
+        action_def = {
+            "kind": "EditTableV2",
+            "table": "Local.items",
+            "operation": "add",
+            "item": item,
+        }
+        executor = EditTableV2Executor(action_def)
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        result = state.get("Local.items")
+        assert result[:-1] == [True]
+        assert result[-1] == item
+        assert type(result[-1]) is type(item)
+
+    async def test_edit_table_v2_add_uses_legacy_value_when_item_is_none(self, mock_context, mock_state):
+        """Test EditTableV2 retains the legacy value fallback for a missing item."""
+        from agent_framework_declarative._workflows._executors_basic import EditTableV2Executor
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def = {
+            "kind": "EditTableV2",
+            "table": "Local.items",
+            "operation": "add",
+            "item": None,
+            "value": "legacy",
+        }
+        executor = EditTableV2Executor(action_def)
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        result = state.get("Local.items")
+        assert result == ["legacy"]
+
     @pytest.mark.asyncio
     async def test_edit_table_v2_add_or_update_new(self, mock_context, mock_state):
         """Test EditTableV2 with addOrUpdate - adding new record."""

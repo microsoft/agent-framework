@@ -2392,4 +2392,152 @@ public class ToolApprovalAgentTests
     }
 
     #endregion
+
+    #region Auto-approval iteration cap
+
+    /// <summary>
+    /// Verify that a model which never stops requesting an auto-approved tool cannot drive an
+    /// unbounded number of inner invocations. Regression test for the runaway auto-approval loop
+    /// where every pass is a fresh inner call, so no per-request cap can bound it.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_AutoApprovedToolRequestedForever_StopsAtIterationCapAsync()
+    {
+        // Arrange — the inner agent always asks for an auto-approved tool and never answers.
+        var session = new ChatClientAgentSession();
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return new AgentResponse([new ChatMessage(ChatRole.Assistant,
+                    [new ToolApprovalRequestContent($"req{callCount}", new FunctionCallContent($"call{callCount}", "load_skill"))])]);
+            });
+
+        var options = new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+            MaxAutoApprovalIterations = 3,
+        };
+        var agent = new ToolApprovalAgent(innerAgent.Object, options);
+
+        // Act
+        var response = await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert — 3 auto-approving passes plus one final turn that does not auto-approve.
+        Assert.Equal(4, callCount);
+
+        // The final turn's approval request is surfaced to the caller instead of being auto-approved,
+        // so the caller regains control rather than receiving the stripped (empty) response.
+        Assert.NotEmpty(response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>());
+    }
+
+    /// <summary>
+    /// Verify the streaming path is bounded by the same cap as the non-streaming path.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_AutoApprovedToolRequestedForever_StopsAtIterationCapAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() =>
+            {
+                callCount++;
+                return ToAsyncEnumerableAsync([
+                    new AgentResponseUpdate(ChatRole.Assistant,
+                        new List<AIContent> { new ToolApprovalRequestContent($"req{callCount}", new FunctionCallContent($"call{callCount}", "load_skill")) })
+                ]);
+            });
+
+        var options = new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+            MaxAutoApprovalIterations = 3,
+        };
+        var agent = new ToolApprovalAgent(innerAgent.Object, options);
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hi")], session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert — bounded the same way, and the final turn's request reaches the caller.
+        Assert.Equal(4, callCount);
+        Assert.NotEmpty(updates.SelectMany(u => u.Contents).OfType<ToolApprovalRequestContent>());
+    }
+
+    /// <summary>
+    /// Verify that the cap defaults to <see cref="ToolApprovalAgent.DefaultMaxAutoApprovalIterations"/>
+    /// when the caller does not configure one.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_NoCapConfigured_UsesDefaultMaxAutoApprovalIterationsAsync()
+    {
+        // Arrange
+        var session = new ChatClientAgentSession();
+        var callCount = 0;
+        var innerAgent = new Mock<AIAgent>();
+        innerAgent
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return new AgentResponse([new ChatMessage(ChatRole.Assistant,
+                    [new ToolApprovalRequestContent($"req{callCount}", new FunctionCallContent($"call{callCount}", "load_skill"))])]);
+            });
+
+        var agent = new ToolApprovalAgent(innerAgent.Object, new ToolApprovalAgentOptions
+        {
+            AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+        });
+
+        // Act
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hi")], session);
+
+        // Assert
+        Assert.Equal(ToolApprovalAgent.DefaultMaxAutoApprovalIterations + 1, callCount);
+    }
+
+    /// <summary>
+    /// Verify that a cap below 1 is rejected, since it would leave no turn to run.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Constructor_MaxAutoApprovalIterationsBelowOne_Throws(int value)
+    {
+        // Arrange
+        var innerAgent = new Mock<AIAgent>().Object;
+
+        // Act & Assert
+        Assert.Throws<ArgumentOutOfRangeException>(() => new ToolApprovalAgent(innerAgent, new ToolApprovalAgentOptions
+        {
+            MaxAutoApprovalIterations = value,
+        }));
+    }
+
+    #endregion
 }

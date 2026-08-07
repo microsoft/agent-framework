@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.13.0,<2",
-    "microsoft-agents-copilotstudio-client>=0.3.1,<0.3.2",
+    "microsoft-agents-copilotstudio-client>=1.2.0,<2",
 ]
 
 [tool.uv]

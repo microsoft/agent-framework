@@ -1,3 +1,15 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "agent-framework-openai",
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+#     "python-dotenv",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/single_agent/02_agent_with_tool.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio

@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -47,7 +47,7 @@ from agent_framework._skills import (
     _FileSkillResource,
 )
 
-from .conftest import MockAgent, MockAgentSession
+from .conftest import MockAgent, MockAgentSession, create_junction_or_skip
 
 # Cross-platform absolute path prefix for tests
 _ABS = "C:\\skills" if os.name == "nt" else "/skills"
@@ -885,7 +885,7 @@ class TestSkillsProvider:
 
 
 # ---------------------------------------------------------------------------
-# Tests: symlink detection (_has_symlink_in_path and end-to-end guards)
+# Tests: link detection (_has_link_or_reparse_point_in_path and end-to-end guards)
 # ---------------------------------------------------------------------------
 
 
@@ -898,7 +898,7 @@ def _requires_symlinks(tmp_path: Path) -> None:
 
 @pytest.mark.usefixtures("_requires_symlinks")
 class TestSymlinkDetection:
-    """Tests for _has_symlink_in_path and the symlink guards in validation/read."""
+    """Tests for link detection and the guards in validation/read."""
 
     def test_detects_symlinked_file(self, tmp_path: Path) -> None:
         """A symlink to a file outside the directory should be detected."""
@@ -913,7 +913,7 @@ class TestSymlinkDetection:
 
         full_path = str(symlink_path)
         directory_path = str(skill_dir) + os.sep
-        assert FileSkillsSource._has_symlink_in_path(full_path, directory_path) is True
+        assert FileSkillsSource._has_link_or_reparse_point_in_path(full_path, directory_path) is True
 
     def test_detects_symlinked_directory(self, tmp_path: Path) -> None:
         """A symlink to a directory outside should be detected for paths through it."""
@@ -929,7 +929,7 @@ class TestSymlinkDetection:
 
         full_path = str(skill_dir / "linked-dir" / "data.txt")
         directory_path = str(skill_dir) + os.sep
-        assert FileSkillsSource._has_symlink_in_path(full_path, directory_path) is True
+        assert FileSkillsSource._has_link_or_reparse_point_in_path(full_path, directory_path) is True
 
     def test_returns_false_for_regular_files(self, tmp_path: Path) -> None:
         """Regular (non-symlinked) files should not be flagged."""
@@ -941,7 +941,7 @@ class TestSymlinkDetection:
 
         full_path = str(regular_file)
         directory_path = str(skill_dir) + os.sep
-        assert FileSkillsSource._has_symlink_in_path(full_path, directory_path) is False
+        assert FileSkillsSource._has_link_or_reparse_point_in_path(full_path, directory_path) is False
 
     async def test_discover_skips_symlinked_resource(self, tmp_path: Path) -> None:
         """get_skills() should skip a symlinked resource but keep the skill."""
@@ -1002,6 +1002,137 @@ class TestSymlinkDetection:
         discovered = _discover_scripts(str(skill_dir))
         assert "scripts/safe.py" in discovered
         assert "scripts/leak.py" not in discovered
+
+    async def test_discover_skips_symlinked_skill_directory(self, tmp_path: Path) -> None:
+        """A symlinked directory below a configured root must not become a skill root."""
+        root = tmp_path / "root"
+        root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        _write_skill(outside, "evil-skill")
+
+        (root / "evil-skill").symlink_to(outside / "evil-skill", target_is_directory=True)
+        _write_skill(root, "good-skill")
+
+        assert FileSkillsSource._discover_skill_directories([str(root)]) == [str((root / "good-skill").absolute())]
+
+        skills = await _discover_file_skills_for_test([str(root)])
+        assert "evil-skill" not in skills
+        assert "good-skill" in skills
+
+    def test_discover_skips_directory_with_symlinked_skill_file(self, tmp_path: Path) -> None:
+        """A real directory whose SKILL.md is a symlink must not be discovered."""
+        root = tmp_path / "root"
+        root.mkdir()
+        outside_skill_file = tmp_path / "outside-SKILL.md"
+        outside_skill_file.write_text(
+            "---\nname: evil-skill\ndescription: Evil.\n---\nEvil instructions.",
+            encoding="utf-8",
+        )
+
+        evil_dir = root / "evil-skill"
+        evil_dir.mkdir()
+        (evil_dir / "SKILL.md").symlink_to(outside_skill_file)
+
+        assert FileSkillsSource._discover_skill_directories([str(root)]) == []
+
+    def test_discover_keeps_nested_real_skill_directories(self, tmp_path: Path) -> None:
+        """Nested real skill directories are still discovered when links are present."""
+        root = tmp_path / "root"
+        nested = root / "group"
+        nested.mkdir(parents=True)
+        _write_skill(nested, "nested-skill")
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (root / "linked").symlink_to(outside, target_is_directory=True)
+
+        assert FileSkillsSource._discover_skill_directories([str(root)]) == [str((nested / "nested-skill").absolute())]
+
+    def test_configured_root_may_itself_be_a_link(self, tmp_path: Path) -> None:
+        """The host-configured root defines the trust boundary and is not link-checked."""
+        real_root = tmp_path / "real-root"
+        real_root.mkdir()
+        _write_skill(real_root, "my-skill")
+
+        linked_root = tmp_path / "linked-root"
+        linked_root.symlink_to(real_root, target_is_directory=True)
+
+        assert FileSkillsSource._discover_skill_directories([str(linked_root)]) == [
+            str((linked_root / "my-skill").absolute())
+        ]
+
+
+class TestJunctionDetection:
+    """Tests for Windows junction guards in file-based skills."""
+
+    def test_junction_is_detected_and_excluded(self, tmp_path: Path) -> None:
+        skill_dir = _write_skill(tmp_path, "my-skill")
+        outside_dir = tmp_path / "outside"
+        outside_dir.mkdir()
+        (outside_dir / "leak.md").write_text("secret", encoding="utf-8")
+        (outside_dir / "leak.py").write_text("print('secret')", encoding="utf-8")
+
+        junction = skill_dir / "linked"
+        create_junction_or_skip(link=junction, target=outside_dir)
+
+        try:
+            linked_resource = str(junction / "leak.md")
+            assert FileSkillsSource._has_link_or_reparse_point_in_path(linked_resource, str(skill_dir)) is True
+            assert "linked/leak.md" not in _discover_resources(str(skill_dir))
+            assert "linked/leak.py" not in _discover_scripts(str(skill_dir))
+            with pytest.raises(ValueError, match="symbolic link or reparse point"):
+                FileSkillsSource._get_validated_resource_path(str(skill_dir), "linked/leak.md")
+        finally:
+            junction.rmdir()
+
+    async def test_junctioned_skill_directory_is_not_discovered(self, tmp_path: Path) -> None:
+        """A junction below a configured root must not be adopted as a skill root."""
+        root = tmp_path / "root"
+        root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        _write_skill(outside, "evil-skill")
+        _write_skill(root, "good-skill")
+
+        junction = root / "evil-skill"
+        create_junction_or_skip(link=junction, target=outside / "evil-skill")
+
+        try:
+            assert FileSkillsSource._discover_skill_directories([str(root)]) == [str((root / "good-skill").absolute())]
+            skills = await _discover_file_skills_for_test([str(root)])
+            assert "evil-skill" not in skills
+            assert "good-skill" in skills
+        finally:
+            junction.rmdir()
+
+
+class TestSkillDiscoveryFailsClosed:
+    """Discovery must fail closed when an entry cannot be inspected."""
+
+    def test_entry_that_cannot_be_inspected_is_skipped(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        _write_skill(root, "my-skill")
+
+        def _raise(path: Path) -> bool:
+            raise OSError("cannot inspect")
+
+        with patch("agent_framework._skills.is_link_or_reparse_point", side_effect=_raise):
+            assert FileSkillsSource._discover_skill_directories([str(root)]) == []
+
+    def test_skill_file_that_cannot_be_inspected_is_skipped(self, tmp_path: Path) -> None:
+        root = tmp_path / "root"
+        root.mkdir()
+        _write_skill(root, "my-skill")
+
+        def _raise_for_skill_file(path: Path) -> bool:
+            if path.name == "SKILL.md":
+                raise OSError("cannot inspect")
+            return False
+
+        with patch("agent_framework._skills.is_link_or_reparse_point", side_effect=_raise_for_skill_file):
+            assert FileSkillsSource._discover_skill_directories([str(root)]) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1870,21 +2001,32 @@ class TestIsPathWithinDirectory:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _has_symlink_in_path edge cases
+# Tests: _has_link_or_reparse_point_in_path edge cases
 # ---------------------------------------------------------------------------
 
 
-class TestHasSymlinkInPathEdgeCases:
-    """Edge-case tests for _has_symlink_in_path."""
+class TestHasLinkOrReparsePointInPathEdgeCases:
+    """Edge-case tests for _has_link_or_reparse_point_in_path."""
 
     def test_raises_when_path_not_relative(self, tmp_path: Path) -> None:
         unrelated = str(tmp_path.parent / "other" / "file.txt")
         with pytest.raises(ValueError, match="does not start with directory"):
-            FileSkillsSource._has_symlink_in_path(unrelated, str(tmp_path))
+            FileSkillsSource._has_link_or_reparse_point_in_path(unrelated, str(tmp_path))
 
     def test_returns_false_for_empty_relative(self, tmp_path: Path) -> None:
         """When path equals directory, relative is empty so no symlinks."""
-        assert FileSkillsSource._has_symlink_in_path(str(tmp_path), str(tmp_path)) is False
+        assert FileSkillsSource._has_link_or_reparse_point_in_path(str(tmp_path), str(tmp_path)) is False
+
+    def test_fails_closed_when_path_cannot_be_inspected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        target = tmp_path / "resource.md"
+        target.write_text("content", encoding="utf-8")
+
+        def fail_probe(path: Path) -> bool:
+            raise PermissionError(path)
+
+        monkeypatch.setattr("agent_framework._skills.is_link_or_reparse_point", fail_probe)
+
+        assert FileSkillsSource._has_link_or_reparse_point_in_path(str(target), str(tmp_path)) is True
 
 
 # ---------------------------------------------------------------------------
@@ -2166,7 +2308,7 @@ class TestGetValidatedResourcePath:
         (real_subdir / "data.md").write_text("external data")
         link = skill_dir / "linked"
         link.symlink_to(real_subdir)
-        with pytest.raises(ValueError, match="symlink"):
+        with pytest.raises(ValueError, match="symbolic link or reparse point"):
             FileSkillsSource._get_validated_resource_path(str(skill_dir), "linked/data.md")
 
 

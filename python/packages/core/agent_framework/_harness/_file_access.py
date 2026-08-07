@@ -27,7 +27,6 @@ import fnmatch
 import logging
 import os
 import re
-import stat
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, MutableMapping
 from pathlib import Path
@@ -36,6 +35,7 @@ from typing import Annotated, Any, ClassVar, cast
 from pydantic import BaseModel, Field
 
 from .._feature_stage import ExperimentalFeature, experimental
+from .._filesystem import is_link_or_reparse_point
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._telemetry import FeatureIndex, mark_feature_used
@@ -81,21 +81,6 @@ _SEARCH_TIMEOUT_SECONDS = 10.0
 # refusal into the same :class:`ValueError` the static probe raises so the
 # caller can treat the two cases uniformly.
 _ELOOP = errno.ELOOP
-
-
-def _is_link_or_reparse_point(path: Path) -> bool:
-    """Return whether ``path`` is a symbolic link, junction, or other reparse point."""
-    path_stat = path.lstat()
-    if stat.S_ISLNK(path_stat.st_mode):
-        return True
-
-    is_junction = getattr(path, "is_junction", None)
-    if callable(is_junction) and is_junction():
-        return True
-
-    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    file_attributes = getattr(path_stat, "st_file_attributes", 0)
-    return bool(reparse_attribute and file_attributes & reparse_attribute)
 
 
 def _compile_search_regex(pattern: str) -> re.Pattern[str]:
@@ -889,7 +874,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         for segment in relative_parts:
             current = current / segment
             try:
-                is_link = _is_link_or_reparse_point(current)
+                is_link = is_link_or_reparse_point(current)
             except FileNotFoundError:
                 break
             except OSError as exc:
@@ -1003,7 +988,7 @@ class FileSystemAgentFileStore(AgentFileStore):
         files: list[FileStoreEntry] = []
         for entry in full_dir.iterdir():
             try:
-                is_link = _is_link_or_reparse_point(entry)
+                is_link = is_link_or_reparse_point(entry)
             except OSError:
                 # Fail closed when an entry cannot be inspected.
                 continue
@@ -1062,7 +1047,7 @@ class FileSystemAgentFileStore(AgentFileStore):
             current = directories.pop()
             for entry in current.iterdir():
                 try:
-                    is_link = _is_link_or_reparse_point(entry)
+                    is_link = is_link_or_reparse_point(entry)
                 except OSError:
                     # Fail closed when an entry cannot be inspected.
                     continue

@@ -7,9 +7,10 @@ from __future__ import annotations
 import copy
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from ag_ui.core import (
     BaseEvent,
@@ -32,16 +33,39 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from agent_framework import Content
+from agent_framework import Content, ResponseStream
 
-from ._orchestration._predictive_state import PredictiveStateHandler
+from ._predictive_state import PredictiveStateHandler
 from ._state import TOOL_RESULT_DISPLAY_KEY, TOOL_RESULT_STATE_KEY
 from ._utils import generate_event_id, make_json_safe, normalize_agui_role
 
 logger = logging.getLogger(__name__)
 
+_StreamItemT = TypeVar("_StreamItemT")
+
 # Sentinel for an unset display_result; distinguishes "caller didn't pass" from None/{}/"".
 _UNSET = object()
+
+
+async def _iterate_with_context(
+    stream: AsyncIterable[_StreamItemT],
+    context_factory: Callable[[], AbstractContextManager[Any]],
+) -> AsyncGenerator[_StreamItemT]:
+    """Advance a response stream with a fresh execution context for every pull."""
+    if isinstance(stream, ResponseStream):
+        stream.with_pull_context_manager(context_factory)
+        async for item in stream:
+            yield item
+        return
+
+    stream_iterator = aiter(stream)
+    while True:
+        with context_factory():
+            try:
+                item = await anext(stream_iterator)
+            except StopAsyncIteration:
+                return
+        yield item
 
 
 def _has_only_tool_calls(contents: list[Any]) -> bool:
@@ -106,6 +130,18 @@ def _normalize_resume_interrupts(resume_payload: Any) -> list[dict[str, Any]]:
         normalized.append(normalized_entry)
 
     return normalized
+
+
+def _cancelled_resume_interrupt_ids(resume_payload: Any) -> set[str]:
+    """Return cancelled canonical resume interrupt ids."""
+    interrupt_ids: set[str] = set()
+    for interrupt in _normalize_resume_interrupts(resume_payload):
+        if interrupt.get("status") != "cancelled":
+            continue
+        interrupt_id = interrupt.get("id")
+        if interrupt_id:
+            interrupt_ids.add(str(interrupt_id))
+    return interrupt_ids
 
 
 def _extract_resume_payload(input_data: dict[str, Any]) -> Any:
@@ -824,10 +860,12 @@ def _emit_approval_request(
     )
     interrupt_id = func_call_id or content.id
     if interrupt_id:
+        response_schema = _approval_response_schema() if func_call.additional_properties.get("server_label") else None
         flow.interrupts.append(
             _approval_interrupt_for_function_call(
                 interrupt_id=str(interrupt_id),
                 function_call=func_call,
+                response_schema=response_schema,
             )
         )
 
