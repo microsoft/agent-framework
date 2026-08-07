@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
+from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
