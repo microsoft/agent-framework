@@ -24,21 +24,19 @@ class StoreProvider(ABC, Generic[StoreT]):
     """Provide store for a hosting environment."""
 
     @abstractmethod
-    def get_store(self, *, is_hosted: bool, context_id: str) -> StoreT:
+    def get_store(self, *, is_hosted: bool, context_id: str | None = None) -> StoreT:
         """Get store for a hosting environment.
 
         Args:
             is_hosted: A boolean indicating whether the environment is a Foundry
                 Hosted environment (vs. a local environment).
-            context_id: A string that uniquely identifies the context for which the store is scoped.
+            context_id: An optional string that uniquely identifies the context for which the store is scoped.
 
         Returns:
-            The store instance for the given hosting environment and scoped by context ID.
+            The store instance for the given hosting environment, optionally scoped by context ID.
 
         Note:
-            `is_hosted` and `context_id` are used to determine which store implementation to return.
-            Concrete implementations are free to use these parameters as needed to return the appropriate
-            store instance.
+            Concrete implementations may require `context_id` when the returned store is context-scoped.
         """
 
 
@@ -162,7 +160,7 @@ class CheckpointStoreProvider(StoreProvider[CheckpointStorage]):
         self,
         *,
         is_hosted: bool,
-        context_id: str,
+        context_id: str | None = None,
     ) -> CheckpointStorage:
         """Get checkpoint store for the requested hosting environment."""
         stores = self._foundry_storages if is_hosted else self._in_memory_storages
@@ -251,7 +249,7 @@ class FunctionApprovalStoreProvider(StoreProvider[FunctionApprovalStore]):
         self._foundry_storage: FunctionApprovalStore | None = None
         self._in_memory_storage: FunctionApprovalStore | None = None
 
-    def get_store(self, *, is_hosted: bool, context_id: str) -> FunctionApprovalStore:
+    def get_store(self, *, is_hosted: bool, context_id: str | None = None) -> FunctionApprovalStore:
         """Get function approval store for the requested hosting environment."""
         if is_hosted:
             if self._foundry_storage is None:
@@ -305,7 +303,7 @@ class AgentSessionStoreProvider(StoreProvider[SessionStore]):
         self._foundry_storage: SessionStore | None = None
         self._in_memory_storage: SessionStore | None = None
 
-    def get_store(self, *, is_hosted: bool, context_id: str) -> SessionStore:
+    def get_store(self, *, is_hosted: bool, context_id: str | None = None) -> SessionStore:
         """Get agent session store for the requested hosting environment."""
         if is_hosted:
             if self._foundry_storage is None:
