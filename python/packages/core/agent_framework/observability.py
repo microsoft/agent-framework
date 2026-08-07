@@ -371,7 +371,7 @@ class OtelAttr(str, Enum):
 def _serialize_for_telemetry(value: Any) -> str:
     """Serialize heterogeneous telemetry payloads without affecting application execution."""
     try:
-        return json.dumps(make_json_safe(value), ensure_ascii=False)
+        return json.dumps(make_json_safe(value), ensure_ascii=False, allow_nan=False)
     except Exception:
         value_type = f"{type(value).__module__}.{type(value).__qualname__}"
         return json.dumps(f"[Unserializable: {value_type}]", ensure_ascii=False)

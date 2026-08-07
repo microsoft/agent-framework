@@ -247,7 +247,8 @@ async def test_workflow_payloads_are_captured_when_sensitive_data_enabled(
     workflow = WorkflowBuilder(start_executor=OutputExecutor()).build()
     span_exporter.clear()
 
-    async for _ in workflow.run({"value": 1}, stream=True):
+    workflow_message = WorkflowMessage(data={"value": 1}, source_id="external", target_id=None)
+    async for _ in workflow.run(workflow_message, stream=True):
         pass
 
     spans = span_exporter.get_finished_spans()
@@ -333,6 +334,26 @@ async def test_message_send_telemetry_serialization_cannot_break_workflow(
     sending_span = next(span for span in span_exporter.get_finished_spans() if span.name == OtelAttr.MESSAGE_SEND_SPAN)
     assert sending_span.attributes is not None
     assert "[Unserializable:" in str(sending_span.attributes[OtelAttr.MESSAGE_CONTENT])
+
+
+@pytest.mark.parametrize("non_finite_value", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_message_send_telemetry_rejects_non_finite_json_values(
+    span_exporter: InMemorySpanExporter,
+    non_finite_value: float,
+) -> None:
+    workflow_ctx: WorkflowContext[float] = WorkflowContext(
+        MockExecutor("source_executor"),
+        ["source"],
+        State(),
+        InProcRunnerContext(),
+    )
+
+    await workflow_ctx.send_message(non_finite_value)
+
+    sending_span = next(span for span in span_exporter.get_finished_spans() if span.name == OtelAttr.MESSAGE_SEND_SPAN)
+    assert sending_span.attributes is not None
+    assert sending_span.attributes[OtelAttr.MESSAGE_CONTENT] == '"[Unserializable: builtins.float]"'
 
 
 @pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)

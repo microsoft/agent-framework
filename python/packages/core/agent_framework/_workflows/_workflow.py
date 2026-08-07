@@ -899,10 +899,13 @@ class Workflow(DictConvertible):
                     )
 
             initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
+            telemetry_input = message.data if isinstance(message, WorkflowMessage) else message
+            if telemetry_input is None:
+                telemetry_input = responses
 
             async for event in self._run_workflow_with_tracing(
                 initial_executor_fn=initial_executor_fn,
-                telemetry_input=message if message is not None else responses,
+                telemetry_input=telemetry_input,
                 is_continuation=(message is None),
                 streaming=streaming,
                 function_invocation_kwargs=function_invocation_kwargs,
