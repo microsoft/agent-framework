@@ -38,20 +38,36 @@ from ._declarative_base import (
 logger = logging.getLogger(__name__)
 
 _CODE_FENCE = "```"
-_JSON_CODE_FENCE = "```json"
-_MAX_JSON_RECOVERY_SCANS = 2
+_JSON_CODE_FENCE_QUALIFIER = "json"
+_MAX_JSON_DECODE_BUDGET_MULTIPLIER = 4
 _NO_JSON = object()
 
 
-def _iter_fenced_blocks(text: str, opening_fence: str) -> Iterator[str]:
+def _iter_fenced_blocks(text: str, *, require_json_qualifier: bool) -> Iterator[str]:
     """Yield non-overlapping fenced blocks in source order."""
     search_start = 0
     while True:
-        opening_index = text.find(opening_fence, search_start)
+        opening_index = text.find(_CODE_FENCE, search_start)
         if opening_index < 0:
             return
 
-        content_start = opening_index + len(opening_fence)
+        content_start = opening_index + len(_CODE_FENCE)
+        if require_json_qualifier:
+            if not text.startswith(_JSON_CODE_FENCE_QUALIFIER, content_start):
+                search_start = content_start
+                continue
+
+            qualifier_end = content_start + len(_JSON_CODE_FENCE_QUALIFIER)
+            if (
+                qualifier_end < len(text)
+                and not text[qualifier_end].isspace()
+                and text[qualifier_end] not in "{["
+                and not text.startswith(_CODE_FENCE, qualifier_end)
+            ):
+                search_start = content_start
+                continue
+            content_start = qualifier_end
+
         while content_start < len(text) and text[content_start].isspace():
             content_start += 1
 
@@ -63,32 +79,37 @@ def _iter_fenced_blocks(text: str, opening_fence: str) -> Iterator[str]:
         search_start = closing_index + len(_CODE_FENCE)
 
 
-def _index_json_candidates(text: str, start_index: int = 0) -> tuple[list[int], dict[int, int], int | None]:
-    """Index balanced JSON object and array candidates in one pass."""
-    opening_positions: list[int] = []
-    closing_positions: dict[int, int] = {}
-    object_stack: list[int] = []
-    array_stack: list[int] = []
-    in_string = False
-    escape_next = False
+def _index_escaped_quotes(text: str) -> bytearray:
+    """Index quote characters preceded by an odd-length backslash run."""
+    escaped_quotes = bytearray(len(text))
+    backslash_count = 0
 
-    for index in range(start_index, len(text)):
-        char = text[index]
-        if not object_stack and not array_stack:
-            if char in "{[":
-                opening_positions.append(index)
-                (object_stack if char == "{" else array_stack).append(index)
-            continue
-
-        if escape_next:
-            escape_next = False
-            continue
-
+    for index, char in enumerate(text):
         if char == "\\":
-            escape_next = True
+            backslash_count += 1
             continue
 
-        if char == '"':
+        if char == '"' and backslash_count % 2 == 1:
+            escaped_quotes[index] = 1
+        backslash_count = 0
+
+    return escaped_quotes
+
+
+def _index_json_candidates_forward(text: str, escaped_quotes: bytearray) -> set[tuple[int, int]]:
+    """Index JSON candidate ranges from left to right."""
+    candidates: set[tuple[int, int]] = set()
+    object_openings: list[int] = []
+    array_openings: list[int] = []
+    in_string = False
+
+    for index, char in enumerate(text):
+        if not object_openings and not array_openings:
+            if char in "{[":
+                (object_openings if char == "{" else array_openings).append(index)
+            continue
+
+        if char == '"' and not escaped_quotes[index]:
             in_string = not in_string
             continue
 
@@ -96,52 +117,119 @@ def _index_json_candidates(text: str, start_index: int = 0) -> tuple[list[int], 
             continue
 
         if char in "{[":
-            opening_positions.append(index)
-            (object_stack if char == "{" else array_stack).append(index)
-        elif char == "}" and object_stack:
-            closing_positions[object_stack.pop()] = index
-        elif char == "]" and array_stack:
-            closing_positions[array_stack.pop()] = index
+            (object_openings if char == "{" else array_openings).append(index)
+        elif char == "}" and object_openings:
+            candidates.add((object_openings.pop(), index))
+        elif char == "]" and array_openings:
+            candidates.add((array_openings.pop(), index))
 
-    unresolved_positions = [stack[0] for stack in (object_stack, array_stack) if stack]
-    unresolved_root = min(unresolved_positions) if unresolved_positions else None
-    return opening_positions, closing_positions, unresolved_root
+    return candidates
 
 
-def _find_next_json_opening(text: str, start_index: int) -> int:
-    """Find the next object or array opening delimiter."""
-    object_index = text.find("{", start_index)
-    array_index = text.find("[", start_index)
-    if object_index < 0:
-        return array_index
-    if array_index < 0:
-        return object_index
-    return min(object_index, array_index)
+def _index_json_candidates_reverse(text: str, escaped_quotes: bytearray) -> set[tuple[int, int]]:
+    """Index JSON candidate ranges from right to left."""
+    candidates: set[tuple[int, int]] = set()
+    object_closings: list[int] = []
+    array_closings: list[int] = []
+    in_string = False
 
-
-def _decode_last_json_candidate(
-    text: str,
-    opening_positions: list[int],
-    closing_positions: dict[int, int],
-) -> tuple[int, Any] | None:
-    """Decode the last valid non-overlapping JSON candidate."""
-    last_json: tuple[int, Any] | None = None
-    candidate_index = 0
-    while candidate_index < len(opening_positions):
-        json_start = opening_positions[candidate_index]
-        json_end = closing_positions.get(json_start)
-        if json_end is None:
-            candidate_index += 1
+    for index in range(len(text) - 1, -1, -1):
+        char = text[index]
+        if not object_closings and not array_closings:
+            if char in "}]":
+                (object_closings if char == "}" else array_closings).append(index)
             continue
 
-        with contextlib.suppress(json.JSONDecodeError):
-            last_json = (json_start, json.loads(text[json_start : json_end + 1]))
+        if char == '"' and not escaped_quotes[index]:
+            in_string = not in_string
+            continue
 
-        candidate_index += 1
-        while candidate_index < len(opening_positions) and opening_positions[candidate_index] <= json_end:
+        if in_string:
+            continue
+
+        if char in "}]":
+            (object_closings if char == "}" else array_closings).append(index)
+        elif char == "{" and object_closings:
+            candidates.add((index, object_closings.pop()))
+        elif char == "[" and array_closings:
+            candidates.add((index, array_closings.pop()))
+
+    return candidates
+
+
+def _find_last_decodable_json(text: str) -> Any:
+    """Find the last decodable JSON object or array within text."""
+    escaped_quotes = _index_escaped_quotes(text)
+    candidates = _index_json_candidates_forward(text, escaped_quotes)
+    candidates.update(_index_json_candidates_reverse(text, escaped_quotes))
+
+    candidate_groups: list[tuple[int, int, list[tuple[int, int]]]] = []
+    for candidate in sorted(candidates):
+        json_start, json_end = candidate
+        if not candidate_groups or json_start > candidate_groups[-1][1]:
+            candidate_groups.append((json_start, json_end, [candidate]))
+            continue
+
+        group_start, group_end, group_candidates = candidate_groups[-1]
+        group_candidates.append(candidate)
+        candidate_groups[-1] = (group_start, max(group_end, json_end), group_candidates)
+
+    for group_start, group_end, group_candidates in reversed(candidate_groups):
+        group_span = group_end - group_start + 1
+        primary_decode_budget = group_span * (_MAX_JSON_DECODE_BUDGET_MULTIPLIER // 2)
+        recovery_decode_budget = group_span * (
+            _MAX_JSON_DECODE_BUDGET_MULTIPLIER - (_MAX_JSON_DECODE_BUDGET_MULTIPLIER // 2)
+        )
+        attempted_candidates: set[tuple[int, int]] = set()
+        last_json: Any = _NO_JSON
+        consumed_end = -1
+        candidate_index = 0
+
+        while candidate_index < len(group_candidates) and primary_decode_budget > 0:
+            json_start, json_end = group_candidates[candidate_index]
             candidate_index += 1
+            if json_start <= consumed_end:
+                continue
 
-    return last_json
+            candidate_length = json_end - json_start + 1
+            if candidate_length > primary_decode_budget:
+                continue
+
+            primary_decode_budget -= candidate_length
+            attempted_candidates.add((json_start, json_end))
+            try:
+                last_json = json.loads(text[json_start : json_end + 1])
+            except json.JSONDecodeError:
+                continue
+
+            consumed_end = json_end
+            while candidate_index < len(group_candidates) and group_candidates[candidate_index][0] <= consumed_end:
+                candidate_index += 1
+
+        recovery_candidates = sorted(
+            group_candidates,
+            key=lambda candidate: (candidate[1] - candidate[0], -candidate[0]),
+        )
+        for json_start, json_end in recovery_candidates:
+            if recovery_decode_budget == 0:
+                break
+            if (json_start, json_end) in attempted_candidates or json_start <= consumed_end:
+                continue
+
+            candidate_length = json_end - json_start + 1
+            if candidate_length > recovery_decode_budget:
+                continue
+
+            recovery_decode_budget -= candidate_length
+            try:
+                return json.loads(text[json_start : json_end + 1])
+            except json.JSONDecodeError:
+                continue
+
+        if last_json is not _NO_JSON:
+            return last_json
+
+    raise json.JSONDecodeError("No valid JSON found in response", text, 0)
 
 
 def _extract_json_from_response(text: str) -> Any:
@@ -184,10 +272,10 @@ def _extract_json_from_response(text: str) -> Any:
     except json.JSONDecodeError:
         pass
 
-    # Qualified fences take precedence over plain fences, matching the existing behavior.
-    for opening_fence in (_JSON_CODE_FENCE, _CODE_FENCE):
+    # Exactly-qualified JSON fences take precedence over plain fences.
+    for require_json_qualifier in (True, False):
         last_fenced_json: Any = _NO_JSON
-        for block in _iter_fenced_blocks(text, opening_fence):
+        for block in _iter_fenced_blocks(text, require_json_qualifier=require_json_qualifier):
             try:
                 last_fenced_json = json.loads(block)
             except json.JSONDecodeError:
@@ -195,28 +283,7 @@ def _extract_json_from_response(text: str) -> Any:
         if last_fenced_json is not _NO_JSON:
             return last_fenced_json
 
-    # Bound recovery so malformed input cannot trigger unbounded suffix scans.
-    scan_start = 0
-    last_json: tuple[int, Any] | None = None
-    for _ in range(_MAX_JSON_RECOVERY_SCANS + 1):
-        opening_positions, closing_positions, unresolved_root = _index_json_candidates(text, scan_start)
-        scanned_json = _decode_last_json_candidate(text, opening_positions, closing_positions)
-        if scanned_json is not None and (last_json is None or scanned_json[0] > last_json[0]):
-            last_json = scanned_json
-
-        if unresolved_root is None:
-            break
-
-        recovery_start = _find_next_json_opening(text, unresolved_root + 1)
-        if recovery_start < 0:
-            break
-        scan_start = recovery_start
-
-    if last_json is not None:
-        return last_json[1]
-
-    # Unable to extract JSON
-    raise json.JSONDecodeError("No valid JSON found in response", text, 0)
+    return _find_last_decodable_json(text)
 
 
 def _validate_conversation_history(messages: list[Message], agent_name: str) -> None:

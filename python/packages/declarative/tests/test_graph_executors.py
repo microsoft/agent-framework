@@ -1412,6 +1412,51 @@ not valid JSON
         result = _extract_json_from_response('Result: ```json{"status": "complete"}```.')
         assert result == {"status": "complete"}
 
+    def test_inline_json_array_code_block(self):
+        """Test extracting a JSON array from an inline qualified code block."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response("Result: ```json[1, 2]```.")
+        assert result == [1, 2]
+
+    def test_json5_scalar_is_not_treated_as_json_qualified(self):
+        """Test that a JSON5 qualifier prefix is not interpreted as JSON."""
+        import json
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        with pytest.raises(json.JSONDecodeError):
+            _extract_json_from_response("```json5```")
+
+    @pytest.mark.parametrize("qualifier", ["json5", "jsonc"])
+    def test_nonstandard_json_qualified_object_uses_general_fallback(self, qualifier):
+        """Test that objects in nonstandard JSON blocks are recovered by fallback."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response(f'```{qualifier}\n{{"status": "complete"}}\n```')
+        assert result == {"status": "complete"}
+
+    def test_nonstandard_json_block_does_not_take_qualified_precedence(self):
+        """Test that JSON5 blocks do not take precedence over plain blocks."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = """```json5
+{"source": "json5"}
+```
+```
+{"source": "plain"}
+```"""
+        result = _extract_json_from_response(text)
+        assert result == {"source": "plain"}
+
     def test_json_code_block_with_crlf(self):
         """Test extracting JSON from a code block with CRLF line endings."""
         from agent_framework_declarative._workflows._executors_agents import (
@@ -1473,6 +1518,24 @@ not valid JSON
         text = '{"broken": [} then {"status": "complete"} ]}'
         result = _extract_json_from_response(text)
         assert result == {"status": "complete"}
+
+    def test_valid_outer_json_is_preferred_over_crossing_reverse_candidate(self):
+        """Test a reverse-indexed crossing candidate does not override valid JSON."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('{"s": "["}"]')
+        assert result == {"s": "["}
+
+    def test_valid_outer_json_is_preferred_over_nested_candidate(self):
+        """Test a malformed wrapper does not cause a nested value to win."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('{"mixed": [} {"final": {"nested": 1}} ]}')
+        assert result == {"final": {"nested": 1}}
 
     def test_valid_json_after_double_escaped_fragment(self):
         """Test recovering valid JSON after a double-escaped malformed fragment."""
@@ -1536,6 +1599,62 @@ not valid JSON
         text = '{"mixed": [} {"partial: true} then {"status": "complete"}'
         result = _extract_json_from_response(text)
         assert result == {"status": "complete"}
+
+    def test_valid_json_after_many_malformed_candidates(self):
+        """Test recovery is not limited by the number of malformed candidates."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = "[{}[[" * 50 + '{"final": "value"}'
+        result = _extract_json_from_response(text)
+        assert result == {"final": "value"}
+
+    def test_review_reported_malformed_candidate_sequence(self):
+        """Test the review-reported malformed prefix before final JSON."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('[{}[["{"final": "value"}')
+        assert result == {"final": "value"}
+
+    def test_valid_json_before_nested_malformed_suffix(self):
+        """Test a malformed suffix cannot consume the earlier candidate's decode budget."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('{"good": 1} [[[[[[[[[[x]]]]]]]]]]')
+        assert result == {"good": 1}
+
+    def test_last_sibling_json_inside_malformed_wrapper(self):
+        """Test that the last valid sibling wins inside a malformed wrapper."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('[x {"first": 1} {"last": 2}]')
+        assert result == {"last": 2}
+
+    def test_valid_json_inside_deeply_nested_malformed_wrapper(self):
+        """Test recovery budget is reserved for a deeply nested valid value."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('[[[[x {"final": "value"}]]]]')
+        assert result == {"final": "value"}
+
+    def test_valid_json_between_malformed_prefix_and_suffix(self):
+        """Test recovery prioritizes compact JSON over malformed wrappers."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = ("[" * 4) + 'x {"good": 1} ' + ("[" * 9) + "x" + ("]" * 13)
+        result = _extract_json_from_response(text)
+        assert result == {"good": 1}
 
 
 class TestPowerFxConditionalImport:
