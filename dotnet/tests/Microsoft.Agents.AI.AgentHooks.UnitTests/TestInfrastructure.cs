@@ -46,6 +46,16 @@ internal sealed class MockChatClient : IChatClient
         return this;
     }
 
+    public MockChatClient EnqueueThrow(Exception exception)
+    {
+        lock (this._lock)
+        {
+            this.Responses.Enqueue(_ => throw exception);
+        }
+
+        return this;
+    }
+
     public MockChatClient EnqueueFunctionCall(string callId, string name, Dictionary<string, object?> arguments)
     {
         lock (this._lock)
@@ -170,15 +180,27 @@ internal sealed class PoisonedValue
     public string Boom => throw new ArgumentException("poisoned getter");
 }
 
-/// <summary>A chat history provider that records exactly what becomes durable.</summary>
+/// <summary>A chat history provider that records exactly what becomes durable (and what failure notifications carry).</summary>
 internal sealed class RecordingHistoryProvider : ChatHistoryProvider
 {
     public List<ChatMessage> Stored { get; } = [];
+
+    public List<(Exception Exception, int RequestMessageCount)> FailureNotifications { get; } = [];
 
     public int StoreCalls;
 
     protected override ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default) =>
         new([.. this.Stored]);
+
+    protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    {
+        if (context.InvokeException is not null)
+        {
+            this.FailureNotifications.Add((context.InvokeException, context.RequestMessages.Count()));
+        }
+
+        return base.InvokedCoreAsync(context, cancellationToken);
+    }
 
     protected override ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
@@ -189,15 +211,27 @@ internal sealed class RecordingHistoryProvider : ChatHistoryProvider
     }
 }
 
-/// <summary>A context provider that records its run-end (durable) notifications.</summary>
+/// <summary>A context provider that records its run-end (durable) notifications and failure notifications.</summary>
 internal sealed class RecordingContextProvider : AIContextProvider
 {
     public List<ChatMessage> StoredResponses { get; } = [];
+
+    public List<(Exception Exception, int RequestMessageCount)> FailureNotifications { get; } = [];
 
     public int StoreCalls;
 
     protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default) =>
         new(new AIContext());
+
+    protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
+    {
+        if (context.InvokeException is not null)
+        {
+            this.FailureNotifications.Add((context.InvokeException, context.RequestMessages.Count()));
+        }
+
+        return base.InvokedCoreAsync(context, cancellationToken);
+    }
 
     protected override ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {

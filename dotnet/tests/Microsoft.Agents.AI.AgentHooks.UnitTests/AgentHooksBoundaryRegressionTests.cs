@@ -194,6 +194,65 @@ public class AgentHooksBoundaryRegressionTests
     }
 
     [Fact]
+    public async Task DeniedRunFailureNotificationsAreRedactedForBothProviderKindsAsync()
+    {
+        // Arrange: a post_model_call deny makes the inner agent's run fail, which sends
+        // failure notifications to BOTH provider kinds. Those notifications must still
+        // arrive (failure-cleanup contract) but with the denied turn's request messages
+        // redacted.
+        var historyProvider = new RecordingHistoryProvider();
+        var contextProvider = new RecordingContextProvider();
+        var client = new MockChatClient().EnqueueText("secret");
+        var agent = client.AsAIAgentWithAgentHooks(
+            new AgentHooksOptions(new PointGuard(InterceptionPoint.PostModelCall, Verdict.Deny("bad_response"))),
+            new ChatClientAgentOptions
+            {
+                ChatHistoryProvider = historyProvider,
+                AIContextProviders = [contextProvider],
+            });
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        _ = await Assert.ThrowsAsync<InterceptionBlockedException>(() => agent.RunAsync(UserMessage("hi"), session));
+
+        // Assert: both providers were notified of the failure, with zero request messages.
+        var historyNotification = Assert.Single(historyProvider.FailureNotifications);
+        Assert.Equal(0, historyNotification.RequestMessageCount);
+        var contextNotification = Assert.Single(contextProvider.FailureNotifications);
+        Assert.Equal(0, contextNotification.RequestMessageCount);
+        Assert.Empty(historyProvider.Stored);
+        Assert.Empty(contextProvider.StoredResponses);
+    }
+
+    [Fact]
+    public async Task OrdinaryFailureNotificationsPassThroughUnredactedAsync()
+    {
+        // Arrange: a plain model failure (no verdict involved) — providers must receive
+        // the full failure notification, request messages included.
+        var historyProvider = new RecordingHistoryProvider();
+        var contextProvider = new RecordingContextProvider();
+        var client = new MockChatClient().EnqueueThrow(new TimeoutException("model down"));
+        var agent = client.AsAIAgentWithAgentHooks(
+            new AgentHooksOptions(new AllowGuard()),
+            new ChatClientAgentOptions
+            {
+                ChatHistoryProvider = historyProvider,
+                AIContextProviders = [contextProvider],
+            });
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        _ = await Assert.ThrowsAsync<TimeoutException>(() => agent.RunAsync(UserMessage("hi"), session));
+
+        // Assert
+        var historyNotification = Assert.Single(historyProvider.FailureNotifications);
+        Assert.IsType<TimeoutException>(historyNotification.Exception);
+        Assert.True(historyNotification.RequestMessageCount > 0);
+        var contextNotification = Assert.Single(contextProvider.FailureNotifications);
+        Assert.True(contextNotification.RequestMessageCount > 0);
+    }
+
+    [Fact]
     public async Task PoisonedToolArgumentProjectionFailsClosedAsync()
     {
         // Arrange: an argument value whose serialization throws. The projection failure

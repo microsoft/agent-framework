@@ -93,14 +93,16 @@ internal sealed class AgentHooksGatingChatHistoryProvider : ChatHistoryProvider
         if (context.InvokeException is not null)
         {
             // Failure notifications are cleanup control flow (the default provider
-            // stores nothing for them) and pass through — except once a run-level deny
-            // or halt is standing: the notification carries the denied turn's request
-            // messages, which must not reach provider code at all (fail closed).
+            // stores nothing for them) and pass through — but once a run-level deny or
+            // halt is standing they are REDACTED: the notification would carry the
+            // denied turn's request messages, which must not reach provider code, while
+            // providers that release per-run resources on the failure signal must still
+            // be notified.
             var state = AgentHooksRunState.Current;
             if (state is not null && ReferenceEquals(state.Configuration, this._configuration) &&
                 (state.Denied || state.Halted is not null))
             {
-                return default;
+                context = new InvokedContext(context.Agent, context.Session, [], context.InvokeException);
             }
 
             return this._inner.InvokedAsync(context, cancellationToken);
@@ -158,6 +160,15 @@ internal sealed class AgentHooksGatingAIContextProvider : AIContextProvider
     {
         if (context.InvokeException is not null)
         {
+            // See the history wrapper: failure notifications pass through for cleanup,
+            // redacted (empty request messages) once a run-level deny or halt stands.
+            var state = AgentHooksRunState.Current;
+            if (state is not null && ReferenceEquals(state.Configuration, this._configuration) &&
+                (state.Denied || state.Halted is not null))
+            {
+                context = new InvokedContext(context.Agent, context.Session, [], context.InvokeException);
+            }
+
             return this._inner.InvokedAsync(context, cancellationToken);
         }
 
