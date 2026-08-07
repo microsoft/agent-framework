@@ -719,6 +719,79 @@ public class PerServiceCallChatHistoryPersistingChatClientTests
     }
 
     /// <summary>
+    /// Verifies that usage reported by the inner client is surfaced unchanged. This decorator makes
+    /// exactly one inner call per invocation and must never drop usage.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_PassesUsageThroughUnchangedAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")])
+            {
+                Usage = new UsageDetails { InputTokenCount = 21, OutputTokenCount = 9, TotalTokenCount = 30 },
+            });
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            RequirePerServiceCallChatHistoryPersistence = true,
+        });
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        var response = await agent.RunAsync([new(ChatRole.User, "test")], session);
+
+        // Assert
+        Assert.NotNull(response.Usage);
+        Assert.Equal(21, response.Usage!.InputTokenCount);
+        Assert.Equal(9, response.Usage.OutputTokenCount);
+        Assert.Equal(30, response.Usage.TotalTokenCount);
+    }
+
+    /// <summary>
+    /// Verifies that usage streamed by the inner client survives the decorator's streaming pipeline.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_PassesUsageThroughUnchangedAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(CreateAsyncEnumerableAsync(
+                new ChatResponseUpdate(ChatRole.Assistant, "response"),
+                new ChatResponseUpdate(ChatRole.Assistant, [new UsageContent(new UsageDetails { InputTokenCount = 21, OutputTokenCount = 9, TotalTokenCount = 30 })])));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            RequirePerServiceCallChatHistoryPersistence = true,
+        });
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        List<AgentResponseUpdate> updates = [];
+        await foreach (var update in agent.RunStreamingAsync([new(ChatRole.User, "test")], session))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        var response = updates.ToAgentResponse();
+        Assert.NotNull(response.Usage);
+        Assert.Equal(21, response.Usage!.InputTokenCount);
+        Assert.Equal(9, response.Usage.OutputTokenCount);
+        Assert.Equal(30, response.Usage.TotalTokenCount);
+    }
+
+    /// <summary>
     /// Verifies that when per-service-call persistence is active and no real conversation ID exists,
     /// <see cref="ChatClientAgent"/> sets the <see cref="PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId"/>
     /// sentinel on the chat options and <see cref="PerServiceCallChatHistoryPersistingChatClient"/> strips it before

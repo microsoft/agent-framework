@@ -208,6 +208,7 @@ human-only operation; CI only adds and deletes versions under existing agents.
 | --- | --- | --- | --- |
 | `HappyPathHostedAgentFixture` | `happy-path` | `it-happy-path` | Round trip, streaming, and container-instruction behaviour. |
 | `HostedResponsesStoreConfigFixture` | `store-config` | `it-store-config` | Store/session semantics: `store=true` vs `store=false`, `previous_response_id` and `conversation_id` forks (read history without appending), multi-turn recall. |
+| `DownstreamStoreHostedAgentFixture` | `downstream-store` | `it-downstream-store` | An ordinary Foundry `ChatClientAgent` that reports back which conversation its own run left behind on the service, so the test can assert the container does not keep a second copy of a turn the platform already recorded. |
 | `ToolCallingHostedAgentFixture` | `tool-calling` | `it-tool-calling` | Server side AIFunction invocation; arguments; multi turn referencing prior tool result. |
 | `ToolCallingApprovalHostedAgentFixture` | `tool-calling-approval` | `it-tool-calling-approval` | Approval requests raised, approved, denied. |
 | `McpToolboxHostedAgentFixture` | `mcp-toolbox` | `it-mcp-toolbox` | MCP backed tool invocation against `https://learn.microsoft.com/api/mcp` (placeholder). |

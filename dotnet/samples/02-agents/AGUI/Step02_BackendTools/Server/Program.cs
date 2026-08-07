@@ -17,9 +17,9 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddAGUIServer();
 
 // WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
-// make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
+// make sure to also register an AgentIsolationKeyProvider to scope sessions by principal in multi-user
 // deployments, e.g.:
-// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+// builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 WebApplication app = builder.Build();
 
