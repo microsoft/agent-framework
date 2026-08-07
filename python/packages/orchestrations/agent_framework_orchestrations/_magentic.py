@@ -880,6 +880,8 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
     5. The outer loop handles replanning and reenters the inner loop.
     """
 
+    MANAGER_NAME: ClassVar[str] = "magentic_orchestrator"
+
     def __init__(
         self,
         manager: MagenticManagerBase,
@@ -896,7 +898,7 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         Keyword Args:
             require_plan_signoff: If True, requires human approval of the initial plan before proceeding.
         """
-        super().__init__("magentic_orchestrator", participant_registry)
+        super().__init__(self.MANAGER_NAME, participant_registry)
         self._manager = manager
         self._require_plan_signoff = require_plan_signoff
 

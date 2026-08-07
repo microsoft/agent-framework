@@ -3,6 +3,7 @@
 # dependencies = [
 #     "agent-framework-openai",
 #     "agent-framework-orchestrations",
+#     "python-dotenv",
 #     "semantic-kernel",
 # ]
 # ///
