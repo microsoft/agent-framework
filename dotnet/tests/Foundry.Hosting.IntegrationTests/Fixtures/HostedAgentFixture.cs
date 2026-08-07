@@ -3,6 +3,7 @@
 using System;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
@@ -11,6 +12,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI.Responses;
 using Shared.IntegrationTests;
 
 namespace Foundry.Hosting.IntegrationTests.Fixtures;
@@ -144,6 +146,83 @@ public abstract class HostedAgentFixture : IAsyncLifetime
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// Reads every message stored in a conversation, oldest first, as a role and text pair. Used by
+    /// tests that need to see how many times a given turn was recorded, not just how many items there
+    /// are.
+    /// </summary>
+    public async Task<List<(string Role, string Text)>> ReadConversationMessagesAsync(string conversationId)
+    {
+        List<(string Role, string Text)> messages = [];
+        await foreach (AgentResponseItem item in this.AgentOpenAIClient.GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc").ConfigureAwait(false))
+        {
+            if (item.AsResponseResultItem() is MessageResponseItem message)
+            {
+                var text = string.Concat(message.Content
+                    .Where(c => c.Kind is ResponseContentPartKind.OutputText or ResponseContentPartKind.InputText)
+                    .Select(c => c.Text));
+
+                messages.Add((message.Role.ToString(), text));
+            }
+        }
+
+        return messages;
+    }
+
+    /// <summary>
+    /// Reads the input a stored response was run with, oldest first, as a role and text pair. Along a
+    /// <c>previous_response_id</c> chain this is what the turn actually received, so tests can see
+    /// whether an earlier turn was handed to it more than once.
+    /// </summary>
+    public async Task<List<(string Role, string Text)>> ReadResponseInputMessagesAsync(string responseId)
+    {
+        List<(string Role, string Text)> messages = [];
+        await foreach (ResponseItem item in this.AgentOpenAIClient.GetProjectResponsesClient().GetResponseInputItemsAsync(responseId).ConfigureAwait(false))
+        {
+            if (item is MessageResponseItem message)
+            {
+                var text = string.Concat(message.Content
+                    .Where(c => c.Kind is ResponseContentPartKind.OutputText or ResponseContentPartKind.InputText)
+                    .Select(c => c.Text));
+
+                messages.Add((message.Role.ToString(), text));
+            }
+        }
+
+        return messages;
+    }
+
+    /// <summary>
+    /// Tries to read a response back off the service by id, returning <see langword="null"/> when
+    /// nothing is stored under it. Both the project-wide client and this scenario's per-agent client
+    /// are tried, because a response created inside the container is not necessarily reachable through
+    /// the same endpoint as one created for the caller.
+    /// </summary>
+    public async Task<object?> TryReadResponseAsync(string responseId)
+    {
+        foreach (var responses in new[]
+        {
+            this.ProjectClient.GetProjectOpenAIClient().GetProjectResponsesClient(),
+            this.AgentOpenAIClient.GetProjectResponsesClient(),
+        })
+        {
+            try
+            {
+                var response = await responses.GetResponseAsync(responseId).ConfigureAwait(false);
+                if (response?.Value is not null)
+                {
+                    return response.Value;
+                }
+            }
+            catch
+            {
+                // Not readable through this endpoint; try the next one.
+            }
+        }
+
+        return null;
     }
 
     public async ValueTask InitializeAsync()

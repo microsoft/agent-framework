@@ -145,6 +145,7 @@ dev = [
     { name = "zuban" },
 ]
 test = [
+    { name = "agent-hooks-sdk" },
     { name = "azure-monitor-opentelemetry" },
     { name = "mcp", extra = ["ws"] },
 ]
@@ -175,6 +176,7 @@ dev = [
     { name = "zuban", specifier = "==0.9.0" },
 ]
 test = [
+    { name = "agent-hooks-sdk", specifier = ">=0.1.0a4,<0.2" },
     { name = "azure-monitor-opentelemetry" },
     { name = "mcp", extras = ["ws"] },
 ]
@@ -403,7 +405,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
-    { name = "microsoft-agents-copilotstudio-client", specifier = ">=0.3.1,<0.3.2" },
+    { name = "microsoft-agents-copilotstudio-client", specifier = ">=1.2.0,<2" },
 ]
 
 [[package]]
@@ -419,6 +421,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+agent-hooks = [
+    { name = "agent-hooks-sdk" },
+]
 all = [
     { name = "agent-framework-a2a" },
     { name = "agent-framework-ag-ui" },
@@ -490,6 +495,7 @@ requires-dist = [
     { name = "agent-framework-purview", marker = "extra == 'all'", editable = "packages/purview" },
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
     { name = "agent-framework-tools", marker = "extra == 'all'", editable = "packages/tools" },
+    { name = "agent-hooks-sdk", marker = "extra == 'agent-hooks'", specifier = ">=0.1.0a4,<0.2" },
     { name = "mcp", marker = "extra == 'all'", specifier = ">=1.24.0,<2" },
     { name = "msgspec", specifier = ">=0.20.0,<0.22" },
     { name = "opentelemetry-api", specifier = ">=1.39.0,<2" },
@@ -497,7 +503,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1,<2" },
     { name = "typing-extensions", specifier = ">=4.15.0,<5" },
 ]
-provides-extras = ["all"]
+provides-extras = ["agent-hooks", "all"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "azure-ai-agentserver-core", specifier = ">=2.0.0b7,<3" }]
@@ -1002,6 +1008,20 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "psutil", specifier = ">=5.9" },
+]
+
+[[package]]
+name = "agent-hooks-sdk"
+version = "0.1.0a4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/9b/07e9e54941ce60991ce8ba00fe9dc38ea96d885b38a86cd944a409cd7772/agent_hooks_sdk-0.1.0a4.tar.gz", hash = "sha256:e3affd44d7779b8254fd5142f7d41648e48d3d4646acc94b07a28d13c5c07b1d", size = 173745, upload-time = "2026-07-30T02:11:22.235Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/f8/5d27dd5a784c7037cbdd23f8ae7982354440a333e9433b19ea02bf8a0ca3/agent_hooks_sdk-0.1.0a4-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:793cf357413546ddc74c62dac10bf62c05a0ffe69009871fd3484105995a13b7", size = 599140, upload-time = "2026-08-05T05:06:39.637Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/82/2f1d273fc4abd882b8a82c0c65574a0bf56c7181bc1a6be52b2bd58d880b/agent_hooks_sdk-0.1.0a4-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:7299cfd93ed455f0bcbfafb759040500e2920c6547fb6d8829f792307d58a6d4", size = 570698, upload-time = "2026-08-05T05:06:40.906Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/4c/26c71782f12e691958dcb59d530c5a17e8efe4651af3085c52db578e56f9/agent_hooks_sdk-0.1.0a4-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:fa51c408f29fa907be33e8a542f1025b2a92ccce0ccad0a362c299b6cb6dfdd4", size = 626367, upload-time = "2026-08-05T05:06:42.221Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/93/bce858a4e83480373eb55e2923657126e0e736b152f814fcf035b293e3e6/agent_hooks_sdk-0.1.0a4-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:ed556c2d020fffe371eda8055950f7b42c22eee16f3c3ef1dcf1f4ba5704320e", size = 649044, upload-time = "2026-08-05T05:06:43.492Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/07/dc7f4e7a53c208ba35fcf0bd0208cf77a1e84ffd7a42d2a61c6e9faf274b/agent_hooks_sdk-0.1.0a4-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:86f5ff8e0c1201a61b113026c688fc98ea590b10f8bbc5ccfa6ac289fdec037d", size = 634247, upload-time = "2026-07-30T02:11:20.497Z" },
+    { url = "https://files.pythonhosted.org/packages/34/2f/35caaffec73e0e60829a2ec255da1bfc7fe9564876b97eaa4a063327fd93/agent_hooks_sdk-0.1.0a4-cp310-abi3-win_amd64.whl", hash = "sha256:5e1cd64e3ef9c7447cb56a615f79747b7aa42a0065c8a2c5f0b2ae7f0447c908", size = 479900, upload-time = "2026-08-05T05:06:44.898Z" },
 ]
 
 [[package]]
@@ -3990,42 +4010,43 @@ wheels = [
 
 [[package]]
 name = "microsoft-agents-activity"
-version = "0.3.1"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/6a/dfc2fc0316b7dc4f6d24792b4a31a873b026be76792af1e0c3e65f843ef0/microsoft_agents_activity-0.3.1.tar.gz", hash = "sha256:c7567fc30f8e6f2a2d74cd65a1f7f31ade0d7ec9dd94531677d0d7b0648c77ee", size = 44886, upload-time = "2025-09-09T23:19:43.044Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/94/885013edcffdc656190527632fd3a2bf0d7a4b313c42c40230f17a877556/microsoft_agents_activity-1.2.0.tar.gz", hash = "sha256:6c6e43d92e74d148e60a02d40b31f34139ff577694f6c16ea7b35640e8e742ef", size = 65314, upload-time = "2026-07-20T19:41:37.143Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/25/8b/50ce2243e2900e94358f37009121145bb8224a388d95d704856aa2686667/microsoft_agents_activity-0.3.1-py3-none-any.whl", hash = "sha256:d7fc2e9cf2843ec8d6d42608b808b159a12cbb61e1fc7d7b1aaf29899f20746a", size = 111904, upload-time = "2025-09-09T23:19:50.722Z" },
+    { url = "https://files.pythonhosted.org/packages/64/16/ff83466fc2cbbbf16df273b1b75e24b4a45226ee723c55561d662c97c2f6/microsoft_agents_activity-1.2.0-py3-none-any.whl", hash = "sha256:7ca92cde93ce005d93241a6c725a55c746f66d170205670d67514ec4c7d95dd0", size = 137779, upload-time = "2026-07-20T19:41:50.945Z" },
 ]
 
 [[package]]
 name = "microsoft-agents-copilotstudio-client"
-version = "0.3.1"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "microsoft-agents-hosting-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e9/a5/2381ffd14d6a584f9f7ab80c7b6c634f658ea651b38702eb403c930d8396/microsoft_agents_copilotstudio_client-0.3.1.tar.gz", hash = "sha256:c529209241c9d11b7a6e8696f96a3d43121c10b49e44f00e5066f9cf5256f4f3", size = 5024, upload-time = "2025-09-09T23:19:44.833Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/78/ef90d5789945b36bc3ebe61126a332e70c3e84e9d3bae04f34f870e41028/microsoft_agents_copilotstudio_client-1.2.0.tar.gz", hash = "sha256:85784b0a7f057cf013bdb1fbfdaa45be6ffe20436e3700f25da5bee16fabd47a", size = 27944, upload-time = "2026-07-20T19:41:40.59Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/97/35/8b4e9c691f2ce89653007f358519bbadff1fe0d495c3723c9dbbfa962a33/microsoft_agents_copilotstudio_client-0.3.1-py3-none-any.whl", hash = "sha256:cac7485405325b990202452c9c14848cbdb25d13e6cdaf7bd3eca3a5c1fb3989", size = 7420, upload-time = "2025-09-09T23:19:52.287Z" },
+    { url = "https://files.pythonhosted.org/packages/14/07/f15afd04c96ae34c9e7df18abf9bfa0a85af365f872117faa849de4d32ad/microsoft_agents_copilotstudio_client-1.2.0-py3-none-any.whl", hash = "sha256:49acc6ed16e4aa615e87d4036589de3b7095660e18a11e7816413bad6dab7093", size = 23859, upload-time = "2026-07-20T19:41:54.457Z" },
 ]
 
 [[package]]
 name = "microsoft-agents-hosting-core"
-version = "0.3.1"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "azure-core" },
     { name = "isodate" },
     { name = "microsoft-agents-activity" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
     { name = "pyjwt" },
     { name = "python-dotenv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6a/14/a1365e0bab1486c2d16aabeb192ca90715794edf4e68be4815c245884420/microsoft_agents_hosting_core-0.3.1.tar.gz", hash = "sha256:0b76bda10e7a54ff3c86e56cbabaad5ac7a4c2a076c9833af3b2f4c86fa85e89", size = 81137, upload-time = "2025-09-09T23:19:46.73Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4b/cf/5632ed9fdf7c300e94f9be797e57cfbd2618b7940fb41b0324207d2f0e11/microsoft_agents_hosting_core-1.2.0.tar.gz", hash = "sha256:048ac0bef18c4e392563c53d2dcfc7d601333fcd5c6bca4e6ec243f34773c044", size = 131706, upload-time = "2026-07-20T19:41:42.512Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f0/1b/543ddaa2daf8593911a02a07a6a78366d4a6a0053ec86a557c19fa97b60e/microsoft_agents_hosting_core-0.3.1-py3-none-any.whl", hash = "sha256:a4b41556b15321b74f539c5a0a89f70955459b7ec57e9e4b24e61bba27f1cbbc", size = 94573, upload-time = "2025-09-09T23:19:53.855Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/0d/8393861554180447f447a94a4fb35ebef5dedf20ce80c95c21643dcac2de/microsoft_agents_hosting_core-1.2.0-py3-none-any.whl", hash = "sha256:ca1553e9187ed0abf17e7d409d6f8372b27c74af0c00bc7a28f8c9781983ac3f", size = 194618, upload-time = "2026-07-20T19:41:56.411Z" },
 ]
 
 [[package]]

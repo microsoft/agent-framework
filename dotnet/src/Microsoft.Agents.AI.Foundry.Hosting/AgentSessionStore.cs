@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
@@ -42,7 +43,8 @@ public abstract class AgentSessionStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Retrieves a serialized agent session from persistent storage.
+    /// Retrieves a serialized agent session from persistent storage, or <see langword="null"/> when
+    /// no session is stored for the given identifiers.
     /// </summary>
     /// <param name="agent">The agent that owns this session.</param>
     /// <param name="conversationId">The unique identifier for the conversation/session to retrieve.</param>
@@ -55,12 +57,41 @@ public abstract class AgentSessionStore
     /// </param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>
-    /// A task that represents the asynchronous retrieval operation.
-    /// The task result contains the session, or a new session if not found.
+    /// A task that represents the asynchronous retrieval operation. The task result contains the restored
+    /// session, or <see langword="null"/> when nothing is stored for the given identifiers. This is a plain
+    /// lookup: it never creates a session. Use <see cref="GetOrCreateSessionAsync"/> to get a ready-to-use
+    /// session (loading an existing one or creating a new one), and use this method when the caller needs to
+    /// distinguish a resumed session from a fresh one (a non-null result means a prior turn established it).
     /// </returns>
-    public abstract ValueTask<AgentSession> GetSessionAsync(
+    public abstract ValueTask<AgentSession?> GetSessionAsync(
         AIAgent agent,
         string conversationId,
         string? userId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves the stored session for the given identifiers, or creates a new one via
+    /// <see cref="AIAgent.CreateSessionAsync"/> when none is stored.
+    /// </summary>
+    /// <param name="agent">The agent that owns this session.</param>
+    /// <param name="conversationId">The unique identifier for the conversation/session to retrieve.</param>
+    /// <param name="userId">The per-user partition key; see <see cref="GetSessionAsync"/> for its meaning.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A task whose result is always a usable session, never <see langword="null"/>.</returns>
+    /// <remarks>
+    /// This is the convenience path for callers that only need a session to work with and do not care whether
+    /// it was loaded or freshly created. It is implemented in terms of <see cref="GetSessionAsync"/>, so a
+    /// store overriding that method gets this behavior for free.
+    /// </remarks>
+    public virtual async ValueTask<AgentSession> GetOrCreateSessionAsync(
+        AIAgent agent,
+        string conversationId,
+        string? userId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+
+        return await this.GetSessionAsync(agent, conversationId, userId, cancellationToken).ConfigureAwait(false)
+            ?? await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+    }
 }
