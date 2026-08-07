@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import threading
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -2590,6 +2591,71 @@ class TestMiddlewareFailure:
             await agent.run("run both tools")
 
         assert sibling_cancelled == [True]
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_with_sync_sibling_discards_late_result(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Batch cancellation is cooperative: a synchronous sibling cannot be interrupted.
+
+        A synchronous tool body runs in a worker thread (``asyncio.to_thread``);
+        cancelling its wrapping task cannot stop the thread, so the body may complete
+        its side effects after the failure has already reached the caller. Its result
+        is discarded either way — the loop stops at one model call — and failure
+        propagation is not delayed behind the still-running thread.
+        """
+        sync_started = threading.Event()
+        sync_release = threading.Event()
+        sync_completed: list[str] = []
+
+        def sync_slow(location: str) -> str:
+            sync_started.set()
+            sync_release.wait(10)
+            sync_completed.append("side effect")
+            return "late sync result"
+
+        slow_tool = FunctionTool(func=sync_slow, name="slow_tool", approval_mode="never_require")
+
+        class FailFast(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                if context.function.name == "sample_tool_function":
+                    # Fail only once the synchronous sibling body is genuinely running.
+                    await asyncio.to_thread(sync_started.wait, 5)
+                    raise MiddlewareFailure("abort the batch")
+                await call_next()
+
+        batch_response = ChatResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                        ),
+                        Content.from_function_call(call_id="call_2", name="slow_tool", arguments='{"location": "x"}'),
+                    ],
+                )
+            ]
+        )
+        chat_client_base.run_responses = [batch_response]
+        agent = Agent(client=chat_client_base, middleware=[FailFast()], tools=[sample_tool_function, slow_tool])
+
+        try:
+            with pytest.raises(MiddlewareFailure, match="abort the batch"):
+                await agent.run("run both tools")
+            # The failure reached the caller while the synchronous body was still running.
+            assert sync_completed == []
+        finally:
+            sync_release.set()
+
+        for _ in range(500):
+            if sync_completed:
+                break
+            await asyncio.sleep(0.01)
+        # The worker thread survived cancellation and completed its side effect
+        # (the documented cooperative-cancellation limitation) ...
+        assert sync_completed == ["side effect"]
+        # ... but its result went nowhere: the loop never made another model call.
         assert chat_client_base.call_count == 1
 
     async def test_failure_streaming_reaches_stream_consumer(self, chat_client_base: "MockBaseChatClient") -> None:

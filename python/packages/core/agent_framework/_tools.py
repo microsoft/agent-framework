@@ -1858,7 +1858,11 @@ async def _try_execute_function_call_groups(
     except BaseException:
         # A loud escape from one call (e.g. MiddlewareFailure aborting the run
         # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
-        # them so no tool keeps running after the loop has been abandoned.
+        # them so no new tool work starts after the loop is abandoned. Cancellation
+        # is cooperative — a synchronous tool body already running in a worker thread
+        # (asyncio.to_thread) cannot be interrupted and may complete its side effects,
+        # but its result is discarded with the batch and never reaches the transcript,
+        # the model, or history.
         for task in execution_tasks:
             task.cancel()
         await asyncio.gather(*execution_tasks, return_exceptions=True)
