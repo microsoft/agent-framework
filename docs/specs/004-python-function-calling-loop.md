@@ -18,7 +18,7 @@ It covers:
 - approved, rejected, mixed, and replayed approval rounds;
 - reasoning content and opaque reasoning signatures bound to function calls;
 - history persistence and service-side continuation;
-- error, user-input, middleware-termination, and loop-limit paths;
+- error, user-input, middleware-termination, middleware-failure, and loop-limit paths;
 - provider and transport serialization of function calls and results.
 
 The primary implementation is in `python/packages/core/agent_framework/_tools.py`. History replay behavior in
@@ -319,7 +319,11 @@ that manually replay messages own the equivalent rule: do not resend an approval
 ### Function calls and results
 
 - Every actionable local `function_call` produces exactly one terminal `function_result`, unless execution pauses
-  for a new user-input request.
+  for a new user-input request or the run is aborted by `MiddlewareFailure`.
+- An ordinary exception raised by function middleware or a tool body becomes one terminal error `function_result`
+  and the loop continues; `MiddlewareFailure` is the loop's only fail-closed escape: it is never converted into a
+  tool result, the in-flight parallel batch is cancelled, no further tool executes, no further model call is made,
+  and the exception propagates to the caller (for streaming runs, when the stream is consumed).
 - Parallel calls retain model order in the returned transcript.
 - Reused `call_id` values are correlated by logical occurrence, not one global value per id.
 - A completed function call/result pair is inert on later turns.
@@ -506,6 +510,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Consecutive error cap | Error threshold stops repeated failures, submits collected results, and makes only the required final no-tool model call. | `test_function_invocation_config_max_consecutive_errors`, `test_streaming_function_invocation_config_max_consecutive_errors`, `test_approval_resume_error_limit_forces_final_no_tool_response` |
 | Unknown call handling | Configured false returns an error result; configured true raises. | `test_function_invocation_config_terminate_on_unknown_calls_false`, `test_function_invocation_config_terminate_on_unknown_calls_true`, streaming equivalents |
 | Middleware termination | Normal non-approval loop stops without a second model call. | `test_terminate_loop_single_function_call`, `test_terminate_loop_multiple_function_calls_one_terminates`, `test_terminate_loop_streaming_single_function_call` |
+| Middleware failure (fatal) | `MiddlewareFailure` from function middleware or a tool body propagates to the caller without becoming a tool result; the tool does not execute (pre-invocation) or its result never feeds another model call (post-invocation); the cause chain is preserved; ordinary exceptions still become tool-error results and the loop continues. | `packages/core/tests/core/test_middleware_with_agent.py::TestMiddlewareFailure::test_failure_before_tool_aborts_run`, `test_failure_after_tool_aborts_run_before_next_model_turn`, `test_failure_cause_chain_reaches_caller`, `test_failure_from_tool_escapes_without_middleware`, `test_failure_streaming_reaches_stream_consumer`, `test_ordinary_exception_still_becomes_tool_error` |
+| Middleware failure batch cancellation | A fatal signal fails the whole parallel batch: in-flight sibling tool invocations are cancelled and awaited before the failure propagates. | `TestMiddlewareFailure::test_failure_cancels_concurrent_sibling_tool` |
 | Maximum iterations | No orphan calls; a final no-tool response or deterministic fallback is returned. | `test_max_iterations_limit`, `test_max_iterations_no_orphaned_function_calls`, `test_max_iterations_makes_final_toolchoice_none_call`, `test_max_iterations_blank_final_fallback_synthesizes_message`, streaming equivalents |
 | Maximum function calls | Parallel overshoot is bounded after the batch; every executed result group counts even without a `function_result`; blank final responses get fallback content. | `test_max_function_calls_limits_parallel_invocations`, `test_max_function_calls_single_calls_per_iteration`, `test_user_input_request_multiple_contents_propagate`, `test_approval_resume_user_input_counts_toward_function_call_budget`, `test_max_function_calls_blank_final_fallback_synthesizes_message`, streaming equivalent |
 | Provider tool content after an active limit | Locally actionable calls and local approval requests returned despite `tool_choice="none"` are removed in both response modes. Provider-executed informational call/result pairs, hosted approval requests, and metadata-only streaming updates remain visible; fallback text never replaces retained transcript content. | `test_function_invocation_limit_drops_unexecutable_tool_content`, `test_streaming_function_invocation_limit_drops_unexecutable_tool_content`, `test_streaming_function_invocation_limit_preserves_metadata_after_tool_content_is_dropped`, `test_function_invocation_limit_preserves_provider_executed_tool_pair`, `test_streaming_function_invocation_limit_preserves_provider_executed_tool_pair`, `test_function_invocation_limit_appends_fallback_after_provider_executed_tool_pair`, `test_streaming_function_invocation_limit_appends_fallback_after_provider_executed_tool_pair`, `test_function_invocation_limit_preserves_hosted_approval_request`, `test_streaming_function_invocation_limit_preserves_hosted_approval_request` |
@@ -593,6 +599,7 @@ Before accepting an update, reviewers must confirm:
 ## Related issues
 
 - #7241 — approval-resolution result streaming
+- #7522 — first-class fatal signal (`MiddlewareFailure`) for function middleware
 - #7267 / #7271 and #7304 — replayed calls and reused ids
 - #7043 — provider-injected approval execution
 - #6828 — AG-UI `confirm_changes` snapshot correlation
