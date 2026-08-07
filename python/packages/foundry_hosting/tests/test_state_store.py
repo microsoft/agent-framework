@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 from types import SimpleNamespace
+from typing import Any, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -194,9 +194,9 @@ def test_checkpoint_storage_provider_caches_storage_by_context(is_hosted: bool) 
         lambda: CheckpointStoreProvider().get_store(config=_config(is_hosted=True), context_id=""),
     ],
 )
-def test_checkpoint_stores_require_context_id(create_store: object) -> None:
+def test_checkpoint_stores_require_context_id(create_store: Callable[[], Any]) -> None:
     with pytest.raises(ValueError, match="context_id must be provided"):
-        create_store()  # type: ignore[operator]
+        create_store()
 
 
 def _approval_request(approval_request_id: str) -> Content:
