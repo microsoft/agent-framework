@@ -11,7 +11,11 @@ import typing
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar, overload
 
-from ..observability import create_processing_span
+from ..observability import (
+    OtelAttr,
+    _set_sensitive_span_attributes,  # pyright: ignore[reportPrivateUsage]
+    create_processing_span,
+)
 from ._events import (
     WorkflowErrorDetails,
     WorkflowEvent,
@@ -277,7 +281,7 @@ class Executor(RequestInfoMixin, DictConvertible):
                 type(message).__name__,
                 source_trace_contexts=trace_contexts,
                 source_span_ids=source_span_ids,
-            ):
+            ) as span:
                 # Find the handler and handler spec that matches the message type.
                 handler = self._find_handler(message)
 
@@ -285,6 +289,13 @@ class Executor(RequestInfoMixin, DictConvertible):
                 if isinstance(message, WorkflowMessage):
                     # Unwrap raw data for handler call
                     message = message.data
+
+                _set_sensitive_span_attributes(
+                    span,
+                    message,
+                    (OtelAttr.EXECUTOR_INPUT, OtelAttr.INPUT_VALUE),
+                    (OtelAttr.INPUT_MIME_TYPE,),
+                )
 
                 # Create the appropriate WorkflowContext based on handler specs
                 context = self._create_context_for_handler(
@@ -316,6 +327,13 @@ class Executor(RequestInfoMixin, DictConvertible):
                     sent_messages = context.get_sent_messages()
                     yielded_outputs = context.get_yielded_outputs()
                     completion_data = sent_messages + yielded_outputs
+                    if completion_data:
+                        _set_sensitive_span_attributes(
+                            span,
+                            completion_data,
+                            (OtelAttr.EXECUTOR_OUTPUT, OtelAttr.OUTPUT_VALUE),
+                            (OtelAttr.OUTPUT_MIME_TYPE,),
+                        )
                     completed_event = WorkflowEvent.executor_completed(
                         self.id, completion_data if completion_data else None
                     )

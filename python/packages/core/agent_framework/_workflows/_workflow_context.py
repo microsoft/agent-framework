@@ -13,7 +13,11 @@ from opentelemetry.propagate import inject
 from opentelemetry.trace import SpanKind
 from typing_extensions import Never, TypeVar
 
-from ..observability import OtelAttr, create_workflow_span
+from ..observability import (
+    OtelAttr,
+    _set_sensitive_span_attributes,  # pyright: ignore[reportPrivateUsage]
+    create_workflow_span,
+)
 from ._events import (
     WorkflowEvent,
     WorkflowEventSource,
@@ -327,10 +331,20 @@ class WorkflowContext(Generic[OutT, W_OutT]):
         from ..observability import OBSERVABILITY_SETTINGS
 
         # Create publishing span (inherits current trace context automatically)
-        attributes: dict[str, str] = {OtelAttr.MESSAGE_TYPE: type(message).__name__}
+        attributes: dict[str, str] = {
+            OtelAttr.MESSAGE_TYPE: type(message).__name__,
+            OtelAttr.MESSAGE_SOURCE_ID: self._executor_id,
+        }
         if target_id:
             attributes[OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID] = target_id
+            attributes[OtelAttr.MESSAGE_TARGET_ID] = target_id
         with create_workflow_span(OtelAttr.MESSAGE_SEND_SPAN, attributes, kind=SpanKind.PRODUCER) as span:
+            _set_sensitive_span_attributes(
+                span,
+                message,
+                (OtelAttr.MESSAGE_CONTENT, OtelAttr.INPUT_VALUE),
+                (OtelAttr.INPUT_MIME_TYPE,),
+            )
             # Create Message wrapper
             msg = WorkflowMessage(data=message, source_id=self._executor_id, target_id=target_id)
 
