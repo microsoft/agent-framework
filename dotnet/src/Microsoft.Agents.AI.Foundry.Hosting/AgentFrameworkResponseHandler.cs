@@ -11,6 +11,7 @@ using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -28,6 +29,14 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     private readonly FoundryToolboxService? _toolboxService;
 
     /// <summary>
+    /// Whether the host-wide Responses server was configured for durable long-running (resilient)
+    /// background responses (<see cref="ResponsesServerOptions.ResilientBackground"/>). This is the
+    /// first half of the resilience gate: when it is <see langword="false"/> the handler never does
+    /// any checkpoint/recovery work and behaves exactly as a non-resilient host.
+    /// </summary>
+    private readonly bool _resilientBackground;
+
+    /// <summary>
     /// Cached fallback used when no <see cref="HostedSessionIsolationKeyProvider"/> is registered in DI.
     /// Avoids a per-request allocation on the request hot path.
     /// </summary>
@@ -40,10 +49,16 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     /// <param name="serviceProvider">The service provider for resolving agents.</param>
     /// <param name="logger">The logger instance.</param>
     /// <param name="toolboxService">Optional Foundry Toolbox service providing MCP tools.</param>
+    /// <param name="responsesServerOptions">
+    /// The host-wide Responses server options, used only to read whether resilient background
+    /// responses are enabled. Optional so the handler can be constructed without the options
+    /// registered (for example in unit tests), in which case resilience is treated as off.
+    /// </param>
     public AgentFrameworkResponseHandler(
         IServiceProvider serviceProvider,
         ILogger<AgentFrameworkResponseHandler> logger,
-        FoundryToolboxService? toolboxService = null)
+        FoundryToolboxService? toolboxService = null,
+        IOptions<ResponsesServerOptions>? responsesServerOptions = null)
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
         ArgumentNullException.ThrowIfNull(logger);
@@ -51,7 +66,17 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         this._serviceProvider = serviceProvider;
         this._logger = logger;
         this._toolboxService = toolboxService;
+        this._resilientBackground = responsesServerOptions?.Value.ResilientBackground ?? false;
     }
+
+    /// <summary>
+    /// The resilience gate for the save-progress path: checkpoint work is worthwhile only when the
+    /// host enabled resilient background responses and this specific request is a stored background
+    /// response. When any part is false, the request runs exactly as it does on a non-resilient host
+    /// (the recovery path is gated separately on <c>ResponseContext.IsRecovery</c>).
+    /// </summary>
+    private bool ShouldPersistForResilience(CreateResponse request)
+        => this._resilientBackground && request.Background == true && request.Store == true;
 
     /// <inheritdoc/>
     public override async IAsyncEnumerable<ResponseStreamEvent> CreateAsync(
@@ -117,11 +142,20 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var chatClientAgent = agent.GetService<ChatClientAgent>();
 
-        AgentSession? session = !string.IsNullOrWhiteSpace(sessionConversationId)
+        // Load an existing session when there is a conversation key. The store returns null when
+        // nothing is persisted for it, which is the authoritative "this is a resume" signal: a
+        // non-null result means a prior turn saved this session. Whether loaded or created, the
+        // handler owns creating a fresh session when none exists, so the resume signal does not
+        // depend on hosted-only bookkeeping and works the same locally and hosted.
+        AgentSession? loadedSession = !string.IsNullOrWhiteSpace(sessionConversationId)
             ? await sessionStore.GetSessionAsync(agent, sessionConversationId, resolvedUserId, cancellationToken).ConfigureAwait(false)
-                : chatClientAgent is not null
+            : null;
+        var sessionLoadedFromStore = loadedSession is not null;
+
+        AgentSession? session = loadedSession
+            ?? (chatClientAgent is not null
                 ? await chatClientAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
-                : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+                : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false));
 
         // Capture the platform per-request call id (x-agent-foundry-call-id, protocol 2.0.0 only).
         // It is re-applied to the ambient HostedCallContext immediately before each outbound egress
@@ -153,8 +187,16 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             }
         }
 
-        // 3. Create the SDK event stream builder
-        var stream = new ResponseEventStream(context, request);
+        // 3. Create the SDK event stream builder.
+        // On a crash-recovery re-invocation, seed the stream from the last durable snapshot
+        // (context.PersistedResponse) instead of the request, so the resumed stream continues from
+        // the output items already emitted before the crash: the output-index allocator advances to
+        // PersistedResponse.Output.Count and re-emitted items do not collide with the already-durable
+        // slots. On a fresh invocation, seed from the request as before. This is gated on IsRecovery,
+        // so a non-resilient turn is unchanged.
+        var stream = context.IsRecovery && context.PersistedResponse is { } persistedResponse
+            ? new ResponseEventStream(context, persistedResponse)
+            : new ResponseEventStream(context, request);
 
         // 3. Emit lifecycle events
         yield return stream.EmitCreated();
@@ -163,31 +205,42 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // 4. Convert input: history + current input → ChatMessage[]
         var messages = new List<ChatMessage>();
 
-        // Load conversation history only for fresh sessions. When a session already exists
-        // (e.g. resuming a workflow paused at an external-input port), the workflow's
-        // checkpointed state already contains the prior turns' messages — replaying history
-        // would re-drive completed actions and break HITL resume semantics.
-        var isResume = (!string.IsNullOrWhiteSpace(conversationId) || !string.IsNullOrWhiteSpace(request.PreviousResponseId))
-            && session?.StateBag?.Count > 0;
-        if (!isResume)
+        // On a crash-recovery re-invocation the platform re-delivers the same input, but the
+        // persisted session already carries the progress: a workflow hosted as an agent resumes from
+        // its last checkpoint (restored above by GetSessionAsync). Re-injecting the original input
+        // would enqueue a duplicate turn on top of the resumed state, so the run never reaches a
+        // terminal state. Leave messages empty on recovery and let the restored session drive the
+        // resume to completion.
+        if (!context.IsRecovery)
         {
-            var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
-            if (history.Count > 0)
+            // Load conversation history only for fresh sessions. When a session was already
+            // established by a prior turn (e.g. resuming a workflow paused at an external-input port),
+            // its checkpointed state already contains those messages — replaying history would
+            // re-drive completed actions and break HITL resume semantics. The signal is whether the
+            // store actually loaded a persisted session (sessionLoadedFromStore), which is authoritative
+            // in both local and hosted runs.
+            var isResume = (!string.IsNullOrWhiteSpace(conversationId) || !string.IsNullOrWhiteSpace(request.PreviousResponseId))
+                && sessionLoadedFromStore;
+            if (!isResume)
             {
-                messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag));
+                var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
+                if (history.Count > 0)
+                {
+                    messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag));
+                }
             }
-        }
 
-        // Load and convert current input items
-        var inputItems = await context.GetInputItemsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (inputItems.Count > 0)
-        {
-            messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems, session?.StateBag));
-        }
-        else
-        {
-            // Fall back to raw request input
-            messages.AddRange(InputConverter.ConvertInputToMessages(request, session?.StateBag));
+            // Load and convert current input items
+            var inputItems = await context.GetInputItemsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (inputItems.Count > 0)
+            {
+                messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems, session?.StateBag));
+            }
+            else
+            {
+                // Fall back to raw request input
+                messages.AddRange(InputConverter.ConvertInputToMessages(request, session?.StateBag));
+            }
         }
 
         // 5. Build chat options
@@ -349,6 +402,15 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // 7. Run the agent and convert output
         // NOTE: C# forbids 'yield return' inside a try block that has a catch clause,
         // and inside catch blocks. We use a flag to defer the yield to outside the try/catch.
+        //
+        // Resilient turn: when the host enabled resilient background responses for this stored
+        // background request (or this is a crash-recovery re-entry), the session is persisted at
+        // each output-item boundary so a mid-turn crash leaves the last completed workflow superstep
+        // on disk. A workflow hosted as an agent already checkpoints per superstep and resumes from
+        // its restored checkpoint on load; the only gap is that the session was previously persisted
+        // only at end-of-turn. All of this is gated: a non-resilient host runs exactly as before.
+        bool isResilientTurn = this.ShouldPersistForResilience(request) || context.IsRecovery;
+
         bool emittedTerminal = false;
         var enumerator = OutputConverter.ConvertUpdatesToEventsAsync(
             agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
@@ -424,7 +486,17 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
                 if (shutdownDetected)
                 {
-                    // Server is shutting down — emit incomplete so clients can resume
+                    // Server is shutting down. On a resilient turn, defer for recovery instead of
+                    // failing: leaving the response in_progress lets the platform re-invoke the
+                    // handler next lifetime, where the workflow resumes from its last persisted
+                    // superstep. On a non-resilient turn, keep today's behavior (emit incomplete).
+                    if (isResilientTurn)
+                    {
+                        this._logger.LogInformation("Shutdown detected on a resilient turn; deferring for recovery.");
+                        await context.ExitForRecoveryAsync(cancellationToken).ConfigureAwait(false);
+                        yield break;
+                    }
+
                     this._logger.LogInformation("Shutdown detected, emitting incomplete response.");
                     yield return stream.EmitIncomplete();
                     yield break;
@@ -432,6 +504,38 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
                 // yield is in the outer try (finally-only) — allowed by C#
                 yield return evt!;
+
+                // Resilient checkpoint cadence: persist the session at each completed output item,
+                // a natural workflow phase boundary. This is a best-effort durability optimization:
+                // a workflow hosted as an agent runs on its own thread, so serializing the session
+                // here can overlap with the still-running workflow writing its own in-memory
+                // checkpoints and throw ("Collection was modified"). That only affects this one
+                // incremental snapshot, not correctness: the authoritative save in the finally block
+                // below runs after the stream has fully drained and the workflow has stopped running,
+                // and persists the final consistent state. The serialize throws before any file is
+                // written, so a failed attempt leaves the previously persisted session intact. Never
+                // let such a transient failure abort the turn (which would otherwise escape as an
+                // unhandled handler failure and leave the response stuck in_progress).
+                if (isResilientTurn
+                    && evt is ResponseOutputItemDoneEvent
+                    && session is not null
+                    && !string.IsNullOrWhiteSpace(sessionConversationId))
+                {
+                    try
+                    {
+                        await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        if (this._logger.IsEnabled(LogLevel.Debug))
+                        {
+                            this._logger.LogDebug(
+                                ex,
+                                "Incremental session save was skipped for response {ResponseId}; the end-of-turn save will persist the final state.",
+                                context.ResponseId);
+                        }
+                    }
+                }
 
                 if (evt is ResponseCompletedEvent or ResponseFailedEvent or ResponseIncompleteEvent)
                 {

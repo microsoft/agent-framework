@@ -40,7 +40,7 @@ using types like `IChatClient`, `FunctionInvokingChatClient`, `AITool`, `AIFunct
 - **Async**: Use `Async` suffix for methods returning `Task`/`ValueTask`
 - **Private classes**: Should be `sealed` unless subclassed
 - **Config**: Read from environment variables with `UPPER_SNAKE_CASE` naming
-- **Tests**: Add Arrange/Act/Assert comments; use Moq for mocking; test methods returning `Task`/`ValueTask` must use the `Async` suffix.
+- **Tests**: Add Arrange/Act/Assert comments; use Moq for mocking; test methods returning `Task`/`ValueTask` must use the `Async` suffix. Name a test file after its system under test (the type being tested), not after the behaviour or feature under test: for example, tests for `WorkflowHostAgent` live in `WorkflowHostAgentTests.cs`. Keep tests for a given type in that type's test file rather than mixing multiple systems under test in one file.
 
 ## Key Design Principles
 

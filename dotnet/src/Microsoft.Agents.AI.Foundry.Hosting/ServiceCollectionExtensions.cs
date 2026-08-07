@@ -2,6 +2,7 @@
 
 using System;
 using System.ClientModel.Primitives;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
@@ -51,11 +52,15 @@ public static class FoundryHostingExtensions
     /// </para>
     /// </remarks>
     /// <param name="services">The service collection.</param>
+    /// <param name="configure">
+    /// Optional callback to configure the underlying <see cref="ResponsesServerOptions"/>, for example to opt in to
+    /// durable long-running (resilient) execution via <see cref="ResponsesServerOptions.ResilientBackground"/>.
+    /// </param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryResponses(this IServiceCollection services)
+    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, Action<ResponsesServerOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.AddResponsesServer();
+        AddFoundryResponsesServer(services, configure, singleAgentExtension: false);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
         services.TryAddSingleton<AgentSessionStore>(_ => FileSystemAgentSessionStore.CreateDefault());
@@ -86,13 +91,17 @@ public static class FoundryHostingExtensions
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
     /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, a file-system session store is used, rooted at <c>/.checkpoints</c> when running in a Foundry hosted environment and <c>{cwd}/.checkpoints</c> locally.</param>
+    /// <param name="configure">
+    /// Optional callback to configure the underlying <see cref="ResponsesServerOptions"/>, for example to opt in to
+    /// durable long-running (resilient) execution via <see cref="ResponsesServerOptions.ResilientBackground"/>.
+    /// </param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, AIAgent agent, AgentSessionStore? agentSessionStore = null)
+    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, AIAgent agent, AgentSessionStore? agentSessionStore = null, Action<ResponsesServerOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(agent);
 
-        services.AddResponsesServer();
+        AddFoundryResponsesServer(services, configure, singleAgentExtension: true);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
         agentSessionStore ??= FileSystemAgentSessionStore.CreateDefault();
@@ -377,6 +386,144 @@ public static class FoundryHostingExtensions
         }
 
         endpoints.MapHealthChecks(ReadinessPath);
+    }
+
+    /// <summary>
+    /// Registers the Azure AI Responses server exactly once, applying the optional
+    /// <see cref="ResponsesServerOptions"/> configuration callback, and registers the
+    /// agent-registration readiness health check.
+    /// </summary>
+    /// <remarks>
+    /// The Responses server (and its resilience configuration) is host-wide: exactly one per
+    /// process. The underlying <c>AddResponsesServer</c> registers a resilient task under a fixed
+    /// name and throws if invoked twice. A prior <c>AddFoundryResponses</c> call is detected by the
+    /// <see cref="ResponseHandler"/> it always registers, so a second call is handled here with an
+    /// actionable message instead of throwing deep inside the SDK.
+    /// </remarks>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configure">Optional <see cref="ResponsesServerOptions"/> configuration callback.</param>
+    /// <param name="singleAgentExtension">
+    /// <see langword="true"/> when called from the single-agent <c>AddFoundryResponses(agent)</c>
+    /// extension; a repeat registration on this path is a usage error and throws.
+    /// </param>
+    private static void AddFoundryResponsesServer(IServiceCollection services, Action<ResponsesServerOptions>? configure, bool singleAgentExtension)
+    {
+        // Both AddFoundryResponses overloads register a ResponseHandler, so its presence means the
+        // host-wide server was already set up by a previous call.
+        var alreadyRegistered = services.Any(d => d.ServiceType == typeof(ResponseHandler));
+        if (alreadyRegistered)
+        {
+            if (singleAgentExtension)
+            {
+                throw new InvalidOperationException(
+                    "A Foundry Responses server is already registered. AddFoundryResponses(agent) is a single-agent extension and cannot be combined with, or repeated alongside, another AddFoundryResponses call. To host multiple agents, call AddFoundryResponses() once and register each agent with services.AddKeyedSingleton<AIAgent>(name, agent).");
+            }
+
+            // Parameterless path: the host-wide server is already configured. Registering more keyed
+            // agents does not require (and must not repeat) the server registration, so this is a no-op.
+            return;
+        }
+
+        services.AddResponsesServer(configure ?? (_ => { }));
+        AddAgentRegistrationHealthCheck(services);
+        AddResilientWorkflowIdHealthCheck(services);
+    }
+
+    /// <summary>
+    /// Registers a <c>/readiness</c> health check that reports unhealthy until at least one
+    /// <see cref="AIAgent"/> is registered (keyed or default). Because the platform probes
+    /// <c>/readiness</c> before routing any request, this surfaces a missing-agent misconfiguration
+    /// at startup instead of failing the first invocation. Mirrors the toolbox health-check
+    /// registration and dedupes by name so a host that already added it is not double-registered.
+    /// </summary>
+    private static void AddAgentRegistrationHealthCheck(IServiceCollection services)
+    {
+        const string HealthCheckName = "foundry-agent-registration";
+        services.AddHealthChecks();
+        services.Configure<HealthCheckServiceOptions>(opts =>
+        {
+            foreach (var existing in opts.Registrations)
+            {
+                if (string.Equals(existing.Name, HealthCheckName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            opts.Registrations.Add(new HealthCheckRegistration(
+                name: HealthCheckName,
+                factory: _ => new AgentRegistrationHealthCheck(
+                    () => services.Any(d => d.ServiceType == typeof(AIAgent))),
+                failureStatus: HealthStatus.Unhealthy,
+                tags: ["foundry", "agent", "readiness"]));
+        });
+    }
+
+    /// <summary>
+    /// Registers a <c>/readiness</c> health check that, while
+    /// <see cref="ResponsesServerOptions.ResilientBackground"/> is on, reports unhealthy when a
+    /// workflow hosted as an agent has auto-generated executor ids. Such ids change every process,
+    /// so a crash-recovery resume would fail to match its checkpoint. Surfacing this at readiness
+    /// turns a late, cryptic resume failure into an early, actionable not-ready signal. On a
+    /// non-resilient host the check is a no-op. Dedupes by name so a repeat registration is ignored.
+    /// </summary>
+    private static void AddResilientWorkflowIdHealthCheck(IServiceCollection services)
+    {
+        const string HealthCheckName = "foundry-resilient-workflow-ids";
+        services.AddHealthChecks();
+        services.Configure<HealthCheckServiceOptions>(opts =>
+        {
+            foreach (var existing in opts.Registrations)
+            {
+                if (string.Equals(existing.Name, HealthCheckName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            opts.Registrations.Add(new HealthCheckRegistration(
+                name: HealthCheckName,
+                factory: sp => new ResilientWorkflowExecutorIdHealthCheck(
+                    isResilient: () => sp.GetService<IOptions<ResponsesServerOptions>>()?.Value.ResilientBackground ?? false,
+                    agents: () => ResolveRegisteredAgents(sp, services)),
+                failureStatus: HealthStatus.Unhealthy,
+                tags: ["foundry", "workflow", "readiness"]));
+        });
+    }
+
+    /// <summary>
+    /// Resolves the registered <see cref="AIAgent"/> instances (default and keyed) from
+    /// <paramref name="serviceProvider"/>. Resolving (rather than reading descriptors) is what lets the
+    /// health check see agents registered via a factory, not just those registered as a concrete
+    /// instance. The keys are discovered from <paramref name="services"/> because a
+    /// <see cref="IServiceProvider"/> cannot enumerate keyed registrations on its own. Agents are
+    /// singletons here, so each is constructed at most once and cached for later readiness polls.
+    /// </summary>
+    private static IEnumerable<AIAgent> ResolveRegisteredAgents(IServiceProvider serviceProvider, IServiceCollection services)
+    {
+        // Default (non-keyed) registrations.
+        foreach (var agent in serviceProvider.GetServices<AIAgent>())
+        {
+            yield return agent;
+        }
+
+        // Keyed registrations: discover each distinct key from the descriptors, then resolve it.
+        var seenKeys = new HashSet<object>();
+        foreach (var descriptor in services)
+        {
+            if (descriptor.ServiceType != typeof(AIAgent)
+                || !descriptor.IsKeyedService
+                || descriptor.ServiceKey is null
+                || !seenKeys.Add(descriptor.ServiceKey))
+            {
+                continue;
+            }
+
+            foreach (var agent in serviceProvider.GetKeyedServices<AIAgent>(descriptor.ServiceKey))
+            {
+                yield return agent;
+            }
+        }
     }
 
     /// <summary>

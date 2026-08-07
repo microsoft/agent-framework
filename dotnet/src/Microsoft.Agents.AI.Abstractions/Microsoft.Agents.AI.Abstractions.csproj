@@ -32,5 +32,6 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Abstractions.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Foundry.Hosting" />
   </ItemGroup>
 </Project>

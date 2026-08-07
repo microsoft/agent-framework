@@ -1,0 +1,31 @@
+﻿# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: hosted-workflow-resilient
+displayName: "Resilient Translation Chain Workflow Agent"
+
+description: >
+  A durable long-running workflow agent that performs sequential translation through multiple
+  languages (English to French to Spanish back to English). It is hosted with resilient background
+  responses enabled, so a background response survives a container crash or graceful shutdown and
+  resumes from the workflow's last completed step.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Workflows
+    - Resilient
+    - Agent Framework
+
+template:
+  name: hosted-workflow-resilient
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 2.0.0
+  resources:
+    cpu: "0.25"
+    memory: 0.5Gi
+parameters:
+  properties: []
+resources: []

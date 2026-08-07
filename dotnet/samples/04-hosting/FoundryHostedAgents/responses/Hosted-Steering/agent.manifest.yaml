@@ -1,0 +1,29 @@
+﻿# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/AgentManifest.yaml
+name: hosted-steering
+displayName: "Steerable Conversation Agent"
+
+description: >
+  A chat agent hosted as a Foundry Hosted Agent with steerable conversations enabled, so a new
+  input sent while a turn is still running is queued behind the current turn and folded into the
+  ongoing answer instead of being rejected.
+
+metadata:
+  tags:
+    - AI Agent Hosting
+    - Azure AI AgentServer
+    - Responses Protocol
+    - Steering
+    - Agent Framework
+
+template:
+  name: hosted-steering
+  kind: hosted
+  protocols:
+    - protocol: responses
+      version: 2.0.0
+  resources:
+    cpu: "0.25"
+    memory: 0.5Gi
+parameters:
+  properties: []
+resources: []
