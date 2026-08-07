@@ -5,8 +5,8 @@
 from typing import Any, cast
 
 import pytest
-
 from agent_framework import Content, Message
+
 from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
 from agent_framework_declarative._workflows._factory import WorkflowFactory
 

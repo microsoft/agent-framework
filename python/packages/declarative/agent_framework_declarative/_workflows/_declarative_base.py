@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import locale
 import logging
+import math
 import os
 import re
 import sys
@@ -658,28 +659,36 @@ class DeclarativeWorkflowState:
             # Reuse the helper method for consistent text extraction
             return self._eval_and_replace_message_text(inner_expr)
 
-        # Int(expr) - convert to integer (Python-side fallback so the function
-        # works even when PowerFx is unavailable or returns an ErrorValue for
-        # non-numeric input). Returns 0 for blank/unconvertible values, matching
-        # PowerFx's Blank-as-zero coercion behaviour.
+        # Int(expr) - Python-side fallback for the PowerFx Int() function.
+        # Uses math.floor() to preserve Power Fx floor semantics (Int(-4.2) → -5,
+        # not -4). Only handles a single balanced call; compound expressions such
+        # as =Int(a) + Int(b) are left to the PowerFx engine.
         match = re.match(r"Int\((.+)\)$", formula.strip())
         if match:
             inner_expr = match.group(1).strip()
-            raw = self.eval(f"={inner_expr}")
-            try:
-                return int(float(str(raw))) if raw not in (None, "") else 0
-            except (ValueError, TypeError):
-                return 0
-
-        # Float(expr) / Value(expr) - convert to float (Python-side fallback).
-        match = re.match(r"(?:Float|Value)\((.+)\)$", formula.strip())
-        if match:
-            inner_expr = match.group(1).strip()
-            raw = self.eval(f"={inner_expr}")
-            try:
-                return float(str(raw)) if raw not in (None, "") else 0.0
-            except (ValueError, TypeError):
-                return 0.0
+            # Guard against greedy matches: if inner_expr contains a ')' that
+            # pushes paren depth negative, this is a compound expression.
+            depth = 0
+            single_call = True
+            for ch in inner_expr:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth < 0:
+                        single_call = False
+                        break
+            if single_call:
+                raw = self.eval(f"={inner_expr}")
+                if raw in (None, ""):
+                    return 0
+                try:
+                    val = float(str(raw))
+                except (ValueError, TypeError) as exc:
+                    raise ValueError(f"Int() cannot convert {raw!r} to a number") from exc
+                if not math.isfinite(val):
+                    raise ValueError(f"Int() received a non-finite value: {raw!r}")
+                return math.floor(val)
 
         return None
 
