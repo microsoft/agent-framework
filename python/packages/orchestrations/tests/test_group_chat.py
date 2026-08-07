@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import json
 from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any, cast
 
@@ -19,6 +20,7 @@ from agent_framework import (
     WorkflowRunState,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
+from agent_framework._workflows._message_utils import normalize_messages_input
 from agent_framework.orchestrations import (
     AgentRequestInfoResponse,
     GroupChatBuilder,
@@ -30,6 +32,9 @@ from agent_framework.orchestrations import (
 )
 
 from agent_framework_orchestrations import BaseGroupChatOrchestrator
+from agent_framework_orchestrations._group_chat import (  # pyright: ignore[reportPrivateUsage]
+    _CONTINUATION_DEFAULT_INSTRUCTION,
+)
 
 
 class StubAgent(BaseAgent):
@@ -1095,6 +1100,199 @@ def test_group_chat_orchestrator_factory_invalid_return_type():
         match=r"Orchestrator factory must return Agent or BaseGroupChatOrchestrator instance",
     ):
         GroupChatBuilder(participants=[alpha], orchestrator_agent=invalid_factory).build()
+
+
+# endregion
+
+# region Empty-input regression (issue #7456)
+
+
+class RecordingStubAgent(BaseAgent):
+    """Stub agent that records received messages and rejects empty input, like ``A2AAgent``."""
+
+    def __init__(self, agent_name: str, reply_text: str, **kwargs: Any) -> None:
+        super().__init__(name=agent_name, description=f"Recording stub agent {agent_name}", **kwargs)
+        self._reply_text = reply_text
+        self.received_messages: list[list[Message]] = []
+
+    def run(  # type: ignore[override]
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        normalized = normalize_messages_input(messages)
+        self.received_messages.append(normalized)
+        if not normalized:
+            raise ValueError("At least one message is required when starting a new task (no continuation_token).")
+        if stream:
+            return self._run_stream_impl()
+        return self._run_impl()
+
+    async def _run_impl(self) -> AgentResponse[Any]:
+        response = Message(role="assistant", contents=[self._reply_text], author_name=self.name)
+        return AgentResponse(messages=[response])
+
+    async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
+        yield AgentResponseUpdate(
+            contents=[Content.from_text(text=self._reply_text)], role="assistant", author_name=self.name
+        )
+
+
+class RepeatSpeakerManagerAgent(Agent):
+    """Manager that selects the same participant twice in a row, then terminates."""
+
+    def __init__(self, speaker: str, selections: int = 2) -> None:
+        super().__init__(client=cast(Any, MockChatClient()), name="manager_agent", description="Repeat manager")
+        self._speaker = speaker
+        self._selections = selections
+        self._call_count = 0
+
+    async def run(  # type: ignore[override]  # ty: ignore[invalid-method-override]
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> AgentResponse[Any]:
+        if self._call_count < self._selections:
+            self._call_count += 1
+            payload: dict[str, Any] = {
+                "terminate": False,
+                "reason": "Selecting agent",
+                "next_speaker": self._speaker,
+                "final_message": None,
+            }
+        else:
+            payload = {
+                "terminate": True,
+                "reason": "Task complete",
+                "next_speaker": None,
+                "final_message": "manager final",
+            }
+        return AgentResponse[Any](
+            messages=[Message(role="assistant", contents=[json.dumps(payload)], author_name=self.name)],
+            value=payload,
+        )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_group_chat_consecutive_selection_sends_non_empty_messages(stream: bool) -> None:
+    """A participant re-selected right after it spoke must not be invoked with empty input."""
+    agent = RecordingStubAgent("solo", "reply from solo")
+
+    workflow = GroupChatBuilder(
+        participants=[agent],
+        max_rounds=2,
+        selection_func=lambda state: "solo",
+    ).build()
+
+    if stream:
+        async for _ in workflow.run("kickoff", stream=True):
+            pass
+    else:
+        await workflow.run("kickoff")
+
+    assert len(agent.received_messages) == 2, "Expected the participant to be invoked twice"
+    assert all(received for received in agent.received_messages), "Participant was invoked with empty messages"
+    assert any(_CONTINUATION_DEFAULT_INSTRUCTION in (message.text or "") for message in agent.received_messages[1]), (
+        "Second invocation should carry the continuation instruction"
+    )
+
+
+async def test_agent_orchestrator_consecutive_selection_sends_non_empty_messages() -> None:
+    """Same guarantee when an orchestrator agent (LLM) re-selects the participant that just spoke."""
+    agent = RecordingStubAgent("solo", "reply from solo")
+
+    workflow = GroupChatBuilder(
+        participants=[agent],
+        orchestrator_agent=RepeatSpeakerManagerAgent("solo"),
+    ).build()
+
+    async for _ in workflow.run("kickoff", stream=True):
+        pass
+
+    assert len(agent.received_messages) == 2, "Expected the participant to be invoked twice"
+    assert all(received for received in agent.received_messages), "Participant was invoked with empty messages"
+    assert any(_CONTINUATION_DEFAULT_INSTRUCTION in (message.text or "") for message in agent.received_messages[1]), (
+        "Second invocation should carry the continuation instruction"
+    )
+
+
+async def test_group_chat_alternating_selection_has_no_continuation_instruction() -> None:
+    """When a different participant speaks each round, no continuation instruction is added."""
+    alpha = RecordingStubAgent("alpha", "reply from alpha")
+    beta = RecordingStubAgent("beta", "reply from beta")
+
+    workflow = GroupChatBuilder(
+        participants=[alpha, beta],
+        max_rounds=2,
+        selection_func=make_sequence_selector(),
+    ).build()
+
+    async for _ in workflow.run("kickoff", stream=True):
+        pass
+
+    for participant in (alpha, beta):
+        for received in participant.received_messages:
+            assert received, "Participant was invoked with empty messages"
+            assert all(_CONTINUATION_DEFAULT_INSTRUCTION not in (message.text or "") for message in received)
+
+
+class ToolOnlyStubAgent(BaseAgent):
+    """Stub agent whose response holds only a function call, so cleaning strips it entirely."""
+
+    def __init__(self, agent_name: str, **kwargs: Any) -> None:
+        super().__init__(name=agent_name, description=f"Tool-only stub agent {agent_name}", **kwargs)
+
+    def run(  # type: ignore[override]
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        return self._run_stream_impl() if stream else self._run_impl()
+
+    def _contents(self) -> list[Content]:
+        return [Content.from_function_call(call_id=f"call-{self.name}", name="do_work", arguments={})]
+
+    async def _run_impl(self) -> AgentResponse[Any]:
+        return AgentResponse(messages=[Message(role="assistant", contents=self._contents(), author_name=self.name)])
+
+    async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
+        yield AgentResponseUpdate(contents=self._contents(), role="assistant", author_name=self.name)
+
+
+async def test_group_chat_empty_cleaned_broadcast_sends_non_empty_messages() -> None:
+    """A broadcast cleaned down to nothing must not leave the next speaker with an empty cache.
+
+    ``clean_conversation_for_handoff`` drops messages with no text content, so a tool-only
+    response broadcasts nothing and the next speaker is a *different* participant than the
+    one that just spoke.
+    """
+    alpha = RecordingStubAgent("alpha", "reply from alpha")
+    beta = ToolOnlyStubAgent("beta")
+
+    speakers = iter(["alpha", "beta", "alpha"])
+
+    workflow = GroupChatBuilder(
+        participants=[alpha, beta],
+        max_rounds=3,
+        selection_func=lambda state: next(speakers),
+    ).build()
+
+    async for _ in workflow.run("kickoff", stream=True):
+        pass
+
+    assert len(alpha.received_messages) == 2, "Expected alpha to be invoked twice"
+    assert all(received for received in alpha.received_messages), "Participant was invoked with empty messages"
+    assert any(_CONTINUATION_DEFAULT_INSTRUCTION in (message.text or "") for message in alpha.received_messages[1]), (
+        "Second invocation should carry the continuation instruction"
+    )
 
 
 # endregion

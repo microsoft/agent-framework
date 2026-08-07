@@ -69,6 +69,13 @@ else:
 
 logger = logging.getLogger(__name__)
 
+# Sent when the selected speaker would otherwise receive no messages at all: either it just
+# spoke (it gets no broadcast, since its own reply is already in its session) or the broadcast
+# itself was empty because cleaning stripped every message. Its executor cache is cleared after
+# each run, so in both cases the request would carry nothing and some agents (for example
+# A2AAgent) reject empty input.
+_CONTINUATION_DEFAULT_INSTRUCTION = "Continue the conversation."
+
 
 @dataclass(frozen=True)
 class GroupChatState:
@@ -233,6 +240,9 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         await self._send_request_to_participant(
             next_speaker,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
+            additional_instruction=(
+                _CONTINUATION_DEFAULT_INSTRUCTION if next_speaker == participant or not messages else None
+            ),
         )
         self._increment_round()
 
@@ -409,10 +419,14 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             participants=[p for p in self._participant_registry.participants if p != participant],
         )
         # Send request to selected participant
+        next_speaker = agent_orchestration_output.next_speaker
         await self._send_request_to_participant(
             # If not terminating, next_speaker must be provided thus will not be None
-            agent_orchestration_output.next_speaker,  # type: ignore[arg-type]
+            next_speaker,  # type: ignore[arg-type]
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
+            additional_instruction=(
+                _CONTINUATION_DEFAULT_INSTRUCTION if next_speaker == participant or not messages else None
+            ),
         )
         self._increment_round()
 
