@@ -33,7 +33,7 @@ from agent_framework.orchestrations import (
 
 from agent_framework_orchestrations import BaseGroupChatOrchestrator
 from agent_framework_orchestrations._group_chat import (  # pyright: ignore[reportPrivateUsage]
-    _CONSECUTIVE_TURN_DEFAULT_INSTRUCTION,
+    _CONTINUATION_DEFAULT_INSTRUCTION,
 )
 
 
@@ -1197,9 +1197,9 @@ async def test_group_chat_consecutive_selection_sends_non_empty_messages(stream:
 
     assert len(agent.received_messages) == 2, "Expected the participant to be invoked twice"
     assert all(received for received in agent.received_messages), "Participant was invoked with empty messages"
-    assert any(
-        _CONSECUTIVE_TURN_DEFAULT_INSTRUCTION in (message.text or "") for message in agent.received_messages[1]
-    ), "Second invocation should carry the continuation instruction"
+    assert any(_CONTINUATION_DEFAULT_INSTRUCTION in (message.text or "") for message in agent.received_messages[1]), (
+        "Second invocation should carry the continuation instruction"
+    )
 
 
 async def test_agent_orchestrator_consecutive_selection_sends_non_empty_messages() -> None:
@@ -1216,9 +1216,9 @@ async def test_agent_orchestrator_consecutive_selection_sends_non_empty_messages
 
     assert len(agent.received_messages) == 2, "Expected the participant to be invoked twice"
     assert all(received for received in agent.received_messages), "Participant was invoked with empty messages"
-    assert any(
-        _CONSECUTIVE_TURN_DEFAULT_INSTRUCTION in (message.text or "") for message in agent.received_messages[1]
-    ), "Second invocation should carry the continuation instruction"
+    assert any(_CONTINUATION_DEFAULT_INSTRUCTION in (message.text or "") for message in agent.received_messages[1]), (
+        "Second invocation should carry the continuation instruction"
+    )
 
 
 async def test_group_chat_alternating_selection_has_no_continuation_instruction() -> None:
@@ -1238,7 +1238,61 @@ async def test_group_chat_alternating_selection_has_no_continuation_instruction(
     for participant in (alpha, beta):
         for received in participant.received_messages:
             assert received, "Participant was invoked with empty messages"
-            assert all(_CONSECUTIVE_TURN_DEFAULT_INSTRUCTION not in (message.text or "") for message in received)
+            assert all(_CONTINUATION_DEFAULT_INSTRUCTION not in (message.text or "") for message in received)
+
+
+class ToolOnlyStubAgent(BaseAgent):
+    """Stub agent whose response holds only a function call, so cleaning strips it entirely."""
+
+    def __init__(self, agent_name: str, **kwargs: Any) -> None:
+        super().__init__(name=agent_name, description=f"Tool-only stub agent {agent_name}", **kwargs)
+
+    def run(  # type: ignore[override]
+        self,
+        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        return self._run_stream_impl() if stream else self._run_impl()
+
+    def _contents(self) -> list[Content]:
+        return [Content.from_function_call(call_id=f"call-{self.name}", name="do_work", arguments={})]
+
+    async def _run_impl(self) -> AgentResponse[Any]:
+        return AgentResponse(messages=[Message(role="assistant", contents=self._contents(), author_name=self.name)])
+
+    async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
+        yield AgentResponseUpdate(contents=self._contents(), role="assistant", author_name=self.name)
+
+
+async def test_group_chat_empty_cleaned_broadcast_sends_non_empty_messages() -> None:
+    """A broadcast cleaned down to nothing must not leave the next speaker with an empty cache.
+
+    ``clean_conversation_for_handoff`` drops messages with no text content, so a tool-only
+    response broadcasts nothing and the next speaker is a *different* participant than the
+    one that just spoke.
+    """
+    alpha = RecordingStubAgent("alpha", "reply from alpha")
+    beta = ToolOnlyStubAgent("beta")
+
+    speakers = iter(["alpha", "beta", "alpha"])
+
+    workflow = GroupChatBuilder(
+        participants=[alpha, beta],
+        max_rounds=3,
+        selection_func=lambda state: next(speakers),
+    ).build()
+
+    async for _ in workflow.run("kickoff", stream=True):
+        pass
+
+    assert len(alpha.received_messages) == 2, "Expected alpha to be invoked twice"
+    assert all(received for received in alpha.received_messages), "Participant was invoked with empty messages"
+    assert any(_CONTINUATION_DEFAULT_INSTRUCTION in (message.text or "") for message in alpha.received_messages[1]), (
+        "Second invocation should carry the continuation instruction"
+    )
 
 
 # endregion
