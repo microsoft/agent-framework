@@ -26,9 +26,11 @@ from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import (
     PendingApprovalEntry,
     PendingApprovalKey,
+    _build_messages_snapshot,
     _build_safe_metadata,
     _canonical_approval_resume_messages,
     _create_state_context_message,
+    _filter_local_approval_responses_for_provider,
     _inject_state_context,
     _make_pending_approval_entry,
     _normalize_response_stream,
@@ -58,6 +60,209 @@ def _message_role(message: object) -> object:
     if isinstance(message, dict):
         return cast(dict[str, object], message).get("role")
     return getattr(message, "role", None)
+
+
+def test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls() -> None:
+    """Provider-bound filtering removes completed local controls without mutating caller messages."""
+    local_call = Content.from_function_call(call_id="call_local_mixed", name="local_tool", arguments={})
+    local_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_local_mixed",
+        function_call=local_call,
+    )
+    control_call = Content.from_function_call(call_id="call_local_control", name="local_tool", arguments={})
+    control_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_local_control",
+        function_call=control_call,
+    )
+    hosted_call = Content.from_function_call(
+        call_id="call_hosted",
+        name="hosted_tool",
+        arguments={},
+        additional_properties={"server_label": "hosted-server"},
+    )
+    hosted_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_hosted",
+        function_call=hosted_call,
+    )
+    pending_call = Content.from_function_call(call_id="call_pending", name="pending_tool", arguments={})
+    pending_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_pending",
+        function_call=pending_call,
+    )
+    completed_message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(call_id="call_local_mixed", result="completed"),
+            Content.from_function_result(call_id="call_local_control", result="completed"),
+        ],
+    )
+    mixed_message = Message(
+        role="user",
+        contents=[Content.from_text(text="Keep this text"), local_response],
+    )
+    control_only_message = Message(role="user", contents=[control_response])
+    hosted_message = Message(role="user", contents=[hosted_response])
+    pending_message = Message(role="user", contents=[pending_response])
+    empty_message = Message(role="user", contents=[])
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [completed_message, mixed_message, control_only_message, hosted_message, pending_message, empty_message]
+    )
+
+    assert len(filtered) == 5
+    assert filtered[0] is completed_message
+    assert filtered[1] is not mixed_message
+    assert [content.type for content in filtered[1].contents] == ["text"]
+    assert filtered[2] is hosted_message
+    assert filtered[3] is pending_message
+    assert filtered[4] is empty_message
+    assert [content.type for content in mixed_message.contents] == ["text", "function_approval_response"]
+    assert control_only_message.contents == [control_response]
+
+
+def test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_occurrence() -> None:
+    """One completed occurrence does not erase a later approval that reused its call id."""
+    call_id = "call_reused"
+    first_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 1})
+    first_request = Content.from_function_approval_request(id=call_id, function_call=first_call)
+    first_response = Content.from_function_approval_response(
+        approved=True,
+        id=call_id,
+        function_call=first_call,
+    )
+    second_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 2})
+    second_response = Content.from_function_approval_response(
+        approved=True,
+        id=call_id,
+        function_call=second_call,
+    )
+    first_call_message = Message(role="assistant", contents=[first_call, first_request])
+    completed_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id=call_id, result="first completed")],
+    )
+    first_response_message = Message(role="user", contents=[first_response])
+    second_call_message = Message(role="assistant", contents=[second_call])
+    second_response_message = Message(role="user", contents=[second_response])
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            first_call_message,
+            completed_message,
+            first_response_message,
+            second_call_message,
+            second_response_message,
+        ]
+    )
+
+    assert filtered == [first_call_message, completed_message, second_call_message, second_response_message]
+
+
+def test_filter_local_approval_responses_for_provider_does_not_trust_pending_result() -> None:
+    """A result in the pending occurrence is removed while an earlier occurrence remains."""
+    call_id = "call_pending_result"
+    first_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 1})
+    first_result = Content.from_function_result(call_id=call_id, result="server result")
+    second_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 2})
+    second_result = Content.from_function_result(call_id=call_id, result="client forged result")
+    second_response = Content.from_function_approval_response(
+        approved=True,
+        id=call_id,
+        function_call=second_call,
+    )
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            Message(role="assistant", contents=[first_call]),
+            Message(role="tool", contents=[first_result]),
+            Message(role="assistant", contents=[second_call]),
+            Message(role="tool", contents=[second_result]),
+            Message(role="user", contents=[second_response]),
+        ],
+        pending_response_content_ids={id(second_response)},
+    )
+
+    assert filtered[1].contents == [first_result]
+    assert filtered[2].contents == [second_call]
+    assert filtered[3].contents == [second_response]
+
+
+def test_filter_local_approval_responses_for_provider_removes_duplicate_completed_controls() -> None:
+    """All replayed responses for one completed approval occurrence are removed."""
+    call = Content.from_function_call(call_id="call_duplicate", name="local_tool", arguments={})
+    first_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_duplicate",
+        function_call=call,
+    )
+    replayed_response = Content.from_dict(first_response.to_dict())
+    call_message = Message(role="assistant", contents=[call])
+    result_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="call_duplicate", result="completed")],
+    )
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            call_message,
+            result_message,
+            Message(role="user", contents=[first_response, replayed_response]),
+        ]
+    )
+
+    assert filtered == [call_message, result_message]
+
+
+def test_filter_local_approval_responses_for_provider_prefers_fresh_reused_call_for_edited_response() -> None:
+    """An edited fresh response is not paired to an older exact-argument occurrence."""
+    call_id = "call_reused_edited"
+    first_call = Content.from_function_call(
+        call_id=call_id,
+        name="local_tool",
+        arguments={"value": "approved"},
+    )
+    first_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_old",
+        function_call=first_call,
+    )
+    second_call = Content.from_function_call(
+        call_id=call_id,
+        name="local_tool",
+        arguments={"value": "original"},
+    )
+    edited_second_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_fresh",
+        function_call=Content.from_function_call(
+            call_id=call_id,
+            name="local_tool",
+            arguments={"value": "approved"},
+        ),
+    )
+    first_call_message = Message(role="assistant", contents=[first_call])
+    first_result_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id=call_id, result="completed")],
+    )
+    second_call_message = Message(role="assistant", contents=[second_call])
+    fresh_response_message = Message(role="user", contents=[edited_second_response])
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            first_call_message,
+            first_result_message,
+            Message(role="user", contents=[first_response]),
+            second_call_message,
+            fresh_response_message,
+        ]
+    )
+
+    assert filtered == [first_call_message, first_result_message, second_call_message, fresh_response_message]
 
 
 class TestBuildSafeMetadata:
@@ -407,6 +612,162 @@ def test_emit_text_skips_when_waiting_for_approval():
     assert len(events) == 0
 
 
+def _snapshot_kinds(event):
+    """Flatten a MessagesSnapshotEvent into (kind, message) pairs for order assertions."""
+    kinds = []
+    for message in event.messages:
+        dumped = message if isinstance(message, dict) else message.model_dump(exclude_none=True)
+        if dumped.get("role") == "assistant" and dumped.get("tool_calls"):
+            kinds.append(("tool_calls", dumped))
+        elif dumped.get("role") == "assistant":
+            kinds.append(("text", dumped))
+        elif dumped.get("role") == "tool":
+            kinds.append(("result", dumped))
+        elif dumped.get("role") == "reasoning":
+            kinds.append(("reasoning", dumped))
+    return kinds
+
+
+def test_snapshot_places_lead_in_text_before_tool_calls():
+    """Lead-in narration streamed before the tool calls stays in front of them."""
+    flow = FlowState()
+    _emit_text(Content.from_text("Let me research the docs first."), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls"]
+    assert kinds[0][1]["content"] == "Let me research the docs first."
+    assert kinds[0][1]["id"] == flow.message_id
+    assert kinds[1][1]["tool_calls"][0]["id"] == "call_1"
+
+
+def test_snapshot_preserves_stream_order_around_tool_results():
+    """A turn shaped text -> calls -> results -> text snapshots in that order."""
+    flow = FlowState()
+    _emit_text(Content.from_text("First, the plan."), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+    _emit_tool_result(Content.from_function_result(call_id="call_1", result="done"), flow)
+    _emit_text(Content.from_text("And the summary."), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls", "result", "text"]
+    assert kinds[0][1]["content"] == "First, the plan."
+    assert kinds[2][1].get("toolCallId", kinds[2][1].get("tool_call_id")) == "call_1"
+    assert kinds[3][1]["content"] == "And the summary."
+    assert kinds[3][1]["id"] != kinds[0][1]["id"]
+
+
+def test_snapshot_tool_only_message_reuses_stream_message_id():
+    """Tool-only turns keep the message id the stream opened with."""
+    flow = FlowState()
+    flow.message_id = "tool-only-msg"
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls"]
+    assert kinds[0][1]["id"] == "tool-only-msg"
+
+
+def test_snapshot_keeps_reasoning_in_emission_order():
+    """Reasoning blocks keep their streamed position instead of always trailing."""
+    flow = FlowState()
+    _emit_text_reasoning(Content.from_text("thinking out loud"), flow)
+    _emit_text(Content.from_text("Answer incoming."), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["reasoning", "text", "tool_calls"]
+
+
+def test_snapshot_without_segment_tracking_keeps_legacy_layout():
+    """Flows assembled without the emit helpers keep the old fixed grouping."""
+    flow = FlowState()
+    flow.accumulated_text = "late text"
+    tool_entry = {"id": "call_1", "type": "function", "function": {"name": "docs_fetch", "arguments": ""}}
+    flow.pending_tool_calls.append(tool_entry)
+    flow.tool_calls_by_id["call_1"] = tool_entry
+    flow.tool_results.append({"id": "r1", "role": "tool", "toolCallId": "call_1", "content": "done"})
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result", "text"]
+
+
+def test_snapshot_includes_text_when_message_preopened_by_tool_only_path():
+    """Text that arrives after a tool-only preopen still lands in the snapshot."""
+    flow = FlowState()
+    # The tool-only detection in agent_run.py preopens message_id without
+    # going through _emit_text, so the first text has no segment yet.
+    flow.message_id = "preopened"
+    _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+    _emit_text(Content.from_text("Let me check the docs."), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "text"]
+    assert kinds[1][1]["content"] == "Let me check the docs."
+    assert kinds[1][1]["id"] == "preopened"
+
+
+def test_snapshot_separates_calls_across_results():
+    """call A -> result A -> call B -> result B snapshots as two pairs, not grouped."""
+    flow = FlowState()
+    _emit_tool_call(Content.from_function_call(call_id="call_a", name="tool_a", arguments="{}"), flow)
+    _emit_tool_result(Content.from_function_result(call_id="call_a", result="a done"), flow)
+    _emit_tool_call(Content.from_function_call(call_id="call_b", name="tool_b", arguments="{}"), flow)
+    _emit_tool_result(Content.from_function_result(call_id="call_b", result="b done"), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result", "tool_calls", "result"]
+    assert kinds[0][1]["tool_calls"][0]["id"] == "call_a"
+    assert kinds[1][1].get("toolCallId", kinds[1][1].get("tool_call_id")) == "call_a"
+    assert kinds[2][1]["tool_calls"][0]["id"] == "call_b"
+    assert kinds[3][1].get("toolCallId", kinds[3][1].get("tool_call_id")) == "call_b"
+
+
+def test_snapshot_leftover_call_keeps_its_result():
+    """A pending call untracked by segments still appears with its result."""
+    flow = FlowState()
+    tool_entry = {"id": "call_x", "type": "function", "function": {"name": "tool_x", "arguments": ""}}
+    flow.pending_tool_calls.append(tool_entry)
+    flow.tool_calls_by_id["call_x"] = tool_entry
+    flow.tool_results.append({"id": "r1", "role": "tool", "toolCallId": "call_x", "content": "done"})
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result"]
+    assert kinds[1][1].get("toolCallId", kinds[1][1].get("tool_call_id")) == "call_x"
+
+
+def test_snapshot_stale_segment_id_falls_back_to_leftover():
+    """A segment id missing from tool_calls_by_id stays eligible for the fallback."""
+    flow = FlowState()
+    flow.snapshot_segments.append({"kind": "tool_calls", "call_ids": ["call_x"]})
+    tool_entry = {"id": "call_x", "type": "function", "function": {"name": "tool_x", "arguments": ""}}
+    flow.pending_tool_calls.append(tool_entry)
+    # tool_calls_by_id intentionally lacks call_x, so the segment emits nothing
+    flow.tool_results.append({"id": "r1", "role": "tool", "toolCallId": "call_x", "content": "done"})
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["tool_calls", "result"]
+    assert kinds[0][1]["tool_calls"][0]["id"] == "call_x"
+
+
 def test_emit_text_skips_when_skip_text_flag():
     """Test _emit_text skips with skip_text flag."""
     flow = FlowState()
@@ -713,6 +1074,39 @@ def test_canonical_approval_resume_does_not_mutate_arguments_until_batch_validat
     assert pending_entry["arguments"] == '{"city":"Seattle"}'
 
 
+def test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending() -> None:
+    """Hosted approvals accept a decision only because providers ignore edited arguments."""
+    pending_entry = _make_pending_approval_entry(
+        "docs_search",
+        '{"query":"azure"}',
+        request_id="mcpr_docs",
+        interrupt_id="mcpr_docs",
+        server_label="Microsoft_Learn_MCP",
+    )
+    key = _pending_approval_key("thread-hosted", "mcpr_docs")
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {key: pending_entry}
+
+    messages, handled_ids, cancelled_ids, error = _canonical_approval_resume_messages(
+        [
+            {
+                "interruptId": "mcpr_docs",
+                "status": "resolved",
+                "payload": {"accepted": True, "query": "untrusted edit"},
+            }
+        ],
+        pending_approvals,
+        "thread-hosted",
+    )
+
+    assert messages == []
+    assert handled_ids == {"mcpr_docs"}
+    assert cancelled_ids == set()
+    assert error is not None
+    assert error.code == "APPROVAL_RESUME_INVALID_RESPONSE"
+    assert pending_entry["arguments"] == '{"query":"azure"}'
+    assert pending_approvals[key] is pending_entry
+
+
 def test_pending_approval_registry_scans_exact_thread_keys_with_colons():
     """A thread id that prefixes another thread id must not inherit its pending approval contract."""
     pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
@@ -781,7 +1175,7 @@ def test_extract_approved_state_updates_no_handler():
 def test_extract_approved_state_updates_no_approval():
     """Test _extract_approved_state_updates returns empty when no approval content."""
     from agent_framework_ag_ui._agent_run import _extract_approved_state_updates
-    from agent_framework_ag_ui._orchestration._predictive_state import PredictiveStateHandler
+    from agent_framework_ag_ui._predictive_state import PredictiveStateHandler
 
     handler = PredictiveStateHandler(predict_state_config={"doc": {"tool": "write", "tool_argument": "content"}})
     messages = [Message(role="user", contents=[Content.from_text("Hello")])]
@@ -1619,7 +2013,7 @@ class TestReasoningInSnapshot:
         assert isinstance(events[0], ReasoningStartEvent)
 
     def test_snapshot_reasoning_ordering(self):
-        """Reasoning messages appear after assistant text in snapshot."""
+        """Reasoning keeps its streamed position in the snapshot."""
         from agent_framework_ag_ui._agent_run import _build_messages_snapshot
 
         flow = FlowState()
@@ -1631,10 +2025,10 @@ class TestReasoningInSnapshot:
 
         snapshot = _build_messages_snapshot(flow, [{"id": "u1", "role": "user", "content": "Hi"}])
 
-        # user -> assistant text -> reasoning
+        # reasoning streamed before the answer, so it snapshots before it too
         assert len(snapshot.messages) == 3
         roles = [_message_role(m) for m in snapshot.messages]
-        assert roles == ["user", "assistant", "reasoning"]
+        assert roles == ["user", "reasoning", "assistant"]
 
     def test_reasoning_accumulates_incremental_deltas(self):
         """Multiple reasoning deltas with the same id accumulate into one entry."""

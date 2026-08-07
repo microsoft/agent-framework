@@ -19,6 +19,8 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
 )
+from agent_framework._telemetry import mark_feature_used
+from agent_framework_lab_common._feature_usage import FeatureIndex
 from loguru import logger
 from tau2.data_model.simulation import SimulationRun, TerminationReason
 from tau2.data_model.tasks import Task
@@ -338,6 +340,7 @@ class TaskRunner:
         Returns:
             Complete conversation history as Message list for evaluation
         """
+        mark_feature_used(FeatureIndex.LAB)
         logger.info(f"Starting workflow agent for task {task.id}: {task.description.purpose}")  # type: ignore[unused-ignore]
         logger.info(f"Assistant chat client: {assistant_chat_client}")
         logger.info(f"User simulator chat client: {user_simulator_chat_client}")

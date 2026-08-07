@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Security;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -21,6 +22,7 @@ namespace Microsoft.Agents.AI;
 /// </summary>
 /// <remarks>
 /// Searches directories recursively (up to 2 levels deep) for SKILL.md files.
+/// Symbolic links and reparse points below configured roots are not followed during skill discovery.
 /// Each file is validated for YAML frontmatter. Resource and script files are discovered by scanning the skill
 /// directory for files with matching extensions. Invalid resources are skipped with logged warnings.
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
@@ -114,7 +116,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     /// <inheritdoc/>
     public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
-        var discoveredPaths = DiscoverSkillDirectories(this._skillPaths);
+        var discoveredPaths = this.DiscoverSkillDirectories(this._skillPaths);
 
         LogSkillsDiscovered(this._logger, discoveredPaths.Count);
 
@@ -138,7 +140,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         return Task.FromResult(skills as IList<AgentSkill>);
     }
 
-    private static List<string> DiscoverSkillDirectories(IEnumerable<string> skillPaths)
+    private List<string> DiscoverSkillDirectories(IEnumerable<string> skillPaths)
     {
         var discoveredPaths = new List<string>();
 
@@ -149,17 +151,23 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
                 continue;
             }
 
-            SearchDirectoriesForSkills(rootDirectory, discoveredPaths, currentDepth: 0);
+            this.SearchDirectoriesForSkills(rootDirectory, discoveredPaths, currentDepth: 0);
         }
 
         return discoveredPaths;
     }
 
-    private static void SearchDirectoriesForSkills(string directory, List<string> results, int currentDepth)
+    private void SearchDirectoriesForSkills(string directory, List<string> results, int currentDepth)
     {
         string skillFilePath = Path.Combine(directory, SkillFileName);
         if (File.Exists(skillFilePath))
         {
+            if (IsLinkOrReparsePointOrInaccessible(skillFilePath))
+            {
+                LogUnsafeSkillDiscoveryPath(this._logger, SanitizePathForLog(skillFilePath));
+                return;
+            }
+
             // Once a SKILL.md is found, this directory is the skill root.
             // Subdirectories are part of this skill and should not be treated as independent skill roots.
             results.Add(Path.GetFullPath(directory));
@@ -171,9 +179,15 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             return;
         }
 
-        foreach (string subdirectory in Directory.EnumerateDirectories(directory))
+        foreach (string subdirectory in this.SafeEnumerateDirectories(directory, attributesToSkip: 0))
         {
-            SearchDirectoriesForSkills(subdirectory, results, currentDepth + 1);
+            if (IsLinkOrReparsePointOrInaccessible(subdirectory))
+            {
+                LogUnsafeSkillDiscoveryPath(this._logger, SanitizePathForLog(subdirectory));
+                continue;
+            }
+
+            this.SearchDirectoriesForSkills(subdirectory, results, currentDepth + 1);
         }
     }
 
@@ -324,8 +338,9 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         bool isRootDirectory = string.Equals(targetDirectory, skillDirectoryFullPath, StringComparison.OrdinalIgnoreCase);
 
         // Directory-level symlink check: skip if targetDirectory (or any intermediate
-        // segment) is a reparse point. The root directory is excluded — it's a caller-supplied
-        // trusted path, and the security boundary guards files within it, not the path itself.
+        // segment) is a reparse point or cannot be inspected. The root directory is excluded —
+        // it's a caller-supplied trusted path, and the security boundary guards files within it,
+        // not the path itself.
         if (!isRootDirectory && HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
         {
             if (this._logger.IsEnabled(LogLevel.Warning))
@@ -386,7 +401,8 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             }
 
             // Per-file symlink check: detects if the file (or any intermediate segment)
-            // is a reparse point. e.g. "references/secret.md" → symlink to "/etc/shadow"
+            // is a reparse point or cannot be inspected.
+            // e.g. "references/secret.md" → symlink to "/etc/shadow"
             if (HasSymlinkInPath(resolvedFilePath, skillDirectoryFullPath))
             {
                 if (this._logger.IsEnabled(LogLevel.Warning))
@@ -413,11 +429,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         // Recurse into subdirectories if within depth limit
         if (currentDepth < this._searchDepth)
         {
-#if NET
-            foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory, "*", enumerationOptions))
-#else
-            foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory))
-#endif
+            foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory, FileAttributes.ReparsePoint))
             {
                 this.ScanDirectoryForResources(subdirectory, skillDirectoryFullPath, skillName, resources, currentDepth + 1);
             }
@@ -452,8 +464,9 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         bool isRootDirectory = string.Equals(targetDirectory, skillDirectoryFullPath, StringComparison.OrdinalIgnoreCase);
 
         // Directory-level symlink check: skip if targetDirectory (or any intermediate
-        // segment) is a reparse point. The root directory is excluded — it's a caller-supplied
-        // trusted path, and the security boundary guards files within it, not the path itself.
+        // segment) is a reparse point or cannot be inspected. The root directory is excluded —
+        // it's a caller-supplied trusted path, and the security boundary guards files within it,
+        // not the path itself.
         if (!isRootDirectory && HasSymlinkInPath(targetDirectory, skillDirectoryFullPath))
         {
             if (this._logger.IsEnabled(LogLevel.Warning))
@@ -501,7 +514,8 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             }
 
             // Per-file symlink check: detects if the file (or any intermediate segment)
-            // is a reparse point. e.g. "scripts/run.py" → symlink to "/etc/shadow"
+            // is a reparse point or cannot be inspected.
+            // e.g. "scripts/run.py" → symlink to "/etc/shadow"
             if (HasSymlinkInPath(resolvedFilePath, skillDirectoryFullPath))
             {
                 if (this._logger.IsEnabled(LogLevel.Warning))
@@ -528,11 +542,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         // Recurse into subdirectories if within depth limit
         if (currentDepth < this._searchDepth)
         {
-#if NET
-            foreach (string subdirectory in Directory.EnumerateDirectories(targetDirectory, "*", enumerationOptions))
-#else
-            foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory))
-#endif
+            foreach (string subdirectory in this.SafeEnumerateDirectories(targetDirectory, FileAttributes.ReparsePoint))
             {
                 this.ScanDirectoryForScripts(subdirectory, skillDirectoryFullPath, skillName, scripts, currentDepth + 1);
             }
@@ -540,7 +550,8 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     }
 
     /// <summary>
-    /// Checks whether any segment in the path (relative to the directory) is a symlink.
+    /// Checks whether any segment in the path (relative to the directory) is a symlink,
+    /// reparse point, or cannot be inspected.
     /// </summary>
     private static bool HasSymlinkInPath(string pathToCheck, string trustedBasePath)
     {
@@ -555,7 +566,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         {
             currentPath = Path.Combine(currentPath, segment);
 
-            if ((File.GetAttributes(currentPath) & FileAttributes.ReparsePoint) != 0)
+            if (IsLinkOrReparsePointOrInaccessible(currentPath))
             {
                 return true;
             }
@@ -564,30 +575,56 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         return false;
     }
 
-#if !NET
-    /// <summary>
-    /// Best-effort directory enumeration for target frameworks without
-    /// <c>EnumerationOptions.IgnoreInaccessible</c> support. Returns an empty
-    /// array when the caller lacks permission to read the directory contents,
-    /// so a single inaccessible child does not abort the entire skill scan.
-    /// </summary>
-    private string[] SafeEnumerateDirectories(string path)
+    private static bool IsLinkOrReparsePointOrInaccessible(string path)
     {
         try
         {
-            return Directory.GetDirectories(path);
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
         }
-        catch (UnauthorizedAccessException)
+        catch (Exception ex) when (IsFileSystemInspectionFailure(ex))
+        {
+            return true;
+        }
+    }
+
+    private static bool IsFileSystemInspectionFailure(Exception exception)
+    {
+        return exception is IOException or UnauthorizedAccessException or SecurityException;
+    }
+
+    /// <summary>
+    /// Best-effort directory enumeration that returns an empty array when the
+    /// directory cannot be inspected, so a single inaccessible child does not
+    /// abort the entire skill scan.
+    /// </summary>
+    private string[] SafeEnumerateDirectories(string path, FileAttributes attributesToSkip)
+    {
+        try
+        {
+#if NET
+            var enumerationOptions = new EnumerationOptions
+            {
+                RecurseSubdirectories = false,
+                IgnoreInaccessible = true,
+                AttributesToSkip = attributesToSkip,
+            };
+
+            return Directory.EnumerateDirectories(path, "*", enumerationOptions).ToArray();
+#else
+            _ = attributesToSkip;
+            return Directory.GetDirectories(path);
+#endif
+        }
+        catch (Exception ex) when (IsFileSystemInspectionFailure(ex))
         {
             if (this._logger.IsEnabled(LogLevel.Warning))
             {
-                LogDirectoryAccessDenied(this._logger, SanitizePathForLog(path));
+                LogDirectoryInspectionFailed(this._logger, SanitizePathForLog(path));
             }
 
             return Array.Empty<string>();
         }
     }
-#endif
 
     private static string ParseYamlScalarValue(string yamlContent, Match kvMatch)
     {
@@ -720,6 +757,9 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     [LoggerMessage(LogLevel.Information, "Successfully loaded {Count} skills")]
     private static partial void LogSkillsLoadedTotal(ILogger logger, int count);
 
+    [LoggerMessage(LogLevel.Warning, "Skipping skill discovery path '{Path}': symbolic link or reparse point detected, or path could not be inspected")]
+    private static partial void LogUnsafeSkillDiscoveryPath(ILogger logger, string path);
+
     [LoggerMessage(LogLevel.Error, "SKILL.md at '{SkillFilePath}' does not contain valid YAML frontmatter delimited by '---'")]
     private static partial void LogInvalidFrontmatter(ILogger logger, string skillFilePath);
 
@@ -732,10 +772,10 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourcePath}' references a path outside the skill directory")]
     private static partial void LogResourcePathTraversal(ILogger logger, string skillName, string resourcePath);
 
-    [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourcePath}' is a symlink that resolves outside the skill directory")]
+    [LoggerMessage(LogLevel.Warning, "Skipping resource in skill '{SkillName}': '{ResourcePath}' contains a symbolic link or reparse point, or could not be inspected")]
     private static partial void LogResourceSymlinkEscape(ILogger logger, string skillName, string resourcePath);
 
-    [LoggerMessage(LogLevel.Warning, "Skipping resource directory '{DirectoryName}' in skill '{SkillName}': directory path contains a symlink")]
+    [LoggerMessage(LogLevel.Warning, "Skipping resource directory '{DirectoryName}' in skill '{SkillName}': directory path contains a symbolic link or reparse point, or could not be inspected")]
     private static partial void LogResourceSymlinkDirectory(ILogger logger, string skillName, string directoryName);
 
     [LoggerMessage(LogLevel.Debug, "Skipping file '{FilePath}' in skill '{SkillName}': extension '{Extension}' is not in the allowed list")]
@@ -744,12 +784,12 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     [LoggerMessage(LogLevel.Warning, "Skipping script in skill '{SkillName}': '{ScriptPath}' references a path outside the skill directory")]
     private static partial void LogScriptPathTraversal(ILogger logger, string skillName, string scriptPath);
 
-    [LoggerMessage(LogLevel.Warning, "Skipping script in skill '{SkillName}': '{ScriptPath}' is a symlink that resolves outside the skill directory")]
+    [LoggerMessage(LogLevel.Warning, "Skipping script in skill '{SkillName}': '{ScriptPath}' contains a symbolic link or reparse point, or could not be inspected")]
     private static partial void LogScriptSymlinkEscape(ILogger logger, string skillName, string scriptPath);
 
-    [LoggerMessage(LogLevel.Warning, "Skipping script directory '{DirectoryName}' in skill '{SkillName}': directory path contains a symlink")]
+    [LoggerMessage(LogLevel.Warning, "Skipping script directory '{DirectoryName}' in skill '{SkillName}': directory path contains a symbolic link or reparse point, or could not be inspected")]
     private static partial void LogScriptSymlinkDirectory(ILogger logger, string skillName, string directoryName);
 
-    [LoggerMessage(LogLevel.Warning, "Skipping directory '{DirectoryPath}': access denied")]
-    private static partial void LogDirectoryAccessDenied(ILogger logger, string directoryPath);
+    [LoggerMessage(LogLevel.Warning, "Skipping directory '{DirectoryPath}': directory could not be inspected")]
+    private static partial void LogDirectoryInspectionFailed(ILogger logger, string directoryPath);
 }

@@ -29,7 +29,7 @@ from agent_framework import (
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework._types import _get_data_bytes  # type: ignore[reportPrivateUsage]
 from agent_framework.exceptions import ContentError
 from agent_framework.observability import ChatTelemetryLayer
@@ -37,6 +37,8 @@ from google import genai
 from google.auth.credentials import Credentials
 from google.genai import types
 from pydantic import BaseModel
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -76,8 +78,8 @@ class ThinkingConfig(TypedDict, total=False):
     Attributes:
         include_thoughts: Whether to include thought summaries in the response. Thought summaries
             are condensed representations of the model's internal reasoning and appear as response
-            parts where ``part.thought`` is ``True``. Note: the framework currently excludes
-            thought parts from ``ChatResponse.contents`` and does not surface them as output.
+            parts where ``part.thought`` is ``True``. When set, the framework surfaces these parts
+            as ``text_reasoning`` content in ``ChatResponse.contents``.
         thinking_budget: Token budget for Gemini 2.5 models. Set to ``0`` to disable
             thinking or ``-1`` to enable a dynamic budget.
         thinking_level: Thinking level for Gemini 2.5 models and later. One of
@@ -539,6 +541,7 @@ class RawGeminiChatClient(
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 validated = await self._validate_options(options)
                 model, contents, config = self._prepare_request(messages, validated)
+                mark_feature_used(FeatureIndex.GEMINI)
                 generate_content_stream = cast(
                     Callable[..., Awaitable[AsyncIterable[types.GenerateContentResponse]]],
                     cast(Any, self._genai_client.aio.models).generate_content_stream,
@@ -555,6 +558,7 @@ class RawGeminiChatClient(
         async def _get_response() -> ChatResponse:
             validated = await self._validate_options(options)
             model, contents, config = self._prepare_request(messages, validated)
+            mark_feature_used(FeatureIndex.GEMINI)
             raw = await self._genai_client.aio.models.generate_content(model=model, contents=contents, config=config)  # type: ignore[arg-type]
             return self._process_generate_response(raw, response_format=validated.get("response_format"))
 
@@ -1116,17 +1120,20 @@ class RawGeminiChatClient(
         )
 
     def _parse_parts(self, parts: Sequence[types.Part]) -> list[Content]:
-        """Convert Gemini response parts to framework Content objects, skipping thought/reasoning parts.
+        """Convert Gemini response parts to framework Content objects.
 
         Args:
             parts: Sequence of ``types.Part`` objects from a Gemini response candidate.
 
         Returns:
-            A list of framework ``Content`` objects (text, function_call, or function_result).
+            A list of framework ``Content`` objects (text_reasoning, text, function_call, or
+            function_result).
         """
         contents: list[Content] = []
         for part in parts:
             if part.thought:
+                if part.text:
+                    contents.append(Content.from_text_reasoning(text=part.text, raw_representation=part))
                 continue
             if part.text is not None:
                 contents.append(Content.from_text(text=part.text, raw_representation=part))

@@ -230,9 +230,9 @@ async def test_fan_out():
     # and executor_completed (type='executor_completed')
     # executor_b will also emit an output event (type='output')
     # Each superstep will emit a started event (type='started') and status event (type='status')
-    # This workflow will converge in 2 supersteps because executor_c will send one more message
-    # after executor_b completes
-    assert len(events) == 11
+    # Superstep 1 runs the start executor (executor_a) on the seeded input; the workflow then
+    # takes two more supersteps because executor_c sends one more message after executor_b completes.
+    assert len(events) == 13
 
     assert events.get_final_state() == WorkflowRunState.IDLE
     outputs = events.get_outputs()
@@ -255,8 +255,9 @@ async def test_fan_out_multiple_completed_events():
     # and executor_completed (type='executor_completed')
     # executor_b and executor_c will also emit an output event (type='output')
     # Each superstep will emit a started event (type='started') and status event (type='status')
-    # This workflow will converge in 1 superstep because executor_a and executor_b will not send further messages
-    assert len(events) == 10
+    # Superstep 1 runs the start executor (executor_a) on the seeded input; superstep 2 runs
+    # executor_b and executor_c, after which the workflow converges.
+    assert len(events) == 12
 
     # Multiple outputs are expected from both executors
     outputs = events.get_outputs()
@@ -283,7 +284,9 @@ async def test_fan_in():
     # and executor_completed (type='executor_completed')
     # aggregator will also emit an output event (type='output')
     # Each superstep will emit a started event (type='started') and status event (type='status')
-    assert len(events) == 13
+    # Superstep 1 runs the start executor (executor_a) on the seeded input, superstep 2 runs the
+    # fan-out targets, and superstep 3 runs the aggregator.
+    assert len(events) == 15
 
     assert events.get_final_state() == WorkflowRunState.IDLE
     outputs = events.get_outputs()
@@ -316,6 +319,26 @@ async def test_workflow_with_checkpointing_enabled(simple_executor: Executor):
         test_message = WorkflowMessage(data="test message", source_id="test", target_id=None)
         result = await workflow.run(test_message)
         assert result is not None
+
+
+async def test_run_with_unhandled_input_type_raises(simple_executor: Executor):
+    """Running with an input the start executor cannot handle must fail loudly, not silently drop it."""
+    workflow = WorkflowBuilder(start_executor=simple_executor).build()
+
+    # simple_executor only handles str; an int is not routable to it.
+    with pytest.raises(RuntimeError, match="cannot handle input of type 'int'"):
+        await workflow.run(42)
+
+
+async def test_run_unwraps_workflow_message_input(simple_executor: Executor):
+    """A WorkflowMessage passed to run() is unwrapped (not double-wrapped) so its data reaches the handler."""
+    # simple_executor handles str; passing WorkflowMessage(data=<str>) must not be dropped as a type
+    # mismatch. Without unwrapping, the start executor would receive a WorkflowMessage (not a str) and
+    # the input would be silently dropped by the internal edge runner.
+    workflow = WorkflowBuilder(start_executor=simple_executor).build()
+
+    result = await workflow.run(WorkflowMessage(data="wrapped", source_id="test", target_id=None))
+    assert result.get_final_state() == WorkflowRunState.IDLE
 
 
 async def test_workflow_checkpointing_not_enabled_for_external_restore(

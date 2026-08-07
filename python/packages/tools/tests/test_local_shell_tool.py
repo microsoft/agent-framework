@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from agent_framework_tools._feature_usage import FeatureIndex
 from agent_framework_tools.shell import LocalShellTool, ShellCommandError, ShellPolicy
 from agent_framework_tools.shell._executor import _popen_kwargs_for_group, run_stateless
 
@@ -34,7 +35,10 @@ class _FakeExecProcess:
 async def test_stateless_echo() -> None:
     tool = LocalShellTool(mode="stateless", approval_mode="never_require", acknowledge_unsafe=True)
     cmd = "Write-Output hello" if sys.platform == "win32" else "echo hello"
-    result = await tool.run(cmd)
+    with patch("agent_framework_tools.shell._tool.mark_feature_used") as mark_feature_used:
+        result = await tool.run(cmd)
+
+    mark_feature_used.assert_called_once_with(FeatureIndex.TOOLS_SHELL)
     assert "hello" in result.stdout
     assert result.exit_code == 0
     assert result.timed_out is False

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 from agent_framework import Agent, tool
 
-from agent_framework_ag_ui._orchestration._tooling import (
+from agent_framework_ag_ui._tooling import (
     collect_server_tools,
     merge_tools,
     register_additional_client_tools,
@@ -167,7 +167,7 @@ def test_register_additional_client_tools_no_tools() -> None:
 
 def test_register_additional_client_tools_no_chat_client() -> None:
     """register_additional_client_tools does nothing when agent has no client."""
-    from agent_framework_ag_ui._orchestration._tooling import register_additional_client_tools
+    from agent_framework_ag_ui._tooling import register_additional_client_tools
 
     class MockAgent:
         pass
