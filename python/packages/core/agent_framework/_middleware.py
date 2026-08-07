@@ -82,6 +82,50 @@ class MiddlewareTermination(MiddlewareException):
         self.result = result
 
 
+class MiddlewareFailure(MiddlewareException):
+    """Fatal middleware signal that aborts the run instead of being absorbed.
+
+    Ordinary exceptions raised by **function** middleware (or by the tool it wraps) are
+    converted into tool-error results by the function-invocation loop, which then keeps
+    running — appropriate for recoverable tool failures, but fail-open for enforcement
+    layers and guardrails. ``MiddlewareFailure`` is the loop's explicit fail-closed
+    escape: it is never converted into a tool result, the current batch of concurrent
+    tool calls is cancelled, no further tool executes, and the exception propagates to
+    the caller of :meth:`Agent.run` (for streaming runs, it is raised when the stream
+    is consumed).
+
+    Agent and chat middleware do not need a dedicated signal — every exception they
+    raise already propagates to the caller — and ``MiddlewareFailure`` behaves the same
+    there, so one exception type gives uniform fail-loud semantics across all three
+    middleware categories.
+
+    Contrast with :class:`MiddlewareTermination`, which stops the loop *gracefully*
+    (optionally substituting a result that still flows back to the caller):
+    ``MiddlewareFailure`` produces no result at all.
+
+    Chain the underlying error so it reaches the caller intact:
+
+    .. code-block:: python
+
+        from agent_framework import FunctionMiddleware, FunctionInvocationContext, MiddlewareFailure
+
+
+        class EnforcementMiddleware(FunctionMiddleware):
+            async def process(self, context: FunctionInvocationContext, call_next):
+                try:
+                    verdict = await self.check(context.arguments)
+                except Exception as exc:
+                    # The enforcement layer itself failed: abort instead of running unguarded.
+                    raise MiddlewareFailure("policy check failed") from exc
+                if verdict.deny:
+                    raise MiddlewareFailure(f"denied: {verdict.reason}")
+                await call_next()
+    """
+
+    def __init__(self, message: str = "Middleware failed.") -> None:
+        super().__init__(message, log_level=None)
+
+
 class MiddlewareType(str, Enum):
     """Enum representing the type of middleware.
 
@@ -543,6 +587,13 @@ class FunctionMiddleware(ABC):
     Note:
         FunctionMiddleware is an abstract base class. You must subclass it and implement
         the ``process()`` method to create custom function middleware.
+
+    Note:
+        Exception semantics inside the function-invocation loop: an ordinary exception
+        raised from function middleware is converted into a tool-error result and the
+        loop keeps running; raise :class:`MiddlewareTermination` to stop the loop
+        gracefully (optionally substituting a result), or :class:`MiddlewareFailure` to
+        abort the run fail-closed and propagate the failure to the caller.
 
     Examples:
         .. code-block:: python

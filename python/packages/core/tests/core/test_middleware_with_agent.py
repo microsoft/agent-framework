@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -21,6 +22,7 @@ from agent_framework import (
     FunctionTool,
     Message,
     MiddlewareException,
+    MiddlewareFailure,
     MiddlewareTermination,
     MiddlewareType,
     SupportsChatGetResponse,
@@ -2398,3 +2400,247 @@ class TestCallableClassMiddlewareErrorHandling:
 
         assert "UndeterminedCallableMiddleware" in str(exc_info.value)
         assert "Cannot determine middleware type" in str(exc_info.value)
+
+
+# region MiddlewareFailure fail-closed escape
+
+
+def _tool_call_response(name: str = "sample_tool_function", call_id: str = "call_1") -> ChatResponse:
+    return ChatResponse(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id=call_id, name=name, arguments='{"location": "Seattle"}')],
+            )
+        ]
+    )
+
+
+class TestMiddlewareFailure:
+    """The explicit fail-closed escape from the function-invocation loop.
+
+    Ordinary exceptions raised by function middleware are converted into tool-error
+    results and the loop keeps running (a public behavior, pinned below); only the
+    explicit ``MiddlewareFailure`` signal escapes the loop and propagates to the
+    ``run()`` caller.
+    """
+
+    async def test_failure_before_tool_aborts_run(self, chat_client_base: "MockBaseChatClient") -> None:
+        executed: list[str] = []
+
+        def tool_impl(location: str) -> str:
+            executed.append(location)
+            return "ran"
+
+        tracked_tool = FunctionTool(func=tool_impl, name="sample_tool_function", approval_mode="never_require")
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        chat_client_base.run_responses = [
+            _tool_call_response(),
+            ChatResponse(messages=[Message(role="assistant", contents=["Final"])]),
+        ]
+        agent = Agent(client=chat_client_base, middleware=[Enforcement()], tools=[tracked_tool])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            await agent.run("get the weather")
+
+        # Fail-closed: the tool never executed and no further model turn was consumed.
+        assert executed == []
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_after_tool_aborts_run_before_next_model_turn(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        executed: list[str] = []
+
+        def tool_impl(location: str) -> str:
+            executed.append(location)
+            return "ran"
+
+        tracked_tool = FunctionTool(func=tool_impl, name="sample_tool_function", approval_mode="never_require")
+
+        class PostCheck(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                await call_next()
+                raise MiddlewareFailure("result rejected")
+
+        chat_client_base.run_responses = [
+            _tool_call_response(),
+            ChatResponse(messages=[Message(role="assistant", contents=["Final"])]),
+        ]
+        agent = Agent(client=chat_client_base, middleware=[PostCheck()], tools=[tracked_tool])
+
+        with pytest.raises(MiddlewareFailure, match="result rejected"):
+            await agent.run("get the weather")
+
+        # The tool ran once, but its result never fed another model iteration.
+        assert executed == ["Seattle"]
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_cause_chain_reaches_caller(self, chat_client_base: "MockBaseChatClient") -> None:
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                try:
+                    raise ValueError("enforcement backend down")
+                except ValueError as exc:
+                    raise MiddlewareFailure("enforcement failed") from exc
+
+        chat_client_base.run_responses = [_tool_call_response()]
+        agent = Agent(client=chat_client_base, middleware=[Enforcement()], tools=[sample_tool_function])
+
+        with pytest.raises(MiddlewareFailure, match="enforcement failed") as exc_info:
+            await agent.run("get the weather")
+
+        assert isinstance(exc_info.value.__cause__, ValueError)
+
+    async def test_ordinary_exception_still_becomes_tool_error(self, chat_client_base: "MockBaseChatClient") -> None:
+        """The loop's absorb-into-tool-error contract for ordinary exceptions is unchanged."""
+
+        class Broken(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise RuntimeError("middleware bug")
+
+        chat_client_base.run_responses = [
+            _tool_call_response(),
+            ChatResponse(messages=[Message(role="assistant", contents=["Final"])]),
+        ]
+        agent = Agent(client=chat_client_base, middleware=[Broken()], tools=[sample_tool_function])
+
+        response = await agent.run("get the weather")
+
+        # The exception was converted into a tool-error result and the loop continued.
+        assert chat_client_base.call_count == 2
+        error_results = [
+            content
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_result" and content.exception is not None
+        ]
+        assert len(error_results) == 1
+
+    async def test_failure_from_tool_escapes_without_middleware(self, chat_client_base: "MockBaseChatClient") -> None:
+        """The direct (no-middleware) execution path honors the same explicit signal."""
+
+        def tool_impl(location: str) -> str:
+            raise MiddlewareFailure("tool aborted the run")
+
+        failing_tool = FunctionTool(func=tool_impl, name="sample_tool_function", approval_mode="never_require")
+        chat_client_base.run_responses = [_tool_call_response()]
+        agent = Agent(client=chat_client_base, tools=[failing_tool])
+
+        with pytest.raises(MiddlewareFailure, match="tool aborted the run"):
+            await agent.run("get the weather")
+
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_cancels_concurrent_sibling_tool(self, chat_client_base: "MockBaseChatClient") -> None:
+        """A fatal signal fails the whole batch: in-flight siblings are cancelled."""
+        sibling_started = asyncio.Event()
+        sibling_cancelled: list[bool] = []
+
+        async def slow_impl(location: str) -> str:
+            sibling_started.set()
+            try:
+                await asyncio.Event().wait()  # blocks until cancelled
+            except asyncio.CancelledError:
+                sibling_cancelled.append(True)
+                raise
+            return "never"
+
+        slow_tool = FunctionTool(func=slow_impl, name="slow_tool", approval_mode="never_require")
+
+        class FailFast(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                if context.function.name == "sample_tool_function":
+                    # Fail only after the sibling is genuinely in flight.
+                    await sibling_started.wait()
+                    raise MiddlewareFailure("abort the batch")
+                await call_next()
+
+        batch_response = ChatResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                        ),
+                        Content.from_function_call(call_id="call_2", name="slow_tool", arguments='{"location": "x"}'),
+                    ],
+                )
+            ]
+        )
+        chat_client_base.run_responses = [batch_response]
+        agent = Agent(client=chat_client_base, middleware=[FailFast()], tools=[sample_tool_function, slow_tool])
+
+        with pytest.raises(MiddlewareFailure, match="abort the batch"):
+            await agent.run("run both tools")
+
+        assert sibling_cancelled == [True]
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_streaming_reaches_stream_consumer(self, chat_client_base: "MockBaseChatClient") -> None:
+        executed: list[str] = []
+
+        def tool_impl(location: str) -> str:
+            executed.append(location)
+            return "ran"
+
+        tracked_tool = FunctionTool(func=tool_impl, name="sample_tool_function", approval_mode="never_require")
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        chat_client_base.streaming_responses = [
+            [
+                ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                        )
+                    ],
+                    role="assistant",
+                )
+            ]
+        ]
+        agent = Agent(client=chat_client_base, middleware=[Enforcement()], tools=[tracked_tool])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            async for _ in agent.run("get the weather", stream=True):
+                pass
+
+        assert executed == []
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_from_agent_middleware_propagates(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Agent (and chat) middleware exceptions already propagate; the explicit signal behaves the same."""
+
+        class Guard(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                raise MiddlewareFailure("run denied")
+
+        agent = Agent(client=chat_client_base, middleware=[Guard()])
+
+        with pytest.raises(MiddlewareFailure, match="run denied"):
+            await agent.run("hello")
+
+        assert chat_client_base.call_count == 0
+
+
+# endregion

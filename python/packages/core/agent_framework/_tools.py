@@ -1458,6 +1458,10 @@ async def _auto_invoke_function(
     Raises:
         KeyError: If the requested function is not found in the tool map.
         MiddlewareTermination: If middleware requests loop termination.
+        MiddlewareFailure: If middleware (or the tool) aborts the run fail-closed.
+            Unlike ordinary exceptions, which are converted into tool-error results,
+            this explicit signal is re-raised so it propagates to the run's caller.
+        UserInputRequiredException: If the tool requires user input to proceed.
     """
     from ._types import Content
 
@@ -1532,7 +1536,7 @@ async def _auto_invoke_function(
             additional_properties=function_call_content.additional_properties,
         )
 
-    from ._middleware import FunctionInvocationContext
+    from ._middleware import FunctionInvocationContext, MiddlewareFailure
 
     if middleware_pipeline is None or not middleware_pipeline.has_middlewares:
         # No middleware - execute directly
@@ -1556,7 +1560,9 @@ async def _auto_invoke_function(
                 result=function_result,
                 additional_properties=function_call_content.additional_properties,
             )
-        except UserInputRequiredException:
+        except (MiddlewareFailure, UserInputRequiredException):
+            # Explicit control-flow signals escape the loop; only ordinary exceptions
+            # are absorbed into tool-error results below.
             raise
         except Exception as exc:
             return _function_execution_error_result(function_call_content, tool.name, exc, config)
@@ -1620,7 +1626,10 @@ async def _auto_invoke_function(
                     additional_properties=function_call_content.additional_properties,
                 )
         raise
-    except UserInputRequiredException:
+    except (MiddlewareFailure, UserInputRequiredException):
+        # MiddlewareFailure is the loop's explicit fail-closed escape: middleware that
+        # must abort the run (enforcement layers, guardrails) raises it instead of
+        # relying on the tool-error conversion below, and it propagates to the caller.
         raise
     except Exception as exc:
         return _function_execution_error_result(function_call_content, tool.name, exc, config)
@@ -1844,7 +1853,16 @@ async def _try_execute_function_call_groups(
         )
         for function_call in function_calls
     ]
-    execution_results = await asyncio.gather(*execution_tasks)
+    try:
+        execution_results = await asyncio.gather(*execution_tasks)
+    except BaseException:
+        # A loud escape from one call (e.g. MiddlewareFailure aborting the run
+        # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
+        # them so no tool keeps running after the loop has been abandoned.
+        for task in execution_tasks:
+            task.cancel()
+        await asyncio.gather(*execution_tasks, return_exceptions=True)
+        raise
 
     should_terminate = any(terminate for _, terminate in execution_results)
     return [result_contents for result_contents, _ in execution_results], should_terminate
