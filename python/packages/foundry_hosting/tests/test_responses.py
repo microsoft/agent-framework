@@ -517,7 +517,7 @@ class TestAgentSessionPersistence:
 
         provider = server._session_storage_provider  # pyright: ignore[reportPrivateUsage]
         assert provider is not None
-        session_store = provider.get_store(is_hosted=False)
+        session_store = provider.get_store(config=server.config)
         assert session_store is not None
         first_session = await session_store.get(first.json()["id"])
         second_session = await session_store.get(second.json()["id"])
@@ -3410,7 +3410,7 @@ class TestFunctionApprovalRoundTrip:
 
         # Storage must contain a saved entry under the emitted request id.
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            is_hosted=False
+            config=server.config
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert loaded.function_call is not None
@@ -3440,7 +3440,7 @@ class TestFunctionApprovalRoundTrip:
         assert approval_request_id is not None
 
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            is_hosted=False
+            config=server.config
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
 
@@ -4283,7 +4283,7 @@ class TestWorkflowAgentHosting:
         # ``function_call``) must be persisted under that id so the next
         # turn can reconstruct it.
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            is_hosted=False
+            config=server.config
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert loaded.function_call is not None
@@ -4313,7 +4313,7 @@ class TestWorkflowAgentHosting:
         assert approval_request_id is not None
 
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            is_hosted=False
+            config=server.config
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert mock_agent.run_count == 1

@@ -15,6 +15,7 @@ from agent_framework import (
     WorkflowCheckpoint,
     WorkflowCheckpointException,
 )
+from azure.ai.agentserver.core import AgentConfig
 from azure.ai.agentserver.core.storage import FoundryStateStore, FoundryStorageConflictError
 
 StoreT = TypeVar("StoreT")
@@ -24,19 +25,35 @@ class StoreProvider(ABC, Generic[StoreT]):
     """Provide store for a hosting environment."""
 
     @abstractmethod
-    def get_store(self, *, is_hosted: bool, context_id: str | None = None) -> StoreT:
+    def get_store(self, *, config: AgentConfig) -> StoreT:
         """Get store for a hosting environment.
 
         Args:
-            is_hosted: A boolean indicating whether the environment is a Foundry
-                Hosted environment (vs. a local environment).
-            context_id: An optional string that uniquely identifies the context for which the store is scoped.
+            config: The resolved agent server configuration.
 
         Returns:
-            The store instance for the given hosting environment, optionally scoped by context ID.
+            The store instance for the given hosting environment.
+        """
 
-        Note:
-            Concrete implementations may require `context_id` when the returned store is context-scoped.
+
+class ContextScopedStoreProvider(ABC, Generic[StoreT]):
+    """Provide a context-scoped store for a hosting environment.
+
+    Use this when state must be queried or managed as a collection belonging to
+    one context, rather than accessed only by an individual item ID. The context
+    can be a conversation ID or another identifier that groups related state.
+    """
+
+    @abstractmethod
+    def get_store(self, *, config: AgentConfig, context_id: str) -> StoreT:
+        """Get a context-scoped store for a hosting environment.
+
+        Args:
+            config: The resolved agent server configuration.
+            context_id: A string that uniquely identifies the context for which the store is scoped.
+
+        Returns:
+            The store instance for the given hosting environment and context ID.
         """
 
 
@@ -145,8 +162,12 @@ class FoundryCheckpointStore:
         return [checkpoint.checkpoint_id for checkpoint in checkpoints]
 
 
-class CheckpointStoreProvider(StoreProvider[CheckpointStorage]):
+class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
     """Provide workflow checkpoint store scoped to a context.
+
+    A workflow context can contain multiple checkpoints. Scoping establishes the
+    collection boundary used to list checkpoints, restore the latest checkpoint,
+    and clean up older checkpoints without affecting another workflow context.
 
     This will default to using the `FoundryCheckpointStore` when hosted in Foundry,
     and an in-memory store otherwise.
@@ -159,17 +180,17 @@ class CheckpointStoreProvider(StoreProvider[CheckpointStorage]):
     def get_store(
         self,
         *,
-        is_hosted: bool,
-        context_id: str | None = None,
+        config: AgentConfig,
+        context_id: str,
     ) -> CheckpointStorage:
         """Get checkpoint store for the requested hosting environment."""
-        stores = self._foundry_storages if is_hosted else self._in_memory_storages
+        stores = self._foundry_storages if config.is_hosted else self._in_memory_storages
 
         if not context_id:
             raise ValueError("context_id must be provided to get a checkpoint store.")
 
         if context_id not in stores:
-            stores[context_id] = FoundryCheckpointStore(context_id) if is_hosted else InMemoryCheckpointStorage()
+            stores[context_id] = FoundryCheckpointStore(context_id) if config.is_hosted else InMemoryCheckpointStorage()
         return stores[context_id]
 
 
@@ -249,9 +270,9 @@ class FunctionApprovalStoreProvider(StoreProvider[FunctionApprovalStore]):
         self._foundry_storage: FunctionApprovalStore | None = None
         self._in_memory_storage: FunctionApprovalStore | None = None
 
-    def get_store(self, *, is_hosted: bool, context_id: str | None = None) -> FunctionApprovalStore:
+    def get_store(self, *, config: AgentConfig) -> FunctionApprovalStore:
         """Get function approval store for the requested hosting environment."""
-        if is_hosted:
+        if config.is_hosted:
             if self._foundry_storage is None:
                 self._foundry_storage = FoundryFunctionApprovalStore()
             return self._foundry_storage
@@ -303,9 +324,9 @@ class AgentSessionStoreProvider(StoreProvider[SessionStore]):
         self._foundry_storage: SessionStore | None = None
         self._in_memory_storage: SessionStore | None = None
 
-    def get_store(self, *, is_hosted: bool, context_id: str | None = None) -> SessionStore:
+    def get_store(self, *, config: AgentConfig) -> SessionStore:
         """Get agent session store for the requested hosting environment."""
-        if is_hosted:
+        if config.is_hosted:
             if self._foundry_storage is None:
                 self._foundry_storage = FoundryAgentSessionStore()
             return self._foundry_storage

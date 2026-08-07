@@ -7,6 +7,7 @@ from ._responses import ResponsesHostServer
 from ._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
+    ContextScopedStoreProvider,
     FoundryAgentSessionStore,
     FoundryCheckpointStore,
     FoundryFunctionApprovalStore,
@@ -24,6 +25,7 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "AgentSessionStoreProvider",
     "CheckpointStoreProvider",
+    "ContextScopedStoreProvider",
     "FoundryAgentSessionStore",
     "FoundryCheckpointStore",
     "FoundryFunctionApprovalStore",

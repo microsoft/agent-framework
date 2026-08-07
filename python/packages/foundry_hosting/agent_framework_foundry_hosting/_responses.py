@@ -69,6 +69,7 @@ from ._request_context import (
 from ._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
+    ContextScopedStoreProvider,
     FunctionApprovalStore,
     FunctionApprovalStoreProvider,
     StoreProvider,
@@ -178,7 +179,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
-        checkpoint_store_provider: StoreProvider[CheckpointStorage] | None = None,
+        checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
         function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
         **kwargs: Any,
     ) -> None:
@@ -369,8 +370,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             return
 
         try:
-            approval_storage = self._function_approval_storage_provider.get_store(is_hosted=self.config.is_hosted)
-            session_storage = self._session_storage_provider.get_store(is_hosted=self.config.is_hosted)
+            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
+            session_storage = self._session_storage_provider.get_store(config=self.config)
             # Agent sessions are either tied to the conversation_id (for multi-turn conversation mode)
             # or the previous_response_id (for response chaining). If neither is present, a new session
             # is created for this request and stored under the current response_id. The current response_id
@@ -497,7 +498,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker: _OutputItemTracker | None = None
 
         try:
-            approval_storage = self._function_approval_storage_provider.get_store(is_hosted=self.config.is_hosted)
+            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
@@ -532,7 +533,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if context_id is not None:
                 validate_path_segment(context_id, kind="context id")
                 restore_storage = self._checkpoint_storage_provider.get_store(
-                    is_hosted=self.config.is_hosted,
+                    config=self.config,
                     context_id=context_id,
                 )
                 latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
@@ -550,7 +551,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             write_context_id = context.conversation_id or context.response_id
             validate_path_segment(write_context_id, kind="context id")
             write_storage = self._checkpoint_storage_provider.get_store(
-                is_hosted=self.config.is_hosted,
+                config=self.config,
                 context_id=write_context_id,
             )
 
