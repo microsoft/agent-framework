@@ -359,13 +359,20 @@ class FanInEdgeRunner(EdgeRunner):
                     # fan-in aggregation are fully preserved. Using the singular
                     # backward-compat properties would silently drop all but the
                     # first context per message.
+                    #
+                    # Pair contexts and span IDs per-message (via zip) so that a
+                    # message with mismatched counts only drops its own orphans
+                    # instead of shifting all subsequent pairs out of alignment
+                    # when the flattened lists are later zipped by
+                    # ``create_processing_span``.
                     trace_contexts: list[dict[str, str]] = []
                     source_span_ids: list[str] = []
                     for msg in messages_to_send:
-                        if msg.trace_contexts:
-                            trace_contexts.extend(msg.trace_contexts)
-                        if msg.source_span_ids:
-                            source_span_ids.extend(msg.source_span_ids)
+                        msg_contexts = msg.trace_contexts or []
+                        msg_span_ids = msg.source_span_ids or []
+                        for trace_context, span_id in zip(msg_contexts, msg_span_ids, strict=False):
+                            trace_contexts.append(trace_context)
+                            source_span_ids.append(span_id)
 
                     # Create a new Message object for the aggregated data
                     aggregated_message = WorkflowMessage(

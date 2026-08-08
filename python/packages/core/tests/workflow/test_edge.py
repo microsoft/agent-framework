@@ -1192,7 +1192,13 @@ async def test_fan_in_edge_group_with_multiple_message_types_failed() -> None:
 
 
 class TraceCapturingAggregator(Executor):
-    """Fan-in aggregator that captures the trace contexts passed to execute()."""
+    """Fan-in aggregator that captures the trace contexts received by its handler.
+
+    Captures the source trace data from the :class:`WorkflowContext` passed to
+    the handler rather than overriding :meth:`Executor.execute` (which is
+    documented as *do not override* — it owns locking, span creation, handler
+    dispatch, and context construction).
+    """
 
     def __init__(self, *, id: str) -> None:
         super().__init__(id=id)
@@ -1203,27 +1209,8 @@ class TraceCapturingAggregator(Executor):
     @handler
     async def mock_aggregator_handler(self, message: list[MockMessage], ctx: WorkflowContext) -> None:
         self.call_count += 1
-
-    async def execute(
-        self,
-        message: WorkflowMessage,
-        source_executor_ids: list[str],
-        state: Any,
-        ctx: Any,
-        *,
-        trace_contexts: list[dict[str, str]] | None = None,
-        source_span_ids: list[str] | None = None,
-    ) -> None:
-        self.captured_trace_contexts = trace_contexts
-        self.captured_source_span_ids = source_span_ids
-        await super().execute(
-            message,
-            source_executor_ids,
-            state,
-            ctx,
-            trace_contexts=trace_contexts,
-            source_span_ids=source_span_ids,
-        )
+        self.captured_trace_contexts = list(ctx._trace_contexts)
+        self.captured_source_span_ids = list(ctx._source_span_ids)
 
 
 async def test_fan_in_preserves_multiple_trace_contexts_per_message() -> None:
