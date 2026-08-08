@@ -16,7 +16,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Provides a Cosmos DB implementation of the <see cref="ChatHistoryProvider"/> abstract class.
+/// Provides a Cosmos DB implementation of the <see cref="ChatHistoryProvider"/> abstract class for persistent chat history storage.
 /// </summary>
 /// <remarks>
 /// <para>
