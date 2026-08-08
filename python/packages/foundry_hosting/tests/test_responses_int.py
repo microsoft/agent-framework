@@ -623,6 +623,7 @@ class TestReasoningHostedMcpReplay:
             default_options={  # pyrefly: ignore[bad-argument-type]
                 "store": False,
                 "reasoning": {"effort": "low", "summary": "auto"},
+                "include": ["reasoning.encrypted_content"],
             },
         )
         server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
