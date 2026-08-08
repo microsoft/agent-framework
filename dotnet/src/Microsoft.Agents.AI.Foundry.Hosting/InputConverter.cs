@@ -7,6 +7,8 @@ using System.Text;
 using System.Text.Json;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
+using ChatCompletionOptions = OpenAI.Chat.ChatCompletionOptions;
+using CreateResponseOptions = OpenAI.Responses.CreateResponseOptions;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 using SdkTextContent = Azure.AI.AgentServer.Responses.Models.TextContent;
 
@@ -87,10 +89,14 @@ internal static class InputConverter
     /// Creates <see cref="ChatOptions"/> from the SDK request properties.
     /// </summary>
     /// <param name="request">The create response request.</param>
+    /// <param name="agentRawRepresentationFactory">
+    /// The factory the agent carries on its own <see cref="ChatOptions"/>, if any, so a request that has
+    /// to set one of its own can run it rather than replace it.
+    /// </param>
     /// <returns>A configured <see cref="ChatOptions"/> instance.</returns>
-    public static ChatOptions ConvertToChatOptions(CreateResponse request)
+    public static ChatOptions ConvertToChatOptions(CreateResponse request, Func<IChatClient, object?>? agentRawRepresentationFactory = null)
     {
-        return new ChatOptions
+        var options = new ChatOptions
         {
             Temperature = (float?)request.Temperature,
             TopP = (float?)request.TopP,
@@ -100,6 +106,43 @@ internal static class InputConverter
             // the client-provided model would override it (causing failures when
             // clients send placeholder values like "hosted-agent").
         };
+
+        // The service behind the agent's chat client is never asked to store a response. Recording a
+        // hosted turn is the AgentServer SDK's job, done by its storage provider around this handler,
+        // and a second recording downstream is a conversation nothing here reads and no one reconciles.
+        // The caller's own store flag is not carried across: it says what the hosting service should
+        // record, which is a separate question and one this handler has no say in.
+        //
+        // Both OpenAI request shapes carry the setting, so a chat client speaking either protocol is
+        // covered. Anything else is a request type with no notion of storing a response, and is handed
+        // back untouched; such a client keeping a conversation of its own is caught later by the
+        // conversation id check in the handler.
+        //
+        // The agent's own factory is invoked here and its result is what gets the setting, because
+        // ChatClientAgent chains the two by taking the agent's only when the request's returns null
+        // (ChatClientAgent.PrepareChatOptions). A request factory that always answers would otherwise
+        // drop whatever the container configured.
+        options.RawRepresentationFactory = chatClient =>
+        {
+            switch (agentRawRepresentationFactory?.Invoke(chatClient))
+            {
+                case CreateResponseOptions responseOptions:
+                    responseOptions.StoredOutputEnabled = false;
+                    return responseOptions;
+
+                case ChatCompletionOptions completionOptions:
+                    completionOptions.StoredOutputEnabled = false;
+                    return completionOptions;
+
+                case { } configuredByTheAgent:
+                    return configuredByTheAgent;
+
+                default:
+                    return new CreateResponseOptions { StoredOutputEnabled = false };
+            }
+        };
+
+        return options;
     }
 
     /// <summary>

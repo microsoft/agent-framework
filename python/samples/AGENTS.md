@@ -7,7 +7,7 @@
 
 ```
 python/samples/
-├── 01-get-started/          # Progressive tutorial (steps 01–06)
+├── 01-get-started/          # Progressive tutorial (steps 01–07)
 ├── 02-agents/               # Deep-dive concept samples
 │   ├── tools/               # Tool patterns (function, approval, schema, etc.)
 │   ├── middleware/           # One file per middleware concept
@@ -37,8 +37,7 @@ python/samples/
 ├── 04-hosting/              # Deployment & hosting
 │   ├── a2a/                 # Agent-to-Agent protocol
 │   ├── af-hosting/          # Native Responses and Telegram hosting
-│   ├── azure_functions/     # Azure Functions samples
-│   └── durabletask/         # Durable task framework
+│   └── foundry-hosted-agents/ # Foundry hosted agents
 ├── 05-end-to-end/           # Complete applications
 │   ├── chatkit-integration/
 │   ├── evaluation/
@@ -51,10 +50,12 @@ python/samples/
 └── _to_delete/              # Old samples awaiting review
 ```
 
+Durable Task and Azure Functions samples are maintained in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
+
 ## Design principles
 
 1. **Progressive complexity**: Sections 01→05 build from "hello world" to
-   production. Within 01-get-started, files are numbered 01–06 and each step
+   production. Within 01-get-started, files are numbered 01–07 and each step
    adds exactly one concept.
 
 2. **One concept per file** in 01-get-started and flat files in 02-agents/.

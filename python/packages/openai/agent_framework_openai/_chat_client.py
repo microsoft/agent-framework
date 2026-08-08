@@ -45,6 +45,7 @@ from agent_framework._tools import (
     FunctionInvocationLayer,
     FunctionTool,
     ToolTypes,
+    _is_hosted_tool_approval,  # pyright: ignore[reportPrivateUsage]
     normalize_tools,
     tool,
 )
@@ -1702,7 +1703,9 @@ class RawOpenAIChatClient(
                     if function_call:
                         all_messages.append(function_call)
                 case "function_approval_request":
-                    if request_uses_service_side_storage:
+                    # Service-stored hosted requests are already present remotely, and local approvals
+                    # are resolved in-process; neither should be serialized as an MCP input item.
+                    if request_uses_service_side_storage or not _is_hosted_tool_approval(content):
                         continue
                     prepared = self._prepare_content_for_openai(
                         message.role,
@@ -1712,6 +1715,10 @@ class RawOpenAIChatClient(
                     if prepared:
                         all_messages.append(prepared)
                 case "function_approval_response":
+                    # Local approvals are resolved in-process; only hosted decisions have a matching
+                    # MCP approval request on the provider and should be serialized.
+                    if not _is_hosted_tool_approval(content):
+                        continue
                     prepared = self._prepare_content_for_openai(
                         message.role,
                         content,

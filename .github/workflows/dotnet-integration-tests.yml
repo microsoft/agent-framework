@@ -43,7 +43,7 @@ jobs:
     environment: integration
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout-ref }}
           persist-credentials: false
@@ -82,10 +82,6 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Set up Durable Task and Azure Functions Integration Test Emulators
-        if: matrix.os == 'ubuntu-latest'
-        uses: ./.github/actions/azure-functions-integration-setup
 
       - name: Run Integration Tests
         shell: bash

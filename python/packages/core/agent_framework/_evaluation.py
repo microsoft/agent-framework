@@ -1520,7 +1520,8 @@ class LocalEvaluator:
     """Evaluation provider that runs checks locally without API calls.
 
     Implements the ``Evaluator`` protocol. Each check function is applied
-    to every item. An item passes only if all checks pass.
+    to every item. An item passes only if at least one check was evaluated
+    and all evaluated checks pass.
 
     Examples:
         Basic usage:
@@ -1560,8 +1561,9 @@ class LocalEvaluator:
     ) -> EvalResults:
         """Run all checks on each item and return aggregated results.
 
-        An item passes only if every check passes for that item. Per-check
-        breakdowns are available in ``per_evaluator``.
+        An item passes only if every check passes for that item. An item with
+        no checks to evaluate fails, since a pass would carry no evidence.
+        Per-check breakdowns are available in ``per_evaluator``.
 
         Supports both sync and async check functions (from
         :func:`evaluator`).
@@ -1574,7 +1576,7 @@ class LocalEvaluator:
 
         for item_idx, item in enumerate(items):
             check_results = await asyncio.gather(*[_run_check(fn, item) for fn in self._checks])
-            item_passed = True
+            item_passed = bool(check_results)
             item_scores: list[EvalScoreResult] = []
             for result in check_results:
                 counts = per_check.setdefault(result.check_name, {"passed": 0, "failed": 0, "errored": 0})

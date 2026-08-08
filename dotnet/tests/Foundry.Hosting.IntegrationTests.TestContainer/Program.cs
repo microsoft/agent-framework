@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.Identity;
 using Azure.Search.Documents;
 using Azure.Search.Documents.Models;
+using Foundry.Hosting.IntegrationTests.TestContainer;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
 using Microsoft.Agents.AI.Foundry.Hosting;
@@ -34,6 +35,7 @@ AIAgent agent = scenario switch
     "happy-path" => CreateHappyPathAgent(projectClient, deployment),
     "unsupported-protocol" => CreateHappyPathAgent(projectClient, deployment),
     "store-config" => CreateStoreConfigAgent(projectClient, deployment),
+    "downstream-store" => CreateDownstreamStoreAgent(projectClient, deployment),
     "tool-calling" => CreateToolCallingAgent(projectClient, deployment),
     "tool-calling-approval" => CreateToolCallingApprovalAgent(projectClient, deployment),
     "mcp-toolbox" => CreateMcpToolboxAgent(projectClient, deployment),
@@ -88,6 +90,19 @@ static AIAgent CreateStoreConfigAgent(AIProjectClient client, string deployment)
                       "and use any facts the user told you earlier in the conversation.",
         name: "store-config-agent",
         description: "Store and session semantics test agent.");
+
+// downstream-store scenario: an ordinary Foundry ChatClientAgent, like the first hosted agent sample,
+// wrapped so the caller is told which conversation the agent's own run left behind on the service. The
+// platform already records the hosted turn in the caller's conversation; anything the agent's run also
+// leaves behind is a second copy of the same turn, on a trail nobody reads.
+static AIAgent CreateDownstreamStoreAgent(AIProjectClient client, string deployment) =>
+    new DownstreamConversationReportingAgent(
+        client.AsAIAgent(
+            model: deployment,
+            instructions: "You are a helpful assistant. Answer the user's question concisely and accurately, " +
+                          "and use any facts the user told you earlier in the conversation.",
+            name: "downstream-store-agent",
+            description: "Downstream store test agent."));
 
 static AIAgent CreateToolCallingAgent(AIProjectClient client, string deployment) =>
     client.AsAIAgent(

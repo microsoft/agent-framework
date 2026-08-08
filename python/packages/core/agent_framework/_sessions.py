@@ -16,6 +16,7 @@ This module provides the core types for the context provider pipeline:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import hashlib
 import json
@@ -29,10 +30,12 @@ import weakref
 from abc import abstractmethod
 from base64 import urlsafe_b64encode
 from collections import deque
-from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeGuard, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
 
 import msgspec
 
@@ -182,18 +185,6 @@ def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[s
             seen_origin_session_ids.add(origin_session_id)
             unique_origin_session_ids.append(origin_session_id)
     return unique_origin_session_ids
-
-
-def _is_middleware_sequence(
-    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
-) -> TypeGuard[Sequence[MiddlewareTypes]]:
-    return isinstance(middleware, Sequence) and not isinstance(middleware, (str, bytes))
-
-
-def _is_single_middleware(
-    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
-) -> TypeGuard[MiddlewareTypes]:
-    return not _is_middleware_sequence(middleware)
 
 
 @dataclass(frozen=True, slots=True)
@@ -688,15 +679,10 @@ class SessionContext:
             source_id: The provider source_id adding this middleware.
             middleware: A single chat/function middleware object/callable or sequence of middleware.
         """
-        from ._middleware import categorize_middleware
+        from ._middleware import _as_middleware_list, categorize_middleware  # pyright: ignore[reportPrivateUsage]
         from .exceptions import MiddlewareException
 
-        if _is_middleware_sequence(middleware):
-            middleware_items = list(middleware)
-        elif _is_single_middleware(middleware):
-            middleware_items = [middleware]
-        else:
-            raise TypeError("middleware must be a middleware object or a sequence of middleware objects.")
+        middleware_items = _as_middleware_list(middleware)
         middleware_list = categorize_middleware(middleware_items)
         if middleware_list["agent"]:
             raise MiddlewareException("Context providers may only add chat or function middleware.")
@@ -1025,6 +1011,238 @@ class HistoryProvider(ContextProvider):
             await self.save_messages(context.session_id, messages_to_store, state=state)
 
 
+# Run-scoped gate for durable persistence side effects. Egress-enforcement middleware
+# (agent-hooks) activates a ``_RunPersistenceGate`` around the guarded section of a run;
+# the persistence call sites below consult it via ``_defer_run_persistence`` so that
+# history only becomes durable after the run's egress verdict permits the content. When
+# no gate is active (the default), persistence runs inline exactly as before.
+_DEFERRED_RUN_PERSISTENCE: ContextVar[_RunPersistenceGate | None] = ContextVar(
+    "agent_framework_deferred_run_persistence", default=None
+)
+
+# Identity of the agent run whose dynamic extent the current code executes in.
+# ``RawAgent.run`` stamps a fresh identity over each run (nested runs re-stamp within
+# their own extent); agents with fully custom run loops may never stamp one, in which
+# case the identity is ``None``. The active gate compares this identity against its
+# owner so that only the gated run's own persistence defers (see ``_RunPersistenceGate``).
+_CURRENT_RUN_IDENTITY: ContextVar[object | None] = ContextVar("agent_framework_current_run_identity", default=None)
+
+# One-shot claim handshake between the middleware layer's final handler and the run it
+# starts: ``(gate_or_None, agent)``. The final handler offers the gate carried by its
+# AgentContext (or ``None``, which also clears any stale ticket at every pipeline
+# boundary); the first ``RawAgent.run`` on the *same agent instance* adopts it and
+# binds the gate's owner to its fresh run identity. Keying the ticket to the agent
+# instance means middleware-initiated sibling runs and nested runs can never claim a
+# gate that belongs to another run.
+_PENDING_GATE_CLAIM: ContextVar[tuple[_RunPersistenceGate | None, object] | None] = ContextVar(
+    "agent_framework_pending_run_persistence_gate_claim", default=None
+)
+
+
+def _current_run_identity() -> object | None:  # pyright: ignore[reportUnusedFunction]
+    """Return the identity of the agent run currently executing, if any."""
+    return _CURRENT_RUN_IDENTITY.get()
+
+
+@contextlib.contextmanager
+def _run_identity_scope(identity: object) -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
+    """Stamp ``identity`` as the current run identity for the enclosed extent."""
+    token = _CURRENT_RUN_IDENTITY.set(identity)
+    try:
+        yield
+    finally:
+        _CURRENT_RUN_IDENTITY.reset(token)
+
+
+def _offer_run_persistence_gate_claim(  # pyright: ignore[reportUnusedFunction]
+    gate: _RunPersistenceGate | None, agent: object
+) -> None:
+    """Offer ``gate`` for adoption by the run that ``agent`` is about to start.
+
+    Called by the middleware layer's final handler for every pipeline execution (with
+    ``gate=None`` when the run carries no gate, which clears any stale ticket left by
+    an agent whose custom run loop never adopts).
+    """
+    _PENDING_GATE_CLAIM.set((gate, agent))
+
+
+def _adopt_run_persistence_gate_claim(agent: object, identity: object) -> None:  # pyright: ignore[reportUnusedFunction]
+    """Adopt a pending gate claim targeted at ``agent``, binding the gate to ``identity``.
+
+    Called from ``RawAgent.run``. Tickets targeted at a different agent instance are
+    left untouched: a nested or sibling run must never claim a gate that covers another
+    run's verdict.
+    """
+    ticket = _PENDING_GATE_CLAIM.get()
+    if ticket is None:
+        return
+    gate, target = ticket
+    if target is not agent:
+        return
+    _PENDING_GATE_CLAIM.set(None)
+    if gate is not None:
+        gate.bind_owner(identity)
+
+
+def _defer_run_persistence(persist: Callable[[], Awaitable[None]]) -> bool:
+    """Queue a persistence side effect behind the active run-persistence gate, if any.
+
+    Returns True when ``persist`` was deferred to the gate owner (which drains it via
+    :meth:`_RunPersistenceGate.flush` only after the gate scope has been exited, so
+    re-entrant calls run inline), and False when the caller must persist inline —
+    either because no gate is active, or because the persist belongs to a different
+    run than the one the gate covers (see :meth:`_RunPersistenceGate.accepts`).
+    """
+    gate = _DEFERRED_RUN_PERSISTENCE.get()
+    if gate is None:
+        return False
+    if not gate.accepts(_CURRENT_RUN_IDENTITY.get()):
+        return False
+    gate.collect(persist)
+    return True
+
+
+class _RunPersistenceGate:
+    """Owner handle for one guarded run section's deferred persistence.
+
+    The handle is a context manager: while entered, durable persistence side effects
+    routed through :func:`_defer_run_persistence` are collected instead of executed.
+    After the scope has been exited, the owner either releases them with :meth:`flush`
+    (the covering verdict permitted the content) or discards them with :meth:`drop`
+    (the content was denied and must never become durable).
+
+    Ownership: the gate covers one pipeline execution's verdict, so it only collects
+    persistence issued by the run(s) that pipeline's final handler started (see
+    :meth:`accepts`). The agent-seam gate is created before its run starts and is
+    bound lazily through the :func:`_offer_run_persistence_gate_claim` /
+    :func:`_adopt_run_persistence_gate_claim` handshake; the chat-seam gate is created
+    inside its run and bound immediately. A retrying or fallback middleware may invoke
+    ``call_next()`` several times, re-offering the same gate: **every** identity
+    adopted through the gate's own ticket becomes an accepted owner, so each attempt's
+    persistence stays deferred behind the final verdict (a first-bind-wins rule would
+    let later attempts persist inline ahead of the verdict — fail-open). While unbound
+    (an agent whose custom run loop never adopts the claim), the gate falls back
+    fail-closed: persists carrying no run identity defer, while persists from
+    identity-stamped (nested or sibling) runs execute inline at their own run
+    boundaries.
+
+    Reset-before-drain is enforced by construction: :meth:`flush` refuses to run while
+    the gate scope is still entered, and executes the collected callables with the
+    gate context suspended, so a re-entrant persistence call made by a flushed
+    callable always runs inline (each deferred persist is covered by exactly one
+    verdict — it is never re-deferred into an enclosing gate).
+
+    Usage (the gate owner is egress-enforcement middleware such as agent-hooks)::
+
+        gate = _RunPersistenceGate()
+        with gate:
+            ...  # the guarded section: persists issued here are collected
+        # verdict is issued here, outside the gate scope
+        await gate.flush()  # permitted: run the collected persists inline
+        # or gate.drop()    # denied: the content never becomes durable
+
+    Gates nest naturally through the context variable: an inner gate (for example a
+    hooked sub-agent run inside a hooked outer run) collects only its own section's
+    persists and restores the outer gate on exit.
+    """
+
+    __slots__ = ("_owner_identities", "_pending", "_token")
+
+    def __init__(self) -> None:
+        self._pending: list[Callable[[], Awaitable[None]]] = []
+        self._token: Token[_RunPersistenceGate | None] | None = None
+        self._owner_identities: list[object | None] = []
+
+    def bind_owner(self, owner: object | None) -> None:
+        """Add ``owner`` to the run identities whose persistence this gate defers.
+
+        Every bind accumulates (it never replaces). Both bind sites sit inside the
+        covered pipeline, so every added identity is a run whose persistence the
+        gate's one covering verdict must gate: the agent seam binds through the
+        gate's instance-keyed claim ticket (each run the pipeline's final handler
+        starts — e.g. successive attempts made by a retrying middleware), and the
+        chat seam binds directly at gate creation to the identity of the run it is
+        executing in. All of those runs' persists must stay deferred behind the
+        final verdict; dropping earlier identities (rebind) or ignoring later ones
+        (first-bind-wins) would let some attempt's persistence run inline ahead of
+        the verdict, which is fail-open.
+        """
+        if not any(existing is owner for existing in self._owner_identities):
+            self._owner_identities.append(owner)
+
+    def collect(self, persist: Callable[[], Awaitable[None]]) -> None:
+        """Collect one deferred persistence callable (see :func:`_defer_run_persistence`)."""
+        self._pending.append(persist)
+
+    def accepts(self, identity: object | None) -> bool:
+        """Whether a persist issued under ``identity`` belongs to this gate's run.
+
+        A bound gate accepts every identity adopted through its claim ticket (each
+        ``call_next()`` attempt of the covered pipeline — see :meth:`bind_owner`). An
+        unbound gate (its run never adopted the claim — a custom run loop) accepts
+        only identity-less persists: the covered run's own persists carry no identity
+        there (fail-closed, matching the pre-ownership behavior), while
+        identity-stamped persists come from other runs that own their content's
+        verdicts themselves.
+        """
+        if self._owner_identities:
+            return any(owner is identity for owner in self._owner_identities)
+        return identity is None
+
+    def __enter__(self) -> _RunPersistenceGate:
+        if self._token is not None:
+            raise RuntimeError("This run-persistence gate is already active; gates are not re-entrant.")
+        self._token = _DEFERRED_RUN_PERSISTENCE.set(self)
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
+        token = self._token
+        self._token = None
+        if token is not None:
+            _DEFERRED_RUN_PERSISTENCE.reset(token)
+
+    async def flush(self) -> None:
+        """Execute the deferred persistence in order (the covering verdict permitted it)."""
+        if self._token is not None:
+            raise RuntimeError(
+                "Cannot flush a run-persistence gate while its scope is still active: "
+                "re-entrant persistence would be re-deferred instead of running inline. "
+                "Exit the gate's context manager first."
+            )
+        # Suspend the gate context while draining: a flushed callable that re-checks
+        # the gate (e.g. _run_after_providers) must run inline, never re-defer into an
+        # enclosing gate — its own covering verdict already permitted it.
+        with _suspend_run_persistence_gate():
+            while self._pending:
+                await self._pending.pop(0)()
+
+    def drop(self) -> None:
+        """Discard the deferred persistence (the covering verdict denied the content)."""
+        self._pending.clear()
+
+
+@contextlib.contextmanager
+def _suspend_run_persistence_gate() -> Generator[None]:
+    """Run a nested section with no active run-persistence gate.
+
+    A run-persistence gate defers only the gated run's *own* persistence; nested agent
+    runs own their content's verdicts themselves (or are unguarded), so their
+    persistence must run inline: deferring it into the outer run's gate would silently
+    drop fully-permitted inner history on an outer deny, and a second nested read in
+    the same outer run would see stale history. Run-identity ownership (see
+    :meth:`_RunPersistenceGate.accepts`) enforces this for every identity-stamped run;
+    the function-invocation layer additionally wraps each tool invocation in this
+    suspension so that nested agents with fully custom run loops (which never stamp an
+    identity and would otherwise inherit the outer run's) also persist inline on the
+    tool path.
+    """
+    token = _DEFERRED_RUN_PERSISTENCE.set(None)
+    try:
+        yield
+    finally:
+        _DEFERRED_RUN_PERSISTENCE.reset(token)
+
+
 LOCAL_HISTORY_CONVERSATION_ID = "agent_framework_local_history_persistence"
 
 
@@ -1332,10 +1550,16 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
                 "instead."
             )
 
-        await self._persist_service_call_response(
+        # Durability is gated: when an egress-enforcement gate is active for this run,
+        # the persist is deferred until the model-call verdict permits the content
+        # (the sentinel/validation logic above stays inline — it drives control flow).
+        persist = partial(
+            self._persist_service_call_response,
             service_call_context=service_call_context,
             response=response,
         )
+        if not _defer_run_persistence(persist):
+            await persist()
         # The local sentinel only applies when the service does not store history; when it does,
         # the real conversation id already drives function-loop continuation.
         if not self._service_stores_history and _response_contains_follow_up_request(response):

@@ -714,8 +714,8 @@ async def test_non_function_result_content_in_tool_message_is_skipped() -> None:
 # thinking parts
 
 
-async def test_thinking_parts_are_silently_skipped() -> None:
-    """Excludes thought-summary parts from ChatResponse.contents, returning only the final answer."""
+async def test_thinking_parts_are_surfaced_as_reasoning() -> None:
+    """Surfaces thought-summary parts as text_reasoning content alongside the final answer."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([
@@ -728,8 +728,26 @@ async def test_thinking_parts_are_silently_skipped() -> None:
         messages=[Message(role="user", contents=[Content.from_text("What is the answer?")])]
     )
 
-    assert len(response.messages[0].contents) == 1
+    contents = response.messages[0].contents
+    assert len(contents) == 2
+    assert contents[0].type == "text_reasoning"
+    assert contents[0].text == "I should think first..."
+    assert contents[1].type == "text"
     assert response.messages[0].text == "The answer is 42."
+
+
+async def test_empty_thinking_part_produces_no_reasoning_content() -> None:
+    """A thought part with no text yields no content rather than empty reasoning."""
+    client, _ = _make_gemini_client()
+
+    contents = client._parse_parts([
+        _make_part(text=None, thought=True),
+        _make_part(text="The answer is 42."),
+    ])
+
+    assert len(contents) == 1
+    assert contents[0].type == "text"
+    assert contents[0].text == "The answer is 42."
 
 
 def test_function_call_part_preserves_thought_signature_from_raw_part() -> None:

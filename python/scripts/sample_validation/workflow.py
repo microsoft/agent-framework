@@ -12,6 +12,7 @@ from sample_validation.create_dynamic_workflow_executor import (
     CreateConcurrentValidationWorkflowExecutor,
 )
 from sample_validation.discovery import DiscoverSamplesExecutor, ValidationConfig
+from sample_validation.replay_executor import ReplayCachedPlaybooksExecutor
 from sample_validation.report import GenerateReportExecutor
 from sample_validation.run_dynamic_validation_workflow_executor import (
     RunDynamicValidationWorkflowExecutor,
@@ -31,13 +32,15 @@ def create_validation_workflow(
         Configured Workflow instance
     """
     discover = DiscoverSamplesExecutor(config)
+    replay = ReplayCachedPlaybooksExecutor(config)
     create_dynamic_workflow = CreateConcurrentValidationWorkflowExecutor(config)
     run_dynamic_workflow = RunDynamicValidationWorkflowExecutor()
     generate = GenerateReportExecutor()
 
     return (
         WorkflowBuilder(start_executor=discover)
-        .add_edge(discover, create_dynamic_workflow)
+        .add_edge(discover, replay)
+        .add_edge(replay, create_dynamic_workflow)
         .add_edge(create_dynamic_workflow, run_dynamic_workflow)
         .add_edge(run_dynamic_workflow, generate)
         .build()
