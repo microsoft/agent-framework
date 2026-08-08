@@ -19,7 +19,12 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 from .._sessions import ContextProvider
 from .._types import ResponseStream
 from ..exceptions import WorkflowException
-from ..observability import OtelAttr, capture_exception, create_workflow_span
+from ..observability import (
+    OtelAttr,
+    _set_sensitive_span_attributes,  # pyright: ignore[reportPrivateUsage]
+    capture_exception,
+    create_workflow_span,
+)
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
@@ -478,6 +483,7 @@ class Workflow(DictConvertible):
     async def _run_workflow_with_tracing(
         self,
         initial_executor_fn: Callable[[], Awaitable[None]] | None = None,
+        telemetry_input: Any | None = None,
         is_continuation: bool = False,
         streaming: bool = False,
         function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
@@ -490,6 +496,7 @@ class Workflow(DictConvertible):
 
         Args:
             initial_executor_fn: Optional function to execute initial executor.
+            telemetry_input: Input payload for this run, captured only when sensitive telemetry is enabled.
             is_continuation: True when this run is a continuation of prior
                 work (a checkpoint restore or a responses-only replay) rather
                 than a fresh new turn delivered via the start executor with
@@ -517,9 +524,20 @@ class Workflow(DictConvertible):
             OtelAttr.WORKFLOW_RUN_SPAN,
             attributes,
         ) as span:
+            from ..observability import OBSERVABILITY_SETTINGS
+
+            capture_workflow_io = OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and span.is_recording()
             saw_request = False
             emitted_in_progress_pending = False
+            workflow_outputs: list[Any] | None = [] if capture_workflow_io else None
             try:
+                if capture_workflow_io and telemetry_input is not None:
+                    _set_sensitive_span_attributes(
+                        span,
+                        telemetry_input,
+                        (OtelAttr.INPUT_VALUE,),
+                        (OtelAttr.INPUT_MIME_TYPE,),
+                    )
                 # Add workflow started event (telemetry + surface state to consumers)
                 span.add_event(OtelAttr.WORKFLOW_STARTED)
                 # Emit explicit start/status events to the stream
@@ -577,6 +595,8 @@ class Workflow(DictConvertible):
                     # Track request events for final status determination
                     if event.type == "request_info":
                         saw_request = True
+                    elif workflow_outputs is not None and event.type == "output":
+                        workflow_outputs.append(event.data)
                     yield event
 
                     if event.type == "request_info" and not emitted_in_progress_pending:
@@ -597,6 +617,13 @@ class Workflow(DictConvertible):
                         terminal_status = WorkflowEvent.status(self._status)
                     yield terminal_status
 
+                if workflow_outputs:
+                    _set_sensitive_span_attributes(
+                        span,
+                        workflow_outputs,
+                        (OtelAttr.OUTPUT_VALUE,),
+                        (OtelAttr.OUTPUT_MIME_TYPE,),
+                    )
                 span.add_event(OtelAttr.WORKFLOW_COMPLETED)
             except Exception as exc:
                 # Drain any pending events (for example, executor_failed) before yielding failed event
@@ -872,9 +899,13 @@ class Workflow(DictConvertible):
                     )
 
             initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
+            telemetry_input = message.data if isinstance(message, WorkflowMessage) else message
+            if telemetry_input is None:
+                telemetry_input = responses
 
             async for event in self._run_workflow_with_tracing(
                 initial_executor_fn=initial_executor_fn,
+                telemetry_input=telemetry_input,
                 is_continuation=(message is None),
                 streaming=streaming,
                 function_invocation_kwargs=function_invocation_kwargs,

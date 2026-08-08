@@ -98,6 +98,17 @@ class FanInAggregator(Executor):
         return self._processed_messages
 
 
+class OutputExecutor(Executor):
+    """Executor that yields a structured workflow output for telemetry tests."""
+
+    def __init__(self, id: str = "output_executor") -> None:
+        super().__init__(id=id)
+
+    @handler
+    async def handle_message(self, message: dict[str, int], ctx: WorkflowContext[Any, dict[str, int]]) -> None:
+        await ctx.yield_output({"result": message["value"] + 1})
+
+
 async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter) -> None:
     """Test creation and attributes of all span types (workflow, processing, sending)."""
     # Create a mock workflow object
@@ -227,6 +238,122 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
     assert processing_span.attributes.get("executor.type") == "MockExecutor"
     assert processing_span.attributes.get("message.type") == str(MessageType.STANDARD)
     assert processing_span.attributes.get("message.payload_type") == "str"
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_workflow_payloads_are_captured_when_sensitive_data_enabled(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    workflow = WorkflowBuilder(start_executor=OutputExecutor()).build()
+    span_exporter.clear()
+
+    workflow_message = WorkflowMessage(data={"value": 1}, source_id="external", target_id=None)
+    async for _ in workflow.run(workflow_message, stream=True):
+        pass
+
+    spans = span_exporter.get_finished_spans()
+    workflow_span = next(span for span in spans if span.name == OtelAttr.WORKFLOW_RUN_SPAN)
+    executor_span = next(span for span in spans if span.name == "executor.process output_executor")
+
+    assert workflow_span.attributes is not None
+    assert workflow_span.attributes[OtelAttr.INPUT_VALUE] == '{"value": 1}'
+    assert workflow_span.attributes[OtelAttr.OUTPUT_VALUE] == '[{"result": 2}]'
+    assert workflow_span.attributes[OtelAttr.INPUT_MIME_TYPE] == OtelAttr.JSON_MIME_TYPE
+    assert workflow_span.attributes[OtelAttr.OUTPUT_MIME_TYPE] == OtelAttr.JSON_MIME_TYPE
+
+    assert executor_span.attributes is not None
+    assert executor_span.attributes[OtelAttr.EXECUTOR_INPUT] == '{"value": 1}'
+    assert executor_span.attributes[OtelAttr.EXECUTOR_OUTPUT] == '[{"result": 2}]'
+    assert executor_span.attributes[OtelAttr.INPUT_VALUE] == '{"value": 1}'
+    assert executor_span.attributes[OtelAttr.OUTPUT_VALUE] == '[{"result": 2}]'
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_workflow_payloads_are_omitted_when_sensitive_data_disabled(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    workflow = WorkflowBuilder(start_executor=OutputExecutor()).build()
+    span_exporter.clear()
+
+    async for _ in workflow.run({"value": 1}, stream=True):
+        pass
+
+    payload_attributes = {
+        OtelAttr.EXECUTOR_INPUT,
+        OtelAttr.EXECUTOR_OUTPUT,
+        OtelAttr.MESSAGE_CONTENT,
+        OtelAttr.INPUT_VALUE,
+        OtelAttr.OUTPUT_VALUE,
+        OtelAttr.INPUT_MIME_TYPE,
+        OtelAttr.OUTPUT_MIME_TYPE,
+    }
+    for span in span_exporter.get_finished_spans():
+        assert span.attributes is not None
+        assert payload_attributes.isdisjoint(span.attributes)
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_message_send_captures_content_and_routing(span_exporter: InMemorySpanExporter) -> None:
+    workflow_ctx: WorkflowContext[str] = WorkflowContext(
+        MockExecutor("source_executor"),
+        ["source"],
+        State(),
+        InProcRunnerContext(),
+    )
+
+    await workflow_ctx.send_message("hello", target_id="target_executor")
+
+    sending_span = next(span for span in span_exporter.get_finished_spans() if span.name == OtelAttr.MESSAGE_SEND_SPAN)
+    assert sending_span.attributes is not None
+    assert sending_span.attributes[OtelAttr.MESSAGE_SOURCE_ID] == "source_executor"
+    assert sending_span.attributes[OtelAttr.MESSAGE_TARGET_ID] == "target_executor"
+    assert sending_span.attributes[OtelAttr.MESSAGE_CONTENT] == '"hello"'
+    assert sending_span.attributes[OtelAttr.INPUT_VALUE] == '"hello"'
+    assert sending_span.attributes[OtelAttr.INPUT_MIME_TYPE] == OtelAttr.JSON_MIME_TYPE
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_message_send_telemetry_serialization_cannot_break_workflow(
+    span_exporter: InMemorySpanExporter,
+) -> None:
+    class UnserializablePayload:
+        __slots__ = ()
+
+        def __str__(self) -> str:
+            raise RuntimeError("cannot stringify")
+
+    workflow_ctx: WorkflowContext[Any] = WorkflowContext(
+        MockExecutor("source_executor"),
+        ["source"],
+        State(),
+        InProcRunnerContext(),
+    )
+
+    await workflow_ctx.send_message(UnserializablePayload())
+
+    sending_span = next(span for span in span_exporter.get_finished_spans() if span.name == OtelAttr.MESSAGE_SEND_SPAN)
+    assert sending_span.attributes is not None
+    assert "[Unserializable:" in str(sending_span.attributes[OtelAttr.MESSAGE_CONTENT])
+
+
+@pytest.mark.parametrize("non_finite_value", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_message_send_telemetry_rejects_non_finite_json_values(
+    span_exporter: InMemorySpanExporter,
+    non_finite_value: float,
+) -> None:
+    workflow_ctx: WorkflowContext[float] = WorkflowContext(
+        MockExecutor("source_executor"),
+        ["source"],
+        State(),
+        InProcRunnerContext(),
+    )
+
+    await workflow_ctx.send_message(non_finite_value)
+
+    sending_span = next(span for span in span_exporter.get_finished_spans() if span.name == OtelAttr.MESSAGE_SEND_SPAN)
+    assert sending_span.attributes is not None
+    assert sending_span.attributes[OtelAttr.MESSAGE_CONTENT] == '"[Unserializable: builtins.float]"'
 
 
 @pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)

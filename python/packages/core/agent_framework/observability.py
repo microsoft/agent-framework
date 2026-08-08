@@ -44,6 +44,7 @@ from typing_extensions import Sentinel
 from . import __version__ as version_info
 from ._serialization import (
     _is_serialization_protocol,  # pyright: ignore[reportPrivateUsage]
+    make_json_safe,
 )
 from ._settings import load_settings
 
@@ -304,6 +305,8 @@ class OtelAttr(str, Enum):
     EXECUTOR_PROCESS_SPAN = "executor.process"
     EXECUTOR_ID = "executor.id"
     EXECUTOR_TYPE = "executor.type"
+    EXECUTOR_INPUT = "executor.input"
+    EXECUTOR_OUTPUT = "executor.output"
     # Edge group attributes
     EDGE_GROUP_PROCESS_SPAN = "edge_group.process"
     EDGE_GROUP_TYPE = "edge_group.type"
@@ -317,6 +320,15 @@ class OtelAttr(str, Enum):
     MESSAGE_TYPE = "message.type"
     MESSAGE_PAYLOAD_TYPE = "message.payload_type"
     MESSAGE_DESTINATION_EXECUTOR_ID = "message.destination_executor_id"
+    MESSAGE_CONTENT = "message.content"
+
+    # OpenInference attributes for vendor-neutral input/output ingestion.
+    # https://arize-ai.github.io/openinference/spec/semantic_conventions.html
+    INPUT_VALUE = "input.value"
+    INPUT_MIME_TYPE = "input.mime_type"
+    OUTPUT_VALUE = "output.value"
+    OUTPUT_MIME_TYPE = "output.mime_type"
+    JSON_MIME_TYPE = "application/json"
 
     # Activity events
     EVENT_NAME = "event.name"
@@ -354,6 +366,32 @@ class OtelAttr(str, Enum):
     def __str__(self) -> str:
         """Return the string representation of the enum member."""
         return self.value
+
+
+def _serialize_for_telemetry(value: Any) -> str:
+    """Serialize heterogeneous telemetry payloads without affecting application execution."""
+    try:
+        return json.dumps(make_json_safe(value), ensure_ascii=False, allow_nan=False)
+    except Exception:
+        value_type = f"{type(value).__module__}.{type(value).__qualname__}"
+        return json.dumps(f"[Unserializable: {value_type}]", ensure_ascii=False)
+
+
+def _set_sensitive_span_attributes(  # pyright: ignore[reportUnusedFunction]
+    span: trace.Span,
+    value: Any,
+    value_attributes: Sequence[str | OtelAttr],
+    mime_type_attributes: Sequence[str | OtelAttr] = (),
+) -> None:
+    """Set serialized payload attributes only when sensitive telemetry is enabled."""
+    if not OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED or not span.is_recording():
+        return
+
+    serialized_value = _serialize_for_telemetry(value)
+    for attribute in value_attributes:
+        span.set_attribute(attribute, serialized_value)
+    for attribute in mime_type_attributes:
+        span.set_attribute(attribute, OtelAttr.JSON_MIME_TYPE)
 
 
 ROLE_EVENT_MAP = {
