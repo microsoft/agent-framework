@@ -202,9 +202,14 @@ class AgentExecutor(Executor):
     ) -> None:
         """Handle an AgentExecutorRequest (canonical input).
 
-        This is the standard path: extend cache with provided messages; if should_respond
-        run the agent and emit an AgentExecutorResponse downstream.
+        This is the standard path: extend cache with provided messages; if should_respond,
+        run the agent and emit an AgentExecutorResponse downstream. When the request
+        replays function-call history, clear the service session because those messages
+        provide the continuation context explicitly.
         """
+        if any(content.type == "function_call" for message in request.messages for content in message.contents):
+            self._session.service_session_id = None
+
         self._cache.extend(request.messages)
 
         if request.should_respond:

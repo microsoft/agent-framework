@@ -3,7 +3,6 @@
 from collections.abc import AsyncIterable, Awaitable
 from typing import Any, Literal, overload
 
-import pytest
 from pydantic import PrivateAttr
 from typing_extensions import Never
 
@@ -434,15 +433,6 @@ class _FullHistoryReplayCoordinator(Executor):
         )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Tracks the executor-layer half of #3295: AgentExecutor should clear service_session_id "
-        "when handed a full prior conversation. The wire-level 'Duplicate item' API error is "
-        "already closed by the chat-client strip in #3295; this xfail covers the defense-in-depth "
-        "follow-up that makes the executor wiring reflect intent."
-    ),
-    strict=True,
-)
 async def test_run_request_with_full_history_clears_service_session_id() -> None:
     """Replaying a full conversation (including function calls) via AgentExecutorRequest must
     clear service_session_id so the API does not receive both previous_response_id and the
@@ -470,6 +460,36 @@ async def test_run_request_with_full_history_clears_service_session_id() -> None
     # "Duplicate item found" because the same function-call IDs appear in both
     # previous_response_id (server-stored) and the explicit input messages.
     assert spy_agent._captured_service_session_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_run_request_with_function_result_preserves_service_session_id() -> None:
+    """A function result continues the service-stored call instead of replaying it."""
+    spy_agent = _SessionIdCapturingAgent(id="result_spy_agent", name="ResultSpyAgent")
+    spy_exec = AgentExecutor(spy_agent, id="result_spy_agent")
+    spy_exec._session.service_session_id = "resp_PENDING_TOOL_CALL"  # pyright: ignore[reportPrivateUsage]
+
+    @executor(id="function_result_source")
+    async def function_result_source(
+        _: str,
+        ctx: WorkflowContext[AgentExecutorRequest, Any],
+    ) -> None:
+        await ctx.send_message(
+            AgentExecutorRequest(
+                messages=[
+                    Message(
+                        role="tool",
+                        contents=[Content.from_function_result(call_id="call_weather_1", result="Sunny, 72F")],
+                    )
+                ],
+                should_respond=True,
+            )
+        )
+
+    wf = WorkflowBuilder(start_executor=function_result_source).add_edge(function_result_source, spy_exec).build()
+
+    await wf.run("tool result")
+
+    assert spy_agent._captured_service_session_id == "resp_PENDING_TOOL_CALL"  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_from_response_preserves_service_session_id() -> None:
