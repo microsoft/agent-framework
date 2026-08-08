@@ -196,6 +196,13 @@ class HandoffAgentUserRequest:
 _AUTONOMOUS_MODE_DEFAULT_PROMPT = "User did not respond. Continue assisting autonomously."
 _DEFAULT_AUTONOMOUS_TURN_LIMIT = 50
 
+# Sent to the handoff target when the handing-off agent's response cleans to no messages at
+# all (e.g. a response consisting solely of the handoff tool call, with no text content). In
+# that case the broadcast to other participants carries nothing. Depending on what the target
+# has already accumulated from earlier broadcasts, this can leave its cache empty; agents that
+# reject empty input would otherwise be invoked with nothing to work with.
+_HANDOFF_CONTINUATION_DEFAULT_INSTRUCTION = "Continue the conversation."
+
 # region Handoff Agent Executor
 
 
@@ -407,8 +414,15 @@ class HandoffAgentExecutor(AgentExecutor):
             # tool result.
             self._cache.append(handoff_message)
 
+            # cleaned_response drops every message with no text content, so a response that
+            # is only a handoff tool call cleans to an empty list. When that happens the
+            # broadcast above carried nothing, so send a continuation instruction instead of
+            # an empty request to avoid invoking the target with no messages at all.
+            handoff_request_messages = (
+                [] if cleaned_response else [Message(role="user", contents=[_HANDOFF_CONTINUATION_DEFAULT_INSTRUCTION])]
+            )
             await ctx.send_message(
-                AgentExecutorRequest(messages=[], should_respond=True),
+                AgentExecutorRequest(messages=handoff_request_messages, should_respond=True),
                 target_id=handoff_target,
             )
             await ctx.add_event(
