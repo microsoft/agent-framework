@@ -35,7 +35,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast, TypeGuard
 
 import msgspec
 
@@ -68,6 +68,7 @@ _MESSAGE_INJECTION_LOCK = threading.Lock()
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
 ServiceSessionId: TypeAlias = Mapping[str, Any]
+MessageIdentity: TypeAlias = tuple[str, ...]
 StateT = TypeVar("StateT")
 StateEncoder: TypeAlias = Callable[[Any], Mapping[str, Any]]
 StateDecoder: TypeAlias = Callable[[Mapping[str, Any]], Any]
@@ -187,13 +188,92 @@ def _deduplicate_origin_session_ids(origin_session_ids: Iterable[str]) -> list[s
     return unique_origin_session_ids
 
 
+def get_message_identity(message: Message) -> MessageIdentity:
+    """Return a stable identity for a message for deduplication.
+
+    Uses the message's ID if available, otherwise falls back to a hash of
+    its role and serialized contents to prevent duplicate persistence.
+    """
+    msg_id = getattr(message, "message_id", None)
+    if msg_id is None:
+        msg_id = getattr(message, "id", None)
+    if msg_id is not None:
+        return ("id", str(msg_id))
+
+    try:
+        contents_data = [c.to_dict() for c in message.contents] if message.contents else []
+        serialized = json.dumps(contents_data, sort_keys=True, ensure_ascii=False)
+        return ("content", str(message.role), serialized)
+    except Exception:
+        return ("content", str(message.role), str(message.contents))
+
+
+def _get_message_hash(message: Message) -> tuple:
+    """Stable hash for sequence matching."""
+    return get_message_identity(message)
+
+
+def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]) -> list[Message]:
+    """Filters incoming messages to only those that are truly new.
+
+    Handles both 'append-only' and 'full transcript replay' scenarios.
+    Prevents superlinear growth and preserves legitimate duplicate turns.
+    """
+    if not existing:
+        return list(incoming)
+
+    existing_hashes = [_get_message_hash(m) for m in existing]
+    incoming_hashes = [_get_message_hash(m) for m in incoming]
+
+    if len(incoming) >= len(existing) and incoming_hashes[: len(existing_hashes)] == existing_hashes:
+        return list(incoming[len(existing) :])
+
+    last_existing_hash = existing_hashes[-1]
+    try:
+        split_idx = -1
+        for i in range(len(incoming_hashes) - 1, -1, -1):
+            if incoming_hashes[i] == last_existing_hash:
+                match = True
+                for j in range(1, min(i + 1, len(existing_hashes))):
+                    if incoming_hashes[i - j] != existing_hashes[-(j + 1)]:
+                        match = False
+                        break
+                if match:
+                    split_idx = i
+                    break
+
+        if split_idx != -1:
+            return list(incoming[split_idx + 1 :])
+    except Exception:
+        logger.debug("sequence alignment check failed, falling back to set-based deduplication")
+
+    existing_set = set(existing_hashes)
+    new_msgs = []
+    for m, h in zip(incoming, incoming_hashes):
+        if h not in existing_set:
+            new_msgs.append(m)
+            existing_set.add(h)
+    return new_msgs
+
+
+def _is_middleware_sequence(
+    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
+) -> TypeGuard[Sequence[MiddlewareTypes]]:
+    return isinstance(middleware, Sequence) and not isinstance(middleware, (str, bytes))
+
+
+def _is_single_middleware(
+    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
+) -> TypeGuard[MiddlewareTypes]:
+    return not _is_middleware_sequence(middleware)
+
+
 @dataclass(frozen=True, slots=True)
 class _StateTypeRegistration:
     cls: type[Any]
     type_id: str
     encoder: StateEncoder
     decoder: StateDecoder
-
 
 _STATE_TYPE_REGISTRY: dict[str, _StateTypeRegistration] = {}
 _STATE_CLASS_REGISTRY: dict[type[Any], _StateTypeRegistration] = {}
@@ -2057,10 +2137,13 @@ class InMemoryHistoryProvider(HistoryProvider):
     ) -> None:
         """Persist messages to session state."""
         mark_feature_used(FeatureIndex.CORE_IN_MEMORY_HISTORY_PROVIDER)
-        if state is None:
+        if state is None or not messages:
             return
         existing = state.get("messages", [])
-        state["messages"] = [*existing, *messages]
+        new_messages = filter_new_messages(existing, messages)
+
+        if new_messages:
+            state["messages"] = [*existing, *new_messages]
 
 
 @experimental(feature_id=ExperimentalFeature.FILE_HISTORY)
@@ -2219,9 +2302,26 @@ class FileHistoryProvider(HistoryProvider):
         def _append_messages() -> None:
             with file_lock:
                 if self.serialization_format == "json":
-                    with file_path.open("a", encoding="utf-8") as file_handle:
-                        for message in messages:
-                            file_handle.write(f"{self._serialize_json_message(message)}\n")
+                    existing_messages: list[Message] = []
+                    if file_path.exists():
+                        with file_path.open("r", encoding="utf-8") as f:
+                            for line in f:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                try:
+                                    payload = self.loads(line)
+                                    msg = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
+                                    existing_messages.append(msg)
+                                except Exception:
+                                    logger.debug("failed to parse history line for deduplication")
+                                    continue
+
+                    new_messages = filter_new_messages(existing_messages, messages)
+                    if new_messages:
+                        with file_path.open("a", encoding="utf-8") as file_handle:
+                            for message in new_messages:
+                                file_handle.write(f"{self._serialize_json_message(message)}\n")
                     return
                 with file_path.open("ab") as file_handle:
                     for message in messages:
