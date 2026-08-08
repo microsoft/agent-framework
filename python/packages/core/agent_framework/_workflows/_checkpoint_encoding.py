@@ -131,14 +131,16 @@ _GETATTR_GLOBAL_KEYS: frozenset[str] = frozenset({
     "__builtin__:getattr",
 })
 
+_CUSTOM_ALLOWED_TYPES: set[str] = set()
+
 
 class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-usage]
     """Unpickler that restricts which classes may be instantiated.
 
     Only classes whose ``module:qualname`` key appears in the combined allow
     set (built-in safe types + framework types + OpenAI SDK types +
-    caller-specified extras) are permitted.  All other classes raise
-    :class:`pickle.UnpicklingError`.
+    caller-specified extras + globally registered custom types) are permitted.
+    All other classes raise :class:`pickle.UnpicklingError`.
     """
 
     def __init__(self, data: bytes, allowed_types: frozenset[str]) -> None:
@@ -150,6 +152,7 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
         return (
             type_key in _BUILTIN_ALLOWED_TYPE_KEYS
             or type_key in self._allowed_types
+            or type_key in _CUSTOM_ALLOWED_TYPES
             or resolved.__module__.startswith(_FRAMEWORK_MODULE_PREFIX)
             or resolved.__module__.startswith(_OPENAI_MODULE_PREFIX)
         )
@@ -191,7 +194,7 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
         if type_key in _BUILTIN_ALLOWED_TYPE_KEYS:
             return super().find_class(module, name)  # nosec
 
-        if type_key in self._allowed_types:
+        if type_key in self._allowed_types or type_key in _CUSTOM_ALLOWED_TYPES:
             resolved = super().find_class(module, name)  # nosec
             if isinstance(resolved, type):
                 return resolved
@@ -209,10 +212,10 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
 
         raise pickle.UnpicklingError(
             f"Checkpoint deserialization blocked for type '{type_key}'. "
-            f"To allow this type, either include its 'module:qualname' key in the "
-            f"'allowed_types' set passed to 'decode_checkpoint_value', or add it to "
-            f"'allowed_checkpoint_types' on your checkpoint storage "
-            f"(for example, 'FileCheckpointStorage.allowed_checkpoint_types')."
+            f"To allow this type, register it globally via 'agent_framework.register_checkpoint_type', "
+            f"include its 'module:qualname' key in the 'allowed_types' set passed to 'decode_checkpoint_value', "
+            f"or pass 'allowed_checkpoint_types' to your checkpoint storage "
+            f"(for example, 'FileCheckpointStorage(..., allowed_checkpoint_types=[...])')."
         )
 
 
@@ -395,3 +398,31 @@ def _type_to_key(t: type[Any]) -> str:
 def _value_type_to_key(value: object) -> str:
     """Convert a value's type to a module:qualname string."""
     return _type_to_key(type(value))
+
+
+def register_checkpoint_type(cls_or_key: type[Any] | str) -> None:
+    """Register a custom type globally to be allowed during checkpoint deserialization.
+
+    .. warning::
+        Registration modifies a process-wide allowlist used during restricted unpickling.
+        Only register trusted application-defined types.
+
+    Each registered type should be either a type class (e.g., custom models or
+    dataclasses) or a ``"module:qualname"`` string.
+
+    Args:
+        cls_or_key: The type class or module-qualified string to register.
+    """
+    if isinstance(cls_or_key, str):
+        if cls_or_key.count(":") != 1:
+            raise ValueError("Type key must be in the format 'module:qualname'.")
+        module, sep, qualname = cls_or_key.partition(":")
+        module = module.strip()
+        qualname = qualname.strip()
+        if not sep or not module or not qualname:
+            raise ValueError("Type key must be in the format 'module:qualname'.")
+        _CUSTOM_ALLOWED_TYPES.add(f"{module}:{qualname}")
+    elif isinstance(cls_or_key, type):
+        _CUSTOM_ALLOWED_TYPES.add(_type_to_key(cls_or_key))
+    else:
+        raise TypeError("Expected a type class or a 'module:qualname' string.")
