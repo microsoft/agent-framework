@@ -249,7 +249,8 @@ class BackgroundAgentsProvider(ContextProvider):
     This provider exposes the following tools to the agent:
 
     - ``background_agents_start_task`` — Start a background task on a named agent with text input.
-    - ``background_agents_wait_for_first_completion`` — Block until the first of the specified tasks completes.
+    - ``background_agents_wait_for_first_completion`` — Block until the first of the specified tasks
+      completes, bounded by the provider's wait timeout (or the ``timeout_seconds`` argument).
     - ``background_agents_get_task_results`` — Retrieve the text output of a completed background task.
     - ``background_agents_get_all_tasks`` — List all background tasks with their IDs, statuses, and descriptions.
     - ``background_agents_continue_task`` — Send follow-up input to a completed task's session to resume work.
@@ -271,6 +272,7 @@ class BackgroundAgentsProvider(ContextProvider):
         *,
         source_id: str = DEFAULT_BACKGROUND_AGENTS_SOURCE_ID,
         instructions: str | None = None,
+        wait_timeout_seconds: float | None = 300.0,
     ) -> None:
         """Initialize the background agents provider.
 
@@ -286,6 +288,10 @@ class BackgroundAgentsProvider(ContextProvider):
             source_id: Unique source ID for serializable task state in session.
             instructions: Optional instruction override. May include ``{background_agents}``
                 placeholder which will be replaced with the agent listing.
+            wait_timeout_seconds: Maximum number of seconds
+                ``background_agents_wait_for_first_completion`` blocks before returning control to
+                the model with the current task statuses. ``None`` waits indefinitely. Defaults to
+                300 seconds so a child that never completes cannot suspend the parent's run forever.
 
         Raises:
             ValueError: If agents is empty, an agent has no name, or names are not unique.
@@ -293,6 +299,7 @@ class BackgroundAgentsProvider(ContextProvider):
         super().__init__(source_id)
 
         self._agents = _validate_and_build_agent_dict(agents)
+        self._wait_timeout_seconds = wait_timeout_seconds
 
         # Build instructions with agent listing.
         base_instructions = instructions if instructions is not None else DEFAULT_BACKGROUND_AGENTS_INSTRUCTIONS
@@ -363,8 +370,20 @@ class BackgroundAgentsProvider(ContextProvider):
         background_agents_start_task._invoke_sync_on_event_loop = True  # pyright: ignore[reportPrivateUsage]
 
         @tool(name="background_agents_wait_for_first_completion", approval_mode="never_require")
-        async def background_agents_wait_for_first_completion(task_ids: list[int]) -> str:
-            """Block until the first of the specified background tasks completes. Returns the completed task's ID."""
+        async def background_agents_wait_for_first_completion(
+            task_ids: list[int],
+            timeout_seconds: float | None = None,
+        ) -> str:
+            """Block until the first of the specified background tasks completes, up to a timeout.
+
+            Returns the completed task's ID, or the current task statuses if the timeout elapses
+            first (in which case call this tool again or check task results to proceed).
+
+            Args:
+                task_ids: IDs of background tasks to wait on.
+                timeout_seconds: Maximum time to wait in seconds. When omitted, the provider's
+                    ``wait_timeout_seconds`` is used.
+            """
             if not task_ids:
                 return "Error: No task IDs provided."
 
@@ -387,11 +406,27 @@ class BackgroundAgentsProvider(ContextProvider):
                     )
                 return "Error: None of the specified task IDs correspond to running tasks."
 
-            # Wait for the first one to complete.
+            # Wait for the first one to complete, bounded so a child that never completes
+            # cannot suspend the calling agent's run indefinitely.
+            effective_timeout = self._wait_timeout_seconds if timeout_seconds is None else timeout_seconds
+            if effective_timeout is not None and effective_timeout < 0:
+                return "Error: timeout_seconds must be non-negative."
             done, _ = await asyncio.wait(
                 [t for _, t in waitable],
                 return_when=asyncio.FIRST_COMPLETED,
+                timeout=effective_timeout,
             )
+
+            if not done:
+                # asyncio.wait with timeout=None blocks indefinitely, so this branch is only
+                # reachable when a numeric timeout was in effect.
+                # Refresh state so a task whose runtime disappeared is surfaced as LOST,
+                # then hand control back to the model with an honest status report.
+                tasks = _refresh_task_state(session, provider_state, runtime, source_id=source_id)
+                status_lines = [f"- Task {t.id} [{t.status.value}]" for t in tasks if t.id in task_ids]
+                status_text = "\n".join(status_lines) if status_lines else "No matching tasks found."
+                timeout_label = f"{effective_timeout:g}" if effective_timeout is not None else "unlimited"
+                return f"No task completed within {timeout_label} seconds. Current task statuses:\n{status_text}"
 
             # Find which ID completed.
             completed_id: int | None = None

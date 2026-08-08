@@ -65,6 +65,23 @@ class _FakeAgent:
         return AgentResponse(messages=[Message(role="assistant", contents=[self._response_text])])
 
 
+class _HangingAgent:
+    """Agent stub whose run never completes, simulating a stuck child task."""
+
+    name = "Hanger"
+    description = None
+
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id)
+
+    async def run(
+        self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
+    ) -> AgentResponse[Any]:
+        del messages, stream, session, kwargs
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
 def _make_provider(*agents: _FakeAgent) -> BackgroundAgentsProvider:
     """Create a provider with given agents."""
     return BackgroundAgentsProvider(agents)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
@@ -290,6 +307,139 @@ async def test_wait_no_running_tasks() -> None:
         task_ids=[999],
     )
     assert "Error" in result or "not running" in result.lower()
+
+
+async def test_wait_for_first_completion_timeout() -> None:
+    """Should return current statuses instead of hanging when no task completes within the timeout."""
+    provider = _make_provider(_HangingAgent())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Hanger",
+        input="go",
+        description="never finishes",
+    )
+    try:
+        result = await _invoke_tool(
+            tools["background_agents_wait_for_first_completion"],
+            task_ids=[1],
+            timeout_seconds=0.05,
+        )
+        assert "no task completed within" in result.lower()
+        assert "running" in result.lower()
+    finally:
+        runtime = provider._get_runtime(session)
+        for task in list(runtime.in_flight_tasks.values()):
+            task.cancel()
+        await asyncio.gather(*runtime.in_flight_tasks.values(), return_exceptions=True)
+
+
+async def test_wait_timeout_uses_provider_default() -> None:
+    """Should apply the provider's wait_timeout_seconds when the tool timeout is omitted."""
+    provider = BackgroundAgentsProvider(
+        [_HangingAgent()],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        wait_timeout_seconds=0.05,
+    )
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Hanger",
+        input="go",
+        description="never finishes",
+    )
+    try:
+        result = await _invoke_tool(
+            tools["background_agents_wait_for_first_completion"],
+            task_ids=[1],
+        )
+        assert "no task completed within" in result.lower()
+        assert "running" in result.lower()
+    finally:
+        runtime = provider._get_runtime(session)
+        for task in list(runtime.in_flight_tasks.values()):
+            task.cancel()
+        await asyncio.gather(*runtime.in_flight_tasks.values(), return_exceptions=True)
+
+
+async def test_wait_for_first_completion_with_explicit_timeout() -> None:
+    """Should still return the completed task when it finishes before the timeout elapses."""
+    provider = _make_provider(_FakeAgent("Fast", response_text="fast result", delay=0.01))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Fast",
+        input="go",
+        description="fast task",
+    )
+    result = await _invoke_tool(
+        tools["background_agents_wait_for_first_completion"],
+        task_ids=[1],
+        timeout_seconds=5.0,
+    )
+    assert "finished" in result.lower()
+    assert "completed" in result.lower()
+
+
+async def test_wait_for_first_completion_rejects_negative_tool_timeout() -> None:
+    """Should return an error message instead of raising for a negative tool timeout."""
+    provider = _make_provider(_HangingAgent())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Hanger",
+        input="go",
+        description="never finishes",
+    )
+    try:
+        result = await _invoke_tool(
+            tools["background_agents_wait_for_first_completion"],
+            task_ids=[1],
+            timeout_seconds=-1,
+        )
+        assert "error" in result.lower()
+        assert "non-negative" in result.lower()
+    finally:
+        runtime = provider._get_runtime(session)
+        for task in list(runtime.in_flight_tasks.values()):
+            task.cancel()
+        await asyncio.gather(*runtime.in_flight_tasks.values(), return_exceptions=True)
+
+
+async def test_wait_for_first_completion_rejects_negative_provider_timeout() -> None:
+    """Should return an error message instead of raising for a negative provider timeout."""
+    provider = BackgroundAgentsProvider(
+        [_HangingAgent()],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        wait_timeout_seconds=-1,
+    )
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Hanger",
+        input="go",
+        description="never finishes",
+    )
+    try:
+        result = await _invoke_tool(
+            tools["background_agents_wait_for_first_completion"],
+            task_ids=[1],
+        )
+        assert "error" in result.lower()
+        assert "non-negative" in result.lower()
+    finally:
+        runtime = provider._get_runtime(session)
+        for task in list(runtime.in_flight_tasks.values()):
+            task.cancel()
+        await asyncio.gather(*runtime.in_flight_tasks.values(), return_exceptions=True)
 
 
 # --- Get Task Results Tests ---
