@@ -21,6 +21,7 @@ from agent_framework import (
     InMemoryCheckpointStorage,
     RunContext,
     StepWrapper,
+    WorkflowCheckpoint,
     WorkflowEvent,
     WorkflowRunResult,
     WorkflowRunState,
@@ -228,6 +229,135 @@ class TestParallelExecution:
 
 
 class TestHITL:
+    async def test_response_only_resume_requires_returned_continuation_token(self):
+        @workflow
+        async def review_wf(doc: str, ctx: RunContext) -> str:
+            feedback = await ctx.request_info({"draft": doc}, response_type=str, request_id="predictable")
+            return f"Final: {feedback}"
+
+        paused = await review_wf.run("caller data")
+
+        assert paused.continuation_token is not None
+        assert json.loads(json.dumps(paused.continuation_token)) == paused.continuation_token
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+            await review_wf.run(responses={"predictable": "stolen"})
+
+        completed = await review_wf.run(
+            responses={"predictable": "approved"},
+            continuation_token=paused.continuation_token,
+        )
+
+        assert completed.get_outputs() == ["Final: approved"]
+        assert completed.continuation_token is None
+
+    async def test_case_119969_rejects_cross_caller_resume_before_response_correlation(self):
+        @workflow
+        async def private_wf(message: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info(
+                {"private": message},
+                response_type=str,
+                request_id="private-request-id",
+            )
+            return f"{message}:{answer}"
+
+        paused = await private_wf.run("caller-secret")
+        assert paused.continuation_token is not None
+        wrong_token = json.loads(json.dumps(paused.continuation_token))
+        wrong_token["token"] = "wrong-token"
+
+        for invalid_token in (None, json.loads("{}"), json.loads('"malformed"'), wrong_token):
+            with pytest.raises(ValueError) as exc_info:
+                await private_wf.run(
+                    responses={"guessed-request-id": "attacker-input"},
+                    continuation_token=invalid_token,
+                )
+
+            assert str(exc_info.value) == "Invalid functional workflow continuation authority."
+            assert "caller-secret" not in str(exc_info.value)
+            assert "private-request-id" not in str(exc_info.value)
+            assert "wrong-token" not in str(exc_info.value)
+
+        completed = await private_wf.run(
+            responses={"private-request-id": "authorized"},
+            continuation_token=paused.continuation_token,
+        )
+        assert completed.get_outputs() == ["caller-secret:authorized"]
+
+    async def test_non_ascii_continuation_token_is_rejected_as_invalid_authority(self):
+        @workflow
+        async def review_wf(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info(doc, response_type=str, request_id="review")
+
+        paused = await review_wf.run("draft")
+        malformed_token = json.loads(json.dumps(paused.continuation_token))
+        malformed_token["token"] = "caf\u00e9"
+
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+            await review_wf.run(
+                responses={"review": "approved"},
+                continuation_token=malformed_token,
+            )
+
+    async def test_unpaired_surrogate_continuation_token_is_rejected_as_invalid_authority(self):
+        @workflow
+        async def review_wf(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info(doc, response_type=str, request_id="review")
+
+        paused = await review_wf.run("draft")
+        malformed_token = json.loads(json.dumps(paused.continuation_token))
+        malformed_token["token"] = json.loads(r'"\ud800"')
+
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+            await review_wf.run(
+                responses={"review": "approved"},
+                continuation_token=malformed_token,
+            )
+
+    async def test_invalid_authority_does_not_reveal_whether_continuation_is_pending(self):
+        @workflow
+        async def idle_wf(value: str) -> str:
+            return value
+
+        @workflow
+        async def pending_wf(value: str, ctx: RunContext) -> str:
+            return await ctx.request_info(value, response_type=str, request_id="review")
+
+        await idle_wf.run("done")
+        paused = await pending_wf.run("draft")
+        invalid_token = json.loads(json.dumps(paused.continuation_token))
+        invalid_token["token"] = "invalid"
+
+        errors: list[str] = []
+        for workflow_instance in (idle_wf, pending_wf):
+            with pytest.raises(ValueError) as exc_info:
+                await workflow_instance.run(
+                    responses={"review": "approved"},
+                    continuation_token=invalid_token,
+                )
+            errors.append(str(exc_info.value))
+
+        assert errors == [
+            "Invalid functional workflow continuation authority.",
+            "Invalid functional workflow continuation authority.",
+        ]
+
+    async def test_continuation_token_allows_additive_opaque_fields(self):
+        @workflow
+        async def review_wf(doc: str, ctx: RunContext) -> str:
+            feedback = await ctx.request_info(doc, response_type=str, request_id="review")
+            return f"{doc}:{feedback}"
+
+        paused = await review_wf.run("draft")
+        extended_token = json.loads(json.dumps(paused.continuation_token))
+        extended_token["future_field"] = {"opaque": True}
+
+        completed = await review_wf.run(
+            responses={"review": "approved"},
+            continuation_token=extended_token,
+        )
+
+        assert completed.get_outputs() == ["draft:approved"]
+
     async def test_request_info_interrupts(self):
         @workflow
         async def review_wf(doc: str, ctx: RunContext) -> str:
@@ -252,29 +382,118 @@ class TestHITL:
         assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
         # Phase 2: resume with response
-        result2 = await review_wf.run(responses={"req1": "Looks great!"})
+        result2 = await review_wf.run(
+            responses={"req1": "Looks great!"},
+            continuation_token=result1.continuation_token,
+        )
         outputs = result2.get_outputs()
         assert outputs == ["Final: Looks great!"]
         assert result2.get_final_state() == WorkflowRunState.IDLE
 
-    async def test_fresh_message_while_pending_requests_warns(self, caplog: pytest.LogCaptureFixture) -> None:
-        """A fresh message while request_info events are pending is allowed but logs a warning."""
-
+    async def test_fresh_message_while_pending_requests_is_rejected_without_losing_continuation(self) -> None:
         @workflow
         async def review_wf(doc: str, ctx: RunContext) -> str:
             feedback = await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
             return f"Final: {feedback}"
 
-        result1 = await review_wf.run("my doc")
-        assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
-
-        # Starting fresh input while a request is pending does not abandon it, but advances
-        # workflow state so a later response may apply to a moved-on workflow -> warn (but proceed).
-        with caplog.at_level(logging.WARNING):
+        paused = await review_wf.run("my doc")
+        with pytest.raises(RuntimeError, match="(?i)resume or abandon the pending continuation"):
             await review_wf.run("another doc")
 
-        assert "request_info event(s) are still pending" in caplog.text
-        assert "a fresh message" in caplog.text
+        completed = await review_wf.run(
+            responses={"req1": "approved"},
+            continuation_token=paused.continuation_token,
+        )
+        assert completed.get_outputs() == ["Final: approved"]
+
+    async def test_checkpoint_restore_while_pending_is_rejected_without_losing_continuation(self) -> None:
+        storage = InMemoryCheckpointStorage()
+
+        @workflow(checkpoint_storage=storage)
+        async def review_wf(doc: str, ctx: RunContext) -> str:
+            feedback = await ctx.request_info({"draft": doc}, response_type=str, request_id="req1")
+            return f"{doc}: {feedback}"
+
+        paused = await review_wf.run("original")
+        checkpoints = await storage.list_checkpoints(workflow_name="review_wf")
+
+        with pytest.raises(RuntimeError, match="(?i)resume or abandon the pending continuation"):
+            await review_wf.run(checkpoint_id=checkpoints[0].checkpoint_id)
+
+        completed = await review_wf.run(
+            responses={"req1": "approved"},
+            continuation_token=paused.continuation_token,
+        )
+        assert completed.get_outputs() == ["original: approved"]
+
+    async def test_abandon_continuation_requires_current_token_and_preserves_state_on_failure(self) -> None:
+        @workflow
+        async def review_wf(doc: str, ctx: RunContext) -> str:
+            feedback = await ctx.request_info(doc, response_type=str, request_id="req1")
+            return f"{doc}: {feedback}"
+
+        paused = await review_wf.run("original")
+        assert paused.continuation_token is not None
+        wrong_token = json.loads(json.dumps(paused.continuation_token))
+        wrong_token["token"] = "wrong"
+
+        for invalid_token in (None, json.loads("{}"), json.loads('"malformed"'), wrong_token):
+            with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+                review_wf.abandon_continuation(invalid_token)
+
+        completed = await review_wf.run(
+            responses={"req1": "approved"},
+            continuation_token=paused.continuation_token,
+        )
+        assert completed.get_outputs() == ["original: approved"]
+
+    async def test_abandon_continuation_clears_replay_state_and_allows_fresh_run(self) -> None:
+        step_calls = 0
+
+        @step
+        async def prepare(doc: str) -> str:
+            nonlocal step_calls
+            step_calls += 1
+            return f"prepared:{doc}"
+
+        @workflow
+        async def review_wf(doc: str, ctx: RunContext) -> str:
+            prepared = await prepare(doc)
+            feedback = await ctx.request_info(prepared, response_type=str)
+            return f"{prepared}: {feedback}"
+
+        abandoned = await review_wf.run("original")
+        assert abandoned.continuation_token is not None
+        assert abandoned.get_request_info_events()[0].request_id == "auto::0"
+        assert step_calls == 1
+
+        review_wf.abandon_continuation(abandoned.continuation_token)
+
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+            review_wf.abandon_continuation(abandoned.continuation_token)
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+            await review_wf.run(
+                responses={"auto::0": "stale"},
+                continuation_token=abandoned.continuation_token,
+            )
+
+        fresh = await review_wf.run("new")
+        fresh_request = fresh.get_request_info_events()[0]
+        assert fresh_request.request_id == "auto::0"
+        assert fresh_request.data == "prepared:new"
+        assert step_calls == 2
+
+    async def test_force_abandon_continuation_recovers_when_token_is_lost(self) -> None:
+        @workflow
+        async def review_wf(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info(doc, response_type=str, request_id="review")
+
+        await review_wf.run("abandoned")
+
+        review_wf.abandon_continuation(force=True)
+        fresh = await review_wf.run("fresh")
+
+        assert fresh.get_request_info_events()[0].data == "fresh"
 
     async def test_responses_while_pending_requests_does_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
         """Delivering responses is the normal completion path and must not warn."""
@@ -289,7 +508,10 @@ class TestHITL:
 
         caplog.clear()
         with caplog.at_level(logging.WARNING):
-            result2 = await review_wf.run(responses={"req1": "Looks great!"})
+            result2 = await review_wf.run(
+                responses={"req1": "Looks great!"},
+                continuation_token=result1.continuation_token,
+            )
 
         assert result2.get_final_state() == WorkflowRunState.IDLE
         assert "still pending" not in caplog.text
@@ -305,7 +527,10 @@ class TestHITL:
         result1 = await review_wf.run("my doc")
         assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
-        result2 = await review_wf.run(responses={"req1": "LGTM"})
+        result2 = await review_wf.run(
+            responses={"req1": "LGTM"},
+            continuation_token=result1.continuation_token,
+        )
         assert result2.get_outputs() == ["Final: LGTM"]
 
     async def test_multiple_sequential_interrupts(self):
@@ -313,21 +538,102 @@ class TestHITL:
         async def multi_hitl(data: str, ctx: RunContext) -> str:
             r1 = await ctx.request_info("step1", response_type=str, request_id="r1")
             r2 = await ctx.request_info("step2", response_type=str, request_id="r2")
-            return f"{r1}+{r2}"
+            return f"{data}:{r1}+{r2}"
 
         # Phase 1: first interrupt
         result1 = await multi_hitl.run("start")
         assert len(result1.get_request_info_events()) == 1
         assert result1.get_request_info_events()[0].request_id == "r1"
+        assert result1.continuation_token is not None
 
         # Phase 2: respond to first, hits second
-        result2 = await multi_hitl.run(responses={"r1": "A"})
+        result2 = await multi_hitl.run(
+            responses={"r1": "A"},
+            continuation_token=result1.continuation_token,
+        )
         assert len(result2.get_request_info_events()) == 1
         assert result2.get_request_info_events()[0].request_id == "r2"
+        assert result2.continuation_token is not None
+        assert result2.continuation_token != result1.continuation_token
+
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+            await multi_hitl.run(
+                responses={"r1": "A", "r2": "stale"},
+                continuation_token=result1.continuation_token,
+            )
 
         # Phase 3: respond to second
-        result3 = await multi_hitl.run(responses={"r1": "A", "r2": "B"})
-        assert result3.get_outputs() == ["A+B"]
+        result3 = await multi_hitl.run(
+            responses={"r1": "A", "r2": "B"},
+            continuation_token=result2.continuation_token,
+        )
+        assert result3.get_outputs() == ["start:A+B"]
+        assert result3.continuation_token is None
+
+    async def test_continuation_token_is_consumed_before_resumed_user_code_fails(self):
+        resumed_user_code_started = False
+
+        @workflow
+        async def failing_resume(data: str, ctx: RunContext) -> str:
+            nonlocal resumed_user_code_started
+            answer = await ctx.request_info(data, response_type=str, request_id="r1")
+            resumed_user_code_started = True
+            raise RuntimeError(f"resume failed after {answer}")
+
+        paused = await failing_resume.run("input")
+        assert paused.continuation_token is not None
+
+        with pytest.raises(RuntimeError, match="resume failed after response"):
+            await failing_resume.run(
+                responses={"r1": "response"},
+                continuation_token=paused.continuation_token,
+            )
+        assert resumed_user_code_started
+
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+            await failing_resume.run(
+                responses={"r1": "response"},
+                continuation_token=paused.continuation_token,
+            )
+
+        fresh = await failing_resume.run("fresh")
+        assert fresh.continuation_token is not None
+        assert fresh.get_request_info_events()[0].data == "fresh"
+
+    async def test_cancellation_after_token_consumption_releases_workflow_instance(self):
+        resumed_user_code_started = asyncio.Event()
+        keep_running = asyncio.Event()
+
+        @workflow
+        async def cancellable_resume(data: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info(data, response_type=str, request_id="r1")
+            resumed_user_code_started.set()
+            await keep_running.wait()
+            return f"{data}:{answer}"
+
+        paused = await cancellable_resume.run("input")
+
+        async def resume() -> None:
+            await cancellable_resume.run(
+                responses={"r1": "response"},
+                continuation_token=paused.continuation_token,
+            )
+
+        task = asyncio.create_task(resume())
+        await resumed_user_code_started.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+            await cancellable_resume.run(
+                responses={"r1": "response"},
+                continuation_token=paused.continuation_token,
+            )
+
+        fresh = await cancellable_resume.run("fresh")
+        assert fresh.continuation_token is not None
 
     async def test_request_info_auto_generates_id(self):
         @workflow
@@ -460,6 +766,25 @@ class TestStreaming:
         await wf.run(1)
         assert streaming_flag is False
 
+    async def test_streaming_final_response_carries_continuation_token(self):
+        @workflow
+        async def review_wf(doc: str, ctx: RunContext) -> str:
+            feedback = await ctx.request_info(doc, response_type=str, request_id="r1")
+            return f"{doc}:{feedback}"
+
+        paused_stream = review_wf.run("draft", stream=True)
+        paused = await paused_stream.get_final_response()
+        assert paused.continuation_token is not None
+
+        completed_stream = review_wf.run(
+            responses={"r1": "approved"},
+            continuation_token=paused.continuation_token,
+            stream=True,
+        )
+        completed = await completed_stream.get_final_response()
+        assert completed.get_outputs() == ["draft:approved"]
+        assert completed.continuation_token is None
+
 
 # ---------------------------------------------------------------------------
 # Step passthrough outside workflow
@@ -514,6 +839,121 @@ class TestStateManagement:
 
 
 class TestCheckpointing:
+    async def test_failed_pause_checkpoint_uses_normal_failure_event_surface(self):
+        class FailingStorage(InMemoryCheckpointStorage):
+            async def save(self, checkpoint: WorkflowCheckpoint) -> str:
+                raise RuntimeError("checkpoint storage unavailable")
+
+        storage = FailingStorage()
+
+        @workflow(checkpoint_storage=storage)
+        async def review(doc: str, ctx: RunContext) -> str:
+            return await ctx.request_info(doc, response_type=str, request_id="review")
+
+        events: list[WorkflowEvent] = []
+        with pytest.raises(RuntimeError, match="checkpoint storage unavailable"):
+            async for event in review.run("draft", stream=True):
+                events.append(event)
+
+        assert any(event.type == "request_info" for event in events)
+        assert any(event.type == "failed" for event in events)
+        assert events[-1].type == "status"
+        assert events[-1].state == WorkflowRunState.FAILED
+
+    async def test_failed_pause_checkpoint_does_not_strand_in_memory_continuation(self):
+        class FailsFirstSaveStorage(InMemoryCheckpointStorage):
+            def __init__(self) -> None:
+                super().__init__()
+                self.save_attempts = 0
+
+            async def save(self, checkpoint: WorkflowCheckpoint) -> str:
+                self.save_attempts += 1
+                if self.save_attempts == 1:
+                    raise RuntimeError("checkpoint storage unavailable")
+                return await super().save(checkpoint)
+
+        storage = FailsFirstSaveStorage()
+
+        @workflow(checkpoint_storage=storage)
+        async def review(doc: str, ctx: RunContext) -> str:
+            feedback = await ctx.request_info(doc, response_type=str, request_id="review")
+            return f"{doc}:{feedback}"
+
+        with pytest.raises(RuntimeError, match="checkpoint storage unavailable"):
+            await review.run("first")
+
+        recovered = await review.run("second")
+
+        assert recovered.continuation_token is not None
+        assert recovered.get_request_info_events()[0].data == "second"
+        completed = await review.run(
+            responses={"review": "approved"},
+            continuation_token=recovered.continuation_token,
+        )
+        assert completed.get_outputs() == ["second:approved"]
+
+    async def test_restored_checkpoint_issues_process_local_continuation_authority(self):
+        storage = InMemoryCheckpointStorage()
+
+        async def review(doc: str, ctx: RunContext) -> str:
+            first = await ctx.request_info({"draft": doc}, response_type=str)
+            second = await ctx.request_info({"first": first}, response_type=str, request_id="final-review")
+            return f"{doc}:{first}:{second}"
+
+        original_process = workflow(checkpoint_storage=storage)(review)
+        original_pause = await original_process.run("draft")
+        checkpoint = (await storage.list_checkpoints(workflow_name="review"))[-1]
+
+        restored_process = workflow(checkpoint_storage=storage)(review)
+        restored_pause = await restored_process.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        assert restored_pause.get_request_info_events()[0].request_id == "auto::0"
+        assert restored_pause.continuation_token is not None
+        assert restored_pause.continuation_token != original_pause.continuation_token
+
+        for invalid_token in (None, original_pause.continuation_token):
+            with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+                await restored_process.run(
+                    responses={"auto::0": "approved"},
+                    continuation_token=invalid_token,
+                )
+
+        second_pause = await restored_process.run(
+            responses={"auto::0": "approved"},
+            continuation_token=restored_pause.continuation_token,
+        )
+        assert second_pause.get_request_info_events()[0].request_id == "final-review"
+        assert second_pause.continuation_token is not None
+        assert second_pause.continuation_token != restored_pause.continuation_token
+
+        completed = await restored_process.run(
+            responses={"auto::0": "approved", "final-review": "ship it"},
+            continuation_token=second_pause.continuation_token,
+        )
+        assert completed.get_outputs() == ["draft:approved:ship it"]
+        assert completed.continuation_token is None
+
+    async def test_runtime_storage_override_restores_checkpoint_with_responses_without_token(self):
+        storage = InMemoryCheckpointStorage()
+
+        async def review(doc: str, ctx: RunContext) -> str:
+            feedback = await ctx.request_info(doc, response_type=str, request_id="predictable-review")
+            return f"{doc}:{feedback}"
+
+        original_process = workflow(review)
+        await original_process.run("draft", checkpoint_storage=storage)
+        checkpoint = (await storage.list_checkpoints(workflow_name="review"))[-1]
+
+        restored_process = workflow(review)
+        completed = await restored_process.run(
+            checkpoint_id=checkpoint.checkpoint_id,
+            responses={"predictable-review": "approved"},
+            checkpoint_storage=storage,
+        )
+
+        assert completed.get_outputs() == ["draft:approved"]
+        assert completed.continuation_token is None
+
     async def test_checkpoint_save_and_restore(self):
         storage = InMemoryCheckpointStorage()
 
@@ -588,6 +1028,7 @@ class TestCheckpointing:
         # Phase 1: interrupt
         result1 = await hitl_wf.run("draft text")
         assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        hitl_wf.abandon_continuation(result1.continuation_token)
 
         # Get checkpoint
         checkpoints = await storage.list_checkpoints(workflow_name="hitl_wf")
@@ -618,6 +1059,7 @@ class TestCheckpointing:
         # Phase 1
         result1 = await stateful_wf.run(1)
         assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
+        stateful_wf.abandon_continuation(result1.continuation_token)
 
         # Phase 2: restore and respond
         checkpoints = await storage.list_checkpoints(workflow_name="stateful_wf")
@@ -1180,7 +1622,10 @@ class TestRequestInfoInStep:
         assert result1.get_request_info_events()[0].request_id == "s1"
 
         # Phase 2: resume
-        result2 = await wf.run(responses={"s1": "LGTM"})
+        result2 = await wf.run(
+            responses={"s1": "LGTM"},
+            continuation_token=result1.continuation_token,
+        )
         assert result2.get_outputs() == ["reviewed: LGTM"]
 
     async def test_step_works_outside_workflow_with_explicit_ctx(self):
@@ -1255,11 +1700,14 @@ class TestNoneResponseHandling:
             return f"got: {val}"
 
         # Phase 1
-        await wf.run("start")
+        paused = await wf.run("start")
 
         # Phase 2: resume with None response — should warn but still work
         with caplog_context(logging.getLogger("agent_framework._workflows._functional")) as logs:
-            result = await wf.run(responses={"r1": None})
+            result = await wf.run(
+                responses={"r1": None},
+                continuation_token=paused.continuation_token,
+            )
 
         assert result.get_outputs() == ["got: None"]
         assert any("None" in msg and "r1" in msg for msg in logs)
@@ -1272,8 +1720,11 @@ class TestNoneResponseHandling:
             val = await ctx.request_info("need data", response_type=str, request_id="r1")
             return f"value={val}"
 
-        await wf.run(1)
-        result = await wf.run(responses={"r1": None})
+        paused = await wf.run(1)
+        result = await wf.run(
+            responses={"r1": None},
+            continuation_token=paused.continuation_token,
+        )
         assert result.get_outputs() == ["value=None"]
 
 
@@ -1333,7 +1784,10 @@ class TestHITLInStepWithCaching:
         assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
         # Phase 2: resume — step_a should be bypassed, step_b re-executes
-        result2 = await wf.run(responses={"r1": "ok"})
+        result2 = await wf.run(
+            responses={"r1": "ok"},
+            continuation_token=result1.continuation_token,
+        )
         assert call_count_a == 1  # step_a not called again
         assert result2.get_outputs() == ["6:ok"]
 
@@ -1363,7 +1817,10 @@ class TestHITLInStepWithCaching:
         assert result1.get_final_state() == WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
 
         # Phase 2: resume
-        result2 = await wf.run(responses={"rev": "LGTM"})
+        result2 = await wf.run(
+            responses={"rev": "LGTM"},
+            continuation_token=result1.continuation_token,
+        )
         assert result2.get_outputs() == ["reviewed(30):LGTM"]
 
         # Phase 3: restore from latest checkpoint -- both steps should be bypassed
@@ -1388,10 +1845,13 @@ class TestHITLInStepWithCaching:
         async def wf(doc: str) -> str:
             return await needs_feedback(doc)
 
-        await wf.run("draft")
+        paused = await wf.run("draft")
 
         with caplog_context(logging.getLogger("agent_framework._workflows._functional")) as logs:
-            result = await wf.run(responses={"r1": None})
+            result = await wf.run(
+                responses={"r1": None},
+                continuation_token=paused.continuation_token,
+            )
 
         assert result.get_outputs() == ["got:None"]
         assert any("None" in msg and "r1" in msg for msg in logs)
@@ -1436,7 +1896,10 @@ class TestDeterministicAutoRequestId:
         assert rid  # non-empty
 
         # Resume with the id the caller just received.
-        result2 = await wf.run(responses={rid: "hello"})
+        result2 = await wf.run(
+            responses={rid: "hello"},
+            continuation_token=result1.continuation_token,
+        )
         assert result2.get_final_state() == WorkflowRunState.IDLE
         assert result2.get_outputs() == ["got:hello"]
 
@@ -1449,10 +1912,16 @@ class TestDeterministicAutoRequestId:
 
         r1 = await wf.run(1)
         rid1 = r1.get_request_info_events()[0].request_id
-        r2 = await wf.run(responses={rid1: "A"})
+        r2 = await wf.run(
+            responses={rid1: "A"},
+            continuation_token=r1.continuation_token,
+        )
         rid2 = r2.get_request_info_events()[0].request_id
         assert rid1 != rid2
-        r3 = await wf.run(responses={rid1: "A", rid2: "B"})
+        r3 = await wf.run(
+            responses={rid1: "A", rid2: "B"},
+            continuation_token=r2.continuation_token,
+        )
         assert r3.get_outputs() == ["A/B"]
 
     async def test_cached_step_advances_auto_request_id_counter(self):
@@ -1478,12 +1947,18 @@ class TestDeterministicAutoRequestId:
         first_request_id = first_run.get_request_info_events()[0].request_id
         assert first_request_id == "auto::0"
 
-        second_run = await wf.run(responses={first_request_id: "A"})
+        second_run = await wf.run(
+            responses={first_request_id: "A"},
+            continuation_token=first_run.continuation_token,
+        )
         second_request_id = second_run.get_request_info_events()[0].request_id
         assert second_request_id == "auto::1"
         completed_call_count = call_count
 
-        final_run = await wf.run(responses={first_request_id: "A", second_request_id: "B"})
+        final_run = await wf.run(
+            responses={first_request_id: "A", second_request_id: "B"},
+            continuation_token=second_run.continuation_token,
+        )
 
         assert call_count == completed_call_count
         assert final_run.get_outputs() == ["A/B"]
@@ -1501,9 +1976,15 @@ class TestPendingRequestsPruned:
             b = await ctx.request_info("q2", response_type=str, request_id="r2")
             return f"{a}/{b}"
 
-        await wf.run(1)
-        await wf.run(responses={"r1": "A"})
-        result = await wf.run(responses={"r1": "A", "r2": "B"})
+        first_run = await wf.run(1)
+        second_run = await wf.run(
+            responses={"r1": "A"},
+            continuation_token=first_run.continuation_token,
+        )
+        result = await wf.run(
+            responses={"r1": "A", "r2": "B"},
+            continuation_token=second_run.continuation_token,
+        )
         assert result.get_final_state() == WorkflowRunState.IDLE
         # Latest checkpoint must show no pending requests.
         checkpoints = await storage.list_checkpoints(workflow_name="wf")
@@ -1551,7 +2032,7 @@ class TestStaleResponsesRejected:
             return x * 2
 
         await wf.run(5)  # clean completion, no pending requests
-        with pytest.raises(ValueError, match="no pending request_info"):
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
             await wf.run(responses={"stale": "x"})
 
     async def test_responses_mismatched_key_raises(self):
@@ -1559,9 +2040,12 @@ class TestStaleResponsesRejected:
         async def wf(x: int, ctx: RunContext) -> str:
             return await ctx.request_info("q", response_type=str, request_id="r1")
 
-        await wf.run(1)  # interrupts with r1 pending
+        paused = await wf.run(1)  # interrupts with r1 pending
         with pytest.raises(ValueError, match="do not answer"):
-            await wf.run(responses={"definitely_not_r1": "x"})
+            await wf.run(
+                responses={"definitely_not_r1": "x"},
+                continuation_token=paused.continuation_token,
+            )
 
 
 class TestReservedStateKeys:
@@ -1719,9 +2203,13 @@ class TestFunctionalWorkflowAgentHITL:
 
         agent = wf.as_agent()
         # First phase: suspend
-        await agent.run("topic")
+        paused = await agent.run("topic")
+        assert paused.continuation_token is not None
         # Second phase: resume via the agent surface
-        response = await agent.run(responses={"rid-1": "answered"})
+        response = await agent.run(
+            responses={"rid-1": "answered"},
+            continuation_token=paused.continuation_token,
+        )
         # Agent's final response should contain the workflow's text output.
         text_blobs: list[str] = []
         for message in response.messages:
@@ -1731,6 +2219,118 @@ class TestFunctionalWorkflowAgentHITL:
                     text_blobs.append(text)
         assert any("got:answered" in t for t in text_blobs)
 
+    async def test_streaming_resume_carries_continuation_token(self):
+        @workflow
+        async def wf(x: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info(x, response_type=str, request_id="rid-1")
+            return f"got:{answer}"
+
+        agent = wf.as_agent()
+        paused = await agent.run("topic", stream=True).get_final_response()
+        assert paused.continuation_token is not None
+
+        completed = await agent.run(
+            responses={"rid-1": "answered"},
+            continuation_token=paused.continuation_token,
+            stream=True,
+        ).get_final_response()
+        assert completed.text == "got:answered"
+        assert completed.continuation_token is None
+
+    async def test_failed_streaming_resume_preserves_pending_requests(self):
+        @workflow
+        async def wf(x: str, ctx: RunContext) -> str:
+            return await ctx.request_info(x, response_type=str, request_id="rid-1")
+
+        agent = wf.as_agent()
+        paused = await agent.run("topic")
+        wrong_token = json.loads(json.dumps(paused.continuation_token))
+        wrong_token["token"] = "wrong"
+
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+            agent.run(
+                responses={"rid-1": "answered"},
+                continuation_token=wrong_token,
+                stream=True,
+            )
+
+        assert "rid-1" in agent.pending_requests
+
+    async def test_failed_non_streaming_resume_clears_consumed_pending_request(self):
+        @workflow
+        async def wf(x: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info(x, response_type=str, request_id="rid-1")
+            raise RuntimeError(f"resume failed after {answer}")
+
+        agent = wf.as_agent()
+        paused = await agent.run("topic")
+
+        with pytest.raises(RuntimeError, match="resume failed after answered"):
+            await agent.run(
+                responses={"rid-1": "answered"},
+                continuation_token=paused.continuation_token,
+            )
+
+        assert agent.pending_requests == {}
+
+    async def test_failed_pause_checkpoint_does_not_leave_agent_pending_request(self):
+        class FailingStorage(InMemoryCheckpointStorage):
+            async def save(self, checkpoint: WorkflowCheckpoint) -> str:
+                raise RuntimeError("checkpoint storage unavailable")
+
+        @workflow(checkpoint_storage=FailingStorage())
+        async def wf(x: str, ctx: RunContext) -> str:
+            return await ctx.request_info(x, response_type=str, request_id="rid-1")
+
+        agent = wf.as_agent()
+
+        with pytest.raises(RuntimeError, match="checkpoint storage unavailable"):
+            await agent.run("topic", stream=True).get_final_response()
+
+        assert agent.pending_requests == {}
+
+    async def test_agent_can_abandon_pending_continuation(self) -> None:
+        @workflow
+        async def wf(x: str, ctx: RunContext) -> str:
+            answer = await ctx.request_info(x, response_type=str, request_id="rid-1")
+            return f"{x}:{answer}"
+
+        agent = wf.as_agent()
+        abandoned = await agent.run("original")
+        assert abandoned.continuation_token is not None
+
+        wrong_token = json.loads(json.dumps(abandoned.continuation_token))
+        wrong_token["token"] = "wrong"
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+            agent.abandon_continuation(wrong_token)
+        assert "rid-1" in agent.pending_requests
+
+        agent.abandon_continuation(abandoned.continuation_token)
+        assert agent.pending_requests == {}
+
+        with pytest.raises(ValueError, match="Invalid functional workflow continuation authority"):
+            await agent.run(
+                responses={"rid-1": "stale"},
+                continuation_token=abandoned.continuation_token,
+            )
+        fresh = await agent.run("new")
+        assert fresh.continuation_token is not None
+        assert fresh.continuation_token != abandoned.continuation_token
+
+    async def test_agent_can_force_abandon_when_continuation_token_is_lost(self) -> None:
+        @workflow
+        async def wf(x: str, ctx: RunContext) -> str:
+            return await ctx.request_info(x, response_type=str, request_id="rid-1")
+
+        agent = wf.as_agent()
+        await agent.run("abandoned")
+
+        agent.abandon_continuation(force=True)
+
+        assert agent.pending_requests == {}
+        fresh = await agent.run("fresh")
+        assert fresh.continuation_token is not None
+
 
 class TestRunDocstringAllowsResponsesAndCheckpoint:
     """Regression for bug_010: docstring must permit responses+checkpoint_id combo."""
@@ -1739,6 +2339,13 @@ class TestRunDocstringAllowsResponsesAndCheckpoint:
         doc = FunctionalWorkflow.run.__doc__ or ""
         assert "At least one" in doc or "at least one" in doc
         assert "Exactly one" not in doc
+
+    def test_agent_docstring_distinguishes_process_local_token_from_durable_polling(self):
+        doc = " ".join((FunctionalWorkflowAgent.__doc__ or "").split())
+
+        assert "process-local" in doc
+        assert "not a durable polling token" in doc
+        assert "must be supplied together with" in doc
 
 
 class TestFunctionalWorkflowExperimentalStage:

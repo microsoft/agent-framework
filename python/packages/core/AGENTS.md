@@ -200,7 +200,18 @@ agent_framework/
   explicit all-output behavior and `intermediate_output_from="all_other"` for visible progress from
   every output-capable executor not selected by `output_from`.
 - **`WorkflowRunResult`** - Non-streaming workflow result with Workflow Output `get_outputs()`
-  and Intermediate Output `get_intermediate_outputs()` accessors
+  and Intermediate Output `get_intermediate_outputs()` accessors. Functional workflows that pause for
+  `request_info` also return an opaque, single-use `continuation_token`; pass it with `responses` for an in-memory
+  response-only resume. The token is process-local, is not a durable polling token, and is consumed before resumed
+  user code executes to prevent ambiguous failures from replaying side effects. Each `FunctionalWorkflow` instance
+  retains at most one in-memory continuation: callers must resume it or call `abandon_continuation(token)` before
+  starting new input or restoring a checkpoint. If the token is irretrievably lost, the workflow owner can use
+  `abandon_continuation(force=True)` to recover the instance; hosts must not expose forced abandonment to untrusted
+  callers. Use separate workflow instances for independent in-memory runs; `FunctionalWorkflowAgent` delegates the
+  same abandonment operations. Checkpoint restoration is a separate host-authorized path: checkpoint IDs only
+  locate persisted state, while the host or storage adapter owns authorization and tenant isolation. A restored
+  functional workflow that pauses returns fresh process-local continuation authority. This does not alter
+  graph-workflow request-info authoritative resolution from PR #7500.
 - **Orchestrators**: `SequentialOrchestrator`, `ConcurrentOrchestrator`, `GroupChatOrchestrator`, `MagenticOrchestrator`, `HandoffOrchestrator`
 
 ## Built-in Providers

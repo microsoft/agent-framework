@@ -127,7 +127,13 @@ class WorkflowCheckpoint:
 
 
 class CheckpointStorage(Protocol):
-    """Protocol for checkpoint storage backends."""
+    """Protocol for checkpoint storage backends.
+
+    Checkpoint IDs locate persisted workflow state; they are not authentication
+    or authorization credentials, even when represented as UUIDs. Hosts and
+    storage adapters are responsible for authorizing checkpoint operations and
+    isolating checkpoint data between tenants.
+    """
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint and return its ID.

@@ -36,10 +36,12 @@ from __future__ import annotations
 # pyright: reportPrivateUsage=false
 # Classes in this module (RunContext, StepWrapper, FunctionalWorkflow) form a
 # cohesive unit and intentionally access each other's underscore-prefixed members.
+import asyncio
 import functools
 import hashlib
 import inspect
 import logging
+import secrets
 import typing
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from contextvars import ContextVar
@@ -48,7 +50,7 @@ from typing import Any, Generic, Literal, TypeVar, overload
 
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import make_json_safe
-from .._types import AgentResponse, AgentResponseUpdate, ResponseStream
+from .._types import AgentResponse, AgentResponseUpdate, ContinuationToken, ResponseStream
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage, WorkflowCheckpoint
 from ._events import (
@@ -62,6 +64,17 @@ from ._workflow import WorkflowRunResult
 logger = logging.getLogger(__name__)
 
 R = TypeVar("R")
+
+_CONTINUATION_KIND: Literal["functional_workflow"] = "functional_workflow"
+_CONTINUATION_VERSION: Literal["1"] = "1"
+_INVALID_CONTINUATION_AUTHORITY = "Invalid functional workflow continuation authority."
+
+
+class _FunctionalWorkflowContinuationToken(ContinuationToken):
+    kind: Literal["functional_workflow"]
+    version: Literal["1"]
+    token: str
+
 
 # ContextVar holding the active RunContext during workflow execution.
 # ContextVar is per-asyncio-Task, so concurrent workflows each get their own context.
@@ -205,8 +218,10 @@ class RunContext:
         ``ResponseStream`` when ``stream=True``) whose
         :meth:`~WorkflowRunResult.get_request_info_events` contains the pending
         request.  When the workflow is resumed with
-        ``run(responses={request_id: value})``, the same function re-executes
-        and ``request_info`` returns the provided *value* directly.
+        ``run(responses={request_id: value},
+        continuation_token=prior_result.continuation_token)``, the same
+        function re-executes and ``request_info`` returns the provided *value*
+        directly.
 
         Args:
             request_data: Arbitrary payload describing what information is
@@ -646,6 +661,29 @@ class FunctionalWorkflow:
     edge wiring is involved.  Native Python control flow (``if``/``else``,
     ``for``, ``asyncio.gather``) is used for branching and parallelism.
 
+    Continuation tokens for pending in-memory request-info work are
+    process-local, single-use capabilities. They must be supplied together
+    with ``responses`` and are consumed before resumed user code executes.
+    After an execution failure, recover from an authorized checkpoint or
+    start a new run after owner-authorized abandonment; reusing the consumed
+    token could otherwise duplicate side effects.
+
+    A workflow instance retains at most one in-memory continuation.  Resume
+    or explicitly abandon a pending continuation before starting new input
+    or restoring a checkpoint on that instance.  Use separate workflow
+    instances for independent in-memory runs.
+
+    Checkpoint restoration is a distinct, host-authorized continuation path
+    and does not require continuation authority from the process that created
+    the checkpoint.  The host or checkpoint-storage adapter must authorize
+    access and enforce tenant isolation; a checkpoint ID, including a UUID, is
+    only a locator.  If a restored run pauses, its result carries fresh
+    process-local continuation authority for later response-only runs.
+
+    These continuation rules apply only to functional workflows.  Graph
+    workflow request-info authoritative resolution remains a separate concern,
+    as hardened in PR #7500.
+
     Args:
         func: The async function that implements the workflow logic.
         name: Display name for the workflow.  Defaults to ``func.__name__``.
@@ -687,6 +725,7 @@ class FunctionalWorkflow:
         self._last_step_cache: dict[tuple[str, int], Any] = {}
         self._last_step_cache_auto_request_info_counts: dict[tuple[str, int], int] = {}
         self._last_pending_request_ids: set[str] = set()
+        self._continuation_nonce: str | None = None
 
         # Signature arity is validated once at decoration time.
         self._non_ctx_param_names = self._classify_signature(func)
@@ -740,6 +779,7 @@ class FunctionalWorkflow:
         *,
         stream: Literal[True],
         responses: dict[str, Any] | None = None,
+        continuation_token: ContinuationToken | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -752,6 +792,7 @@ class FunctionalWorkflow:
         *,
         stream: Literal[False] = ...,
         responses: dict[str, Any] | None = None,
+        continuation_token: ContinuationToken | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
@@ -764,6 +805,7 @@ class FunctionalWorkflow:
         *,
         stream: bool = False,
         responses: dict[str, Any] | None = None,
+        continuation_token: ContinuationToken | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
@@ -787,9 +829,17 @@ class FunctionalWorkflow:
             responses: HITL responses keyed by ``request_id``, used to
                 resume a workflow that was suspended by
                 :meth:`RunContext.request_info`.
+            continuation_token: Opaque token returned by the immediately
+                preceding result for the pending in-memory continuation.
+                Required when *responses* are provided without *checkpoint_id*.
+                This process-local, single-use capability is consumed before
+                resumed user code executes and is not a durable polling token.
             checkpoint_id: Identifier of a checkpoint to restore from.
                 Requires *checkpoint_storage* to be set (here or on the
-                decorator).
+                decorator).  Checkpoint restoration does not use prior
+                process-local continuation authority; the host or storage
+                adapter is responsible for authorizing checkpoint access and
+                tenant isolation.
             checkpoint_storage: Override the default checkpoint storage
                 for this run.
             include_status_events: When ``True`` (non-streaming only),
@@ -807,58 +857,48 @@ class FunctionalWorkflow:
         Raises:
             ValueError: If the combination of *message*, *responses*, and
                 *checkpoint_id* is invalid.
-            RuntimeError: If the workflow is already running (concurrent
-                execution is not allowed).
+            RuntimeError: If the workflow is already running, or if new input
+                or a checkpoint restore is attempted while an in-memory
+                continuation is pending.
         """
         self._validate_run_params(message, responses, checkpoint_id)
-        # Warn (but don't block) when a fresh message or a checkpoint restore begins while a prior
-        # run left request_info events pending. Mirrors Workflow.run. Delivering responses is the
-        # normal way to complete the pending cycle and is intentionally not warned.
+        continuation_nonce: str | None = None
+        if responses is not None and checkpoint_id is None:
+            continuation_nonce = self._validate_continuation_authority(continuation_token)
         if (message is not None or checkpoint_id is not None) and self._last_pending_request_ids:
-            logger.warning(
-                "Workflow %s received %s while %d request_info event(s) are still pending from an "
-                "unfinished request/response cycle; %s. Deliver responses (responses=...) to complete "
-                "the pending cycle before starting new input.",
-                self.name,
-                "a fresh message" if message is not None else "a checkpoint restore",
-                len(self._last_pending_request_ids),
-                (
-                    "those requests remain answerable, but this run advances workflow state, so a "
-                    "response that arrives later may apply to a workflow that has moved on"
-                    if message is not None
-                    else "those pending requests will be overwritten by the checkpoint's state"
-                ),
+            raise RuntimeError(
+                "Cannot start or restore a functional workflow run while an in-memory continuation is pending. "
+                "Resume or abandon the pending continuation first."
             )
-        if responses and checkpoint_id is None:
-            # Require at least one response key to match a currently-pending
-            # request; prevents silent replay against stale state while still
-            # allowing callers to accumulate prior answers across multi-round
-            # HITL.
-            if not self._last_pending_request_ids:
-                raise ValueError(
-                    f"responses={list(responses)!r} do not correspond to any pending request on "
-                    f"workflow '{self.name}'.  The workflow has no pending request_info events, "
-                    f"so there is nothing to resume.  Start a fresh run with 'message', or supply "
-                    f"'checkpoint_id' to restore a specific checkpoint."
-                )
-            if not (set(responses) & self._last_pending_request_ids):
-                raise ValueError(
-                    f"responses={list(responses)!r} do not answer any of the currently-pending "
-                    f"requests on workflow '{self.name}' ({sorted(self._last_pending_request_ids)!r}).  "
-                    f"Provide a response keyed by one of the pending request_ids."
-                )
+        # Require at least one response key to match a currently-pending
+        # request; prevents silent replay against stale state while still
+        # allowing callers to accumulate prior answers across multi-round
+        # HITL.
+        if responses is not None and checkpoint_id is None and not (set(responses) & self._last_pending_request_ids):
+            raise ValueError(
+                f"responses={list(responses)!r} do not answer any of the currently-pending "
+                f"requests on workflow '{self.name}' ({sorted(self._last_pending_request_ids)!r}).  "
+                f"Provide a response keyed by one of the pending request_ids."
+            )
         self._ensure_not_running()
+        result_continuation_token: list[ContinuationToken | None] = [None]
 
         response_stream: ResponseStream[WorkflowEvent[Any], WorkflowRunResult] = ResponseStream(
             self._run_core(
                 message=message,
                 responses=responses,
+                continuation_nonce=continuation_nonce,
+                result_continuation_token=result_continuation_token,
                 checkpoint_id=checkpoint_id,
                 checkpoint_storage=checkpoint_storage,
                 streaming=stream,
                 **kwargs,
             ),
-            finalizer=functools.partial(self._finalize_events, include_status_events=include_status_events),
+            finalizer=functools.partial(
+                self._finalize_events,
+                include_status_events=include_status_events,
+                continuation_token=result_continuation_token,
+            ),
             cleanup_hooks=[self._run_cleanup],
         )
 
@@ -908,6 +948,39 @@ class FunctionalWorkflow:
             **kwargs,
         )
 
+    def abandon_continuation(
+        self,
+        continuation_token: ContinuationToken | None = None,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Abandon the pending in-memory continuation.
+
+        Successful abandonment consumes the token and clears the retained
+        message, step cache, request metadata, and pending requests.  A failed
+        token-authorized attempt leaves the continuation unchanged.
+
+        ``force=True`` is an owner-only recovery escape hatch for a lost token.
+        Hosts must not expose forced abandonment to untrusted callers because
+        it allows one caller to cancel another caller's pending continuation.
+
+        Args:
+            continuation_token: Opaque token returned by the pending run.
+            force: Clear retained continuation state without validating a
+                token. Intended only for the owner of the workflow instance.
+
+        Raises:
+            RuntimeError: If the workflow is currently running.
+            ValueError: If the token does not authorize the current pending continuation.
+        """
+        if self._is_running:
+            raise RuntimeError("Cannot abandon a continuation while the functional workflow is running.")
+        if force:
+            self._clear_continuation_state()
+            return
+        continuation_nonce = self._validate_continuation_authority(continuation_token)
+        self._consume_continuation_authority(continuation_nonce)
+
     # ------------------------------------------------------------------
     # Internal execution
     # ------------------------------------------------------------------
@@ -917,6 +990,8 @@ class FunctionalWorkflow:
         message: Any | None = None,
         *,
         responses: dict[str, Any] | None = None,
+        continuation_nonce: str | None = None,
+        result_continuation_token: list[ContinuationToken | None],
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         streaming: bool = False,
@@ -963,10 +1038,6 @@ class FunctionalWorkflow:
             ctx._step_cache = dict(self._last_step_cache)
             ctx._step_cache_auto_request_info_counts = dict(self._last_step_cache_auto_request_info_counts)
 
-        # Store message for future replays
-        if message is not None:
-            self._last_message = message
-
         # Set responses for replay
         if responses:
             ctx._set_responses(responses)
@@ -977,7 +1048,7 @@ class FunctionalWorkflow:
         if storage is not None:
 
             async def _on_step_completed() -> None:
-                ckpt_chain[0] = await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+                ckpt_chain[0] = await self._save_checkpoint(ctx, storage, message, ckpt_chain[0])
 
             ctx._on_step_completed = _on_step_completed
 
@@ -995,6 +1066,9 @@ class FunctionalWorkflow:
                     yield WorkflowEvent.started()
                 with _framework_event_origin():
                     yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS)
+
+                if continuation_nonce is not None:
+                    self._consume_continuation_authority(continuation_nonce)
 
                 # Execute the user function
                 return_value = await self._execute(ctx, message)
@@ -1024,29 +1098,46 @@ class FunctionalWorkflow:
 
                 # Save final checkpoint if storage is available
                 if storage is not None:
-                    await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+                    await self._save_checkpoint(ctx, storage, message, ckpt_chain[0])
 
                 # Final status
                 if saw_request:
+                    self._last_message = message
                     self._last_pending_request_ids = set(ctx._pending_requests)
+                    self._rotate_continuation_authority()
+                    result_continuation_token[0] = self._get_continuation_token()
                     with _framework_event_origin():
                         yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
                 else:
                     # Clean completion — drop cross-run replay state.
-                    self._last_message = None
-                    self._last_step_cache = {}
-                    self._last_step_cache_auto_request_info_counts = {}
-                    self._last_pending_request_ids = set()
+                    self._clear_continuation_state()
                     with _framework_event_origin():
                         yield WorkflowEvent.status(WorkflowRunState.IDLE)
 
                 span.add_event(OtelAttr.WORKFLOW_COMPLETED)
 
             except WorkflowInterrupted:
-                # Persist step cache for response-only replay
-                self._last_step_cache = dict(ctx._step_cache)
-                self._last_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
-                self._last_pending_request_ids = set(ctx._pending_requests)
+                pending_step_cache = dict(ctx._step_cache)
+                pending_step_cache_auto_request_info_counts = dict(ctx._step_cache_auto_request_info_counts)
+                pending_request_ids = set(ctx._pending_requests)
+
+                # Persist before publishing in-memory continuation authority. If
+                # storage fails, the caller receives no token, so the workflow
+                # instance must remain free for a fresh run.
+                if storage is not None:
+                    try:
+                        await self._save_checkpoint(ctx, storage, message, ckpt_chain[0])
+                    except Exception as exc:
+                        for event in self._failure_events(ctx, span, exc):
+                            yield event
+                        raise
+
+                self._last_message = message
+                self._last_step_cache = pending_step_cache
+                self._last_step_cache_auto_request_info_counts = pending_step_cache_auto_request_info_counts
+                self._last_pending_request_ids = pending_request_ids
+                self._rotate_continuation_authority()
+                result_continuation_token[0] = self._get_continuation_token()
 
                 # HITL interruption — yield events collected so far
                 for event in ctx._get_events():
@@ -1057,35 +1148,38 @@ class FunctionalWorkflow:
                         with _framework_event_origin():
                             yield WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
 
-                # Save checkpoint
-                if storage is not None:
-                    await self._save_checkpoint(ctx, storage, ckpt_chain[0])
-
                 with _framework_event_origin():
                     yield WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
 
                 span.add_event(OtelAttr.WORKFLOW_COMPLETED)
 
-            except Exception as exc:
-                # Yield any events collected before the failure
-                for event in ctx._get_events():
-                    yield event
-
-                details = WorkflowErrorDetails.from_exception(exc)
-                with _framework_event_origin():
-                    yield WorkflowEvent.failed(details)
-                with _framework_event_origin():
-                    yield WorkflowEvent.status(WorkflowRunState.FAILED)
-
-                span.add_event(
-                    name=OtelAttr.WORKFLOW_ERROR,
-                    attributes={
-                        "error.message": str(exc),
-                        "error.type": type(exc).__name__,
-                    },
-                )
-                capture_exception(span, exception=exc)
+            except asyncio.CancelledError:
+                await self._run_cleanup()
                 raise
+
+            except Exception as exc:
+                for event in self._failure_events(ctx, span, exc):
+                    yield event
+                raise
+
+    @staticmethod
+    def _failure_events(ctx: RunContext, span: Any, exc: Exception) -> list[WorkflowEvent[Any]]:
+        events = ctx._get_events()
+        details = WorkflowErrorDetails.from_exception(exc)
+        with _framework_event_origin():
+            events.append(WorkflowEvent.failed(details))
+        with _framework_event_origin():
+            events.append(WorkflowEvent.status(WorkflowRunState.FAILED))
+
+        span.add_event(
+            name=OtelAttr.WORKFLOW_ERROR,
+            attributes={
+                "error.message": str(exc),
+                "error.type": type(exc).__name__,
+            },
+        )
+        capture_exception(span, exception=exc)
+        return events
 
     async def _execute(self, ctx: RunContext, message: Any) -> Any:
         """Run the user's async function with the active context."""
@@ -1143,12 +1237,13 @@ class FunctionalWorkflow:
         self,
         ctx: RunContext,
         storage: CheckpointStorage,
+        original_message: Any,
         previous_checkpoint_id: str | None = None,
     ) -> str:
         state = dict(ctx._state)
         state["_step_cache"] = ctx._export_step_cache()
         state["_step_cache_auto_request_info_counts"] = ctx._export_step_cache_auto_request_info_counts()
-        state["_original_message"] = self._last_message
+        state["_original_message"] = original_message
 
         checkpoint = WorkflowCheckpoint(
             workflow_name=self.name,
@@ -1209,6 +1304,7 @@ class FunctionalWorkflow:
         events: Sequence[WorkflowEvent[Any]],
         *,
         include_status_events: bool = False,
+        continuation_token: list[ContinuationToken | None],
     ) -> WorkflowRunResult:
         filtered: list[WorkflowEvent[Any]] = []
         status_events: list[WorkflowEvent[Any]] = []
@@ -1223,7 +1319,56 @@ class FunctionalWorkflow:
                 continue
             filtered.append(ev)
 
-        return WorkflowRunResult(filtered, status_events)
+        return WorkflowRunResult(filtered, status_events, continuation_token[0])
+
+    def _get_continuation_token(self) -> ContinuationToken | None:
+        if self._continuation_nonce is None:
+            return None
+        return _FunctionalWorkflowContinuationToken(
+            kind=_CONTINUATION_KIND,
+            version=_CONTINUATION_VERSION,
+            token=self._continuation_nonce,
+        )
+
+    def _rotate_continuation_authority(self) -> None:
+        self._continuation_nonce = secrets.token_urlsafe(32)
+
+    def _validate_continuation_authority(self, continuation_token: ContinuationToken | None) -> str:
+        if (
+            self._continuation_nonce is None
+            or not isinstance(continuation_token, dict)
+            or not {"kind", "version", "token"}.issubset(continuation_token)
+            or continuation_token.get("kind") != _CONTINUATION_KIND
+            or continuation_token.get("version") != _CONTINUATION_VERSION
+        ):
+            raise ValueError(_INVALID_CONTINUATION_AUTHORITY)
+
+        token = continuation_token.get("token")
+        if not isinstance(token, str) or not self._continuation_tokens_equal(token, self._continuation_nonce):
+            raise ValueError(_INVALID_CONTINUATION_AUTHORITY)
+        return token
+
+    def _consume_continuation_authority(self, continuation_nonce: str) -> None:
+        if self._continuation_nonce is None or not self._continuation_tokens_equal(
+            continuation_nonce,
+            self._continuation_nonce,
+        ):
+            raise ValueError(_INVALID_CONTINUATION_AUTHORITY)
+        self._clear_continuation_state()
+
+    @staticmethod
+    def _continuation_tokens_equal(candidate: str, expected: str) -> bool:
+        try:
+            return secrets.compare_digest(candidate.encode(), expected.encode())
+        except UnicodeEncodeError:
+            return False
+
+    def _clear_continuation_state(self) -> None:
+        self._last_message = None
+        self._last_step_cache = {}
+        self._last_step_cache_auto_request_info_counts = {}
+        self._last_pending_request_ids = set()
+        self._continuation_nonce = None
 
     @staticmethod
     def _validate_run_params(
@@ -1341,7 +1486,14 @@ class FunctionalWorkflowAgent:
     ``request_info`` events emitted by the underlying workflow are surfaced
     as :class:`FunctionApprovalRequestContent` items (mirroring the graph
     :class:`WorkflowAgent`), so HITL workflows are callable via this
-    adapter.  Callers resume via ``responses=`` / ``checkpoint_id=``.
+    adapter.  Response-only callers resume via ``responses=`` and the prior
+    response's ``continuation_token``; checkpoint restores use
+    ``checkpoint_id=`` after the host or storage adapter authorizes access.
+    A restored run that pauses returns fresh process-local authority through
+    the agent response's ``continuation_token``. The token is not a durable
+    polling token and must be supplied together with ``responses``; providing
+    it alone does not resume work. :meth:`abandon_continuation` delegates
+    abandonment to the wrapped workflow.
 
     Args:
         workflow: The :class:`FunctionalWorkflow` to wrap.
@@ -1379,6 +1531,16 @@ class FunctionalWorkflowAgent:
         """Pending request_info events emitted during the last run."""
         return self._pending_requests
 
+    def abandon_continuation(
+        self,
+        continuation_token: ContinuationToken | None = None,
+        *,
+        force: bool = False,
+    ) -> None:
+        """Abandon the wrapped workflow's pending in-memory continuation."""
+        self._workflow.abandon_continuation(continuation_token, force=force)
+        self._pending_requests = {}
+
     @overload
     def run(
         self,
@@ -1386,6 +1548,7 @@ class FunctionalWorkflowAgent:
         *,
         stream: Literal[True],
         responses: dict[str, Any] | None = None,
+        continuation_token: ContinuationToken | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -1398,6 +1561,7 @@ class FunctionalWorkflowAgent:
         *,
         stream: Literal[False] = ...,
         responses: dict[str, Any] | None = None,
+        continuation_token: ContinuationToken | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -1409,6 +1573,7 @@ class FunctionalWorkflowAgent:
         *,
         stream: bool = False,
         responses: dict[str, Any] | None = None,
+        continuation_token: ContinuationToken | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -1423,7 +1588,13 @@ class FunctionalWorkflowAgent:
                 :class:`AgentResponseUpdate` items.
             responses: HITL responses keyed by ``request_id``, forwarded to
                 the underlying workflow so HITL resumes work via this agent.
-            checkpoint_id: Optional checkpoint to restore from.
+            continuation_token: Opaque continuation token returned by the
+                preceding agent response. This process-local, single-use
+                capability is valid only together with *responses* and is not
+                a durable polling token.
+            checkpoint_id: Optional host-authorized checkpoint to restore
+                from.  A checkpoint ID locates state; it is not an
+                authorization credential.
             checkpoint_storage: Override the workflow's default
                 :class:`CheckpointStorage` for this run.
             **kwargs: Extra keyword arguments forwarded to the workflow run.
@@ -1436,6 +1607,7 @@ class FunctionalWorkflowAgent:
             return self._run_streaming(
                 messages,
                 responses=responses,
+                continuation_token=continuation_token,
                 checkpoint_id=checkpoint_id,
                 checkpoint_storage=checkpoint_storage,
                 **kwargs,
@@ -1443,6 +1615,7 @@ class FunctionalWorkflowAgent:
         return self._run_non_streaming(
             messages,
             responses=responses,
+            continuation_token=continuation_token,
             checkpoint_id=checkpoint_id,
             checkpoint_storage=checkpoint_storage,
             **kwargs,
@@ -1453,17 +1626,27 @@ class FunctionalWorkflowAgent:
         messages: Any | None,
         *,
         responses: dict[str, Any] | None = None,
+        continuation_token: ContinuationToken | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
     ) -> AgentResponse:
-        result = await self._workflow.run(
+        workflow_result = self._workflow.run(
             messages,
             responses=responses,
+            continuation_token=continuation_token,
             checkpoint_id=checkpoint_id,
             checkpoint_storage=checkpoint_storage,
             **kwargs,
         )
+        # Synchronous validation has succeeded, so the prior pending-request
+        # view no longer describes the accepted run.
+        self._pending_requests = {}
+        try:
+            result = await workflow_result
+        except Exception:
+            self._pending_requests = {}
+            raise
         return self._result_to_agent_response(result)
 
     def _run_streaming(
@@ -1471,6 +1654,7 @@ class FunctionalWorkflowAgent:
         messages: Any | None,
         *,
         responses: dict[str, Any] | None = None,
+        continuation_token: ContinuationToken | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -1478,41 +1662,50 @@ class FunctionalWorkflowAgent:
         from .._types import Content
 
         agent_name = self.name
-        # Clear per-run pending state up front
-        self._pending_requests = {}
         workflow_stream = self._workflow.run(
             messages,
             stream=True,
             responses=responses,
+            continuation_token=continuation_token,
             checkpoint_id=checkpoint_id,
             checkpoint_storage=checkpoint_storage,
             **kwargs,
         )
+        # Synchronous workflow validation has succeeded, so this run now owns
+        # the adapter's pending-request view.
+        self._pending_requests = {}
 
         async def _generate_updates() -> AsyncIterable[AgentResponseUpdate]:
-            async for event in workflow_stream:
-                if event.type == "output":
-                    data = event.data
-                    if isinstance(data, str):
-                        contents: list[Content] = [Content.from_text(text=data)]
-                    elif isinstance(data, Content):
-                        contents = [data]
-                    else:
-                        contents = [Content.from_text(text=str(data))]
-                    yield AgentResponseUpdate(
-                        contents=contents,
-                        role="assistant",
-                        author_name=agent_name,
-                    )
-                elif event.type == "request_info":
-                    approval = self._request_info_to_approval_request(event)
-                    if approval is None:
-                        continue
-                    yield AgentResponseUpdate(
-                        contents=[approval],
-                        role="assistant",
-                        author_name=agent_name,
-                    )
+            try:
+                async for event in workflow_stream:
+                    if event.type == "output":
+                        data = event.data
+                        if isinstance(data, str):
+                            contents: list[Content] = [Content.from_text(text=data)]
+                        elif isinstance(data, Content):
+                            contents = [data]
+                        else:
+                            contents = [Content.from_text(text=str(data))]
+                        yield AgentResponseUpdate(
+                            contents=contents,
+                            role="assistant",
+                            author_name=agent_name,
+                        )
+                    elif event.type == "request_info":
+                        approval = self._request_info_to_approval_request(event)
+                        if approval is None:
+                            continue
+                        yield AgentResponseUpdate(
+                            contents=[approval],
+                            role="assistant",
+                            author_name=agent_name,
+                        )
+                workflow_result = await workflow_stream.get_final_response()
+                if workflow_result.continuation_token is not None:
+                    yield AgentResponseUpdate(continuation_token=workflow_result.continuation_token)
+            except Exception:
+                self._pending_requests = {}
+                raise
 
         return ResponseStream(
             _generate_updates(),
@@ -1568,4 +1761,4 @@ class FunctionalWorkflowAgent:
         if approval_contents:
             messages.append(Msg("assistant", approval_contents))
 
-        return AgentResponse(messages=messages)
+        return AgentResponse(messages=messages, continuation_token=result.continuation_token)

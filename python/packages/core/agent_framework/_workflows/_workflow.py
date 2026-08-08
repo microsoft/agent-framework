@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .._sessions import ContextProvider
-from .._types import ResponseStream
+from .._types import ContinuationToken, ResponseStream
 from ..exceptions import WorkflowException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage
@@ -118,11 +118,22 @@ class WorkflowRunResult(list[WorkflowEvent]):
     - get_request_info_events(): Retrieve external input requests made during execution
     - get_final_state(): Get the final workflow state (IDLE, IDLE_WITH_PENDING_REQUESTS, etc.)
     - status_timeline(): Access the complete status event history
+
+    Functional workflows set ``continuation_token`` when execution pauses for
+    external input. It is a process-local, single-use capability rather than a
+    durable polling token. Callers must treat it as opaque and pass it back
+    together with responses for the next in-memory resume.
     """
 
-    def __init__(self, events: list[WorkflowEvent[Any]], status_events: list[WorkflowEvent[Any]] | None = None) -> None:
+    def __init__(
+        self,
+        events: list[WorkflowEvent[Any]],
+        status_events: list[WorkflowEvent[Any]] | None = None,
+        continuation_token: ContinuationToken | None = None,
+    ) -> None:
         super().__init__(events)
         self._status_events: list[WorkflowEvent[Any]] = status_events or []
+        self.continuation_token = continuation_token
 
     def get_outputs(self) -> list[Any]:
         """Get all outputs from the workflow run result.
