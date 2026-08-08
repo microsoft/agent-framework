@@ -19,9 +19,9 @@ class FoundrySessionStore(FileSessionStore):
     A Foundry hosted session controls platform compute and filesystem lifetime
     and may host multiple users and Responses conversations. A MAF
     :class:`AgentSession` contains framework context state. Snapshots are keyed
-    by ``conversation_id`` for stored conversations or by Responses
-    ``response_id`` for response chains; these storage keys are independent of
-    the MAF session's own identifier.
+    by every Responses ``response_id``. Stored conversations also update a
+    snapshot keyed by ``conversation_id`` as an alias for the latest turn.
+    These storage keys are independent of the MAF session's own identifier.
 
     This implementation currently persists through :class:`FileSessionStore`,
     with each validated platform user ID as a child directory. The

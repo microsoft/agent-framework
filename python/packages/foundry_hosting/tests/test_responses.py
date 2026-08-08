@@ -501,6 +501,22 @@ class TestResponsesHostServerInit:
         error = getattr(failed_response, "error", None)
         assert "Session storage is required" in getattr(error, "message", "")
 
+    async def test_previous_response_rejected_with_conversation(self) -> None:
+        agent = _make_agent()
+        server = _make_server(agent)
+        response = await _post(
+            server,
+            previous_response_id="caresp_aaaaaaaaaaaaaaaa00" + "1" * 32,
+            conversation_id="conversation-1",
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "failed"
+        assert body["error"]["message"] == ("Previous response ID cannot be used in conjunction with conversation ID.")
+        agent.run.assert_not_called()
+        agent.create_session.assert_not_called()
+
     async def test_previous_response_requires_existing_snapshot(self, tmp_path: Path) -> None:
         agent = _make_agent()
         server = _make_server(agent, session_store=FoundrySessionStore(tmp_path))
@@ -685,8 +701,45 @@ class TestAgentSessionPersistence:
         assert seen_session_ids[2] == seen_session_ids[0]
         assert (tmp_path / "user-1" / "conversation-1.json").is_file()
         assert (tmp_path / "user-1" / "conversation-2.json").is_file()
+        assert (tmp_path / "user-1" / "response-1.json").is_file()
+        assert (tmp_path / "user-1" / "response-2.json").is_file()
+        assert (tmp_path / "user-1" / "response-3.json").is_file()
         assert agent.create_session.call_count == 2
         assert all(item.kwargs == {} for item in agent.create_session.call_args_list)
+
+    async def test_conversation_response_snapshots_support_branching(self) -> None:
+        seen_counts: list[int] = []
+
+        async def run_with_state(*args: Any, **kwargs: Any) -> AgentResponse:
+            session = kwargs["session"]
+            assert isinstance(session, AgentSession)
+            count = int(session.state.get("turn_count", 0)) + 1
+            session.state["turn_count"] = count
+            seen_counts.append(count)
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(f"turn {count}")])])
+
+        agent = _make_agent()
+        agent.run = AsyncMock(side_effect=run_with_state)
+        store = SessionStore()
+        server = _make_server(agent, session_store=store)
+
+        first = await _post(server, input_text="first", conversation_id="conversation-1")
+        await _post(server, input_text="second", conversation_id="conversation-1")
+        branch = await _post(server, input_text="branch", previous_response_id=first.json()["id"])
+
+        assert first.status_code == 200
+        assert branch.status_code == 200
+        assert seen_counts == [1, 2, 2]
+
+        conversation_snapshot = await store.get("conversation-1")
+        first_snapshot = await store.get(first.json()["id"])
+        branch_snapshot = await store.get(branch.json()["id"])
+        assert conversation_snapshot is not None
+        assert first_snapshot is not None
+        assert branch_snapshot is not None
+        assert conversation_snapshot.state["turn_count"] == 2
+        assert first_snapshot.state["turn_count"] == 1
+        assert branch_snapshot.state["turn_count"] == 2
 
     async def test_previous_response_chain_restores_session_state(self) -> None:
         seen_counts: list[int] = []
@@ -4892,6 +4945,156 @@ class TestWorkflowAgentHosting:
         assert "response.output_text.delta" in types
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert any(e["data"]["text"] == "hello stream" for e in text_done)
+
+    @pytest.mark.parametrize("stream", [False, True])
+    async def test_conversation_response_checkpoints_support_branching(self, tmp_path: Path, stream: bool) -> None:
+        @executor
+        async def count_turns(messages: list[Message], ctx: WorkflowContext[Any, AgentResponse]) -> None:
+            del messages
+            turn_count = int(ctx.get_state("turn_count", 0)) + 1
+            ctx.set_state("turn_count", turn_count)
+            await ctx.yield_output(
+                AgentResponse(messages=[Message("assistant", [Content.from_text(f"turn {turn_count}")])])
+            )
+
+        workflow_agent = WorkflowAgent(
+            workflow=WorkflowBuilder(start_executor=count_turns).build(),
+            name="Counting Workflow Agent",
+        )
+        server = _make_server(workflow_agent)
+        server._checkpoint_storage_path = str(tmp_path)  # pyright: ignore[reportPrivateUsage]
+
+        def response_body(response: httpx.Response) -> dict[str, Any]:
+            if not stream:
+                return response.json()
+            return _parse_sse_events(response.text)[-1]["data"]["response"]
+
+        first = await _post(
+            server,
+            input_text="first",
+            conversation_id="conversation-1",
+            stream=stream,
+        )
+        second = await _post(
+            server,
+            input_text="second",
+            conversation_id="conversation-1",
+            stream=stream,
+        )
+        first_body = response_body(first)
+        branch = await _post(
+            server,
+            input_text="branch",
+            previous_response_id=first_body["id"],
+            stream=stream,
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert branch.status_code == 200
+        assert first_body["status"] == "completed"
+        assert (tmp_path / first_body["id"]).is_dir()
+        assert (tmp_path / response_body(second)["id"]).is_dir()
+        assert (tmp_path / response_body(branch)["id"]).is_dir()
+        assert (tmp_path / "conversation-1").is_dir()
+
+        branch_text = [
+            part["text"]
+            for item in response_body(branch)["output"]
+            if item["type"] == "message"
+            for part in item.get("content", [])
+            if part["type"] == "output_text"
+        ]
+        assert branch_text == ["turn 2"]
+
+    async def test_failed_conversation_workflow_promotes_latest_response_checkpoint(self, tmp_path: Path) -> None:
+        workflow_agent = _build_text_workflow_agent("ignored")
+        checkpoint = WorkflowCheckpoint(
+            workflow_name=workflow_agent.workflow.name,
+            graph_signature_hash="hash",
+        )
+
+        async def failing_run(*args: Any, **kwargs: Any) -> AgentResponse:
+            await kwargs["checkpoint_storage"].save(checkpoint)
+            raise RuntimeError("workflow failed")
+
+        server = _make_server(workflow_agent)
+        server._checkpoint_storage_path = str(tmp_path)  # pyright: ignore[reportPrivateUsage]
+        request = CreateResponse(model="m", input="hi")
+        context = ResponseContext(
+            response_id="response-1",
+            conversation_id="conversation-1",
+            mode_flags=MagicMock(),
+        )
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(workflow_agent, "run", side_effect=failing_run),
+        ):
+            events = [
+                event
+                async for event in server._handle_inner_workflow(  # pyright: ignore[reportPrivateUsage]
+                    request,
+                    context,
+                )
+            ]
+
+        conversation_storage = FileCheckpointStorage(tmp_path / "conversation-1")
+        latest = await conversation_storage.get_latest(workflow_name=workflow_agent.workflow.name)
+        assert latest is not None
+        assert latest.checkpoint_id == checkpoint.checkpoint_id
+        assert getattr(events[-1], "type", None) == "response.failed"
+
+    @pytest.mark.parametrize("interruption", ["cancel", "close"])
+    async def test_interrupted_conversation_workflow_promotes_latest_response_checkpoint(
+        self,
+        tmp_path: Path,
+        interruption: str,
+    ) -> None:
+        workflow_agent = _build_text_workflow_agent("ignored")
+        checkpoint = WorkflowCheckpoint(
+            workflow_name=workflow_agent.workflow.name,
+            graph_signature_hash="hash",
+        )
+
+        async def updates(checkpoint_storage: FileCheckpointStorage) -> AsyncIterator[AgentResponseUpdate]:
+            await checkpoint_storage.save(checkpoint)
+            yield AgentResponseUpdate(contents=[Content.from_text("started")], role="assistant")
+            await asyncio.Event().wait()
+
+        def streaming_run(*args: Any, **kwargs: Any) -> AsyncIterator[AgentResponseUpdate]:
+            return updates(kwargs["checkpoint_storage"])
+
+        server = _make_server(workflow_agent)
+        server._checkpoint_storage_path = str(tmp_path)  # pyright: ignore[reportPrivateUsage]
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(
+            response_id="response-1",
+            conversation_id="conversation-1",
+            mode_flags=MagicMock(),
+        )
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(workflow_agent, "run", side_effect=streaming_run),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_inner_workflow(request, context),  # pyright: ignore[reportPrivateUsage]
+            )
+            await anext(handler)
+            await anext(handler)
+            await anext(handler)
+            if interruption == "cancel":
+                with pytest.raises(asyncio.CancelledError):
+                    await handler.athrow(asyncio.CancelledError())
+            else:
+                await handler.aclose()
+
+        conversation_storage = FileCheckpointStorage(tmp_path / "conversation-1")
+        latest = await conversation_storage.get_latest(workflow_name=workflow_agent.workflow.name)
+        assert latest is not None
+        assert latest.checkpoint_id == checkpoint.checkpoint_id
 
     async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")
