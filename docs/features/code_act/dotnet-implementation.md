@@ -1,7 +1,7 @@
 # CodeAct .NET implementation
 
 This document describes the .NET realization of the CodeAct design in
-[`docs/decisions/0024-codeact-integration.md`](../../decisions/0024-codeact-integration.md).
+[`docs/decisions/0029-codeact-integration.md`](../../decisions/0029-codeact-integration.md).
 
 This document is intentionally focused on the .NET design and public API surface.
 The initial public .NET type described here is `HyperlightCodeActProvider`. Future .NET backends, such as Monty, should follow the same conceptual model with their own concrete provider types rather than through a public abstract base class or a public executor parameter.
@@ -23,7 +23,7 @@ Implementation-free outcome:
 
 ## What is the problem being solved?
 
-The cross-SDK problem statement and decision rationale live in the [ADR](../../decisions/0024-codeact-integration.md). The items below narrow that statement to .NET-specific design concerns:
+The cross-SDK problem statement and decision rationale live in the [ADR](../../decisions/0029-codeact-integration.md). The items below narrow that statement to .NET-specific design concerns:
 
 - Today, the easiest way to prototype CodeAct in .NET is to manually configure an `AIFunction` and wire instructions — this is fragile and requires understanding internal sandbox lifecycle details.
 - There is no first-class .NET design that simultaneously covers Hyperlight-backed CodeAct now, future backend-specific providers, and both tool-enabled and interpreter modes.

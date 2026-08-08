@@ -1,7 +1,7 @@
 # CodeAct Python implementation
 
 This document describes the Python realization of the CodeAct design in
-[`docs/decisions/0024-codeact-integration.md`](../../decisions/0024-codeact-integration.md).
+[`docs/decisions/0029-codeact-integration.md`](../../decisions/0029-codeact-integration.md).
 
 This document is intentionally focused on the Python design and public API surface.
 The initial public Python type described here is `HyperlightCodeActProvider`. Future Python backends, such as Monty, should follow the same conceptual model with their own concrete provider types rather than through a public abstract base class or a public executor parameter.
@@ -23,7 +23,7 @@ Implementation-free outcome:
 
 ## What is the problem being solved?
 
-The cross-SDK problem statement and decision rationale live in the [ADR](../../decisions/0024-codeact-integration.md). The items below narrow that statement to Python-specific design concerns:
+The cross-SDK problem statement and decision rationale live in the [ADR](../../decisions/0029-codeact-integration.md). The items below narrow that statement to Python-specific design concerns:
 
 - Today, the easiest way to prototype CodeAct is to infer or reshape the agent's direct tool surface, which is fragile and hard to reason about.
 - In Python, inferring a CodeAct tool surface from generic agent tool configuration is fragile and hard to reason about.
