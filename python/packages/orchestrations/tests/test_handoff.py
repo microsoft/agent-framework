@@ -36,6 +36,7 @@ from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuild
 from pytest import param
 
 from agent_framework_orchestrations._handoff import (
+    _HANDOFF_CONTINUATION_DEFAULT_INSTRUCTION,  # pyright: ignore[reportPrivateUsage]
     HANDOFF_FUNCTION_RESULT_KEY,
     HandoffAgentExecutor,
     HandoffConfiguration,
@@ -1430,6 +1431,159 @@ async def test_simple_handoff_workflow_with_approval_request(store: bool) -> Non
     workflow_result = await workflow.run(responses={request_events[0].request_id: HandoffAgentUserRequest.terminate()})
 
     assert workflow_result.get_final_state() == WorkflowRunState.IDLE
+
+
+# endregion
+
+
+# region Empty-input regression (issue #7573)
+
+
+class TextlessHandoffChatClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
+    """Mock chat client whose only reply content is a handoff tool call, with no text at all."""
+
+    def __init__(self, *, handoff_to: str) -> None:
+        ChatMiddlewareLayer.__init__(self)
+        FunctionInvocationLayer.__init__(self)
+        BaseChatClient.__init__(self)
+        self._handoff_to = handoff_to
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        del messages, options, kwargs
+        contents: list[Content] = [
+            Content.from_function_call(
+                call_id="handoff-call-1",
+                name=f"handoff_to_{self._handoff_to}",
+                arguments={"handoff_to": self._handoff_to},
+            )
+        ]
+        if stream:
+            return self._build_streaming_response(contents)
+
+        async def _get() -> ChatResponse:
+            return ChatResponse(messages=[Message(role="assistant", contents=contents)], response_id="textless-handoff")
+
+        return _get()
+
+    def _build_streaming_response(self, contents: list[Content]) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            yield ChatResponseUpdate(contents=contents, role="assistant", finish_reason="stop")
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            return ChatResponse.from_updates(updates)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
+
+
+class RecordingChatClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
+    """Mock chat client that records the exact messages it is invoked with on every call."""
+
+    def __init__(self) -> None:
+        ChatMiddlewareLayer.__init__(self)
+        FunctionInvocationLayer.__init__(self)
+        BaseChatClient.__init__(self)
+        self.received_messages: list[list[Message]] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        del options, kwargs
+        self.received_messages.append(list(messages))
+        contents: list[Content] = [Content.from_text(text="specialist reply")]
+        if stream:
+            return self._build_streaming_response(contents)
+
+        async def _get() -> ChatResponse:
+            return ChatResponse(messages=[Message(role="assistant", contents=contents)], response_id="specialist-reply")
+
+        return _get()
+
+    def _build_streaming_response(self, contents: list[Content]) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            yield ChatResponseUpdate(contents=contents, role="assistant", finish_reason="stop")
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            return ChatResponse.from_updates(updates)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_handoff_target_gets_continuation_instruction_when_response_has_no_text(stream: bool) -> None:
+    """Regression test for #7573.
+
+    ``clean_conversation_for_handoff`` drops every message with no text content, so a response
+    consisting solely of the handoff tool call cleans to an empty list. Before the fix, the
+    handoff target's ``AgentExecutorRequest`` carried ``messages=[]`` in that case; it must now
+    carry the continuation instruction instead, so agents that reject empty input (e.g.
+    ``A2AAgent``) are never invoked with nothing at all.
+    """
+    triage = Agent(
+        client=TextlessHandoffChatClient(handoff_to="specialist"),
+        name="triage",
+        id="triage",
+        require_per_service_call_history_persistence=True,
+    )
+    specialist_client = RecordingChatClient()
+    specialist = Agent(
+        client=specialist_client,
+        name="specialist",
+        id="specialist",
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = (
+        HandoffBuilder(participants=_as_handoff_agents(triage, specialist))
+        .with_start_agent(_as_handoff_agent(triage))
+        .build()
+    )
+
+    if stream:
+        await _drain(workflow.run("Need technical support", stream=True))
+    else:
+        await workflow.run("Need technical support")
+
+    assert specialist_client.received_messages, "Handoff target was never invoked"
+    assert any(
+        _HANDOFF_CONTINUATION_DEFAULT_INSTRUCTION in (m.text or "") for m in specialist_client.received_messages[0]
+    ), "Handoff target's first invocation should carry the continuation instruction"
+
+
+async def test_handoff_no_continuation_instruction_when_response_has_text() -> None:
+    """The continuation instruction must only be injected when the broadcast would otherwise be empty."""
+    triage = MockHandoffAgent(name="triage", handoff_to="specialist")
+    specialist_client = RecordingChatClient()
+    specialist = Agent(
+        client=specialist_client,
+        name="specialist",
+        id="specialist",
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = (
+        HandoffBuilder(participants=_as_handoff_agents(triage, specialist))
+        .with_start_agent(_as_handoff_agent(triage))
+        .build()
+    )
+
+    await workflow.run("Need technical support")
+
+    assert specialist_client.received_messages, "Handoff target was never invoked"
+    assert not any(
+        _HANDOFF_CONTINUATION_DEFAULT_INSTRUCTION in (m.text or "") for m in specialist_client.received_messages[0]
+    ), "Continuation instruction should not be injected when the handoff response already has text"
 
 
 # endregion
