@@ -2166,77 +2166,86 @@ def _collect_approval_responses(
     Hosted tool approvals (e.g. MCP) are excluded because they must be
     forwarded to the API as-is rather than processed locally.
     """
+    resolved_call_ids: set[str] = set()
+
+    # First pass: collect what resolves the responses (order-independent)
+    for message in messages:
+        for content in message.contents:
+            if content.call_id is not None:
+                is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+                is_follow_up_request = content.user_input_request and content.type not in {
+                    "function_approval_request",
+                    "function_approval_response",
+                }
+                if is_terminal_result or is_follow_up_request:
+                    resolved_call_ids.add(content.call_id)
+
+    # Second pass: collect unresolved approval responses
     approval_responses: list[Content] = []
-    pending_by_call_id: dict[str, deque[Content]] = {}
-    resolved_response_ids: set[int] = set()
     for message in messages:
         for content in message.contents:
             if content.type == "function_approval_response" and not _is_hosted_tool_approval(content):
                 function_call = content.function_call
                 if function_call is None or function_call.call_id is None:
                     continue
-                approval_responses.append(content)
-                pending_by_call_id.setdefault(function_call.call_id, deque()).append(content)
-                continue
-            if content.call_id is None:
-                continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
-            is_follow_up_request = content.user_input_request and content.type not in {
-                "function_approval_request",
-                "function_approval_response",
-            }
-            if not (is_terminal_result or is_follow_up_request):
-                continue
-            pending_responses = pending_by_call_id.get(content.call_id)
-            if pending_responses:
-                resolved_response_ids.add(id(pending_responses.popleft()))
+                if function_call.call_id not in resolved_call_ids:
+                    approval_responses.append(content)
 
-    return {
-        content.id: content
-        for content in approval_responses
-        if id(content) not in resolved_response_ids and content.id is not None
-    }
+    return {content.id: content for content in approval_responses if content.id is not None}
 
 
 def _collect_unanswered_approval_requests(messages: Sequence[Message]) -> list[Content]:
-    approval_requests_by_id: dict[str, Content] = {}
-    pending_request_ids_by_call_id: dict[str, deque[str]] = {}
     answered_approval_ids: set[str] = set()
+    resolved_call_ids: set[str] = set()
 
+    # First pass: collect what resolves the requests (order-independent)
+    for message in messages:
+        for content in message.contents:
+            if content.type == "function_approval_response":
+                if content.id is not None:
+                    answered_approval_ids.add(content.id)
+            elif content.call_id is not None:
+                is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+                is_follow_up_request = content.user_input_request and content.type not in {
+                    "function_approval_request",
+                    "function_approval_response",
+                }
+                if is_terminal_result or is_follow_up_request:
+                    resolved_call_ids.add(content.call_id)
+
+    # Second pass: collect unanswered requests
+    approval_requests_by_id: dict[str, Content] = {}
     for message in messages:
         for content in message.contents:
             if content.type == "function_approval_request":
                 function_call = content.function_call
                 if content.id is None or function_call is None or function_call.call_id is None:
                     continue
+                if content.id in answered_approval_ids or function_call.call_id in resolved_call_ids:
+                    continue
                 if content.id not in approval_requests_by_id:
                     approval_requests_by_id[content.id] = content
-                    pending_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
-                continue
-            if content.type == "function_approval_response":
-                if content.id is not None:
-                    answered_approval_ids.add(content.id)
-                continue
-            if content.call_id is None:
-                continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
-            is_follow_up_request = content.user_input_request and content.type not in {
-                "function_approval_request",
-                "function_approval_response",
-            }
-            if not (is_terminal_result or is_follow_up_request):
-                continue
-            if request_ids := pending_request_ids_by_call_id.get(content.call_id):
-                answered_approval_ids.add(request_ids.popleft())
 
-    return [
-        request for approval_id, request in approval_requests_by_id.items() if approval_id not in answered_approval_ids
-    ]
+    return list(approval_requests_by_id.values())
 
 
 def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]) -> None:
     pending_requests = _collect_unanswered_approval_requests(messages)
-    if not pending_requests:
+
+    # Collect resolved call_ids to strip resolved local approval responses so they don't leak to the API
+    resolved_call_ids: set[str] = set()
+    for message in messages:
+        for content in message.contents:
+            if content.call_id is not None:
+                is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+                is_follow_up_request = content.user_input_request and content.type not in {
+                    "function_approval_request",
+                    "function_approval_response",
+                }
+                if is_terminal_result or is_follow_up_request:
+                    resolved_call_ids.add(content.call_id)
+
+    if not pending_requests and not resolved_call_ids:
         return
 
     pending_approval_ids = {request.id for request in pending_requests if request.id is not None}
@@ -2315,6 +2324,12 @@ def _remove_unanswered_approval_batches_from_model_input(messages: list[Message]
             for content in message.contents
             if not (
                 (content.type == "function_approval_request" and content.id in pending_approval_ids)
+                or (
+                    content.type == "function_approval_response"
+                    and not _is_hosted_tool_approval(content)
+                    and content.function_call is not None
+                    and content.function_call.call_id in resolved_call_ids
+                )
                 or (
                     message_index in call_batch_message_indices
                     and (
