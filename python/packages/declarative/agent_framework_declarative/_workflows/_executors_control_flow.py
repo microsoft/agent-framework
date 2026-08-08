@@ -400,6 +400,7 @@ class JoinExecutor(DeclarativeActionExecutor):
         self,
         trigger: dict[str, Any]
         | str
+        | Message
         | list[Message]
         | ActionTrigger
         | ActionComplete
@@ -408,6 +409,10 @@ class JoinExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[ActionComplete],
     ) -> None:
         """Simply pass through to continue the workflow."""
+        # Normalize a single Message to list[Message] so _ensure_state_initialized
+        # can extract the user text via the list[Message] path.
+        if isinstance(trigger, Message):
+            trigger = [trigger]
         await self._ensure_state_initialized(ctx, trigger)
         await ctx.send_message(ActionComplete())
 
