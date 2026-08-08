@@ -1604,19 +1604,28 @@ async def _auto_invoke_function(
         return Content.from_function_result(call_id=call_id, result=function_result)
     except MiddlewareTermination as term_exc:
         # Re-raise to signal loop termination, but first capture any result set by middleware
-        if middleware_context.result is not None:
+        middleware_result = middleware_context.result
+        if middleware_result is not None:
+            blocked_result = cast(dict[str, Any], middleware_result) if isinstance(middleware_result, dict) else None
+            if blocked_result is not None and blocked_result.get("blocked_violation") is True:
+                blocked_properties = dict(function_call_content.additional_properties or {})
+                blocked_properties.update({key: value for key, value in blocked_result.items() if key != "error"})
+                blocked_error = str(blocked_result.get("error", "Tool blocked by security policy."))
+                term_exc.result = Content.from_function_result(
+                    call_id=call_id,
+                    result=blocked_error,
+                    exception=blocked_error,
+                    additional_properties=blocked_properties,
+                )
             # Pass through function_approval_request directly (e.g., from security policy middleware)
             # so the approval flow in _handle_function_call_results activates correctly.
-            if (
-                isinstance(middleware_context.result, Content)
-                and middleware_context.result.type == "function_approval_request"
-            ):
-                term_exc.result = middleware_context.result
+            elif isinstance(middleware_result, Content) and middleware_result.type == "function_approval_request":
+                term_exc.result = middleware_result
             else:
                 # Store result in exception for caller to extract
                 term_exc.result = Content.from_function_result(
                     call_id=call_id,
-                    result=middleware_context.result,
+                    result=middleware_result,
                     additional_properties=function_call_content.additional_properties,
                 )
         raise
@@ -1680,7 +1689,11 @@ async def _execute_single_function_call(
         return [result], False
     except MiddlewareTermination as exc:
         if isinstance(exc.result, Content):
-            return [exc.result], True
+            # A blocked FIDES call is a normal tool result: the model must receive
+            # the refusal and get a chance to explain or choose another action.
+            # Approval requests remain terminal and pause for user input.
+            is_blocked_policy = (exc.result.additional_properties or {}).get("blocked_violation") is True
+            return [exc.result], not is_blocked_policy
         source_function_call = _underlying_function_call(function_call)
         return [
             Content.from_function_result(

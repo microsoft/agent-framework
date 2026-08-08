@@ -295,7 +295,22 @@ def _function_call_from_request(request: Content) -> Content | None:
     function_call = request.function_call
     if function_call is None or function_call.type != "function_call" or function_call.name is None:
         return None
+    request_props = request.additional_properties or {}
+    if request_props:
+        function_call = copy.copy(function_call)
+        function_call.additional_properties = {
+            **(function_call.additional_properties or {}),
+            **request_props,
+        }
     return function_call
+
+
+def _has_policy_violation(request: Content) -> bool:
+    """Return whether an approval request represents a FIDES policy violation."""
+    properties = request.additional_properties or {}
+    return bool(
+        properties.get("policy_violation") or properties.get("blocked_violation") or properties.get("_fides_violations")
+    )
 
 
 def _arguments_match(rule_arguments: Mapping[str, str], function_call: Content) -> bool:
@@ -557,7 +572,9 @@ class ToolApprovalMiddleware(AgentMiddleware):
     async def _drain_auto_approvable_queue(self, state: ToolApprovalState) -> None:
         remaining: list[Content] = []
         for request in state.queued_approval_requests:
-            if _matches_rule(request, state.rules) or await self._matches_auto_rule(request):
+            if not _has_policy_violation(request) and (
+                _matches_rule(request, state.rules) or await self._matches_auto_rule(request)
+            ):
                 state.collected_approval_responses.append(request.to_function_approval_response(approved=True))
                 continue
             remaining.append(request)
@@ -581,7 +598,9 @@ class ToolApprovalMiddleware(AgentMiddleware):
         auto_approved: set[int] = set()
         unresolved: list[Content] = []
         for request in approval_requests:
-            if _matches_rule(request, state.rules) or await self._matches_auto_rule(request):
+            if not _has_policy_violation(request) and (
+                _matches_rule(request, state.rules) or await self._matches_auto_rule(request)
+            ):
                 state.collected_approval_responses.append(request.to_function_approval_response(approved=True))
                 auto_approved.add(id(request))
             else:

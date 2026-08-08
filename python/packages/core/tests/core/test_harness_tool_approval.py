@@ -25,6 +25,11 @@ from agent_framework import (
     tool,
 )
 from agent_framework._feature_stage import ExperimentalWarning
+from agent_framework._harness._tool_approval import (
+    ToolApprovalRule,
+    _function_call_from_request,
+    _has_policy_violation,
+)
 
 from .conftest import MockBaseChatClient
 
@@ -1253,3 +1258,24 @@ async def test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide(
     requests = _approval_requests(second_response.messages)
     assert [_function_call(request).arguments for request in requests] == ['{"value": "custom"}']
     assert calls == 1
+
+
+async def test_policy_violations_are_not_auto_approved_by_standing_rules() -> None:
+    request = Content.from_function_approval_request(
+        id="call-1",
+        function_call=Content.from_function_call(call_id="call-1", name="write_file", arguments={}),
+        additional_properties={"policy_violation": True},
+    )
+    function_call = _function_call_from_request(request)
+    assert function_call is not None
+    assert function_call.additional_properties["policy_violation"] is True
+    assert _has_policy_violation(request) is True
+
+    middleware = ToolApprovalMiddleware()
+    state = ToolApprovalState(rules=[ToolApprovalRule(tool_name="write_file")])
+    messages = [Message(role="assistant", contents=[request])]
+
+    all_auto_approved = await middleware._process_outbound_messages(messages, state)
+
+    assert all_auto_approved is False
+    assert messages[0].contents == [request]
