@@ -62,7 +62,7 @@ from agent_framework.orchestrations import (
 | Handoff (Autonomous)                     | [handoff_autonomous.py](./handoff_autonomous.py)                                                 | Autonomous mode: specialists iterate independently until invoking a handoff tool using `.with_autonomous_mode()` |
 | Handoff with Code Interpreter            | [handoff_with_code_interpreter_file.py](./handoff_with_code_interpreter_file.py)                 | Retrieve file IDs from code interpreter output in handoff workflow                                               |
 | Handoff with Tool Approval + Checkpoint  | [handoff_with_tool_approval_checkpoint_resume.py](./handoff_with_tool_approval_checkpoint_resume.py) | Capture tool-approval decisions in checkpoints and resume from persisted state                                  |
-| Handoff Orchestration as Agent           | [handoff_workflow_as_agent.py](../agents/handoff_workflow_as_agent.py)                                   | Build a HandoffBuilder workflow and expose it as an agent, including HITL request/response flow                |
+| Handoff Orchestration as Agent           | [handoff_workflow_as_agent.py](../agents/handoff_workflow_as_agent.py)                                   | Resolve authoritative pending HITL requests from a HandoffBuilder workflow agent                              |
 
 ### magentic
 

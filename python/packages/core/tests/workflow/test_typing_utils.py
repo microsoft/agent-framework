@@ -1,11 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import importlib
+import sys
+import typing
 from dataclasses import dataclass
+from pathlib import Path
+from types import ModuleType
 from typing import Any, Generic, Optional, TypeVar, Union
 
 import pytest
 
-from agent_framework import WorkflowEvent
+from agent_framework import Message, WorkflowEvent
 from agent_framework._workflows._typing_utils import (
     deserialize_type,
     is_instance_of,
@@ -284,6 +289,32 @@ def test_serialize_type() -> None:
     assert serialize_type(TestClass) == expected
 
 
+def test_serialize_type_parameterized_generic_preserves_wire_name() -> None:
+    """Parameterized generics preserve their historical wire names."""
+    serialized_name = serialize_type(list[Message])
+
+    assert serialized_name == "builtins.list"
+    assert deserialize_type(serialized_name) is list
+    legacy_list_alias = vars(typing)["List"]
+    legacy_list = legacy_list_alias[Message]
+    legacy_serialized_name = serialize_type(legacy_list)
+    assert legacy_serialized_name == "typing.List"
+    assert deserialize_type(legacy_serialized_name) is legacy_list_alias
+
+
+@pytest.mark.parametrize(
+    "alias_name",
+    ["List", "Dict", "Tuple", "Set", "FrozenSet", "Sequence", "Mapping", "Callable", "Type"],
+)
+def test_deserialize_type_supports_legacy_typing_aliases(alias_name: str) -> None:
+    """Trusted standard typing aliases retain their historical wire compatibility."""
+    legacy_alias = vars(typing)[alias_name]
+    serialized_name = f"typing.{alias_name}"
+
+    assert serialize_type(legacy_alias) == serialized_name
+    assert deserialize_type(serialized_name) is legacy_alias
+
+
 def test_deserialize_type() -> None:
     """Test deserialization of type strings back to types."""
     # Test built-in types
@@ -324,17 +355,200 @@ def test_serialize_deserialize_roundtrip() -> None:
     assert instance.type == "request_info"
 
 
+def test_deserialize_type_accepts_explicit_custom_type_mapping() -> None:
+    """Callers can resolve a trusted custom type without first serializing it."""
+
+    class ExplicitlyAllowedType:
+        pass
+
+    serialized_name = f"{ExplicitlyAllowedType.__module__}.{ExplicitlyAllowedType.__qualname__}"
+
+    assert (
+        deserialize_type(serialized_name, allowed_types={serialized_name: ExplicitlyAllowedType})
+        is ExplicitlyAllowedType
+    )
+
+
+def test_deserialize_type_accepts_historical_optional_name_for_union_annotation() -> None:
+    """A trusted Optional annotation can rehydrate payloads emitted before runtime canonicalization."""
+    optional_string = str | None
+
+    assert deserialize_type("typing.Optional", allowed_types={"typing.Optional": optional_string}) == optional_string
+
+
+def test_serialize_type_preserves_unusual_runtime_type_name() -> None:
+    """Compatibility names remain the exact module and qualified name strings."""
+
+    class UnusualType:
+        pass
+
+    UnusualType.__qualname__ = "Request-Type"
+    expected_name = f"{UnusualType.__module__}.{UnusualType.__qualname__}"
+
+    assert serialize_type(UnusualType) == expected_name
+    assert deserialize_type(expected_name, allowed_types={expected_name: UnusualType}) is UnusualType
+
+
+def test_deserialize_type_rejects_non_type_mapping_value() -> None:
+    """Explicit compatibility mappings cannot resolve arbitrary objects."""
+    invalid_mapping: Any = {"trusted.Request": object()}
+
+    with pytest.raises(TypeError, match="must be an actual type"):
+        deserialize_type("trusted.Request", allowed_types=invalid_mapping)
+
+
+def test_deserialize_type_rejects_alias_mapping() -> None:
+    """A type cannot be authorized under a different serialized name."""
+
+    class TrustedRequest:
+        pass
+
+    with pytest.raises(ValueError, match="does not match the supplied type"):
+        deserialize_type("trusted.Alias", allowed_types={"trusted.Alias": TrustedRequest})
+
+
+def test_deserialize_type_rejects_subclass_for_base_name() -> None:
+    """Subclass compatibility is insufficient for serialized type identity."""
+
+    class BaseRequest:
+        pass
+
+    class DerivedRequest(BaseRequest):
+        pass
+
+    base_name = f"{BaseRequest.__module__}.{BaseRequest.__qualname__}"
+    with pytest.raises(ValueError, match="does not match the supplied type"):
+        deserialize_type(base_name, allowed_types={base_name: DerivedRequest})
+
+
+def test_deserialize_type_explicit_mapping_resolves_same_named_local_type() -> None:
+    """An exact per-call mapping selects a trusted local type with a reused compatibility name."""
+
+    class RegisteredRequest:
+        pass
+
+    class ConflictingRequest:
+        pass
+
+    serialized_name = serialize_type(RegisteredRequest)
+    ConflictingRequest.__module__ = RegisteredRequest.__module__
+    ConflictingRequest.__qualname__ = RegisteredRequest.__qualname__
+
+    assert deserialize_type(serialized_name, allowed_types={serialized_name: ConflictingRequest}) is ConflictingRequest
+
+
+def test_serialize_type_allows_repeated_factory_types_with_same_name() -> None:
+    """Independent factories can serialize distinct types that share one compatibility name."""
+
+    def make_request_type() -> type:
+        class Request:
+            pass
+
+        return Request
+
+    first_type = make_request_type()
+    second_type = make_request_type()
+
+    serialized_name = serialize_type(first_type)
+    assert serialize_type(second_type) == serialized_name
+
+    with pytest.raises(ModuleNotFoundError, match="<locals>"):
+        deserialize_type(serialized_name)
+
+    assert deserialize_type(serialized_name, allowed_types={serialized_name: second_type}) is second_type
+
+
+def test_serialize_type_allows_reloaded_type_with_same_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module reload can replace a type without permanently poisoning serialization."""
+    module_name = "_request_info_reload_type"
+    module_path = tmp_path / f"{module_name}.py"
+    module_path.write_text("class ReloadedRequest:\n    pass\n", encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    importlib.invalidate_caches()
+
+    module = importlib.import_module(module_name)
+    try:
+        first_type = module.ReloadedRequest
+        serialized_name = serialize_type(first_type)
+
+        reloaded_module = importlib.reload(module)
+        second_type = reloaded_module.ReloadedRequest
+
+        assert second_type is not first_type
+        assert serialize_type(second_type) == serialized_name
+        assert deserialize_type(serialized_name) is second_type
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+@pytest.mark.parametrize("serialized_name", ["", "int", ".int", "builtins..int", "builtins.int."])
+def test_deserialize_type_rejects_malformed_names(serialized_name: str) -> None:
+    """Malformed serialized names fail before compatibility lookup."""
+    with pytest.raises(ValueError, match="Malformed serialized type name"):
+        deserialize_type(serialized_name)
+
+
+def test_deserialize_type_does_not_access_payload_selected_module_attributes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unknown names do not invoke module attribute hooks."""
+    module_name = "_request_info_module_with_attribute_hook"
+    accessed_attributes: list[str] = []
+
+    class ObservableModule(ModuleType):
+        def __getattribute__(self, name: str) -> Any:
+            if name == "__dict__":
+                accessed_attributes.append(name)
+            return ModuleType.__getattribute__(self, name)
+
+        def __getattr__(self, name: str) -> Any:
+            accessed_attributes.append(name)
+            raise AttributeError(name)
+
+    selected_module = ObservableModule(module_name)
+    monkeypatch.setitem(sys.modules, module_name, selected_module)
+
+    with pytest.raises(AttributeError, match="has no attribute 'Attack'"):
+        deserialize_type(f"{module_name}.Attack")
+
+    assert accessed_attributes == []
+
+
 def test_deserialize_type_error_handling() -> None:
     """Test error handling in deserialize_type function."""
-    import pytest
-
-    # Test with non-existent module
-    with pytest.raises(ModuleNotFoundError):
+    with pytest.raises(ModuleNotFoundError, match="No module named 'nonexistent.module'"):
         deserialize_type("nonexistent.module.Type")
 
-    # Test with non-existent type in existing module
-    with pytest.raises(AttributeError):
+    with pytest.raises(AttributeError, match="has no attribute 'NonExistentType'"):
         deserialize_type("builtins.NonExistentType")
+
+
+def test_deserialize_type_requires_exact_loaded_module_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A loaded parent package does not turn an unloaded submodule into an attribute lookup."""
+    importlib.import_module("xml")
+
+    monkeypatch.delitem(sys.modules, "xml.not_loaded", raising=False)
+
+    with pytest.raises(ModuleNotFoundError, match="No module named 'xml.not_loaded'"):
+        deserialize_type("xml.not_loaded.Type")
+
+
+def test_deserialize_type_does_not_import_unknown_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unknown serialized types must fail without importing payload-selected modules."""
+    imported_modules: list[str] = []
+
+    def track_import(module_name: str) -> None:
+        imported_modules.append(module_name)
+
+    monkeypatch.setattr(importlib, "import_module", track_import)
+
+    with pytest.raises(ModuleNotFoundError, match="No module named 'untrusted_request_info_payload'"):
+        deserialize_type("untrusted_request_info_payload.Attack")
+
+    assert imported_modules == []
 
 
 def test_type_compatibility_basic() -> None:

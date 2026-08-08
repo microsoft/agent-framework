@@ -1,8 +1,15 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
+import sys
+import typing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
+from types import ModuleType
+from typing import Any, cast
+
+import pytest
 
 from agent_framework import (
     FileCheckpointStorage,
@@ -45,6 +52,267 @@ class SlottedApproval:
 @dataclass
 class TimedApproval:
     issued_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+def test_workflow_event_rehydrate_request_info_accepts_explicit_custom_type_mapping() -> None:
+    """Transport rehydration accepts caller-supplied trusted custom types without a warning."""
+
+    @dataclass
+    class ExplicitRequest:
+        prompt: str
+
+    class ExplicitResponse:
+        pass
+
+    request_type_name = f"{ExplicitRequest.__module__}.{ExplicitRequest.__qualname__}"
+    response_type_name = f"{ExplicitResponse.__module__}.{ExplicitResponse.__qualname__}"
+
+    event = WorkflowEvent.rehydrate_request_info(
+        {
+            "type": "request_info",
+            "data": ExplicitRequest(prompt="Approve?"),
+            "request_id": "request-123",
+            "source_executor_id": "review_gateway",
+            "request_type": request_type_name,
+            "response_type": response_type_name,
+        },
+        allowed_types={
+            request_type_name: ExplicitRequest,
+            response_type_name: ExplicitResponse,
+        },
+    )
+
+    assert type(event.data) is ExplicitRequest
+    assert event.request_type is ExplicitRequest
+    assert event.response_type is ExplicitResponse
+
+
+def test_workflow_event_rehydrate_request_info_rejects_non_mapping_data() -> None:
+    """Transport rehydration rejects malformed event containers at the interface."""
+    malformed_data = "data request_id source_executor_id request_type response_type"
+
+    with pytest.raises(ValueError, match="request-info event data must be a mapping"):
+        WorkflowEvent.rehydrate_request_info(cast(Any, malformed_data))
+
+
+@pytest.mark.parametrize(
+    ("serialized_name", "response_annotation"),
+    [
+        ("typing.Optional", typing.Optional[str]),
+        ("typing.Union", typing.Union[str, int]),
+    ],
+)
+def test_workflow_event_rehydrate_request_info_accepts_parameterized_annotation_mapping(
+    serialized_name: str,
+    response_annotation: object,
+) -> None:
+    """Transport rehydration accepts an exact trusted parameterized response annotation."""
+    event = WorkflowEvent.rehydrate_request_info(
+        {
+            "type": "request_info",
+            "data": "Approve?",
+            "request_id": "request-123",
+            "source_executor_id": "review_gateway",
+            "request_type": "builtins.str",
+            "response_type": serialized_name,
+        },
+        allowed_types={serialized_name: response_annotation},
+    )
+
+    assert event.response_type == response_annotation
+
+
+@pytest.mark.parametrize(
+    "response_annotation",
+    [
+        str | None,
+        typing.Optional[str],
+        typing.Union[str, int],
+    ],
+)
+def test_workflow_event_to_dict_rejects_lossy_union_response_type(response_annotation: object) -> None:
+    """Wire serialization rejects unions whose member types cannot be preserved."""
+    event = WorkflowEvent.request_info(
+        request_id="request-123",
+        source_executor_id="review_gateway",
+        request_data="Approve?",
+        response_type=cast(Any, response_annotation),
+    )
+
+    with pytest.raises(TypeError, match="Union annotations cannot be serialized without losing type arguments"):
+        event.to_dict()
+
+
+def test_workflow_event_rehydrate_request_info_resolves_loaded_module_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transport rehydration resolves a module-level type without importing its module."""
+    module_name = "_loaded_request_info_types"
+    loaded_module = ModuleType(module_name)
+
+    class LoadedResponse:
+        pass
+
+    LoadedResponse.__module__ = module_name
+    LoadedResponse.__qualname__ = "LoadedResponse"
+    loaded_module.__dict__["LoadedResponse"] = LoadedResponse
+    monkeypatch.setitem(sys.modules, module_name, loaded_module)
+
+    event = WorkflowEvent.rehydrate_request_info({
+        "type": "request_info",
+        "data": "Approve?",
+        "request_id": "request-123",
+        "source_executor_id": "review_gateway",
+        "request_type": "builtins.str",
+        "response_type": f"{module_name}.LoadedResponse",
+    })
+
+    assert event.response_type is LoadedResponse
+
+
+def test_workflow_event_rehydrate_request_info_handles_colliding_request_and_response_names() -> None:
+    """Request validation remains concrete when the response annotation shares its wire name."""
+    response_annotation = list[str]
+
+    event = WorkflowEvent.rehydrate_request_info(
+        {
+            "type": "request_info",
+            "data": [],
+            "request_id": "request-123",
+            "source_executor_id": "review_gateway",
+            "request_type": "builtins.list",
+            "response_type": "builtins.list",
+        },
+        allowed_types={"builtins.list": response_annotation},
+    )
+
+    assert event.request_type is list
+    assert event.response_type == response_annotation
+
+
+def test_workflow_event_from_dict_accepts_explicit_custom_type_mapping() -> None:
+    """Legacy reconstruction accepts caller-supplied trusted custom types."""
+
+    @dataclass
+    class ExplicitRequest:
+        prompt: str
+
+    class ExplicitResponse:
+        pass
+
+    request_type_name = f"{ExplicitRequest.__module__}.{ExplicitRequest.__qualname__}"
+    response_type_name = f"{ExplicitResponse.__module__}.{ExplicitResponse.__qualname__}"
+    with pytest.warns(
+        DeprecationWarning,
+        match=r"WorkflowEvent\.from_dict.*will be removed in a future version"
+        r".*WorkflowEvent\.rehydrate_request_info",
+    ) as recorded_warnings:
+        event = WorkflowEvent.from_dict(
+            {
+                "type": "request_info",
+                "data": ExplicitRequest(prompt="Approve?"),
+                "request_id": "request-123",
+                "source_executor_id": "review_gateway",
+                "request_type": request_type_name,
+                "response_type": response_type_name,
+            },
+            allowed_types={
+                request_type_name: ExplicitRequest,
+                response_type_name: ExplicitResponse,
+            },
+        )
+
+    assert len(recorded_warnings) == 1
+    assert recorded_warnings[0].filename == __file__
+    assert type(event.data) is ExplicitRequest
+    assert event.request_type is ExplicitRequest
+    assert event.response_type is ExplicitResponse
+
+
+def test_workflow_event_from_dict_requires_exact_request_data_type() -> None:
+    """Request metadata cannot authorize subclass request data."""
+
+    class BaseRequest:
+        pass
+
+    class DerivedRequest(BaseRequest):
+        pass
+
+    request_type_name = f"{BaseRequest.__module__}.{BaseRequest.__qualname__}"
+    with (
+        pytest.warns(DeprecationWarning),
+        pytest.raises(TypeError, match="Mismatch between request_data type"),
+    ):
+        WorkflowEvent.from_dict(
+            {
+                "type": "request_info",
+                "data": DerivedRequest(),
+                "request_id": "request-123",
+                "source_executor_id": "review_gateway",
+                "request_type": request_type_name,
+                "response_type": "builtins.bool",
+            },
+            allowed_types={request_type_name: BaseRequest},
+        )
+
+
+def _write_observable_type_module(tmp_path: Path, module_name: str) -> Path:
+    marker_path = tmp_path / f"{module_name}.imported"
+    module_path = tmp_path / f"{module_name}.py"
+    module_path.write_text(f"from pathlib import Path\nPath({str(marker_path)!r}).touch()\nclass Attack:\n    pass\n")
+    return marker_path
+
+
+def test_workflow_event_from_dict_does_not_import_request_type(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malicious request-type name cannot execute module code."""
+    module_name = "_malicious_request_info_request_type"
+    marker_path = _write_observable_type_module(tmp_path, module_name)
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.warns(DeprecationWarning), pytest.raises(TypeError, match="Mismatch between request_data type"):
+        WorkflowEvent.from_dict({
+            "type": "request_info",
+            "data": "Approve?",
+            "request_id": "request-123",
+            "source_executor_id": "review_gateway",
+            "request_type": f"{module_name}.Attack",
+            "response_type": "builtins.bool",
+        })
+
+    assert module_name not in sys.modules
+    assert not marker_path.exists()
+
+
+def test_workflow_event_from_dict_does_not_import_response_type(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malicious response-type name cannot execute module code."""
+    module_name = "_malicious_request_info_response_type"
+    marker_path = _write_observable_type_module(tmp_path, module_name)
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with (
+        pytest.warns(DeprecationWarning),
+        pytest.raises(
+            ModuleNotFoundError,
+            match=f"No module named '{module_name}'",
+        ),
+    ):
+        WorkflowEvent.from_dict({
+            "type": "request_info",
+            "data": "Approve?",
+            "request_id": "request-123",
+            "source_executor_id": "review_gateway",
+            "request_type": "builtins.str",
+            "response_type": f"{module_name}.Attack",
+        })
+
+    assert module_name not in sys.modules
+    assert not marker_path.exists()
 
 
 async def test_rehydrate_request_info_event() -> None:
@@ -195,8 +463,12 @@ async def test_checkpoint_with_pending_request_info_events():
         assert completed, "Workflow should reach idle with pending requests state after restoration"
         assert restored_request_event is not None, "Restored request info event should be emitted"
 
-        # Verify the restored event matches the original
+        # Verify the restored workflow retains the same typed event it emitted.
+        restored_lookup = await restored_workflow.get_pending_request_info(request_info_event.request_id)
+        assert restored_lookup is restored_request_event
         assert restored_request_event.source_executor_id == request_info_event.source_executor_id
+        assert restored_request_event.request_type is UserApprovalRequest
+        assert restored_request_event.response_type is bool
         assert isinstance(restored_request_event.data, UserApprovalRequest)
         assert restored_request_event.data.prompt == request_info_event.data.prompt
         assert restored_request_event.data.context == request_info_event.data.context
@@ -218,6 +490,8 @@ async def test_checkpoint_with_pending_request_info_events():
         assert new_executor.approval_received is True
         expected_result = "Operation approved: Please approve the operation: checkpoint test operation"
         assert new_executor.final_result == expected_result
+        with pytest.raises(ValueError, match="No pending request-info event found"):
+            await restored_workflow.get_pending_request_info(request_info_event.request_id)
 
 
 async def test_checkpoint_restore_with_responses_does_not_reemit_handled_requests():

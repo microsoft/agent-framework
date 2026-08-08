@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import uuid
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -64,18 +66,69 @@ class WorkflowAgent(BaseAgent):
             return {"request_id": self.request_id, "request_event": self.request_event.to_dict()}
 
         @classmethod
-        def from_dict(cls, payload: dict[str, Any]) -> WorkflowAgent.RequestInfoFunctionArgs:
+        def rehydrate(
+            cls,
+            payload: Mapping[str, Any],
+            *,
+            allowed_types: Mapping[str, object] | None = None,
+        ) -> WorkflowAgent.RequestInfoFunctionArgs:
+            """Rehydrate request-info arguments from trusted transport data.
+
+            Args:
+                payload: Serialized request-info function arguments.
+
+            Keyword Args:
+                allowed_types: Optional mapping of serialized names to trusted custom types or typing annotations.
+
+            Returns:
+                The rehydrated request-info arguments.
+
+            Raises:
+                ValueError: If required request-info fields are missing or empty.
+            """
+            if not isinstance(payload, Mapping):
+                raise ValueError("Serialized request-info arguments payload must be a mapping.")
             if "request_id" not in payload or "request_event" not in payload:
                 raise ValueError(
                     "Invalid payload for RequestInfoFunctionArgs. 'request_id' and 'request_event' are required."
                 )
             if not payload["request_id"]:
                 raise ValueError("request_id cannot be empty.")
+            request_event = payload["request_event"]
+            if not isinstance(request_event, Mapping):
+                raise ValueError("Serialized request-info field 'request_event' must be a mapping.")
+            request_event_mapping = cast(Mapping[str, Any], request_event)
 
             return cls(
                 request_id=payload.get("request_id", ""),
-                request_event=WorkflowEvent.from_dict(payload.get("request_event", {})),
+                request_event=WorkflowEvent.rehydrate_request_info(
+                    request_event_mapping,
+                    allowed_types=allowed_types,
+                ),
             )
+
+        @classmethod
+        def from_dict(
+            cls,
+            payload: dict[str, Any],
+            *,
+            allowed_types: Mapping[str, object] | None = None,
+        ) -> WorkflowAgent.RequestInfoFunctionArgs:
+            """Reconstruct request-info arguments with optional trusted custom types.
+
+            Deprecated:
+                Use :meth:`rehydrate` for transport decoding or
+                :meth:`WorkflowAgent.resolve_request_info` with a live workflow.
+            """
+            warnings.warn(
+                "`WorkflowAgent.RequestInfoFunctionArgs.from_dict` is deprecated and will be removed "
+                "in a future version; use `WorkflowAgent.RequestInfoFunctionArgs.rehydrate` for transport "
+                "decoding or `WorkflowAgent.resolve_request_info` "
+                "(`await agent.resolve_request_info(content)`) with a live workflow instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return cls.rehydrate(payload, allowed_types=allowed_types)
 
     def __init__(
         self,
@@ -129,6 +182,83 @@ class WorkflowAgent(BaseAgent):
     @property
     def workflow(self) -> Workflow:
         return self._workflow
+
+    async def resolve_request_info(self, content: Content) -> WorkflowEvent[Any]:
+        """Resolve a request-info function call against the wrapped workflow's pending state.
+
+        Copied request data is ignored. Correlation and compatibility metadata are
+        validated against the authoritative event retained by the workflow.
+
+        Args:
+            content: Complete request-info function-call content emitted by this agent.
+
+        Returns:
+            The original pending request-info event retained by the workflow.
+
+        Raises:
+            ValueError: If the content is malformed, forged, stale, or replayed.
+            TypeError: If the pending request contains an unsupported wire type annotation.
+        """
+        if not isinstance(content, Content):
+            raise ValueError("Request-info content must be a Content instance.")
+        content_type = content.type
+        if type(content_type) is not str or content_type != "function_call":
+            raise ValueError("Request-info content type must be 'function_call'.")
+
+        function_name = content.name
+        if type(function_name) is not str or function_name != self.REQUEST_INFO_FUNCTION_NAME:
+            raise ValueError(f"Request-info function-call field 'name' must be {self.REQUEST_INFO_FUNCTION_NAME!r}.")
+
+        if isinstance(content.arguments, str):
+            try:
+                arguments = json.loads(content.arguments)
+            except json.JSONDecodeError:
+                raise ValueError("Request-info function-call field 'arguments' must be a JSON object.") from None
+        else:
+            arguments = content.parse_arguments()
+        if not isinstance(arguments, Mapping):
+            raise ValueError("Request-info function-call field 'arguments' must be a JSON object.")
+        arguments_mapping = cast(Mapping[str, Any], arguments)
+        arguments_dict = dict(arguments_mapping)
+
+        call_id = content.call_id
+        if type(call_id) is not str or not call_id:
+            raise ValueError("Request-info function-call field 'call_id' must be a non-empty string.")
+
+        request_id = arguments_dict.get("request_id")
+        if type(request_id) is not str or not request_id:
+            raise ValueError("Request-info function-call field 'arguments.request_id' must be a non-empty string.")
+
+        request_event_value = arguments_dict.get("request_event")
+        if not isinstance(request_event_value, Mapping):
+            raise ValueError("Request-info function-call field 'request_event' must be a JSON object.")
+        request_event_mapping = cast(Mapping[str, Any], request_event_value)
+        request_event = dict(request_event_mapping)
+
+        event_request_id = request_event.get("request_id")
+        if type(event_request_id) is not str or not event_request_id:
+            raise ValueError("Request-info function-call field 'request_event.request_id' must be a non-empty string.")
+        if call_id != request_id or request_id != event_request_id:
+            raise ValueError(
+                "Request-info correlation IDs in fields 'call_id', 'arguments.request_id', "
+                "and 'request_event.request_id' must match."
+            )
+
+        pending_event = await self._workflow.get_pending_request_info(request_id)
+        expected_arguments = self.RequestInfoFunctionArgs(
+            request_id=request_id,
+            request_event=pending_event,
+        ).to_dict()
+        expected_request_event = cast(dict[str, Any], expected_arguments["request_event"])
+        for field in ("type", "source_executor_id", "request_type", "response_type"):
+            expected_value = expected_request_event[field]
+            actual_value = request_event.get(field)
+            if type(actual_value) is not str or actual_value != expected_value:
+                raise ValueError(
+                    f"Request-info function-call field 'request_event.{field}' does not match the pending request."
+                )
+
+        return pending_event
 
     # region Run Methods
 

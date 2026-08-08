@@ -1,7 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import builtins
+import sys
 import typing
-from types import UnionType
+from collections.abc import Mapping
+from types import ModuleType, UnionType
 from typing import Any, TypeGuard, Union, cast, get_args, get_origin
 
 import typing_extensions
@@ -12,6 +17,120 @@ from .._agents import Agent
 # isinstance(x, TypeVar) can fail if TypeVar is a factory/callable
 # on some Python versions, so we compare against the actual runtime type.
 _TYPEVAR_TYPES: tuple[type, ...] = (type(typing.TypeVar("_T")), type(typing_extensions.TypeVar("_T")))  # pyright: ignore[reportUnknownVariableType]
+
+
+def _validate_serialized_type_name(serialized_name: object) -> str:
+    if not isinstance(serialized_name, str):
+        raise TypeError("Serialized type names must be strings.")
+    parts = serialized_name.split(".")
+    if len(parts) < 2 or any(not part for part in parts):
+        raise ValueError(f"Malformed serialized type name '{serialized_name}'.")
+    return serialized_name
+
+
+def _is_runtime_type(value: object) -> TypeGuard[type[Any]]:
+    if not isinstance(value, type):
+        return False
+
+    # Python 3.10 reports GenericAlias instances as types even though they are not class objects.
+    try:
+        type.__getattribute__(value, "__module__")
+        type.__getattribute__(value, "__qualname__")
+    except TypeError:
+        return False
+
+    return True
+
+
+def _trusted_annotation_name(value: object) -> str:
+    if _is_runtime_type(value):
+        module_name = type.__getattribute__(value, "__module__")
+        qualified_name = type.__getattribute__(value, "__qualname__")
+    else:
+        module_name = getattr(value, "__module__", None)
+        qualified_name = getattr(value, "__qualname__", None)
+        if not isinstance(module_name, str) or not isinstance(qualified_name, str):
+            raise TypeError("Serialized type values must be actual types or supported typing annotations.")
+
+    if not isinstance(module_name, str) or not module_name or not isinstance(qualified_name, str) or not qualified_name:
+        raise ValueError("Types must have non-empty string __module__ and __qualname__ attributes.")
+    return _validate_serialized_type_name(f"{module_name}.{qualified_name}")
+
+
+def _serialized_type_name(value: object) -> str:
+    if get_origin(value) in (Union, UnionType):
+        raise TypeError("Union annotations cannot be serialized without losing type arguments.")
+    return _trusted_annotation_name(value)
+
+
+def _is_supported_type_annotation(value: object) -> bool:
+    if _is_runtime_type(value):
+        return True
+
+    if get_origin(value) in (Union, UnionType):
+        return True
+
+    try:
+        _trusted_annotation_name(value)
+    except (TypeError, ValueError):
+        return False
+
+    return get_origin(value) is not None
+
+
+def _trusted_annotation_matches_name(serialized_name: str, value: object) -> bool:
+    try:
+        if _trusted_annotation_name(value) == serialized_name:
+            return True
+    except TypeError:
+        pass
+
+    return (
+        serialized_name in ("typing.Optional", "typing.Union")
+        and get_origin(value) in (Union, UnionType)
+        and (serialized_name == "typing.Union" or type(None) in get_args(value))
+    )
+
+
+def _build_legacy_typing_aliases() -> dict[str, object]:
+    aliases: dict[str, object] = {}
+    for public_name, value in vars(typing).items():
+        if public_name.startswith("_") or not _is_runtime_type(get_origin(value)):
+            continue
+
+        try:
+            serialized_name = _trusted_annotation_name(value)
+        except (TypeError, ValueError):
+            continue
+
+        if serialized_name == f"typing.{public_name}":
+            aliases[serialized_name] = value
+
+    return aliases
+
+
+_BUILTIN_SERIALIZED_TYPES: dict[str, type[Any]] = {
+    _serialized_type_name(value): value for value in vars(builtins).values() if isinstance(value, type)
+}
+_LEGACY_TYPING_ALIASES = _build_legacy_typing_aliases()
+
+
+def _resolve_loaded_serialized_type(serialized_name: str) -> object:
+    module_name, _, type_name = serialized_name.rpartition(".")
+    loaded_module = sys.modules.get(module_name)
+    if not isinstance(loaded_module, ModuleType):
+        raise ModuleNotFoundError(f"No module named {module_name!r}", name=module_name)
+
+    namespace = ModuleType.__getattribute__(loaded_module, "__dict__")
+    if type_name not in namespace:
+        raise AttributeError(f"{module_name!r} has no attribute {type_name!r}")
+
+    resolved = namespace[type_name]
+    if not _is_runtime_type(resolved):
+        raise TypeError(f"{serialized_name!r} does not resolve to a type or supported typing annotation.")
+    if _serialized_type_name(resolved) != serialized_name:
+        raise ValueError(f"Serialized type name '{serialized_name}' does not match the resolved type.")
+    return resolved
 
 
 def is_typevar(x: Any) -> bool:
@@ -264,29 +383,82 @@ def try_coerce_to_type(data: Any, target_type: type | UnionType | Any) -> Any:
     return original_data
 
 
-def serialize_type(t: type) -> str:
+def serialize_type(t: object) -> str:
     """Serialize a type to a string.
+
+    Typing annotations retain their historical module and qualified-name wire
+    representation.
 
     For example,
 
     serialize_type(int) => "builtins.int"
+
+    Raises:
+        TypeError: If the annotation cannot be represented without losing type arguments.
     """
-    return f"{t.__module__}.{t.__qualname__}"
+    return _serialized_type_name(t)
 
 
-def deserialize_type(serialized_type_string: str) -> type:
+def deserialize_type(
+    serialized_type_string: str,
+    *,
+    allowed_types: Mapping[str, object] | None = None,
+) -> type:
     """Deserialize a serialized type string.
+
+    Resolution is limited to built-in types, supported aliases from the trusted
+    :mod:`typing` module, exact entries in ``allowed_types``, and types already
+    present in loaded module namespaces. It never imports or invokes attribute
+    hooks on a module selected by the serialized value.
+
+    Args:
+        serialized_type_string: Fully qualified serialized type name.
+        allowed_types: Optional per-call mapping of serialized names to trusted types or typing annotations. The
+            explicit key supplies the stable wire name, including historical names such as ``typing.Optional`` after
+            runtime canonicalization. Use explicit entries for nested, local, lazily exported, or parameterized types.
 
     For example,
 
     deserialize_type("builtins.int") => int
+
+    Raises:
+        ModuleNotFoundError: If the serialized module is not already loaded.
+        AttributeError: If a loaded module does not physically contain the serialized top-level type in its namespace.
+        TypeError: If the resolved value is not a supported type annotation.
+        ValueError: If an explicit or loaded type does not match the serialized name.
     """
-    import importlib
+    serialized_name = _validate_serialized_type_name(serialized_type_string)
 
-    module_name, _, type_name = serialized_type_string.rpartition(".")
-    module = importlib.import_module(module_name)
+    explicit_type: object | None = None
+    if allowed_types is not None:
+        if not isinstance(allowed_types, Mapping):
+            raise TypeError("allowed_types must be a mapping of serialized names to types or typing annotations.")
+        for allowed_name, allowed_type in allowed_types.items():
+            validated_name = _validate_serialized_type_name(allowed_name)
+            if not _is_supported_type_annotation(allowed_type):
+                raise TypeError(
+                    f"allowed_types entry '{validated_name}' must be an actual type or supported typing annotation."
+                )
+            if not _trusted_annotation_matches_name(validated_name, allowed_type):
+                raise ValueError(f"allowed_types entry '{validated_name}' does not match the supplied type.")
+            if validated_name == serialized_name:
+                explicit_type = allowed_type
 
-    return cast(type, getattr(module, type_name))
+    builtin_type = _BUILTIN_SERIALIZED_TYPES.get(serialized_name)
+    legacy_typing_alias = _LEGACY_TYPING_ALIASES.get(serialized_name)
+
+    if explicit_type is not None:
+        resolved_type = explicit_type
+    elif builtin_type is not None:
+        resolved_type = builtin_type
+    elif legacy_typing_alias is not None:
+        resolved_type = legacy_typing_alias
+    else:
+        resolved_type = _resolve_loaded_serialized_type(serialized_name)
+
+    if not _trusted_annotation_matches_name(serialized_name, resolved_type):
+        raise ValueError(f"Serialized type name '{serialized_name}' does not match the resolved type.")
+    return cast(type, resolved_type)
 
 
 def is_type_compatible(source_type: type | UnionType | Any, target_type: type | UnionType | Any) -> bool:

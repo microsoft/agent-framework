@@ -116,29 +116,21 @@ def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent
     return triage_agent, refund_agent, order_agent, return_agent
 
 
-def handle_response_and_requests(response: AgentResponse) -> dict[str, HandoffAgentUserRequest]:
-    """Process agent response messages and extract any user requests.
-
-    This function inspects the agent response and:
-    - Displays agent messages to the console
-    - Collects HandoffAgentUserRequest instances for response handling
-
-    Args:
-        response: The AgentResponse from the agent run call.
-
-    Returns:
-        A dictionary mapping request IDs to HandoffAgentUserRequest instances.
-    """
+async def handle_response_and_requests(
+    agent: WorkflowAgent,
+    response: AgentResponse,
+) -> dict[str, HandoffAgentUserRequest]:
+    """Display an agent response and resolve its pending user requests."""
     pending_requests: dict[str, HandoffAgentUserRequest] = {}
     for message in response.messages:
         if message.text:
             print(f"- {message.author_name or message.role}: {message.text}")
         for content in message.contents:
             if content.type == "function_call" and content.name == WorkflowAgent.REQUEST_INFO_FUNCTION_NAME:
-                request_function_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(content.arguments)  # type: ignore
-                request_id = request_function_args.request_id
-                request_event = request_function_args.request_event
-                pending_requests[request_id] = request_event.data
+                request_event = await agent.resolve_request_info(content)
+                if not isinstance(request_event.data, HandoffAgentUserRequest):
+                    raise ValueError("Handoff request payload must be a HandoffAgentUserRequest.")
+                pending_requests[request_event.request_id] = request_event.data
 
     return pending_requests
 
@@ -205,7 +197,7 @@ async def main() -> None:
     initial_message = "Hello, I need assistance with my recent purchase."
     print(f"- User: {initial_message}")
     response = await agent.run(initial_message)
-    pending_requests = handle_response_and_requests(response)
+    pending_requests = await handle_response_and_requests(agent, response)
 
     # Process the request/response cycle
     # The workflow will continue requesting input until:
@@ -228,7 +220,7 @@ async def main() -> None:
             Content("function_result", call_id=req_id, result=response) for req_id, response in responses.items()
         ]
         response = await agent.run(Message("tool", function_results))
-        pending_requests = handle_response_and_requests(response)
+        pending_requests = await handle_response_and_requests(agent, response)
 
 
 if __name__ == "__main__":

@@ -259,6 +259,42 @@ async def test_handoff():
     assert request.source_executor_id == escalation.name
 
 
+async def test_handoff_as_agent_serializes_generic_request_info_response_type() -> None:
+    """Handoff request-info remains usable when the workflow is wrapped as an agent."""
+    triage = MockHandoffAgent(name="triage", handoff_to="specialist")
+    specialist = MockHandoffAgent(name="specialist")
+    workflow = (
+        HandoffBuilder(
+            participants=_as_handoff_agents(triage, specialist),
+            termination_condition=lambda conversation: (
+                sum(1 for message in conversation if message.role == "user") >= 2
+            ),
+        )
+        .with_start_agent(_as_handoff_agent(triage))
+        .build()
+    )
+    agent = workflow.as_agent(name="handoff-agent")
+
+    response = await agent.run("Need technical support")
+
+    request_calls = [
+        content
+        for message in response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.name == agent.REQUEST_INFO_FUNCTION_NAME
+    ]
+    assert len(request_calls) == 1
+    request_call = request_calls[0]
+    assert isinstance(request_call.arguments, dict)
+    request_event = request_call.arguments["request_event"]
+    assert isinstance(request_event, dict)
+    assert request_event["response_type"] == "builtins.list"
+
+    resolved_event = await agent.resolve_request_info(request_call)
+
+    assert resolved_event.response_type == list[Message]
+
+
 def _latest_request_info_event(events: list[WorkflowEvent]) -> WorkflowEvent[Any]:
     request_events = [event for event in events if event.type == "request_info"]
     assert request_events

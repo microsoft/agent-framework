@@ -201,6 +201,22 @@ agent_framework/
   every output-capable executor not selected by `output_from`.
 - **`WorkflowRunResult`** - Non-streaming workflow result with Workflow Output `get_outputs()`
   and Intermediate Output `get_intermediate_outputs()` accessors
+- **Request-info trust boundary** - Pending workflow state is authoritative for request data and Python types.
+  For a plain workflow, retain the emitted typed event or use
+  `await workflow.get_pending_request_info(request_id)`. For a workflow agent, pass the complete emitted
+  function-call `Content` to `await agent.resolve_request_info(content)`; the resolver validates correlation and
+  compatibility metadata, then returns the workflow-held event without trusting copied request data. Both lookups
+  are non-consuming; successful response submission through `run(...)` consumes the pending request. Serialized
+  request and response type names in the current wire envelope are compatibility metadata only, not authorization
+  data. Out-of-process consumers that do not own the live workflow can use
+  `WorkflowEvent.rehydrate_request_info(...)` or `WorkflowAgent.RequestInfoFunctionArgs.rehydrate(...)`, supplying
+  `allowed_types` for custom or parameterized annotations that are not available from an already-loaded module.
+  Default module resolution reads only top-level types physically present in an already-loaded module namespace;
+  nested, function-local, lazily exported, and parameterized annotations require `allowed_types`. These transport-only
+  rehydration methods do not establish that a request is still pending. `WorkflowEvent.from_dict` and
+  `WorkflowAgent.RequestInfoFunctionArgs.from_dict` remain only as deprecated compatibility paths; migrate them to the
+  corresponding `rehydrate...` method for transport decoding or to the authoritative workflow/agent resolver when the
+  owning workflow is available.
 - **Orchestrators**: `SequentialOrchestrator`, `ConcurrentOrchestrator`, `GroupChatOrchestrator`, `MagenticOrchestrator`, `HandoffOrchestrator`
 
 ## Built-in Providers

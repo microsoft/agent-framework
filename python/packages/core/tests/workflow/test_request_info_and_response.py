@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+import pytest
+
 from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
@@ -198,6 +200,52 @@ class TestRequestInfoAndResponse:
         assert completed
         assert executor.approval_received is True
         assert executor.final_result == "Operation approved: Please approve the operation: test operation"
+
+    async def test_pending_request_info_lookup_returns_original_event_without_consuming_it(self):
+        executor = ApprovalRequiredExecutor(id="approval_executor")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+
+        result = await workflow.run("test operation")
+        request_info_event = result.get_request_info_events()[0]
+
+        first_lookup = await workflow.get_pending_request_info(request_info_event.request_id)
+        second_lookup = await workflow.get_pending_request_info(request_info_event.request_id)
+
+        assert first_lookup is request_info_event
+        assert second_lookup is request_info_event
+        assert first_lookup.data is request_info_event.data
+        assert first_lookup.request_type is UserApprovalRequest
+        assert first_lookup.response_type is bool
+
+    async def test_pending_request_info_lookup_rejects_unknown_request_id(self):
+        executor = ApprovalRequiredExecutor(id="approval_executor")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+
+        with pytest.raises(
+            ValueError,
+            match="No pending request-info event found for request ID 'missing-request'",
+        ):
+            await workflow.get_pending_request_info("missing-request")
+
+    async def test_successful_response_consumes_pending_request_info(self):
+        executor = ApprovalRequiredExecutor(id="approval_executor")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+        result = await workflow.run("test operation")
+        request_info_event = result.get_request_info_events()[0]
+
+        with pytest.raises(ValueError, match="Response type mismatch"):
+            await workflow.run(responses={request_info_event.request_id: object()})
+
+        assert await workflow.get_pending_request_info(request_info_event.request_id) is request_info_event
+
+        await workflow.run(responses={request_info_event.request_id: True})
+
+        with pytest.raises(ValueError, match="No pending request-info event found") as completed_error:
+            await workflow.get_pending_request_info(request_info_event.request_id)
+        assert request_info_event.data.prompt not in str(completed_error.value)
+
+        with pytest.raises(ValueError, match="No pending request-info event found"):
+            await workflow.get_pending_request_info(request_info_event.request_id)
 
     async def test_calculation_workflow(self):
         """Test end-to-end workflow with calculation request."""

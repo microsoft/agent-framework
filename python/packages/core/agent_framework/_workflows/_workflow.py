@@ -383,6 +383,27 @@ class Workflow(DictConvertible):
         """
         return self._status
 
+    async def get_pending_request_info(self, request_id: str) -> WorkflowEvent[Any]:
+        """Return the authoritative pending request-info event for ``request_id``.
+
+        Lookup is non-consuming. The event remains pending until a response is
+        successfully submitted through :meth:`run`.
+
+        Args:
+            request_id: Correlation ID of the pending request-info event.
+
+        Returns:
+            The original typed event retained by the workflow.
+
+        Raises:
+            ValueError: If ``request_id`` does not identify a pending request.
+        """
+        pending_requests = await self._runner.context.get_pending_request_info_events()
+        try:
+            return pending_requests[request_id]
+        except KeyError:
+            raise ValueError(f"No pending request-info event found for request ID {request_id!r}.") from None
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize the workflow definition into a JSON-ready dictionary."""
         data: dict[str, Any] = {

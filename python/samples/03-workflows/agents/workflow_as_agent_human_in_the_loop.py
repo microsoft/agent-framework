@@ -133,14 +133,14 @@ async def main() -> None:
     human_review_function_call: Content | None = None
     for message in response.messages:
         for content in message.contents:
-            if content.name == WorkflowAgent.REQUEST_INFO_FUNCTION_NAME:
+            if content.type == "function_call" and content.name == WorkflowAgent.REQUEST_INFO_FUNCTION_NAME:
                 human_review_function_call = content
 
     # Handle the human review if required.
     if human_review_function_call:
-        # Parse the human review request arguments.
-        human_request_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(human_review_function_call.arguments)  # type: ignore
-        request_payload = human_request_args.request_event.data
+        # Resolve the complete function call against the workflow's authoritative pending state.
+        human_request_event = await agent.resolve_request_info(human_review_function_call)
+        request_payload = human_request_event.data
         if not isinstance(request_payload, HumanReviewRequest):
             raise ValueError("Human review request payload must be a HumanReviewRequest.")
         if not request_payload.agent_request:
@@ -150,7 +150,7 @@ async def main() -> None:
         # Create the function call result object to send back to the agent.
         human_review_function_result = Content(
             "function_result",
-            call_id=human_review_function_call.call_id,  # type: ignore
+            call_id=human_request_event.request_id,
             result=human_response,
         )
         # Send the human review result back to the agent.
