@@ -331,6 +331,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         {
             Model = source?.Model,
             ReasoningEffort = source?.ReasoningEffort,
+            ReasoningSummary = source?.ReasoningSummary,
+            ContextTier = source?.ContextTier,
             Tools = source?.Tools,
             SystemMessage = source?.SystemMessage,
             AvailableTools = source?.AvailableTools,
