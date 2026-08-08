@@ -1,11 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory;
+using AsyncKeyedLock;
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI;
 
@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI;
 /// </remarks>
 internal static class MemoryCacheExtensions
 {
-    private static readonly ConcurrentDictionary<(IMemoryCache, object), SemaphoreSlim> s_semaphores = new();
+    private static readonly AsyncKeyedLocker<(IMemoryCache, object)> s_semaphores = new();
 
     /// <summary>
     /// Atomically gets the value associated with this key if it exists, or generates a new entry
@@ -44,28 +44,7 @@ internal static class MemoryCacheExtensions
             return (T)value;
         }
 
-        // Get or create a semaphore for this cache key
-        bool isOwner = false;
-        var semaphoreKey = (memoryCache, key);
-        if (!s_semaphores.TryGetValue(semaphoreKey, out SemaphoreSlim? semaphore))
-        {
-            SemaphoreSlim? createdSemaphore = null;
-            semaphore = s_semaphores.GetOrAdd(semaphoreKey, _ => createdSemaphore = new SemaphoreSlim(1));
-
-            // If we created the semaphore that made it into the dictionary, we're the owner
-            if (ReferenceEquals(createdSemaphore, semaphore))
-            {
-                isOwner = true;
-            }
-            else
-            {
-                // Our semaphore wasn't the one stored, so dispose it
-                createdSemaphore?.Dispose();
-            }
-        }
-
-        await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        using (await s_semaphores.LockAsync((memoryCache, key), cancellationToken).ConfigureAwait(false))
         {
             // Double-check: another thread might have created the value while we were waiting
             if (!memoryCache.TryGetValue(key, out value))
@@ -76,20 +55,8 @@ internal static class MemoryCacheExtensions
                 Debug.Assert(value is not null);
                 return (T)value;
             }
-
             Debug.Assert(value is not null);
             return (T)value;
-        }
-        finally
-        {
-            // If we were the owner of the semaphore, remove it from the dictionary
-            // This prevents memory leaks from accumulating semaphores for evicted cache entries
-            if (isOwner)
-            {
-                s_semaphores.TryRemove(semaphoreKey, out _);
-            }
-
-            semaphore.Release();
         }
     }
 }
