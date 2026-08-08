@@ -80,6 +80,19 @@ public abstract class AIContextProvider
     protected Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> StoreInputResponseMessageFilter { get; }
 
     /// <summary>
+    /// Merges input messages with messages provided by this context provider.
+    /// </summary>
+    /// <param name="inputMessages">The original input messages for the invocation.</param>
+    /// <param name="providedMessages">The messages provided by this context provider, after source attribution has been applied.</param>
+    /// <returns>The merged messages to use for the invocation.</returns>
+    /// <remarks>
+    /// The default implementation appends provided messages after input messages.
+    /// Override this method to customize placement, for example to prepend provided context before user messages.
+    /// </remarks>
+    protected virtual IEnumerable<ChatMessage> MergeMessages(IEnumerable<ChatMessage> inputMessages, IEnumerable<ChatMessage> providedMessages)
+        => inputMessages.Concat(providedMessages);
+
+    /// <summary>
     /// Gets the set of keys used to store the provider state in the <see cref="AgentSession.StateBag"/>.
     /// </summary>
     /// <remarks>
@@ -180,7 +193,7 @@ public abstract class AIContextProvider
             (null, null) => null,
             (var a, null) => a,
             (null, var b) => b,
-            (var a, var b) => a.Concat(b)
+            (var a, var b) => this.MergeMessages(a, b)
         };
 
         var mergedTools = (inputContext.Tools, provided.Tools) switch
