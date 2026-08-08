@@ -198,9 +198,9 @@ _DEFAULT_AUTONOMOUS_TURN_LIMIT = 50
 
 # Sent to the handoff target when the handing-off agent's response cleans to no messages at
 # all (e.g. a response consisting solely of the handoff tool call, with no text content). In
-# that case the broadcast to other participants carries nothing, so the target's executor
-# cache is empty; without this, agents that reject empty input (e.g. A2AAgent) raise instead
-# of running.
+# that case the broadcast to other participants carries nothing. Depending on what the target
+# has already accumulated from earlier broadcasts, this can leave its cache empty; agents that
+# reject empty input would otherwise be invoked with nothing to work with.
 _HANDOFF_CONTINUATION_DEFAULT_INSTRUCTION = "Continue the conversation."
 
 # region Handoff Agent Executor
