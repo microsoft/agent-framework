@@ -13,6 +13,7 @@ import inspect
 import logging
 import sys
 from collections.abc import Awaitable, Callable
+from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, overload
 
 from agent_framework import (
@@ -138,6 +139,16 @@ logger = logging.getLogger("agent_framework.azure_ai_search")
 
 _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT = 10
 _AZURE_SEARCH_RESOURCE_SCOPE = "https://search.azure.com/.default"
+
+
+def _normalize_role(role: Any) -> Any:
+    """Return the plain string role for a Knowledge Base role value.
+
+    The SDK role can be a ``str``-subclass enum. Agent Framework types ``Message.role`` as a plain
+    ``str``, and durable session-state serialization rejects scalar subclasses, so unwrap the enum
+    before it reaches a ``Message``.
+    """
+    return role.value if isinstance(role, Enum) else role
 
 
 def _installed_search_documents_version() -> str:
@@ -1081,7 +1092,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 if annotations:
                     for c in contents:
                         c.annotations = annotations
-                result_messages.append(Message(role=kb_msg.role or "assistant", contents=contents))
+                result_messages.append(Message(role=_normalize_role(kb_msg.role) or "assistant", contents=contents))
 
         if not result_messages:
             return [Message(role="assistant", contents=["No results found from Knowledge Base."])]

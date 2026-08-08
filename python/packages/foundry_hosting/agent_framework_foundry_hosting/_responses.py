@@ -12,6 +12,7 @@ import threading
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from dataclasses import asdict, dataclass, is_dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
@@ -131,6 +132,16 @@ logger = logging.getLogger(__name__)
 
 _AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+
+
+def _normalize_role(role: Any) -> str:
+    """Return the plain string role for an Azure Responses SDK role value.
+
+    ``MessageRole`` is a ``str``-subclass enum. Agent Framework types ``Message.role`` as a plain
+    ``str``, and durable session-state serialization rejects scalar subclasses, so unwrap the enum
+    before it reaches a ``Message``.
+    """
+    return role.value if isinstance(role, Enum) else role
 
 
 # region Approval Storage
@@ -1225,14 +1236,16 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
     """
     if item.type == "message":
         msg = cast(ItemMessage, item)
+        role = _normalize_role(msg.role)
         if isinstance(msg.content, str):
-            return Message(role=msg.role, contents=[Content.from_text(msg.content)])
-        return Message(role=msg.role, contents=[_convert_message_content(part) for part in msg.content])
+            return Message(role=role, contents=[Content.from_text(msg.content)])
+        return Message(role=role, contents=[_convert_message_content(part) for part in msg.content])
 
     if item.type == "output_message":
         output_msg = cast(ItemOutputMessage, item)
         return Message(
-            role=output_msg.role, contents=[_convert_output_message_content(part) for part in output_msg.content]
+            role=_normalize_role(output_msg.role),
+            contents=[_convert_output_message_content(part) for part in output_msg.content],
         )
 
     if item.type == "function_call":
@@ -1513,12 +1526,15 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
     if item.type == "output_message":
         output_msg = cast(OutputItemOutputMessage, item)
         return Message(
-            role=output_msg.role, contents=[_convert_output_message_content(part) for part in output_msg.content]
+            role=_normalize_role(output_msg.role),
+            contents=[_convert_output_message_content(part) for part in output_msg.content],
         )
 
     if item.type == "message":
         msg = cast(OutputItemMessage, item)
-        return Message(role=msg.role, contents=[_convert_message_content(part) for part in msg.content])
+        return Message(
+            role=_normalize_role(msg.role), contents=[_convert_message_content(part) for part in msg.content]
+        )
 
     if item.type == "function_call":
         fc = cast(OutputItemFunctionToolCall, item)

@@ -1797,6 +1797,30 @@ class TestParseMessagesFromKbResponse:
         assert result[1].role == "assistant"
         assert result[1].text == "answer"
 
+    def test_role_enum_is_normalized_to_plain_string(self) -> None:
+        from enum import Enum
+
+        from azure.search.documents.knowledgebases.models import (
+            KnowledgeBaseMessage,
+            KnowledgeBaseMessageTextContent,
+            KnowledgeBaseRetrievalResponse,
+        )
+
+        class _Role(str, Enum):
+            USER = "user"
+
+        # Search SDK versions may type the role as a str-subclass enum. Agent Framework types
+        # Message.role as a plain str, and durable session-state serialization rejects scalar
+        # subclasses, so the role must be unwrapped when the message is created.
+        response = KnowledgeBaseRetrievalResponse(
+            response=[KnowledgeBaseMessage(role=_Role.USER, content=[KnowledgeBaseMessageTextContent(text="q")])],
+            references=None,
+        )
+        result = AzureAISearchContextProvider._parse_messages_from_kb_response(response)
+        assert len(result) == 1
+        assert type(result[0].role) is str
+        assert result[0].role == "user"
+
     def test_none_response_returns_default(self) -> None:
         from azure.search.documents.knowledgebases.models import KnowledgeBaseRetrievalResponse
 
