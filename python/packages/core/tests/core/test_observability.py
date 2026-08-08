@@ -3185,6 +3185,65 @@ def test_configure_providers_with_span_exporters(monkeypatch):
     mock_set_tracer.assert_called_once()
 
 
+def test_configure_providers_with_log_exporters_attaches_root_handler(monkeypatch):
+    """Test _configure_providers attaches the OpenTelemetry handler to the root logger."""
+    from unittest.mock import patch
+
+    from opentelemetry.sdk._logs import LoggingHandler, ReadableLogRecord
+    from opentelemetry.sdk._logs.export import LogRecordExporter, LogRecordExportResult
+
+    from agent_framework.observability import ObservabilitySettings
+
+    class _LogExporter(LogRecordExporter):
+        def export(self, batch: Sequence[ReadableLogRecord]) -> LogRecordExportResult:
+            return LogRecordExportResult.SUCCESS
+
+        def shutdown(self) -> None:
+            return None
+
+        def force_flush(self, timeout_millis: int = 30000) -> bool:
+            return True
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "true")
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    settings = ObservabilitySettings()
+    root_logger = logging.getLogger()
+    agent_logger = logging.getLogger("agent_framework")
+    original_root_handlers = list(root_logger.handlers)
+    original_agent_handlers = list(agent_logger.handlers)
+    added_root_handlers: list[logging.Handler] = []
+    added_agent_handlers: list[logging.Handler] = []
+
+    try:
+        with patch("opentelemetry._logs.set_logger_provider"):
+            settings._configure_providers([_LogExporter()])
+
+        added_root_handlers = [handler for handler in root_logger.handlers if handler not in original_root_handlers]
+        added_agent_handlers = [handler for handler in agent_logger.handlers if handler not in original_agent_handlers]
+
+        assert len(added_root_handlers) == 1
+        assert isinstance(added_root_handlers[0], LoggingHandler)
+        assert added_agent_handlers == []
+    finally:
+        for current_logger, handlers in (
+            (root_logger, added_root_handlers),
+            (agent_logger, added_agent_handlers),
+        ):
+            for handler in handlers:
+                current_logger.removeHandler(handler)
+                logger_provider = getattr(handler, "_logger_provider", None)
+                if logger_provider is not None:
+                    logger_provider.shutdown()
+                handler.close()
+
+
 # region Test histograms
 
 
