@@ -97,6 +97,7 @@ DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
+_SURFACED_APPROVAL_REQUESTS_KEY: Final[str] = "surfaced_approval_requests"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
@@ -1813,6 +1814,7 @@ async def _try_execute_function_call_groups(
             visible_requests,
             already_approved_requests,
         )
+        _store_surfaced_approval_requests(invocation_session, visible_requests)
         return [[request] for request in visible_requests], False
     if has_declaration_only_call:
         # Declaration-only calls are returned as user input rather than executed locally.
@@ -2115,6 +2117,78 @@ def _store_already_approved_approval_requests(
         "approval_requests": [request.to_dict() for request in already_approved_requests],
     })
     state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = pending_groups
+
+
+def _store_surfaced_approval_requests(
+    invocation_session: AgentSession | None,
+    visible_approval_requests: Sequence[Content],
+) -> None:
+    """Record surfaced approval requests so inbound decisions can be bound back to them."""
+    state = _get_tool_approval_state(invocation_session)
+    if state is None:
+        return
+    raw_surfaced = state.get(_SURFACED_APPROVAL_REQUESTS_KEY)
+    surfaced_requests = dict(cast(dict[str, Any], raw_surfaced)) if isinstance(raw_surfaced, dict) else {}
+    for request in visible_approval_requests:
+        if request.id and request.function_call is not None:
+            surfaced_requests[request.id] = request.function_call.to_dict()
+    if surfaced_requests:
+        state[_SURFACED_APPROVAL_REQUESTS_KEY] = surfaced_requests
+
+
+def _bind_approval_responses_to_surfaced_requests(
+    invocation_session: AgentSession | None,
+    approval_responses: Sequence[Content],
+) -> list[Content]:
+    """Bind inbound approval decisions to the surfaced requests they answer, consuming each record.
+
+    An approval response is a decision token, not a work order: what executes after an
+    approval must be the function call the host actually saw when it decided. For
+    session-backed runs the surfaced requests are recorded, so each inbound decision is
+    rebound to its recorded call and the record is consumed (one decision per surfaced
+    request, approved or rejected). A response whose embedded call differs from the
+    recorded one is logged and the recorded call wins, so an edited or replayed response
+    cannot execute a call that was never surfaced. Without a session there is no record
+    and responses pass through unchanged.
+
+    Returns the approved responses to execute, in their original order.
+    """
+    state = _get_tool_approval_state(invocation_session)
+    raw_surfaced = state.get(_SURFACED_APPROVAL_REQUESTS_KEY) if state is not None else None
+    if state is None or not isinstance(raw_surfaced, dict):
+        return [response for response in approval_responses if response.approved]
+    surfaced_requests = cast(dict[str, Any], raw_surfaced)
+
+    from ._types import Content
+
+    responses_to_execute: list[Content] = []
+    for response in approval_responses:
+        recorded = _content_from_state(surfaced_requests.pop(response.id, None)) if response.id else None
+        if not response.approved:
+            # The record is consumed above: a rejected request must not be approvable later.
+            continue
+        if recorded is None or recorded.type != "function_call":
+            responses_to_execute.append(response)
+            continue
+        inbound_call = response.function_call
+        if inbound_call is None or inbound_call.to_dict() != recorded.to_dict():
+            logger.warning(
+                "Approval response %s does not match the surfaced approval request; "
+                "executing the surfaced function call instead.",
+                response.id,
+            )
+        responses_to_execute.append(
+            Content.from_function_approval_response(
+                id=response.id,  # type: ignore[arg-type]
+                function_call=recorded,
+                approved=True,
+            )
+        )
+    if surfaced_requests:
+        state[_SURFACED_APPROVAL_REQUESTS_KEY] = surfaced_requests
+    else:
+        state.pop(_SURFACED_APPROVAL_REQUESTS_KEY, None)
+    return responses_to_execute
 
 
 def _pop_already_approved_approval_responses(
@@ -2748,8 +2822,13 @@ async def _resolve_approval_responses(
         _remove_unanswered_approval_batches_from_model_input(prepared_messages)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
 
-    # 3. Execute approved decisions once. Rejected decisions are converted to results during normalization below.
-    responses_to_execute = [response for response in pending_approval_responses.values() if response.approved]
+    # 3. Execute approved decisions once, each bound back to the approval request that was
+    # actually surfaced (session-backed runs record them; see #7383). Rejected decisions are
+    # converted to results during normalization below.
+    responses_to_execute = _bind_approval_responses_to_surfaced_requests(
+        invocation_session,
+        list(pending_approval_responses.values()),
+    )
     execution_result_groups: list[list[Content]] = []
     should_terminate = False
     reached_error_limit = False

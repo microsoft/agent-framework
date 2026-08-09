@@ -1253,3 +1253,83 @@ async def test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide(
     requests = _approval_requests(second_response.messages)
     assert [_function_call(request).arguments for request in requests] == ['{"value": "custom"}']
     assert calls == 1
+
+
+async def test_approval_resume_binds_decision_to_surfaced_request(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """An approval response carrying an edited call must execute the surfaced call, not the edited one (#7383)."""
+    received_amounts: list[str] = []
+
+    @tool(name="guarded_transfer", approval_mode="always_require")
+    def guarded_transfer(amount: str) -> str:
+        received_amounts.append(amount)
+        return f"transferred {amount}"
+
+    agent = Agent(client=chat_client_base, tools=[guarded_transfer])
+    session = AgentSession(session_id="bind-approval-to-surfaced-request")
+    function_call = Content.from_function_call(
+        call_id="call_transfer",
+        name="guarded_transfer",
+        arguments='{"amount": "10"}',
+    )
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[function_call]))]
+
+    first_response = await agent.run("run guarded", session=session)
+    approval_request = first_response.user_input_requests[0]
+
+    edited_call = Content.from_function_call(
+        call_id="call_transfer",
+        name="guarded_transfer",
+        arguments='{"amount": "10000"}',
+    )
+    edited_response = Content.from_function_approval_response(
+        id=approval_request.id,
+        function_call=edited_call,
+        approved=True,
+    )
+
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["done"]))]
+    second_response = await agent.run(Message(role="user", contents=[edited_response]), session=session)
+
+    assert received_amounts == ["10"]
+    result = next(
+        content
+        for message in second_response.messages
+        for content in message.contents
+        if content.type == "function_result"
+    )
+    assert result.result == "transferred 10"
+
+
+async def test_surfaced_approval_request_record_is_consumed_on_decision(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """The surfaced-request record is one-time-use: consumed by the first decision, approved or rejected."""
+    calls = 0
+
+    @tool(name="guarded_tool", approval_mode="always_require")
+    def guarded_tool() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved result"
+
+    agent = Agent(client=chat_client_base, tools=[guarded_tool])
+    session = AgentSession(session_id="surfaced-record-consumed")
+    function_call = Content.from_function_call(call_id="call_guarded", name="guarded_tool", arguments="{}")
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[function_call]))]
+
+    first_response = await agent.run("run guarded", session=session)
+    approval_request = first_response.user_input_requests[0]
+
+    tool_state = session.state.get("tool_approval")
+    assert isinstance(tool_state, dict)
+    assert approval_request.id in tool_state.get("surfaced_approval_requests", {})
+
+    rejection = approval_request.to_function_approval_response(approved=False)
+    chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=["done"]))]
+    await agent.run(Message(role="user", contents=[rejection]), session=session)
+
+    tool_state = session.state.get("tool_approval") or {}
+    assert "surfaced_approval_requests" not in tool_state
+    assert calls == 0
