@@ -693,6 +693,27 @@ def test_snapshot_tool_only_message_reuses_stream_message_id():
     assert kinds[0][1]["id"] == "tool-only-msg"
 
 
+def test_snapshot_tool_only_segments_get_unique_ids_across_reasoning():
+    """A tool-only opening ID is consumed once across separated tool segments."""
+    flow = FlowState(message_id="tool-only-msg")
+    first_events = _emit_tool_call(
+        Content.from_function_call(call_id="call_1", name="first_tool", arguments="{}"), flow
+    )
+    _emit_text_reasoning(Content.from_text("Thinking between calls."), flow)
+    second_events = _emit_tool_call(
+        Content.from_function_call(call_id="call_2", name="second_tool", arguments="{}"), flow
+    )
+
+    snapshot = _build_messages_snapshot(flow, [])
+    tool_messages = [message for kind, message in _snapshot_kinds(snapshot) if kind == "tool_calls"]
+    first_start = next(event for event in first_events if isinstance(event, ToolCallStartEvent))
+    second_start = next(event for event in second_events if isinstance(event, ToolCallStartEvent))
+
+    assert [message["id"] for message in tool_messages] == ["tool-only-msg", second_start.parent_message_id]
+    assert first_start.parent_message_id == "tool-only-msg"
+    assert second_start.parent_message_id != first_start.parent_message_id
+
+
 def test_snapshot_keeps_reasoning_in_emission_order():
     """Reasoning blocks keep their streamed position instead of always trailing."""
     flow = FlowState()
@@ -1047,6 +1068,14 @@ async def test_predictive_confirmation_run_finished_interrupt_links_tool_call():
         "name": "write_doc",
         "arguments": {"content": "Draft"},
     }
+
+    confirm_start = next(
+        event for event in events if isinstance(event, ToolCallStartEvent) and event.tool_call_name == "confirm_changes"
+    )
+    snapshots = [event for event in events if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"]
+    assert snapshots
+    snapshot_tool_message = next(message for message in snapshots[-1].messages if getattr(message, "tool_calls", None))
+    assert confirm_start.parent_message_id == snapshot_tool_message.id
 
 
 def test_resume_to_tool_messages_from_interrupts_payload():

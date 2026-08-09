@@ -512,11 +512,14 @@ def _text_segment_for(flow: FlowState, message_id: str) -> dict[str, Any] | None
 
 
 def _new_tool_call_segment_id(flow: FlowState) -> str:
-    """Allocate an ID that is distinct from any streamed text segment."""
-    text_message_ids = {segment.get("id") for segment in flow.snapshot_segments if segment["kind"] == "text"}
-    if flow.message_id and flow.message_id not in text_message_ids:
+    """Allocate a snapshot ID, reusing a tool-only opening ID at most once."""
+    segment_ids = {segment.get("id") for segment in flow.snapshot_segments if segment.get("id")}
+    if flow.message_id and flow.message_id not in segment_ids:
         return flow.message_id
-    return generate_event_id()
+    message_id = generate_event_id()
+    while message_id in segment_ids:
+        message_id = generate_event_id()
+    return message_id
 
 
 def _track_tool_call_segment(flow: FlowState, tool_call_id: str) -> str:
