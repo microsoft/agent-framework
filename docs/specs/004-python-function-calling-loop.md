@@ -331,6 +331,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - Service-managed continuation may omit inline reasoning/call items only when the hosted service already owns them.
 - Missing non-reconstructable reasoning fails explicitly before a provider request instead of silently dropping the
   content.
+- Foundry clients do not request `reasoning.encrypted_content` implicitly; callers may opt in explicitly when the
+  selected deployment supports encrypted reasoning.
 - Compaction preserves or excludes the complete reasoning/call/result group atomically.
 
 ### Approval request and resume
@@ -478,6 +480,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | OpenAI end-to-end hosted approval | Hosted request parses, response sends, and continuation completes. | `test_end_to_end_mcp_approval_flow` |
 | Stored function call/result | Service-side storage drops server-issued calls but keeps new outputs. | `test_prepare_options_with_conversation_id_strips_server_issued_items`, `test_prepare_messages_for_openai_full_conversation_with_reasoning` |
 | Stateless reasoning replay | Replay reconstructs reasoning, call, and result together; missing required reasoning fails before the request. | `test_tool_loop_store_false_replays_encrypted_reasoning_group`, `test_stateless_request_rejects_non_replayable_reasoning_bound_mcp_output`, `test_prepare_messages_for_openai_full_conversation_with_reasoning` |
+| Foundry encrypted reasoning opt-in | Foundry clients omit `reasoning.encrypted_content` by default and preserve an explicit caller opt-in. | `packages/foundry/tests/foundry/test_foundry_chat_client.py::test_get_response_does_not_request_encrypted_reasoning_by_default`, `test_get_response_preserves_explicit_encrypted_reasoning_opt_in`, `packages/foundry/tests/foundry/test_foundry_agent.py::test_foundry_agent_basic_call_does_not_request_unsupported_encrypted_reasoning`, `test_foundry_agent_preserves_caller_requested_encrypted_reasoning`, `packages/foundry_hosting/tests/test_responses_int.py::TestReasoningHostedMcpReplay::test_second_turn_replays_mcp_call_with_encrypted_reasoning` |
 | Opaque reasoning signature replay | Provider-specific opaque reasoning metadata is captured and restored on reconstructed calls. | `packages/gemini/tests/test_gemini_client.py::test_function_call_part_captures_thought_signature_as_reasoning_content`, `test_reconstructed_function_call_replays_thought_signature_from_reasoning_content` |
 | Chat Completions approval wrappers | Framework approval wrappers are not sent as chat messages. | `packages/openai/tests/openai/test_openai_chat_completion_client.py` approval serialization tests |
 | AG-UI approval result event | Approved result emits once with content and persists in snapshot. | `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_approval_resume_emits_tool_call_result`, `test_approval_resume_result_has_content`, `test_approval_resume_snapshot_replaces_approval_payload_with_tool_result`, `test_approval_resume_zero_updates_emits_tool_result` |
