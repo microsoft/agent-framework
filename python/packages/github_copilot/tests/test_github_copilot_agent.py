@@ -2685,6 +2685,38 @@ class TestNormalizeApproveForSession:
 
         assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalMemory)
 
+    async def test_extension_management_request_preserves_operation(self) -> None:
+        """An extension-management prompt yields an approval carrying the request's operation."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalExtensionManagement,
+        )
+        from copilot.session_events import PermissionRequestExtensionManagement
+
+        request = PermissionRequestExtensionManagement(operation="enable", extension_name="my-ext")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalExtensionManagement)
+        assert result.approval.operation == "enable"
+        assert result.to_dict()["approval"] == {"kind": "extension-management", "operation": "enable"}
+
+    async def test_extension_permission_access_request_preserves_extension_name(self) -> None:
+        """An extension-permission-access prompt yields an approval carrying the extension name."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess,
+        )
+        from copilot.session_events import PermissionRequestExtensionPermissionAccess
+
+        request = PermissionRequestExtensionPermissionAccess(capabilities=["read"], extension_name="my-ext")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess)
+        assert result.approval.extension_name == "my-ext"
+        assert result.to_dict()["approval"] == {"kind": "extension-permission-access", "extensionName": "my-ext"}
+
     async def test_url_request_derives_domain_instead_of_approval(self) -> None:
         """A URL prompt is scoped by ``domain``; URL prompts have no ``approval``."""
         from copilot.generated.rpc import PermissionDecisionApproveForSession
