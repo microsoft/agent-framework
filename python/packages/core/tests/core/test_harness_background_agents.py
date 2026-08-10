@@ -137,6 +137,15 @@ def test_constructor_valid_agents() -> None:
     assert provider.source_id == "background_agents"
 
 
+def test_constructor_rejects_negative_wait_timeout() -> None:
+    """Should fail fast for invalid provider wait timeout configuration."""
+    with pytest.raises(ValueError, match="wait_timeout_seconds must be non-negative"):
+        BackgroundAgentsProvider(
+            [_FakeAgent("Worker")],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+            wait_timeout_seconds=-1,
+        )
+
+
 def test_constructor_custom_source_id() -> None:
     """Should accept custom source_id."""
     provider = BackgroundAgentsProvider([_FakeAgent("Agent1")], source_id="custom_bg")  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
@@ -386,6 +395,30 @@ async def test_wait_for_first_completion_with_explicit_timeout() -> None:
     assert "completed" in result.lower()
 
 
+async def test_wait_for_first_completion_explicit_none_waits_indefinitely() -> None:
+    """Should let explicit None override the provider default with an unbounded wait."""
+    provider = BackgroundAgentsProvider(
+        [_FakeAgent("Slow", response_text="slow result", delay=0.01)],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        wait_timeout_seconds=0,
+    )
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Slow",
+        input="go",
+        description="slow task",
+    )
+    result = await _invoke_tool(
+        tools["background_agents_wait_for_first_completion"],
+        task_ids=[1],
+        timeout_seconds=None,
+    )
+    assert "finished" in result.lower()
+    assert "completed" in result.lower()
+
+
 async def test_wait_for_first_completion_rejects_negative_tool_timeout() -> None:
     """Should return an error message instead of raising for a negative tool timeout."""
     provider = _make_provider(_HangingAgent())  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
@@ -403,35 +436,6 @@ async def test_wait_for_first_completion_rejects_negative_tool_timeout() -> None
             tools["background_agents_wait_for_first_completion"],
             task_ids=[1],
             timeout_seconds=-1,
-        )
-        assert "error" in result.lower()
-        assert "non-negative" in result.lower()
-    finally:
-        runtime = provider._get_runtime(session)
-        for task in list(runtime.in_flight_tasks.values()):
-            task.cancel()
-        await asyncio.gather(*runtime.in_flight_tasks.values(), return_exceptions=True)
-
-
-async def test_wait_for_first_completion_rejects_negative_provider_timeout() -> None:
-    """Should return an error message instead of raising for a negative provider timeout."""
-    provider = BackgroundAgentsProvider(
-        [_HangingAgent()],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
-        wait_timeout_seconds=-1,
-    )
-    session = _make_session()
-    tools = await _get_tools(provider, session)
-
-    await _invoke_tool(
-        tools["background_agents_start_task"],
-        agent_name="Hanger",
-        input="go",
-        description="never finishes",
-    )
-    try:
-        result = await _invoke_tool(
-            tools["background_agents_wait_for_first_completion"],
-            task_ids=[1],
         )
         assert "error" in result.lower()
         assert "non-negative" in result.lower()

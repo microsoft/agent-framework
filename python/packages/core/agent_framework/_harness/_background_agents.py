@@ -24,6 +24,7 @@ from .._tools import tool
 from .._types import AgentResponse, Message
 
 DEFAULT_BACKGROUND_AGENTS_SOURCE_ID = "background_agents"
+_DEFAULT_WAIT_TIMEOUT: Any = object()
 
 DEFAULT_BACKGROUND_AGENTS_INSTRUCTIONS = """\
 ## Background Agents
@@ -294,11 +295,14 @@ class BackgroundAgentsProvider(ContextProvider):
                 300 seconds so a child that never completes cannot suspend the parent's run forever.
 
         Raises:
-            ValueError: If agents is empty, an agent has no name, or names are not unique.
+            ValueError: If agents is empty, an agent has no name, names are not unique,
+                or ``wait_timeout_seconds`` is negative.
         """
         super().__init__(source_id)
 
         self._agents = _validate_and_build_agent_dict(agents)
+        if wait_timeout_seconds is not None and wait_timeout_seconds < 0:
+            raise ValueError("wait_timeout_seconds must be non-negative.")
         self._wait_timeout_seconds = wait_timeout_seconds
 
         # Build instructions with agent listing.
@@ -372,7 +376,7 @@ class BackgroundAgentsProvider(ContextProvider):
         @tool(name="background_agents_wait_for_first_completion", approval_mode="never_require")
         async def background_agents_wait_for_first_completion(
             task_ids: list[int],
-            timeout_seconds: float | None = None,
+            timeout_seconds: float | None = _DEFAULT_WAIT_TIMEOUT,  # type: ignore[assignment]
         ) -> str:
             """Block until the first of the specified background tasks completes, up to a timeout.
 
@@ -382,7 +386,7 @@ class BackgroundAgentsProvider(ContextProvider):
             Args:
                 task_ids: IDs of background tasks to wait on.
                 timeout_seconds: Maximum time to wait in seconds. When omitted, the provider's
-                    ``wait_timeout_seconds`` is used.
+                    ``wait_timeout_seconds`` is used. Pass ``None`` to wait indefinitely.
             """
             if not task_ids:
                 return "Error: No task IDs provided."
@@ -408,7 +412,9 @@ class BackgroundAgentsProvider(ContextProvider):
 
             # Wait for the first one to complete, bounded so a child that never completes
             # cannot suspend the calling agent's run indefinitely.
-            effective_timeout = self._wait_timeout_seconds if timeout_seconds is None else timeout_seconds
+            effective_timeout = (
+                self._wait_timeout_seconds if timeout_seconds is _DEFAULT_WAIT_TIMEOUT else timeout_seconds
+            )
             if effective_timeout is not None and effective_timeout < 0:
                 return "Error: timeout_seconds must be non-negative."
             done, _ = await asyncio.wait(
