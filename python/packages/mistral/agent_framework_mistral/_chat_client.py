@@ -855,9 +855,10 @@ class RawMistralChatClient(
             details["total_token_count"] = value
         prompt_tokens_details = usage.get("prompt_tokens_details")
         if isinstance(prompt_tokens_details, Mapping):
-            if (value := prompt_tokens_details.get("cached_tokens")) is not None:
-                details["prompt/cached_tokens"] = value
-                details["cache_read_input_token_count"] = value
+            cached_tokens = prompt_tokens_details.get("cached_tokens")
+            if isinstance(cached_tokens, int) and not isinstance(cached_tokens, bool):
+                details["prompt/cached_tokens"] = cached_tokens
+                details["cache_read_input_token_count"] = cached_tokens
         return details or None
 
     # endregion

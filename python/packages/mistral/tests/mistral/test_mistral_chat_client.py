@@ -241,6 +241,29 @@ async def test_get_response_includes_cached_input_tokens() -> None:
     assert response.usage_details["cache_read_input_token_count"] == 80
 
 
+@pytest.mark.parametrize("cached_tokens", ["80", 80.5, True, False])
+async def test_get_response_ignores_invalid_cached_input_tokens(cached_tokens: Any) -> None:
+    client, _ = make_client(
+        json_response(
+            make_response_payload(
+                content="hello",
+                usage={
+                    "prompt_tokens": 100,
+                    "completion_tokens": 7,
+                    "total_tokens": 107,
+                    "prompt_tokens_details": {"cached_tokens": cached_tokens},
+                },
+            )
+        )
+    )
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.usage_details is not None
+    assert "prompt/cached_tokens" not in response.usage_details
+    assert "cache_read_input_token_count" not in response.usage_details
+
+
 @pytest.mark.parametrize(
     ("status_code", "expected_exception"),
     [
