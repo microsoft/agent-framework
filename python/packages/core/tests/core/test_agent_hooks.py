@@ -310,6 +310,74 @@ async def test_agent_startup_projects_constructor_registered_tools(chat_client_b
 
 
 @requires_sdk
+async def test_agent_startup_projects_configured_and_run_tools(chat_client_base: MockBaseChatClient) -> None:
+    @tool(approval_mode="never_require")
+    def runtime_tool(location: str) -> str:
+        """Look up a location supplied at runtime."""
+        return f"runtime weather in {location}"
+
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("hello", tools=[runtime_tool])
+
+    startup = guard.contexts_for("agent_startup")
+    assert len(startup) == 1
+    assert startup[0]["agent_init"]["tools_registered"] == ["weather_tool", "runtime_tool"]
+
+
+@requires_sdk
+async def test_agent_startup_projects_configured_and_options_tools(chat_client_base: MockBaseChatClient) -> None:
+    @tool(approval_mode="never_require")
+    def options_tool(location: str) -> str:
+        """Look up a location supplied through run options."""
+        return f"options weather in {location}"
+
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("hello", options={"tools": [options_tool]})
+
+    startup = guard.contexts_for("agent_startup")
+    assert len(startup) == 1
+    assert startup[0]["agent_init"]["tools_registered"] == ["weather_tool", "options_tool"]
+
+
+@requires_sdk
+async def test_agent_startup_prefers_named_run_tools_over_options(chat_client_base: MockBaseChatClient) -> None:
+    @tool(approval_mode="never_require")
+    def named_tool(location: str) -> str:
+        """Look up a location supplied through the named argument."""
+        return f"named weather in {location}"
+
+    @tool(approval_mode="never_require")
+    def ignored_options_tool(location: str) -> str:
+        """Look up a location supplied through run options."""
+        return f"ignored options weather in {location}"
+
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("hello", tools=[named_tool], options={"tools": [ignored_options_tool]})
+
+    startup = guard.contexts_for("agent_startup")
+    assert len(startup) == 1
+    assert startup[0]["agent_init"]["tools_registered"] == ["weather_tool", "named_tool"]
+
+
+@requires_sdk
 async def test_input_projection_is_faithful(chat_client_base: MockBaseChatClient) -> None:
     guard = AllowGuard()
     agent = Agent(client=chat_client_base, middleware=[create_agent_hooks_middleware([guard])])

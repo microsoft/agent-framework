@@ -858,21 +858,28 @@ def _agent_updates_from_response(response: AgentResponse[Any]) -> list[AgentResp
 
 def _tool_names(context: AgentContext) -> list[str]:
     """Project the registered tool names for ``agent_startup`` (spec ``tools_registered``)."""
-    from ._tools import _get_tool_name, normalize_tools  # type: ignore[reportPrivateUsage]
+    from ._tools import _append_unique_tools, _get_tool_name, normalize_tools  # type: ignore[reportPrivateUsage]
 
-    if context.tools is not None:
-        tools: Any = context.tools
+    default_options = getattr(context.agent, "default_options", None)
+    if isinstance(default_options, Mapping) and "tools" in default_options:
+        configured_tools: Any = default_options["tools"]
     else:
-        tools = getattr(context.agent, "tools", None)
-        default_options = getattr(context.agent, "default_options", None)
-        if tools is None and isinstance(default_options, Mapping):
-            tools = default_options.get("tools")
-    if tools is None:
-        return []
+        configured_tools = getattr(context.agent, "tools", None)
+
+    # Agent._prepare_run_context uses the named run-level tools when present and
+    # otherwise consumes options["tools"]. Mirror that precedence here so the
+    # startup projection describes the same run that reaches the model.
+    run_tools = context.tools
+    if run_tools is None and isinstance(context.options, Mapping):
+        run_tools = context.options.get("tools")
+
     try:
-        normalized = normalize_tools(tools)
+        normalized = _append_unique_tools(
+            normalize_tools(configured_tools),
+            normalize_tools(run_tools),
+        )
     except Exception:
-        logger.warning("agent-hooks could not normalize the run's tools for the agent_startup projection.")
+        logger.warning("agent-hooks could not normalize the agent's tools for the agent_startup projection.")
         return []
     names: list[str] = []
     for item in normalized:
