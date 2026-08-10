@@ -294,6 +294,22 @@ async def test_full_tool_run_emits_complete_ordered_session(chat_client_base: Mo
 
 
 @requires_sdk
+async def test_agent_startup_projects_constructor_registered_tools(chat_client_base: MockBaseChatClient) -> None:
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("hello")
+
+    startup = guard.contexts_for("agent_startup")
+    assert len(startup) == 1
+    assert startup[0]["agent_init"]["tools_registered"] == ["weather_tool"]
+
+
+@requires_sdk
 async def test_input_projection_is_faithful(chat_client_base: MockBaseChatClient) -> None:
     guard = AllowGuard()
     agent = Agent(client=chat_client_base, middleware=[create_agent_hooks_middleware([guard])])

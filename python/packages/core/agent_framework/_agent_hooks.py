@@ -860,7 +860,13 @@ def _tool_names(context: AgentContext) -> list[str]:
     """Project the registered tool names for ``agent_startup`` (spec ``tools_registered``)."""
     from ._tools import _get_tool_name, normalize_tools  # type: ignore[reportPrivateUsage]
 
-    tools: Any = context.tools if context.tools is not None else getattr(context.agent, "tools", None)
+    if context.tools is not None:
+        tools: Any = context.tools
+    else:
+        tools = getattr(context.agent, "tools", None)
+        default_options = getattr(context.agent, "default_options", None)
+        if tools is None and isinstance(default_options, Mapping):
+            tools = default_options.get("tools")
     if tools is None:
         return []
     try:
