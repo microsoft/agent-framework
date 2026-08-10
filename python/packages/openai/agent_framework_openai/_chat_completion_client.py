@@ -16,7 +16,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, cast, overload
 
 from agent_framework._clients import BaseChatClient
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
@@ -50,8 +50,9 @@ from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types import CompletionUsage
 from openai.types.chat.chat_completion import ChatCompletion, Choice
-from openai.types.chat.chat_completion_chunk import ChatCompletionChunk
+from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.chat.chat_completion_message_custom_tool_call import (
     ChatCompletionMessageCustomToolCall,
 )
@@ -137,6 +138,37 @@ def _sanitize_author_name(name: str | None) -> str | None:
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
+
+
+OpenAIChatResponseContentsParser: TypeAlias = Callable[
+    ["ChatCompletionMessage | ChoiceDelta", list[Content]], list[Content]
+]
+"""Hook to customize how a response message/delta is parsed into ``Content`` items.
+
+Called once per choice (non-streaming) or per streaming update-choice, after the client
+has built its default ``Content`` list. Receives the already-selected OpenAI
+``ChatCompletionMessage`` (non-streaming) or ``ChoiceDelta`` (streaming) and the
+default-parsed contents, and returns the contents to use instead. The client resolves the
+streaming/non-streaming dispatch, so a parser can read provider fields directly (e.g.
+``getattr(message, "reasoning", None)``) without branching.
+
+This is the extension point for OpenAI-compatible endpoints that return non-standard fields
+(e.g. OpenRouter/vLLM ``reasoning`` / ``reasoning_details`` or Mistral chunked ``content``).
+The stock client stays free of provider-specific branches; supply a parser to surface such
+data. Return the input list unchanged to opt out for a given choice.
+"""
+
+OpenAIChatMessagePreparer: TypeAlias = Callable[["Message", list[dict[str, Any]]], list[dict[str, Any]]]
+"""Hook to customize the outgoing request messages built from a single framework ``Message``.
+
+Called once per framework ``Message`` after the client has built its default list of OpenAI
+message dicts. Receives the source ``Message`` and the default dicts, and returns the dicts to
+send instead.
+
+This is the send-side counterpart of :data:`OpenAIChatResponseContentsParser`. Providers such as
+vLLM require reasoning to be echoed back on later turns under the same key it was received; use a
+preparer to inject those fields. Return the input list unchanged to opt out.
+"""
 
 
 # region OpenAI Chat Options TypedDict
@@ -252,6 +284,8 @@ class RawOpenAIChatCompletionClient(
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -272,6 +306,10 @@ class RawOpenAIChatCompletionClient(
             default_headers: Additional HTTP headers.
             async_client: Pre-configured OpenAI client.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize response parsing into ``Content`` items.
+                See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize outgoing request messages.
+                See ``OpenAIChatMessagePreparer``.
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
@@ -294,6 +332,8 @@ class RawOpenAIChatCompletionClient(
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -321,6 +361,10 @@ class RawOpenAIChatCompletionClient(
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize response parsing into ``Content`` items.
+                See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize outgoing request messages.
+                See ``OpenAIChatMessagePreparer``.
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
@@ -343,6 +387,8 @@ class RawOpenAIChatCompletionClient(
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -376,6 +422,13 @@ class RawOpenAIChatCompletionClient(
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize how each response choice/delta is parsed
+                into ``Content`` items. Use it to surface non-standard fields from
+                OpenAI-compatible endpoints (e.g. OpenRouter/vLLM reasoning or Mistral chunked
+                content) without subclassing. See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize the outgoing request messages built from
+                each framework ``Message``. Use it to echo provider-specific fields (e.g. vLLM
+                ``reasoning``) back on later turns. See ``OpenAIChatMessagePreparer``.
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
@@ -429,6 +482,8 @@ class RawOpenAIChatCompletionClient(
         else:
             self.default_headers = None
         self.instruction_role = instruction_role
+        self.response_parser = response_parser
+        self.message_preparer = message_preparer
         self._use_azure_client = use_azure_client
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
@@ -809,6 +864,8 @@ class RawOpenAIChatCompletionClient(
                 contents.extend(parsed_tool_calls)
             if reasoning_details := getattr(choice.message, "reasoning_details", None):
                 contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+            if self.response_parser is not None:
+                contents = list(self.response_parser(choice.message, contents))
             messages.append(Message(role="assistant", contents=contents))
         return ChatResponse(
             response_id=response.id,
@@ -848,11 +905,15 @@ class RawOpenAIChatCompletionClient(
             if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
                 continue
 
-            contents.extend(self._parse_tool_calls_from_openai(choice))
+            choice_contents: list[Content] = []
+            choice_contents.extend(self._parse_tool_calls_from_openai(choice))
             if text_content := self._parse_text_from_openai(choice):
-                contents.append(text_content)
+                choice_contents.append(text_content)
             if reasoning_details := getattr(choice.delta, "reasoning_details", None):
-                contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+                choice_contents.append(Content.from_text_reasoning(protected_data=json.dumps(reasoning_details)))
+            if self.response_parser is not None:
+                choice_contents = list(self.response_parser(choice.delta, choice_contents))
+            contents.extend(choice_contents)
         return ChatResponseUpdate(
             created_at=datetime.fromtimestamp(chunk.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             contents=contents,
@@ -897,6 +958,8 @@ class RawOpenAIChatCompletionClient(
         """Parse the choice into a Content object with type='text'."""
         message = choice.message if isinstance(choice, Choice) else choice.delta
         if message.content:
+            if not isinstance(message.content, str):
+                return None
             return Content.from_text(text=message.content, raw_representation=choice)
         if hasattr(message, "refusal") and message.refusal:
             return Content.from_text(text=message.refusal, raw_representation=choice)
@@ -970,7 +1033,18 @@ class RawOpenAIChatCompletionClient(
     # region Parsers
 
     def _prepare_message_for_openai(self, message: Message) -> list[dict[str, Any]]:
-        """Prepare a chat message for OpenAI."""
+        """Prepare a chat message for OpenAI, applying the ``message_preparer`` hook if set.
+
+        The hook is applied here so it runs exactly once per framework ``Message`` for every
+        role, including ``system`` / ``developer`` messages that build a different shape.
+        """
+        all_messages = self._build_openai_messages(message)
+        if self.message_preparer is not None:
+            all_messages = list(self.message_preparer(message, all_messages))
+        return all_messages
+
+    def _build_openai_messages(self, message: Message) -> list[dict[str, Any]]:
+        """Build the default OpenAI message dicts for a framework message (no hook applied)."""
         # System/developer messages default to plain string content because some
         # OpenAI-compatible endpoints reject list content for non-user roles. The
         # exception is a prompt cache breakpoint on a text part: it can only live on
@@ -1008,6 +1082,7 @@ class RawOpenAIChatCompletionClient(
                 details := message.additional_properties["reasoning_details"]
             ):
                 args["reasoning_details"] = details
+
             match content.type:
                 case "function_call":
                     if all_messages and "tool_calls" in all_messages[-1]:
@@ -1203,6 +1278,8 @@ class OpenAIChatCompletionClient(
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
@@ -1220,6 +1297,10 @@ class OpenAIChatCompletionClient(
             default_headers: Additional HTTP headers.
             async_client: Pre-configured OpenAI client.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize response parsing into ``Content`` items.
+                See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize outgoing request messages.
+                See ``OpenAIChatMessagePreparer``.
             base_url: Base URL override. When not provided explicitly, the constructor reads
                 ``OPENAI_BASE_URL``.
             env_file_path: Optional ``.env`` file that is checked before the process environment
@@ -1243,6 +1324,8 @@ class OpenAIChatCompletionClient(
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
@@ -1269,6 +1352,10 @@ class OpenAIChatCompletionClient(
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize response parsing into ``Content`` items.
+                See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize outgoing request messages.
+                See ``OpenAIChatMessagePreparer``.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -1287,6 +1374,8 @@ class OpenAIChatCompletionClient(
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        response_parser: OpenAIChatResponseContentsParser | None = None,
+        message_preparer: OpenAIChatMessagePreparer | None = None,
         base_url: str | None = None,
         azure_endpoint: str | None = None,
         api_version: str | None = None,
@@ -1315,6 +1404,12 @@ class OpenAIChatCompletionClient(
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role to use for instruction messages (for example ``"system"``).
+            response_parser: Optional hook to customize how each response choice/delta is parsed
+                into ``Content`` items (e.g. to surface OpenRouter/vLLM reasoning or Mistral
+                chunked content). See ``OpenAIChatResponseContentsParser``.
+            message_preparer: Optional hook to customize the outgoing request messages built from
+                each framework ``Message`` (e.g. to echo vLLM ``reasoning`` back on later turns).
+                See ``OpenAIChatMessagePreparer``.
             base_url: Base URL override. For OpenAI routing this maps to ``OPENAI_BASE_URL``.
                 For Azure routing this may be used instead of ``azure_endpoint`` when you want
                 to pass the full ``.../openai/v1`` base URL directly.
@@ -1382,6 +1477,8 @@ class OpenAIChatCompletionClient(
             default_headers=default_headers,
             async_client=async_client,
             instruction_role=instruction_role,
+            response_parser=response_parser,
+            message_preparer=message_preparer,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
             middleware=middleware,

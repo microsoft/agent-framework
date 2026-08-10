@@ -22,7 +22,6 @@ Status is grouped into these buckets:
 | `agent-framework-azure-ai-search` | `python/packages/azure-ai-search` | `beta` |
 | `agent-framework-azure-cosmos` | `python/packages/azure-cosmos` | `beta` |
 | `agent-framework-azure-cosmos-memory` | `python/packages/azure-cosmos-memory` | `alpha` |
-| `agent-framework-azurefunctions` | `python/packages/azurefunctions` | `beta` |
 | `agent-framework-bedrock` | `python/packages/bedrock` | `beta` |
 | `agent-framework-chatkit` | `python/packages/chatkit` | `beta` |
 | `agent-framework-claude` | `python/packages/claude` | `beta` |
@@ -30,7 +29,6 @@ Status is grouped into these buckets:
 | `agent-framework-core` | `python/packages/core` | `released` |
 | `agent-framework-declarative` | `python/packages/declarative` | `released` |
 | `agent-framework-devui` | `python/packages/devui` | `beta` |
-| `agent-framework-durabletask` | `python/packages/durabletask` | `beta` |
 | `agent-framework-foundry` | `python/packages/foundry` | `released` |
 | `agent-framework-foundry-hosting` | `python/packages/foundry_hosting` | `beta` |
 | `agent-framework-foundry-local` | `python/packages/foundry_local` | `beta` |
@@ -65,6 +63,19 @@ The following feature IDs have explicit feature-stage decorators on public APIs 
 listed below.
 
 ### Experimental features
+
+#### `AGENT_HOOKS`
+
+- `agent-framework-core`: `create_agent_hooks_middleware` and
+  `create_agent_hooks_middleware_from_emitter` from `agent_framework/_agent_hooks.py`,
+  the AGENT-HOOKS-0.1 enforcement middleware bundle, and the `MiddlewareBundle`
+  container from `agent_framework/_middleware.py` that both factories produce
+  (`MiddlewareBundle` itself needs no extra). Requires the opt-in
+  `agent-framework-core[agent-hooks]` extra (`agent-hooks-sdk`), which is deliberately
+  not part of `agent-framework-core[all]`. Known limitation: service-side (hosted) tool
+  execution never passes through the framework's function-invocation seam, so the
+  `pre_tool_call`/`post_tool_call` points cannot intercept it; hosted tool calls and
+  outputs are surfaced in the `post_model_call` content projection instead.
 
 #### `DECLARATIVE_AGENTS`
 
@@ -129,8 +140,8 @@ listed below.
 
 - `agent-framework-core`: `SessionStore` and `FileSessionStore` from
   `agent_framework/_sessions.py`
-- `agent-framework-foundry-hosting`: `FoundrySessionStore` from
-  `agent_framework_foundry_hosting/_session_store.py`
+- `agent-framework-foundry-hosting`: `FoundryAgentSessionStore` from
+  `agent_framework_foundry_hosting/_state_store.py`
 
 #### `TO_PROMPT_AGENT`
 

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Threading;
@@ -32,6 +33,16 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     /// Avoids a per-request allocation on the request hot path.
     /// </summary>
     private static readonly HostedSessionIsolationKeyProvider s_defaultIsolationKeyProvider = new PlatformHostedSessionIsolationKeyProvider();
+
+    /// <summary>Identifies the handler as the source of chat history messages it passes as input.</summary>
+    private const string HistorySourceId = "Microsoft.Agents.AI.Foundry.Hosting.AgentFrameworkResponseHandler";
+
+    /// <summary>
+    /// The session type a hosted workflow runs with. It is internal to <c>Microsoft.Agents.AI.Workflows</c>,
+    /// so it is recognised by name: taking a reference to it would mean opening that package's internals,
+    /// which cannot be done here because both packages compile the same shared source files.
+    /// </summary>
+    private const string WorkflowSessionTypeName = "WorkflowSession";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
@@ -112,16 +123,21 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // (resolvedUserId is null) there is no user to partition on, so the session is unscoped/shared
         // by design — per-user isolation applies only when a user identity was resolved (hosted).
         var conversationId = request.GetConversationId();
-        var sessionConversationId = HostedConversationKey.Resolve(
+        var agentSessionId = HostedConversationKey.Resolve(
             conversationId, request.PreviousResponseId, context.ResponseId);
 
-        var chatClientAgent = agent.GetService<ChatClientAgent>();
+        var agentOptions = agent.GetService<ChatClientAgentOptions>();
 
-        AgentSession? session = !string.IsNullOrWhiteSpace(sessionConversationId)
-            ? await sessionStore.GetSessionAsync(agent, sessionConversationId, resolvedUserId, cancellationToken).ConfigureAwait(false)
-                : chatClientAgent is not null
-                ? await chatClientAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
-                : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        // Load an existing session when there is a conversation key. The store returns null when
+        // nothing is persisted for it, which is the authoritative "this is a resume" signal: a
+        // non-null result means a prior turn saved this session. Whether loaded or created, the
+        // handler owns creating a fresh session when none exists, so the resume signal does not
+        // depend on inspecting the session for state the handler itself also writes to.
+        AgentSession? sessionLoadedFromStore = !string.IsNullOrWhiteSpace(agentSessionId)
+            ? await sessionStore.GetSessionAsync(agent, agentSessionId, resolvedUserId, cancellationToken).ConfigureAwait(false)
+            : null;
+
+        AgentSession? session = sessionLoadedFromStore ?? await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
         // Capture the platform per-request call id (x-agent-foundry-call-id, protocol 2.0.0 only).
         // It is re-applied to the ambient HostedCallContext immediately before each outbound egress
@@ -153,6 +169,19 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             }
         }
 
+        // A hosted agent's conversation is recorded by the AgentServer SDK's own storage provider. A
+        // conversation id on the session means the service behind the agent's chat client is recording
+        // a second one, which nothing here reads and which no one reconciles with the first. Refuse
+        // before any work is done, as a plain bad request rather than a failure part way through.
+        if (session is ChatClientAgentSession { ConversationId: not null })
+        {
+            throw new ResponsesApiException(
+                new Error(
+                    "service_managed_chat_history_not_supported",
+                    "Chat history is managed by the hosted agent service, therefore using a ChatClientAgent with its own service storage is not supported. Configure the agent's chat client so the underlying service does not store responses."),
+                400);
+        }
+
         // 3. Create the SDK event stream builder
         var stream = new ResponseEventStream(context, request);
 
@@ -163,18 +192,17 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // 4. Convert input: history + current input → ChatMessage[]
         var messages = new List<ChatMessage>();
 
-        // Load conversation history only for fresh sessions. When a session already exists
-        // (e.g. resuming a workflow paused at an external-input port), the workflow's
-        // checkpointed state already contains the prior turns' messages — replaying history
-        // would re-drive completed actions and break HITL resume semantics.
-        var isResume = (!string.IsNullOrWhiteSpace(conversationId) || !string.IsNullOrWhiteSpace(request.PreviousResponseId))
-            && session?.StateBag?.Count > 0;
-        if (!isResume)
+        // Add the chat history to the request. Workflow sessions accumulate previous turns and must not
+        // get the full history again; their types are internal, hence the check on the type name.
+        if (sessionLoadedFromStore is null
+            || !string.Equals(sessionLoadedFromStore.GetType().Name, WorkflowSessionTypeName, StringComparison.Ordinal))
         {
             var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
             if (history.Count > 0)
             {
-                messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag));
+                messages.AddRange(InputConverter
+                    .ConvertOutputItemsToMessages(history, session?.StateBag)
+                    .Select(m => m.WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, HistorySourceId)));
             }
         }
 
@@ -191,8 +219,15 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         }
 
         // 5. Build chat options
-        var chatOptions = InputConverter.ConvertToChatOptions(request);
+        var chatOptions = InputConverter.ConvertToChatOptions(request, agentOptions?.ChatOptions?.RawRepresentationFactory);
         chatOptions.Instructions = request.Instructions;
+
+        // Everything the agent needs for this turn is already in the input, so the provider it would
+        // otherwise run is replaced for the duration by one that keeps its messages in memory and is
+        // dropped when the run ends. Serving from a longer-lived one would deliver the conversation
+        // twice, and storing into it would leave a copy the hosting service never sees.
+        chatOptions.AdditionalProperties ??= [];
+        chatOptions.AdditionalProperties.Add<ChatHistoryProvider>(new VolatileChatHistoryProvider());
 
         // Inject Foundry Toolbox tools when the toolbox service is available.
         //
@@ -445,9 +480,9 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
             // Persist session after streaming completes (successful or not). The user id partitions the
             // persisted session per end user, mirroring the load above so multi-turn continuity is preserved.
-            if (session is not null && !string.IsNullOrWhiteSpace(sessionConversationId))
+            if (session is not null && !string.IsNullOrWhiteSpace(agentSessionId))
             {
-                await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
+                await sessionStore.SaveSessionAsync(agent, agentSessionId, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
             }
         }
     }

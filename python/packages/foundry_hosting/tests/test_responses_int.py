@@ -532,35 +532,58 @@ class TestReasoningHostedMcpReplay:
                 "status": "completed",
             }
 
+        def _streaming_response(response_id: str, output: list[dict[str, Any]]) -> httpx.Response:
+            response = _response(response_id, output)
+            events: list[dict[str, Any]] = []
+            for output_index, item in enumerate(output):
+                events.extend([
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": output_index,
+                        "item": {**item, "status": "in_progress"},
+                        "sequence_number": len(events),
+                    },
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": output_index,
+                        "item": item,
+                        "sequence_number": len(events) + 1,
+                    },
+                ])
+            events.append({
+                "type": "response.completed",
+                "response": response,
+                "sequence_number": len(events),
+            })
+            body = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
+            return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
         async def foundry_responses_boundary(request: httpx.Request) -> httpx.Response:
             nonlocal call_count
             call_count += 1
             payload = json.loads(request.content)
             provider_payloads.append(payload)
             if call_count == 1:
-                return httpx.Response(
-                    200,
-                    json=_response(
-                        "resp_first",
-                        [
-                            {
-                                "encrypted_content": "encrypted-reasoning",
-                                "id": reasoning_id,
-                                "summary": [{"text": "The MCP server has the answer.", "type": "summary_text"}],
-                                "type": "reasoning",
-                            },
-                            {
-                                "id": "mcp_paired",
-                                "arguments": '{"query":"Agent Framework overview"}',
-                                "name": "microsoft_docs_search",
-                                "server_label": "Microsoft_Learn",
-                                "type": "mcp_call",
-                                "output": "Microsoft Agent Framework",
-                                "status": "completed",
-                            },
-                            _message("msg_first"),
-                        ],
-                    ),
+                return _streaming_response(
+                    "resp_first",
+                    [
+                        {
+                            "encrypted_content": "encrypted-reasoning",
+                            "id": reasoning_id,
+                            "summary": [{"text": "The MCP server has the answer.", "type": "summary_text"}],
+                            "type": "reasoning",
+                        },
+                        {
+                            "id": "mcp_paired",
+                            "arguments": '{"query":"Agent Framework overview"}',
+                            "name": "microsoft_docs_search",
+                            "server_label": "Microsoft_Learn",
+                            "type": "mcp_call",
+                            "output": "Microsoft Agent Framework",
+                            "status": "completed",
+                        },
+                        _message("msg_first"),
+                    ],
                 )
 
             input_items = payload["input"]
@@ -586,13 +609,7 @@ class TestReasoningHostedMcpReplay:
                     },
                 )
 
-            return httpx.Response(
-                200,
-                json=_response(
-                    "resp_second",
-                    [_message("msg_second")],
-                ),
-            )
+            return _streaming_response("resp_second", [_message("msg_second")])
 
         transport = httpx.MockTransport(foundry_responses_boundary)
         responses_client = AsyncOpenAI(
@@ -623,6 +640,7 @@ class TestReasoningHostedMcpReplay:
             default_options={  # pyrefly: ignore[bad-argument-type]
                 "store": False,
                 "reasoning": {"effort": "low", "summary": "auto"},
+                "include": ["reasoning.encrypted_content"],
             },
         )
         server = ResponsesHostServer(agent, store=InMemoryResponseProvider())

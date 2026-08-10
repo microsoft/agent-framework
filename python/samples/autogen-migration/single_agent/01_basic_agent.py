@@ -4,10 +4,11 @@
 #     "agent-framework-openai",
 #     "autogen-agentchat",
 #     "autogen-ext[openai]",
+#     "python-dotenv",
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/single_agent/01_basic_assistant_agent.py
+#   uv run samples/autogen-migration/single_agent/01_basic_agent.py
 
 # Copyright (c) Microsoft. All rights reserved.
 

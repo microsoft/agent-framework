@@ -35,8 +35,8 @@ Developers **must** ensure that:
 3. The ``allowed_types`` parameter is specified whenever possible to restrict
    the set of reconstructible types to the minimum required by the application.
 4. Never pass untrusted external input to ``decode_checkpoint_value``. If you
-   must accept external JSON that might contain checkpoint markers, sanitize it
-   first (for example, :func:`agent_framework_durabletask._workflows.serialization.strip_pickle_markers`).
+   must accept external JSON that might contain checkpoint markers, reject or
+   sanitize the reserved marker keys first.
 
 The allowlist is a mitigation that reduces attack surface but does not
 eliminate the inherent risks of deserializing untrusted pickle data.  Treat

@@ -12,12 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal, cast, overload
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -32,9 +30,8 @@ from agent_framework import (
     BaseChatClient,
     ChatMiddlewareLayer,
     ChatResponse,
+    ChatResponseUpdate,
     Content,
-    ExperimentalFeature,
-    FileCheckpointStorage,
     FunctionInvocationLayer,
     HistoryProvider,
     InMemoryHistoryProvider,
@@ -46,10 +43,7 @@ from agent_framework import (
     SupportsAgentRun,
     WorkflowAgent,
     WorkflowBuilder,
-    WorkflowCheckpoint,
-    WorkflowCheckpointException,
     WorkflowContext,
-    WorkflowMessage,
     executor,
     tool,
 )
@@ -59,24 +53,24 @@ from azure.ai.agentserver.core import (
     set_request_context,
 )
 from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponseContext
-from azure.ai.agentserver.responses.models import CreateResponse
+from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
 from mcp import McpError
 from mcp.types import ErrorData
 from typing_extensions import Any
 
-from agent_framework_foundry_hosting import (
-    FoundrySessionStore,
-    ResponsesHostServer,
-)
+from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
-    _AZURE_RESPONSES_MESSAGE_ROLE_TYPE,  # pyright: ignore[reportPrivateUsage]
     CONSENT_ERROR_CODE,
     ConsentError,
-    FileBasedFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
-    InMemoryFunctionApprovalStorage,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
+)
+from agent_framework_foundry_hosting._state_store import (
+    AgentSessionStoreProvider,
+    CheckpointStoreProvider,
+    FunctionApprovalStoreProvider,
+    InMemoryFunctionApprovalStore,
 )
 
 
@@ -101,7 +95,7 @@ def _request_context(
     call_id: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
-) -> Iterator[None]:
+) -> Generator[None]:
     """Install a Foundry request context for the duration of the block."""
     token = set_request_context(FoundryAgentRequestContext(call_id=call_id, user_id=user_id, session_id=session_id))
     try:
@@ -113,26 +107,53 @@ def _request_context(
 # region Helpers
 
 
+async def _raising_updates(
+    message: str,
+    *,
+    initial_updates: Sequence[AgentResponseUpdate] = (),
+    before_raise: Callable[[], None] | None = None,
+) -> AsyncIterator[AgentResponseUpdate]:
+    if before_raise is not None:
+        before_raise()
+    for update in initial_updates:
+        yield update
+    raise RuntimeError(message)
+
+
 def _make_agent(
     *,
     response: AgentResponse | None = None,
     stream_updates: list[AgentResponseUpdate] | None = None,
     raw_agent: bool = True,
 ) -> MagicMock:
-    """Create a mock agent implementing SupportsAgentRun."""
+    """Create a mock agent implementing SupportsAgentRun.
+
+    ``ResponsesHostServer`` always invokes the inner agent in streaming mode. ``response`` is a convenience for
+    tests that only care about complete output messages: the helper converts those messages into streamed updates.
+    ``stream_updates`` is for tests that need explicit chunk boundaries to verify streaming event behavior.
+    """
     agent = MagicMock(spec=RawAgent) if raw_agent else MagicMock()
     agent.id = "test-agent"
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
     agent.context_providers = []
-    agent.create_session.side_effect = lambda *, session_id=None: AgentSession(session_id=session_id)
+
+    def create_session(*, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id)
+
+    agent.create_session.side_effect = create_session
 
     if response is not None:
 
-        async def run_non_streaming(*args: Any, **kwargs: Any) -> AgentResponse:
-            return response
+        async def _response_gen() -> AsyncIterator[AgentResponseUpdate]:
+            for message in response.messages:
+                yield AgentResponseUpdate(contents=message.contents, role=message.role)
 
-        agent.run = AsyncMock(side_effect=run_non_streaming)
+        def run_response(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args, kwargs
+            return ResponseStream(_response_gen(), finalizer=AgentResponse.from_updates)
+
+        agent.run = MagicMock(side_effect=run_response)
 
     if stream_updates is not None:
 
@@ -140,10 +161,10 @@ def _make_agent(
             for update in stream_updates:
                 yield update
 
-        def run_streaming(*args: Any, **kwargs: Any) -> Any:
-            if kwargs.get("stream"):
-                return ResponseStream(_stream_gen())  # type: ignore
-            raise NotImplementedError("Only streaming is configured on this mock")
+        def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args
+            assert kwargs.get("stream") is True
+            return ResponseStream(_stream_gen(), finalizer=AgentResponse.from_updates)
 
         agent.run = MagicMock(side_effect=run_streaming)
 
@@ -162,16 +183,15 @@ class _RecordingHistoryClient(BaseChatClient):
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse]:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         del options, kwargs
-        if stream:
-            raise NotImplementedError("This test client only supports non-streaming responses.")
+        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
         self.calls.append(list(messages))
 
-        async def get_response() -> ChatResponse:
-            return ChatResponse(messages=[Message(role="assistant", contents=[Content.from_text("recorded")])])
+        async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
+            yield ChatResponseUpdate(contents=[Content.from_text("recorded")], role="assistant")
 
-        return get_response()
+        return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
 
 
 class _PerServiceCallHistoryProvider(HistoryProvider):
@@ -215,35 +235,29 @@ class _FunctionLoopRecordingClient(
         stream: bool,
         options: Mapping[str, Any],
         **kwargs: Any,
-    ) -> Awaitable[ChatResponse]:
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         del options, kwargs
-        if stream:
-            raise NotImplementedError("This test client only supports non-streaming responses.")
+        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
         self.calls.append(list(messages))
         self.saves_before_call.append(self._provider.save_calls)
         call_number = len(self.calls)
 
-        async def get_response() -> ChatResponse:
+        async def stream_response() -> AsyncIterator[ChatResponseUpdate]:
             if call_number == 1:
-                return ChatResponse(
-                    messages=[
-                        Message(
-                            role="assistant",
-                            contents=[
-                                Content.from_function_call(
-                                    call_id="call_1",
-                                    name="lookup_weather",
-                                    arguments='{"location": "Seattle"}',
-                                )
-                            ],
+                yield ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_1",
+                            name="lookup_weather",
+                            arguments='{"location": "Seattle"}',
                         )
-                    ]
+                    ],
+                    role="assistant",
                 )
-            return ChatResponse(
-                messages=[Message(role="assistant", contents=[Content.from_text("It is sunny in Seattle.")])]
-            )
+            else:
+                yield ChatResponseUpdate(contents=[Content.from_text("It is sunny in Seattle.")], role="assistant")
 
-        return get_response()
+        return ResponseStream(stream_response(), finalizer=ChatResponse.from_updates)
 
 
 @tool(name="lookup_weather", approval_mode="never_require")
@@ -268,9 +282,12 @@ _SESSION_STORE_UNSET = object()
 def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
     """Create a ResponsesHostServer, optionally replacing its private store for tests."""
     session_store = kwargs.pop("session_store", _SESSION_STORE_UNSET)
-    server = ResponsesHostServer(agent, store=InMemoryResponseProvider(), **kwargs)
+    response_store = kwargs.pop("response_store", InMemoryResponseProvider())
+    server = ResponsesHostServer(agent, store=response_store, **kwargs)
     if session_store is not _SESSION_STORE_UNSET:
-        server._session_store = cast(SessionStore | None, session_store)  # pyright: ignore[reportPrivateUsage]
+        provider = MagicMock(spec=AgentSessionStoreProvider)
+        provider.get_store.return_value = cast(SessionStore | None, session_store)
+        server._session_storage_provider = provider  # pyright: ignore[reportPrivateUsage]
     return server
 
 
@@ -343,11 +360,6 @@ def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
 
 
 class TestResponsesHostServerInit:
-    def test_init_does_not_expose_session_store_override(self) -> None:
-        import inspect
-
-        assert "session_store" not in inspect.signature(ResponsesHostServer).parameters
-
     def test_init_basic(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
@@ -361,31 +373,24 @@ class TestResponsesHostServerInit:
         assert history_sentinel.store_inputs is True
         assert history_sentinel.store_outputs is True
 
-    def test_init_uses_in_memory_session_store_by_default_locally(self) -> None:
+    def test_init_uses_default_store_providers(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
         server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
-        session_store = server._session_store  # pyright: ignore[reportPrivateUsage]
-        assert type(session_store) is SessionStore
 
-    def test_init_uses_foundry_session_store_by_default_when_hosted(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "1")
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        assert isinstance(
+            server._session_storage_provider,  # pyright: ignore[reportPrivateUsage]
+            AgentSessionStoreProvider,
         )
-
-        with patch.object(Path, "home", return_value=tmp_path):
-            server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
-
-        session_store = server._session_store  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(session_store, FoundrySessionStore)
-        assert session_store.storage_path == tmp_path / ".sessions"
-        assert server.SESSION_STORAGE_PATH == "/.sessions"
+        assert isinstance(
+            server._checkpoint_storage_provider,  # pyright: ignore[reportPrivateUsage]
+            CheckpointStoreProvider,
+        )
+        assert isinstance(
+            server._function_approval_storage_provider,  # pyright: ignore[reportPrivateUsage]
+            FunctionApprovalStoreProvider,
+        )
 
     def test_init_rejects_history_provider_with_load_messages(self) -> None:
 
@@ -393,6 +398,7 @@ class TestResponsesHostServerInit:
             async def get_messages(
                 self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
             ) -> list[Message]:
+                del session_id, state, kwargs
                 return []
 
             async def save_messages(
@@ -403,7 +409,7 @@ class TestResponsesHostServerInit:
                 state: dict[str, Any] | None = None,
                 **kwargs: Any,
             ) -> None:
-                pass
+                del session_id, messages, state, kwargs
 
         hp = _LoadMessagesHistoryProvider(source_id="test", load_messages=True)
         agent = _make_agent(
@@ -451,70 +457,21 @@ class TestResponsesHostServerInit:
                 asyncio.Event(),
             )
 
-    async def test_hosted_foundry_store_does_not_require_platform_session_id(self, tmp_path: Path) -> None:
-        server = _make_server(_make_agent(), session_store=FoundrySessionStore(tmp_path))
-        request = CreateResponse(model="m", input="hi")
-        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-
-        with patch.object(server.config, "is_hosted", True), _request_context(call_id="call-1", user_id="user-1"):
-            handler = await server._handle_response(  # pyright: ignore[reportPrivateUsage]
-                request,
-                context,
-                asyncio.Event(),
-            )
-
-        assert handler is not None
-
-    async def test_fresh_request_runs_without_session_store(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
-        server = _make_server(agent)
-        server._session_store = None  # pyright: ignore[reportPrivateUsage]
-
-        response = await _post(server)
-
-        assert response.json()["status"] == "completed"
-        assert "session" not in agent.run.call_args.kwargs
-
-    @pytest.mark.parametrize("continuation", ["conversation", "previous_response"])
-    async def test_continuation_requires_session_store(self, continuation: str) -> None:
-        server = _make_server(_make_agent())
-        server._session_store = None  # pyright: ignore[reportPrivateUsage]
-        request = CreateResponse(
-            model="m",
-            input="hi",
-            previous_response_id="response-previous" if continuation == "previous_response" else None,
-        )
-        context = ResponseContext(
-            response_id="response-current",
-            conversation_id="conversation-1" if continuation == "conversation" else None,
-            mode_flags=MagicMock(),
-        )
-
-        handler = await server._handle_response(request, context, asyncio.Event())  # pyright: ignore[reportPrivateUsage]
-        events = [event async for event in handler]
-
-        failed_events = [event for event in events if getattr(event, "type", None) == "response.failed"]
-        assert len(failed_events) == 1
-        failed_response = getattr(failed_events[0], "response", None)
-        error = getattr(failed_response, "error", None)
-        assert "Session storage is required" in getattr(error, "message", "")
-
-    async def test_previous_response_requires_existing_snapshot(self, tmp_path: Path) -> None:
+    async def test_previous_response_requires_existing_agent_session(self) -> None:
         agent = _make_agent()
-        server = _make_server(agent, session_store=FoundrySessionStore(tmp_path))
+        server = _make_server(agent, session_store=SessionStore())
         request = CreateResponse(model="m", input="hi", previous_response_id="response-missing")
         context = ResponseContext(response_id="response-current", mode_flags=MagicMock())
 
         handler = await server._handle_response(request, context, asyncio.Event())  # pyright: ignore[reportPrivateUsage]
         events = [event async for event in handler]
 
-        failed_events = [event for event in events if getattr(event, "type", None) == "response.failed"]
+        failed_events = [event for event in events if event.get("type") == "response.failed"]
         assert len(failed_events) == 1
-        failed_response = getattr(failed_events[0], "response", None)
-        error = getattr(failed_response, "error", None)
-        assert "reuse the response's agent_session_id" in getattr(error, "message", "").lower()
+        failed_event = cast(Mapping[str, Any], failed_events[0])
+        response = cast(Mapping[str, Any], failed_event["response"])
+        error = cast(Mapping[str, Any], response["error"])
+        assert "Cannot find an existing agent session for previous_response_id=response-missing." in error["message"]
         agent.run.assert_not_called()
         agent.create_session.assert_not_called()
 
@@ -525,184 +482,27 @@ class TestResponsesHostServerInit:
 # region Session persistence
 
 
-class TestSessionPersistenceHelpers:
-    def test_foundry_session_store_is_public_and_experimental(self) -> None:
-        assert FoundrySessionStore.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        assert FoundrySessionStore.__feature_id__ == ExperimentalFeature.SESSION_STORE.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
-        assert FoundrySessionStore.__doc__ is not None
-        assert ".. warning:: Experimental" in FoundrySessionStore.__doc__
-
-
 class TestAgentSessionPersistence:
-    async def test_file_store_uses_raw_user_directory_and_preserves_format(self, tmp_path: Path) -> None:
-        template = FoundrySessionStore(tmp_path, serialization_format="msgpack")
-        server = _make_server(_make_agent(), session_store=template)
-
-        store = server._session_store  # pyright: ignore[reportPrivateUsage]
-        assert isinstance(store, FoundrySessionStore)
-        assert store.storage_path == tmp_path
-        assert store.serialization_format == "msgpack"
-
-        with _request_context(user_id="user-A"):
-            await store.set("conversation-1", AgentSession(session_id="conversation-1"))
-        with _request_context(user_id="user-B"):
-            await store.set("conversation-1", AgentSession(session_id="conversation-1"))
-
-        assert (tmp_path / "user-A" / "conversation-1.msgpack").is_file()
-        assert (tmp_path / "user-B" / "conversation-1.msgpack").is_file()
-
-    async def test_scoped_file_store_reuses_base_filename_safety(self, tmp_path: Path) -> None:
-        store = FoundrySessionStore(tmp_path)
-        user_directory = tmp_path / "user-A"
-
-        with _request_context(user_id="user-A"):
-            await store.set("CON", AgentSession(session_id="conversation-1"))
-
-        assert not (user_directory / "CON.json").exists()
-        assert len(list(user_directory.glob("~session-*.json"))) == 1
-
-    async def test_scoped_file_store_rejects_symlinked_session_leaf(self, tmp_path: Path) -> None:
-        store = FoundrySessionStore(tmp_path)
-        user_directory = tmp_path / "user-A"
-        user_directory.mkdir()
-        outside_file = tmp_path / "outside.json"
-        outside_file.write_text("outside", encoding="utf-8")
-        try:
-            (user_directory / "conversation-1.json").symlink_to(outside_file)
-        except OSError as exc:
-            pytest.skip(f"Symlinks are not available: {exc}")
-
-        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="escaped user directory"):
-            await store.get("conversation-1")
-
-    async def test_scoped_file_store_rejects_symlinked_session_leaf_within_user_directory(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        store = FoundrySessionStore(tmp_path)
-        user_directory = tmp_path / "user-A"
-        user_directory.mkdir()
-        target_file = user_directory / "conversation-2.json"
-        target_file.write_text("outside", encoding="utf-8")
-        try:
-            (user_directory / "conversation-1.json").symlink_to(target_file)
-        except OSError as exc:
-            pytest.skip(f"Symlinks are not available: {exc}")
-
-        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="escaped user directory"):
-            await store.get("conversation-1")
-
-    async def test_scoped_file_store_rejects_symlinked_isolation_directory(self, tmp_path: Path) -> None:
-        store = FoundrySessionStore(tmp_path)
-        user_directory = "user-A"
-        outside_directory = tmp_path.parent / f"{tmp_path.name}-outside"
-        outside_directory.mkdir()
-        try:
-            (tmp_path / user_directory).symlink_to(outside_directory, target_is_directory=True)
-        except OSError as exc:
-            pytest.skip(f"Symlinks are not available: {exc}")
-
-        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="User directory escaped"):
-            await store.get("conversation-1")
-
-    async def test_scoped_file_store_rejects_symlinked_isolation_directory_within_storage_root(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        store = FoundrySessionStore(tmp_path)
-        other_user_directory = tmp_path / "user-B"
-        other_user_directory.mkdir()
-        try:
-            (tmp_path / "user-A").symlink_to(other_user_directory, target_is_directory=True)
-        except OSError as exc:
-            pytest.skip(f"Symlinks are not available: {exc}")
-
-        with _request_context(user_id="user-A"), pytest.raises(ValueError, match="User directory escaped"):
-            await store.get("conversation-1")
-
-    @pytest.mark.parametrize("user_id", ["../../escape", "/tmp/escape", "user/subdirectory", "user\\subdirectory"])
-    async def test_file_store_rejects_unsafe_user_directory(self, tmp_path: Path, user_id: str) -> None:
-        store = FoundrySessionStore(tmp_path)
-
-        with _request_context(user_id=user_id), pytest.raises(RuntimeError, match="Invalid user id"):
-            await store.set("conversation-1", AgentSession(session_id="conversation-1"))
-
-    async def test_local_file_store_without_user_uses_root_directory(self, tmp_path: Path) -> None:
-        store = FoundrySessionStore(tmp_path)
-        with _request_context():
-            await store.set("conversation-1", AgentSession(session_id="conversation-1"))
-        assert (tmp_path / "conversation-1.json").is_file()
-
-    async def test_hosted_file_store_isolates_conversations_within_platform_session(self, tmp_path: Path) -> None:
-        seen_counts: list[int] = []
-        seen_session_ids: list[str] = []
-
-        async def run_with_state(*args: Any, **kwargs: Any) -> AgentResponse:
-            session = kwargs["session"]
-            assert isinstance(session, AgentSession)
-            count = int(session.state.get("turn_count", 0)) + 1
-            session.state["turn_count"] = count
-            seen_counts.append(count)
-            seen_session_ids.append(session.session_id)
-            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(f"turn {count}")])])
-
-        agent = _make_agent()
-        agent.run = AsyncMock(side_effect=run_with_state)
-        server = _make_server(agent, session_store=FoundrySessionStore(tmp_path))
-
-        with (
-            patch.object(server.config, "is_hosted", True),
-            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
-            _request_context(call_id="call-1", user_id="user-1", session_id="session-1"),
-        ):
-            first_stream = await server._handle_response(  # pyright: ignore[reportPrivateUsage]
-                CreateResponse(model="m", input="hi"),
-                ResponseContext(response_id="response-1", conversation_id="conversation-1", mode_flags=MagicMock()),
-                asyncio.Event(),
-            )
-            first_events = [event async for event in first_stream]
-
-            second_stream = await server._handle_response(  # pyright: ignore[reportPrivateUsage]
-                CreateResponse(model="m", input="again"),
-                ResponseContext(response_id="response-2", conversation_id="conversation-2", mode_flags=MagicMock()),
-                asyncio.Event(),
-            )
-            second_events = [event async for event in second_stream]
-
-            third_stream = await server._handle_response(  # pyright: ignore[reportPrivateUsage]
-                CreateResponse(model="m", input="continue first"),
-                ResponseContext(response_id="response-3", conversation_id="conversation-1", mode_flags=MagicMock()),
-                asyncio.Event(),
-            )
-            third_events = [event async for event in third_stream]
-
-        assert any(getattr(event, "type", None) == "response.completed" for event in first_events)
-        assert any(getattr(event, "type", None) == "response.completed" for event in second_events)
-        assert any(getattr(event, "type", None) == "response.completed" for event in third_events)
-        assert seen_counts == [1, 1, 2]
-        assert seen_session_ids[0] != seen_session_ids[1]
-        assert seen_session_ids[2] == seen_session_ids[0]
-        assert (tmp_path / "user-1" / "conversation-1.json").is_file()
-        assert (tmp_path / "user-1" / "conversation-2.json").is_file()
-        assert agent.create_session.call_count == 2
-        assert all(item.kwargs == {} for item in agent.create_session.call_args_list)
-
     async def test_previous_response_chain_restores_session_state(self) -> None:
         seen_counts: list[int] = []
         seen_session_ids: list[str] = []
 
-        async def run_with_state(*args: Any, **kwargs: Any) -> AgentResponse:
+        def run_with_state(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args
             session = kwargs["session"]
             assert isinstance(session, AgentSession)
             count = int(session.state.get("turn_count", 0)) + 1
             session.state["turn_count"] = count
             seen_counts.append(count)
             seen_session_ids.append(session.session_id)
-            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text(f"turn {count}")])])
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[Content.from_text(f"turn {count}")], role="assistant")
+
+            return ResponseStream(updates())
 
         agent = _make_agent()
-        agent.run = AsyncMock(side_effect=run_with_state)
+        agent.run = MagicMock(side_effect=run_with_state)
         server = _make_server(agent)
 
         first = await _post(server)
@@ -715,18 +515,20 @@ class TestAgentSessionPersistence:
         assert seen_counts == [1, 2, 2]
         assert seen_session_ids[0] == seen_session_ids[1] == seen_session_ids[2]
 
-        session_store = server._session_store  # pyright: ignore[reportPrivateUsage]
+        provider = server._session_storage_provider  # pyright: ignore[reportPrivateUsage]
+        assert provider is not None
+        session_store = provider.get_store(config=server.config)
         assert session_store is not None
-        first_snapshot = await session_store.get(first.json()["id"])
-        second_snapshot = await session_store.get(second.json()["id"])
-        third_snapshot = await session_store.get(third.json()["id"])
-        assert first_snapshot is not None
-        assert second_snapshot is not None
-        assert third_snapshot is not None
-        assert first_snapshot.state["turn_count"] == 1
-        assert second_snapshot.state["turn_count"] == 2
-        assert third_snapshot.state["turn_count"] == 2
-        assert first_snapshot.session_id == second_snapshot.session_id == third_snapshot.session_id
+        first_session = await session_store.get(first.json()["id"])
+        second_session = await session_store.get(second.json()["id"])
+        third_session = await session_store.get(third.json()["id"])
+        assert first_session is not None
+        assert second_session is not None
+        assert third_session is not None
+        assert first_session.state["turn_count"] == 1
+        assert second_session.state["turn_count"] == 2
+        assert third_session.state["turn_count"] == 2
+        assert first_session.session_id == second_session.session_id == third_session.session_id
 
     async def test_responses_history_is_not_duplicated_by_default_local_history(self) -> None:
         client = _RecordingHistoryClient()
@@ -781,78 +583,22 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert "_foundry_responses_history" not in stored.state
 
-    async def test_file_store_restores_session_across_server_instances(self, tmp_path: Path) -> None:
-        seen_counts: list[int] = []
-        response_store = InMemoryResponseProvider()
-
-        def make_agent() -> MagicMock:
-            agent = _make_agent()
-
-            async def run_with_state(*args: Any, **kwargs: Any) -> AgentResponse:
-                session = kwargs["session"]
-                assert isinstance(session, AgentSession)
-                count = int(session.state.get("turn_count", 0)) + 1
-                session.state["turn_count"] = count
-                seen_counts.append(count)
-                return AgentResponse(
-                    messages=[Message(role="assistant", contents=[Content.from_text(f"turn {count}")])]
-                )
-
-            agent.run = AsyncMock(side_effect=run_with_state)
-            return agent
-
-        first_server = ResponsesHostServer(
-            make_agent(),
-            store=response_store,
-        )
-        first_server._session_store = FoundrySessionStore(tmp_path)  # pyright: ignore[reportPrivateUsage]
-        first = await _post(first_server)
-
-        second_server = ResponsesHostServer(
-            make_agent(),
-            store=response_store,
-        )
-        second_server._session_store = FoundrySessionStore(tmp_path)  # pyright: ignore[reportPrivateUsage]
-        second = await _post(second_server, previous_response_id=first.json()["id"])
-
-        assert second.status_code == 200
-        assert seen_counts == [1, 2]
-
-    async def test_corrupt_file_session_fails_once_and_retry_starts_clean(self, tmp_path: Path) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("recovered")])])
-        )
-        server = _make_server(agent, session_store=FoundrySessionStore(tmp_path))
-        corrupt_file = tmp_path / "conversation-1.json"
-        corrupt_file.write_text("{not-json", encoding="utf-8")
-
-        first = await _post(server, conversation_id="conversation-1")
-
-        assert first.json()["status"] == "failed"
-        assert not corrupt_file.exists()
-        quarantined_files = await asyncio.to_thread(lambda: list(tmp_path.glob(".*.corrupt")))
-        assert len(quarantined_files) == 1
-
-        second = await _post(server, conversation_id="conversation-1")
-
-        assert second.json()["status"] == "completed"
-        agent.create_session.assert_called_once_with()
-
-    async def test_streaming_run_saves_final_session_state(self) -> None:
+    async def test_run_saves_final_session_state(self) -> None:
         store = SessionStore()
         agent = _make_agent()
 
-        def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream:
+        def run(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del _args
             session = kwargs["session"]
             assert isinstance(session, AgentSession)
 
             async def updates() -> AsyncIterator[AgentResponseUpdate]:
-                session.state["stream_complete"] = True
+                session.state["run_complete"] = True
                 yield AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant")
 
-            return ResponseStream(updates())
+            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
-        agent.run = MagicMock(side_effect=run_streaming)
+        agent.run = MagicMock(side_effect=run)
         server = _make_server(agent, session_store=store)
 
         response = await _post(server, stream=True)
@@ -861,19 +607,26 @@ class TestAgentSessionPersistence:
         stored = await store.get(session_id)
 
         assert stored is not None
-        assert stored.state["stream_complete"] is True
+        assert stored.state["run_complete"] is True
 
     async def test_failed_run_still_saves_mutated_session(self) -> None:
         store = SessionStore()
         agent = _make_agent()
 
-        async def failing_run(*args: Any, **kwargs: Any) -> AgentResponse:
+        def failing_run(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del _args
             session = kwargs["session"]
             assert isinstance(session, AgentSession)
-            session.state["before_failure"] = "saved"
-            raise RuntimeError("agent failed")
 
-        agent.run = AsyncMock(side_effect=failing_run)
+            return ResponseStream(
+                _raising_updates(
+                    "agent failed",
+                    before_raise=lambda: session.state.__setitem__("before_failure", "saved"),
+                ),
+                finalizer=AgentResponse.from_updates,
+            )
+
+        agent.run = MagicMock(side_effect=failing_run)
         server = _make_server(agent, session_store=store)
 
         response = await _post(server)
@@ -886,21 +639,22 @@ class TestAgentSessionPersistence:
         assert stored is not None
         assert stored.state["before_failure"] == "saved"
 
-    async def test_streaming_save_failure_emits_failed_response(self) -> None:
+    async def test_run_save_failure_emits_failed_response(self) -> None:
         store = _FailingSessionStore()
         agent = _make_agent()
 
-        def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream:
+        def run(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del _args
             session = kwargs["session"]
             assert isinstance(session, AgentSession)
 
             async def updates() -> AsyncIterator[AgentResponseUpdate]:
-                session.state["stream_complete"] = True
+                session.state["run_complete"] = True
                 yield AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant")
 
-            return ResponseStream(updates())
+            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
-        agent.run = MagicMock(side_effect=run_streaming)
+        agent.run = MagicMock(side_effect=run)
         server = _make_server(agent, session_store=store)
 
         response = await _post(server, stream=True)
@@ -910,6 +664,35 @@ class TestAgentSessionPersistence:
         assert "response.completed" not in event_types
         assert store.set_attempts == 1
 
+    async def test_run_and_save_failure_emit_one_combined_failure(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        store = _FailingSessionStore()
+        agent = _make_agent()
+
+        def failing_run(*_args: Any, **_kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del _args, _kwargs
+
+            return ResponseStream(_raising_updates("agent failed"), finalizer=AgentResponse.from_updates)
+
+        agent.run = MagicMock(side_effect=failing_run)
+        server = _make_server(agent, session_store=store)
+
+        response = await _post(server, stream=True)
+        events = _parse_sse_events(response.text)
+        event_types = _sse_event_types(events)
+        failed_events = [event for event in events if event["event"] == "response.failed"]
+
+        assert event_types[-1] == "response.failed"
+        assert event_types.count("response.failed") == 1
+        assert "response.completed" not in event_types
+        error = failed_events[0]["data"]["response"]["error"]
+        assert "agent failed" in error["message"]
+        assert "session storage is full" in error["message"]
+        assert "Failed to produce response for agent" in caplog.text
+        assert "Failed to persist the Agent Framework session after an agent failure" in caplog.text
+
     async def test_cancellation_is_preserved_when_best_effort_save_fails(
         self,
         caplog: pytest.LogCaptureFixture,
@@ -917,7 +700,8 @@ class TestAgentSessionPersistence:
         store = _FailingSessionStore()
         agent = _make_agent()
 
-        def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream:
+        def run_streaming(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del _args
             session = kwargs["session"]
             assert isinstance(session, AgentSession)
 
@@ -925,7 +709,7 @@ class TestAgentSessionPersistence:
                 session.state["started"] = True
                 yield AgentResponseUpdate(contents=[Content.from_text("started")], role="assistant")
 
-            return ResponseStream(updates())
+            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
         agent.run = MagicMock(side_effect=run_streaming)
         server = _make_server(agent, session_store=store)
@@ -953,7 +737,8 @@ class TestAgentSessionPersistence:
         store = SessionStore()
         agent = _make_agent()
 
-        def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream:
+        def run_streaming(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del _args
             session = kwargs["session"]
             assert isinstance(session, AgentSession)
 
@@ -961,7 +746,7 @@ class TestAgentSessionPersistence:
                 session.state["started"] = True
                 yield AgentResponseUpdate(contents=[Content.from_text("started")], role="assistant")
 
-            return ResponseStream(updates())
+            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
 
         agent.run = MagicMock(side_effect=run_streaming)
         server = _make_server(agent, session_store=store)
@@ -1011,6 +796,15 @@ class TestHealthCheck:
 
 
 class TestNonStreaming:
+    """
+    Non-streaming here means that the client requested a non-streaming response, instead of
+    the inner agent being run in non-streaming mode. The inner agent is always run in streaming mode, and the
+    ResponsesHostServer collects the streamed updates and returns a single JSON response at the end of the
+    request.
+
+    The opposite case, where the client requested a streaming response, is tested in `TestStreaming`.
+    """
+
     async def test_basic_text_response(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Hello!")])])
@@ -1138,7 +932,7 @@ class TestNonStreaming:
         assert len(reasoning_items) == 1
         assert reasoning_items[0]["id"] == reasoning_id
         assert reasoning_items[0]["encrypted_content"] == "encrypted-reasoning"
-        assert [part["text"] for part in reasoning_items[0]["summary"]] == ["Let me ", "think..."]
+        assert [part["text"] for part in reasoning_items[0]["summary"]] == ["Let me think..."]
 
     async def test_empty_response(self) -> None:
         agent = _make_agent(response=AgentResponse(messages=[]))
@@ -1161,18 +955,18 @@ class TestNonStreaming:
             temperature=0.5,
             top_p=0.9,
             max_output_tokens=1024,
-            parallel_tool_calls=True,
+            parallel_tool_calls=False,
         )
 
         assert resp.status_code == 200
-        agent.run.assert_awaited_once()
+        agent.run.assert_called_once()
         call_kwargs = agent.run.call_args.kwargs
-        assert call_kwargs["stream"] is False
+        assert call_kwargs["stream"] is True
         options = call_kwargs["options"]
         assert options["temperature"] == 0.5
         assert options["top_p"] == 0.9
         assert options["max_tokens"] == 1024
-        assert options["allow_multiple_tool_calls"] is True
+        assert options["allow_multiple_tool_calls"] is False
 
 
 # endregion
@@ -1182,6 +976,15 @@ class TestNonStreaming:
 
 
 class TestStreaming:
+    """
+    Streaming here means that the client requested a streaming response, and the ResponsesHostServer
+    forwards the stream of updates from the inner agent to the client as a Server-Sent Events (SSE) stream.
+    The inner agent is always run in streaming mode, and the ResponsesHost Server forwards the updates as
+    are created, without waiting for the entire response to complete.
+
+    The opposite case, where the client requested a non-streaming response, is tested in `TestNonStreaming`.
+    """
+
     async def test_chat_options_forwarded(self) -> None:
         agent = _make_agent(
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")],
@@ -1555,13 +1358,16 @@ class TestOutputItemToMessage:
     async def test_output_message(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemOutputMessage, OutputMessageContentOutputTextContent
 
-        item = OutputItemOutputMessage({
-            "type": "output_message",
-            "role": "assistant",
-            "content": [OutputMessageContentOutputTextContent({"type": "output_text", "text": "hello"})],
-            "status": "completed",
-            "id": "msg-1",
-        })
+        item = cast(
+            OutputItemOutputMessage,
+            {
+                "type": "output_message",
+                "role": "assistant",
+                "content": [cast(OutputMessageContentOutputTextContent, {"type": "output_text", "text": "hello"})],
+                "status": "completed",
+                "id": "msg-1",
+            },
+        )
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
         assert len(msg.contents) == 1
@@ -1571,11 +1377,14 @@ class TestOutputItemToMessage:
     async def test_message(self) -> None:
         from azure.ai.agentserver.responses.models import MessageContentInputTextContent, OutputItemMessage
 
-        item = OutputItemMessage({
-            "type": "message",
-            "role": "user",
-            "content": [MessageContentInputTextContent({"type": "input_text", "text": "hi"})],
-        })
+        item = cast(
+            OutputItemMessage,
+            {
+                "type": "message",
+                "role": "user",
+                "content": [MessageContentInputTextContent({"type": "input_text", "text": "hi"})],
+            },
+        )
         msg = await _output_item_to_message(item)
         assert msg.role == "user"
         assert len(msg.contents) == 1
@@ -1629,7 +1438,7 @@ class TestOutputItemToMessage:
     async def test_reasoning_no_summary(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemReasoningItem
 
-        item = OutputItemReasoningItem({"type": "reasoning", "id": "r-2"})
+        item = cast(OutputItemReasoningItem, {"type": "reasoning", "id": "r-2"})
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
         assert len(msg.contents) == 1
@@ -1674,7 +1483,7 @@ class TestOutputItemToMessage:
     async def test_mcp_approval_request(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStorage()
+        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
         await storage.save_approval_request("apr-1", saved)
 
@@ -1692,7 +1501,7 @@ class TestOutputItemToMessage:
     async def test_mcp_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
 
-        storage = InMemoryFunctionApprovalStorage()
+        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
         await storage.save_approval_request("apr-1", saved)
 
@@ -1725,26 +1534,26 @@ class TestOutputItemToMessage:
     async def test_image_generation_call(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemImageGenToolCall
 
-        item = OutputItemImageGenToolCall({"type": "image_generation_call", "id": "ig-1", "status": "completed"})
+        item = cast(
+            OutputItemImageGenToolCall,
+            {"type": "image_generation_call", "id": "ig-1", "status": "completed"},
+        )
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "image_generation_tool_call"
 
     async def test_shell_call(self) -> None:
-        from azure.ai.agentserver.responses.models import (
-            FunctionShellAction,
-            FunctionShellCallEnvironment,
-            OutputItemFunctionShellCall,
+        item = cast(
+            OutputItem,
+            {
+                "type": "shell_call",
+                "id": "sc-1",
+                "call_id": "call_sc",
+                "action": {"commands": ["ls", "-la"], "timeout_ms": 5000, "max_output_length": 1024},
+                "status": "completed",
+                "environment": {"type": "local"},
+            },
         )
-
-        item = OutputItemFunctionShellCall({
-            "type": "shell_call",
-            "id": "sc-1",
-            "call_id": "call_sc",
-            "action": FunctionShellAction({"commands": ["ls", "-la"], "timeout_ms": 5000, "max_output_length": 1024}),
-            "status": "completed",
-            "environment": FunctionShellCallEnvironment({"type": "local"}),
-        })
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "shell_tool_call"
@@ -1767,7 +1576,7 @@ class TestOutputItemToMessage:
                 FunctionShellCallOutputContent({
                     "stdout": "file.txt",
                     "stderr": "",
-                    "outcome": FunctionShellCallOutputExitOutcome({"exit_code": 0}),
+                    "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
                 })
             ],
             "max_output_length": 1024,
@@ -1836,16 +1645,17 @@ class TestOutputItemToMessage:
         assert msg.contents[0].informational_only is True
 
     async def test_computer_call(self) -> None:
-        from azure.ai.agentserver.responses.models import ComputerAction, OutputItemComputerToolCall
-
-        item = OutputItemComputerToolCall({
-            "type": "computer_call",
-            "id": "cc-1",
-            "call_id": "call_cc",
-            "action": ComputerAction({"type": "click"}),
-            "pending_safety_checks": [],
-            "status": "completed",
-        })
+        item = cast(
+            OutputItem,
+            {
+                "type": "computer_call",
+                "id": "cc-1",
+                "call_id": "call_cc",
+                "action": {"type": "click"},
+                "pending_safety_checks": [],
+                "status": "completed",
+            },
+        )
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
@@ -1853,33 +1663,32 @@ class TestOutputItemToMessage:
         assert msg.contents[0].informational_only is True
 
     async def test_computer_call_output(self) -> None:
-        from azure.ai.agentserver.responses.models import (
-            ComputerScreenshotImage,
-            OutputItemComputerToolCallOutputResource,
+        item = cast(
+            OutputItem,
+            {
+                "type": "computer_call_output",
+                "call_id": "call_cc",
+                "output": {
+                    "type": "computer_screenshot",
+                    "image_url": "data:image/png;base64,abc",
+                },
+            },
         )
-
-        item = OutputItemComputerToolCallOutputResource({
-            "type": "computer_call_output",
-            "call_id": "call_cc",
-            "output": ComputerScreenshotImage({
-                "type": "computer_screenshot",
-                "image_url": "data:image/png;base64,abc",
-            }),
-        })
         msg = await _output_item_to_message(item)
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].call_id == "call_cc"
 
     async def test_custom_tool_call(self) -> None:
-        from azure.ai.agentserver.responses.models import OutputItemCustomToolCall
-
-        item = OutputItemCustomToolCall({
-            "type": "custom_tool_call",
-            "call_id": "call_ct",
-            "name": "my_tool",
-            "input": '{"key": "value"}',
-        })
+        item = cast(
+            OutputItem,
+            {
+                "type": "custom_tool_call",
+                "call_id": "call_ct",
+                "name": "my_tool",
+                "input": '{"key": "value"}',
+            },
+        )
         msg = await _output_item_to_message(item)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
@@ -1888,13 +1697,14 @@ class TestOutputItemToMessage:
         assert msg.contents[0].informational_only is True
 
     async def test_custom_tool_call_output(self) -> None:
-        from azure.ai.agentserver.responses.models import OutputItemCustomToolCallOutput
-
-        item = OutputItemCustomToolCallOutput({
-            "type": "custom_tool_call_output",
-            "call_id": "call_ct",
-            "output": "result text",
-        })
+        item = cast(
+            OutputItem,
+            {
+                "type": "custom_tool_call_output",
+                "call_id": "call_ct",
+                "output": "result text",
+            },
+        )
         msg = await _output_item_to_message(item)
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
@@ -1908,13 +1718,14 @@ class TestOutputItemToMessage:
         chat-client serialize layer treats it as a hosted-MCP result and
         does not produce an orphan `function_call_output`.
         """
-        from azure.ai.agentserver.responses.models import OutputItemCustomToolCallOutput
-
-        item = OutputItemCustomToolCallOutput({
-            "type": "custom_tool_call_output",
-            "call_id": "mcp_06b686e11f118cf40169f0e5badb3081979842929d5cf04920",
-            "output": "found 10 cats",
-        })
+        item = cast(
+            OutputItem,
+            {
+                "type": "custom_tool_call_output",
+                "call_id": "mcp_06b686e11f118cf40169f0e5badb3081979842929d5cf04920",
+                "output": "found 10 cats",
+            },
+        )
         msg = await _output_item_to_message(item)
         assert msg.role == "tool"
         assert len(msg.contents) == 1
@@ -1991,9 +1802,7 @@ class TestOutputItemToMessage:
         assert msg.contents[0].text == "plain text"
 
     async def test_unsupported_type_raises(self) -> None:
-        from azure.ai.agentserver.responses.models import OutputItem
-
-        item = OutputItem({"type": "some_unknown_type"})
+        item = cast(OutputItem, {"type": "some_unknown_type"})
         with pytest.raises(ValueError, match="Unsupported OutputItem type: some_unknown_type"):
             await _output_item_to_message(item)
 
@@ -2052,13 +1861,16 @@ class TestItemToMessage:
     async def test_output_message(self) -> None:
         from azure.ai.agentserver.responses.models import ItemOutputMessage, OutputMessageContentOutputTextContent
 
-        item = ItemOutputMessage({
-            "type": "output_message",
-            "role": "assistant",
-            "content": [OutputMessageContentOutputTextContent({"type": "output_text", "text": "response"})],
-            "status": "completed",
-            "id": "msg-1",
-        })
+        item = cast(
+            ItemOutputMessage,
+            {
+                "type": "output_message",
+                "role": "assistant",
+                "content": [cast(OutputMessageContentOutputTextContent, {"type": "output_text", "text": "response"})],
+                "status": "completed",
+                "id": "msg-1",
+            },
+        )
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "assistant"
@@ -2069,14 +1881,17 @@ class TestItemToMessage:
     async def test_function_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemFunctionToolCall
 
-        item = ItemFunctionToolCall({
-            "type": "function_call",
-            "call_id": "call_1",
-            "name": "get_weather",
-            "arguments": '{"city": "NYC"}',
-            "status": "completed",
-            "id": "fc-1",
-        })
+        item = cast(
+            ItemFunctionToolCall,
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "get_weather",
+                "arguments": '{"city": "NYC"}',
+                "status": "completed",
+                "id": "fc-1",
+            },
+        )
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "assistant"
@@ -2090,7 +1905,7 @@ class TestItemToMessage:
         from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
 
         item = FunctionCallOutputItemParam({"type": "function_call_output", "call_id": "call_1", "output": "sunny"})
-        msg = await _item_to_message(item)  # type: ignore[arg-type]
+        msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
@@ -2100,8 +1915,11 @@ class TestItemToMessage:
     async def test_function_call_output_non_string(self) -> None:
         from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
 
-        item = FunctionCallOutputItemParam({"type": "function_call_output", "call_id": "call_2", "output": 42})
-        msg = await _item_to_message(item)  # type: ignore[arg-type]
+        item = cast(
+            FunctionCallOutputItemParam,
+            {"type": "function_call_output", "call_id": "call_2", "output": 42},
+        )
+        msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
         assert msg.contents[0].result == "42"
@@ -2127,7 +1945,7 @@ class TestItemToMessage:
     async def test_reasoning_no_summary(self) -> None:
         from azure.ai.agentserver.responses.models import ItemReasoningItem
 
-        item = ItemReasoningItem({"type": "reasoning", "id": "r-2"})
+        item = cast(ItemReasoningItem, {"type": "reasoning", "id": "r-2"})
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "assistant"
@@ -2175,7 +1993,7 @@ class TestItemToMessage:
     async def test_mcp_approval_request(self) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStorage()
+        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
         await storage.save_approval_request("apr-1", saved)
 
@@ -2194,7 +2012,7 @@ class TestItemToMessage:
     async def test_mcp_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import MCPApprovalResponse
 
-        storage = InMemoryFunctionApprovalStorage()
+        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
         await storage.save_approval_request("apr-1", saved)
 
@@ -2203,7 +2021,7 @@ class TestItemToMessage:
             "approval_request_id": "apr-1",
             "approve": True,
         })
-        msg = await _item_to_message(item, approval_storage=storage)  # type: ignore[arg-type]
+        msg = await _item_to_message(item, approval_storage=storage)
         assert msg is not None
         assert msg.role == "user"
         assert msg.contents[0].type == "function_approval_response"
@@ -2228,7 +2046,10 @@ class TestItemToMessage:
     async def test_image_generation_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemImageGenToolCall
 
-        item = ItemImageGenToolCall({"type": "image_generation_call", "id": "ig-1", "status": "completed"})
+        item = cast(
+            ItemImageGenToolCall,
+            {"type": "image_generation_call", "id": "ig-1", "status": "completed"},
+        )
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "assistant"
@@ -2237,13 +2058,20 @@ class TestItemToMessage:
     async def test_shell_call(self) -> None:
         from azure.ai.agentserver.responses.models import FunctionShellAction, FunctionShellCallItemParam
 
-        item = FunctionShellCallItemParam({
-            "type": "shell_call",
-            "call_id": "call_sc",
-            "action": FunctionShellAction({"commands": ["ls", "-la"], "timeout_ms": 5000, "max_output_length": 1024}),
-            "status": "in_progress",
-        })
-        msg = await _item_to_message(item)  # type: ignore[arg-type]
+        item = cast(
+            FunctionShellCallItemParam,
+            {
+                "type": "shell_call",
+                "call_id": "call_sc",
+                "action": FunctionShellAction({
+                    "commands": ["ls", "-la"],
+                    "timeout_ms": 5000,
+                    "max_output_length": 1024,
+                }),
+                "status": "in_progress",
+            },
+        )
+        msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "assistant"
         assert msg.contents[0].type == "shell_tool_call"
@@ -2264,12 +2092,12 @@ class TestItemToMessage:
                 FunctionShellCallOutputContent({
                     "stdout": "file.txt",
                     "stderr": "",
-                    "outcome": FunctionShellCallOutputExitOutcome({"exit_code": 0}),
+                    "outcome": cast(FunctionShellCallOutputExitOutcome, {"exit_code": 0}),
                 })
             ],
             "max_output_length": 1024,
         })
-        msg = await _item_to_message(item)  # type: ignore[arg-type]
+        msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
         assert msg.contents[0].type == "shell_tool_result"
@@ -2324,11 +2152,14 @@ class TestItemToMessage:
     async def test_web_search_call(self) -> None:
         from azure.ai.agentserver.responses.models import ItemWebSearchToolCall
 
-        item = ItemWebSearchToolCall({
-            "type": "web_search_call",
-            "id": "ws-1",
-            "status": "completed",
-        })
+        item = cast(
+            ItemWebSearchToolCall,
+            {
+                "type": "web_search_call",
+                "id": "ws-1",
+                "status": "completed",
+            },
+        )
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "assistant"
@@ -2337,16 +2168,17 @@ class TestItemToMessage:
         assert msg.contents[0].informational_only is True
 
     async def test_computer_call(self) -> None:
-        from azure.ai.agentserver.responses.models import ComputerAction, ItemComputerToolCall
-
-        item = ItemComputerToolCall({
-            "type": "computer_call",
-            "id": "cc-1",
-            "call_id": "call_cc",
-            "action": ComputerAction({"type": "click"}),
-            "pending_safety_checks": [],
-            "status": "completed",
-        })
+        item = cast(
+            Item,
+            {
+                "type": "computer_call",
+                "id": "cc-1",
+                "call_id": "call_cc",
+                "action": {"type": "click"},
+                "pending_safety_checks": [],
+                "status": "completed",
+            },
+        )
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "assistant"
@@ -2365,7 +2197,7 @@ class TestItemToMessage:
                 "image_url": "data:image/png;base64,abc",
             }),
         })
-        msg = await _item_to_message(item)  # type: ignore[arg-type]
+        msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
@@ -2391,11 +2223,14 @@ class TestItemToMessage:
     async def test_custom_tool_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
 
-        item = ItemCustomToolCallOutput({
-            "type": "custom_tool_call_output",
-            "call_id": "call_ct",
-            "output": "result text",
-        })
+        item = cast(
+            ItemCustomToolCallOutput,
+            {
+                "type": "custom_tool_call_output",
+                "call_id": "call_ct",
+                "output": "result text",
+            },
+        )
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
@@ -2405,11 +2240,14 @@ class TestItemToMessage:
     async def test_custom_tool_call_output_non_string(self) -> None:
         from azure.ai.agentserver.responses.models import ItemCustomToolCallOutput
 
-        item = ItemCustomToolCallOutput({
-            "type": "custom_tool_call_output",
-            "call_id": "call_ct2",
-            "output": 123,
-        })
+        item = cast(
+            ItemCustomToolCallOutput,
+            {
+                "type": "custom_tool_call_output",
+                "call_id": "call_ct2",
+                "output": 123,
+            },
+        )
         msg = await _item_to_message(item)
         assert msg is not None
         assert msg.contents[0].result == "123"
@@ -2443,16 +2281,19 @@ class TestItemToMessage:
     async def test_apply_patch_call(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchToolCallItemParam, ApplyPatchUpdateFileOperation
 
-        item = ApplyPatchToolCallItemParam({
-            "type": "apply_patch_call",
-            "call_id": "call_ap",
-            "operation": ApplyPatchUpdateFileOperation({
-                "type": "update_file",
-                "path": "file.py",
-                "diff": "+ new line",
-            }),
-        })
-        msg = await _item_to_message(item)  # type: ignore[arg-type]
+        item = cast(
+            ApplyPatchToolCallItemParam,
+            {
+                "type": "apply_patch_call",
+                "call_id": "call_ap",
+                "operation": ApplyPatchUpdateFileOperation({
+                    "type": "update_file",
+                    "path": "file.py",
+                    "diff": "+ new line",
+                }),
+            },
+        )
+        msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_call"
@@ -2462,21 +2303,22 @@ class TestItemToMessage:
     async def test_apply_patch_call_output(self) -> None:
         from azure.ai.agentserver.responses.models import ApplyPatchToolCallOutputItemParam
 
-        item = ApplyPatchToolCallOutputItemParam({
-            "type": "apply_patch_call_output",
-            "call_id": "call_ap",
-            "output": "patch applied",
-        })
-        msg = await _item_to_message(item)  # type: ignore[arg-type]
+        item = cast(
+            ApplyPatchToolCallOutputItemParam,
+            {
+                "type": "apply_patch_call_output",
+                "call_id": "call_ap",
+                "output": "patch applied",
+            },
+        )
+        msg = await _item_to_message(item)
         assert msg is not None
         assert msg.role == "tool"
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].result == "patch applied"
 
     async def test_unsupported_type_raises(self) -> None:
-        from azure.ai.agentserver.responses.models import Item
-
-        item = Item({"type": "some_unknown_type"})
+        item = cast(Item, {"type": "some_unknown_type"})
         with pytest.raises(ValueError, match="Unsupported Item type: some_unknown_type"):
             await _item_to_message(item)
 
@@ -2507,36 +2349,33 @@ def _make_multi_response_agent(
     agent.name = "Test Agent"
     agent.description = "A mock agent for testing"
     agent.context_providers = []
-    agent.create_session.side_effect = lambda *, session_id=None: AgentSession(session_id=session_id)
+
+    def create_session(*, session_id: str | None = None) -> AgentSession:
+        return AgentSession(session_id=session_id)
+
+    agent.create_session.side_effect = create_session
 
     call_index = [0]
-
-    async def run_non_streaming(*args: Any, **kwargs: Any) -> AgentResponse:
-        idx = call_index[0]
-        call_index[0] += 1
-        return responses[idx]
 
     async def _stream_gen(updates: list[AgentResponseUpdate]) -> AsyncIterator[AgentResponseUpdate]:
         for update in updates:
             yield update
 
-    def run_dispatch(*args: Any, **kwargs: Any) -> Any:
+    async def _response_gen(response: AgentResponse) -> AsyncIterator[AgentResponseUpdate]:
+        for message in response.messages:
+            yield AgentResponseUpdate(contents=message.contents, role=message.role)
+
+    def run_dispatch(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        del args, kwargs
         idx = call_index[0]
         call_index[0] += 1
-        if kwargs.get("stream") and stream_updates_list is not None:
-            return ResponseStream(_stream_gen(stream_updates_list[idx]))  # type: ignore
-        if not kwargs.get("stream"):
-            # Need to return a coroutine for non-streaming
-            async def _ret() -> AgentResponse:
-                return responses[idx]
+        updates = stream_updates_list[idx] if stream_updates_list is not None else None
+        return ResponseStream(
+            _stream_gen(updates) if updates is not None else _response_gen(responses[idx]),
+            finalizer=AgentResponse.from_updates,
+        )
 
-            return _ret()
-        raise NotImplementedError("Streaming not configured for this call index")
-
-    if stream_updates_list is not None:
-        agent.run = MagicMock(side_effect=run_dispatch)
-    else:
-        agent.run = AsyncMock(side_effect=run_non_streaming)
+    agent.run = MagicMock(side_effect=run_dispatch)
 
     return agent
 
@@ -3405,59 +3244,26 @@ class TestMultiTurnMixedContent:
 # region Function approval round-trip
 
 
-class TestFunctionApprovalStorage:
+class TestFunctionApprovalStore:
     """Unit tests for the function approval storage classes."""
 
     async def test_in_memory_save_and_load(self) -> None:
-        storage = InMemoryFunctionApprovalStorage()
+        storage = InMemoryFunctionApprovalStore()
         request = _make_function_approval_request_content(request_id="apr_1")
         await storage.save_approval_request("apr_1", request)
         loaded = await storage.load_approval_request("apr_1")
         assert loaded.type == "function_approval_request"
-        assert loaded.id == "apr_1"  # type: ignore[attr-defined]
+        assert loaded.id == "apr_1"
 
     async def test_in_memory_duplicate_save_raises(self) -> None:
-        storage = InMemoryFunctionApprovalStorage()
+        storage = InMemoryFunctionApprovalStore()
         request = _make_function_approval_request_content(request_id="apr_1")
         await storage.save_approval_request("apr_1", request)
         with pytest.raises(ValueError, match="already exists"):
             await storage.save_approval_request("apr_1", request)
 
     async def test_in_memory_missing_load_raises(self) -> None:
-        storage = InMemoryFunctionApprovalStorage()
-        with pytest.raises(KeyError):
-            await storage.load_approval_request("missing")
-
-    async def test_file_based_save_and_load_persists_across_instances(self, tmp_path: Any) -> None:
-        path = tmp_path / "subdir" / "approvals.json"
-        storage = FileBasedFunctionApprovalStorage(str(path))
-        request = _make_function_approval_request_content(request_id="apr_1")
-        await storage.save_approval_request("apr_1", request)
-
-        # Directory + file should now exist.
-        assert path.exists()
-
-        # A new instance pointing at the same path can load the saved entry.
-        storage2 = FileBasedFunctionApprovalStorage(str(path))
-        loaded = await storage2.load_approval_request("apr_1")
-        assert loaded.type == "function_approval_request"
-        assert loaded.id == "apr_1"  # type: ignore[attr-defined]
-        # The embedded function_call survives the round trip.
-        function_call = loaded.function_call
-        assert function_call is not None
-        assert function_call.name == "delete_file"
-
-    async def test_file_based_duplicate_save_raises(self, tmp_path: Any) -> None:
-        path = tmp_path / "approvals.json"
-        storage = FileBasedFunctionApprovalStorage(str(path))
-        request = _make_function_approval_request_content(request_id="apr_1")
-        await storage.save_approval_request("apr_1", request)
-        with pytest.raises(ValueError, match="already exists"):
-            await storage.save_approval_request("apr_1", request)
-
-    async def test_file_based_missing_load_raises(self, tmp_path: Any) -> None:
-        path = tmp_path / "approvals.json"
-        storage = FileBasedFunctionApprovalStorage(str(path))
+        storage = InMemoryFunctionApprovalStore()
         with pytest.raises(KeyError):
             await storage.load_approval_request("missing")
 
@@ -3468,7 +3274,7 @@ class TestFunctionApprovalConversion:
     async def test_output_item_mcp_approval_request_loads_from_storage(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStorage()
+        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
         await storage.save_approval_request("apr-1", saved)
 
@@ -3483,7 +3289,7 @@ class TestFunctionApprovalConversion:
         assert msg.role == "assistant"
         c = msg.contents[0]
         assert c.type == "function_approval_request"
-        assert c.id == "apr-1"  # type: ignore[attr-defined]
+        assert c.id == "apr-1"
         # The full saved Content (incl. function_call) is restored.
         function_call = c.function_call
         assert function_call is not None
@@ -3505,7 +3311,7 @@ class TestFunctionApprovalConversion:
     async def test_output_item_mcp_approval_response_resolves_to_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
 
-        storage = InMemoryFunctionApprovalStorage()
+        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
         await storage.save_approval_request("apr-1", saved)
 
@@ -3519,8 +3325,8 @@ class TestFunctionApprovalConversion:
         assert msg.role == "user"
         c = msg.contents[0]
         assert c.type == "function_approval_response"
-        assert c.approved is True  # type: ignore[attr-defined]
-        assert c.id == "apr-1"  # type: ignore[attr-defined]
+        assert c.approved is True
+        assert c.id == "apr-1"
         function_call = c.function_call
         assert function_call is not None
         assert function_call.name == "delete_file"
@@ -3540,7 +3346,7 @@ class TestFunctionApprovalConversion:
     async def test_input_item_mcp_approval_request_loads_from_storage(self) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStorage()
+        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
         await storage.save_approval_request("apr-1", saved)
 
@@ -3554,12 +3360,12 @@ class TestFunctionApprovalConversion:
         msg = await _item_to_message(item, approval_storage=storage)
         assert msg.role == "assistant"
         assert msg.contents[0].type == "function_approval_request"
-        assert msg.contents[0].id == "apr-1"  # type: ignore[attr-defined]
+        assert msg.contents[0].id == "apr-1"
 
     async def test_input_item_mcp_approval_response_resolves_to_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import MCPApprovalResponse
 
-        storage = InMemoryFunctionApprovalStorage()
+        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
         await storage.save_approval_request("apr-1", saved)
 
@@ -3568,11 +3374,11 @@ class TestFunctionApprovalConversion:
             "approval_request_id": "apr-1",
             "approve": False,
         })
-        msg = await _item_to_message(item, approval_storage=storage)  # type: ignore[arg-type]
+        msg = await _item_to_message(item, approval_storage=storage)
         assert msg.role == "user"
         c = msg.contents[0]
         assert c.type == "function_approval_response"
-        assert c.approved is False  # type: ignore[attr-defined]
+        assert c.approved is False
 
 
 class TestFunctionApprovalRoundTrip:
@@ -3603,9 +3409,9 @@ class TestFunctionApprovalRoundTrip:
         assert approval_items[0]["server_label"] == "my_server"
 
         # Storage must contain a saved entry under the emitted request id.
-        loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
-        )
+        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
+            config=server.config
+        ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert loaded.function_call is not None
         assert loaded.function_call.name == "delete_file"
@@ -3633,9 +3439,9 @@ class TestFunctionApprovalRoundTrip:
                 break
         assert approval_request_id is not None
 
-        loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
-        )
+        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
+            config=server.config
+        ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
 
     async def test_round_trip_approval_response_reaches_agent(self) -> None:
@@ -3762,498 +3568,56 @@ class TestFunctionApprovalRoundTrip:
 # endregion
 
 
-# region Checkpoint context path validation
+# region Checkpoint context validation
 
 
-class TestCheckpointContextPathValidation:
-    """Regression tests for the path-traversal hardening of checkpoint storage.
-
-    These tests guard against CWE-22 in the workflow hosting path. The hosting
-    code joins caller-supplied identifiers (``previous_response_id``) and
-    server-generated identifiers (``conversation_id`` / ``response_id``) under
-    the configured checkpoint root. Without validation, traversal segments
-    such as ``../../escape`` or absolute paths cause directory creation
-    outside the intended root.
-    """
-
-    @staticmethod
-    def _helper() -> Callable[..., FileCheckpointStorage]:
-        from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
-            _checkpoint_storage_for_context,
-        )
-
-        return _checkpoint_storage_for_context
-
-    @staticmethod
-    def _checkpoint_with_azure_message_role() -> WorkflowCheckpoint:
-        from azure.ai.agentserver.responses.models import MessageRole
-
-        return WorkflowCheckpoint(
-            workflow_name="wf",
-            graph_signature_hash="hash",
-            messages={
-                "executor": [
-                    WorkflowMessage(
-                        data=Message(role=MessageRole.USER, contents=[Content.from_text("hello")]),
-                        source_id="source",
-                    )
-                ]
-            },
-        )
-
-    def test_valid_segment_creates_storage_under_root(self, tmp_path: Any) -> None:
-        helper = self._helper()
-        root = tmp_path / "root"
-        root.mkdir()
-        storage = helper(str(root), "resp_abc123")
-        assert storage.storage_path.is_dir()
-        assert storage.storage_path.parent == root.resolve()
-
-    def test_azure_message_role_allowlist_type_matches_generated_sdk_path(self) -> None:
-        assert (
-            _AZURE_RESPONSES_MESSAGE_ROLE_TYPE
-            == "azure.ai.agentserver.responses.models._generated.sdk.models.models._enums:MessageRole"
-        )
-
-    async def test_storage_allows_azure_message_role_checkpoint_restore(self, tmp_path: Any) -> None:
-        from azure.ai.agentserver.responses.models import MessageRole
-
-        helper = self._helper()
-        root = tmp_path / "root"
-        root.mkdir()
-        storage = helper(str(root), "resp_abc123")
-        checkpoint = self._checkpoint_with_azure_message_role()
-
-        await storage.save(checkpoint)
-        loaded = await storage.load(checkpoint.checkpoint_id)
-
-        loaded_message = loaded.messages["executor"][0].data
-        assert isinstance(loaded_message, Message)
-        assert type(loaded_message.role) is MessageRole
-        assert loaded_message.role == MessageRole.USER
-        assert loaded_message.text == "hello"
-
-    async def test_plain_storage_blocks_azure_message_role_checkpoint_restore(self, tmp_path: Any) -> None:
-        storage = FileCheckpointStorage(tmp_path / "plain")
-        checkpoint = self._checkpoint_with_azure_message_role()
-
-        await storage.save(checkpoint)
-        with pytest.raises(WorkflowCheckpointException, match="MessageRole"):
-            await storage.load(checkpoint.checkpoint_id)
-
-    async def test_get_latest_restores_azure_message_role(self, tmp_path: Any) -> None:
-        from azure.ai.agentserver.responses.models import MessageRole
-
-        helper = self._helper()
-        root = tmp_path / "root"
-        root.mkdir()
-        storage = helper(str(root), "resp_abc123")
-        checkpoint = self._checkpoint_with_azure_message_role()
-
-        await storage.save(checkpoint)
-        latest = await storage.get_latest(workflow_name="wf")
-
-        assert latest is not None
-        assert latest.checkpoint_id == checkpoint.checkpoint_id
-        latest_message = latest.messages["executor"][0].data
-        assert isinstance(latest_message, Message)
-        assert type(latest_message.role) is MessageRole
-
-    async def test_get_latest_silently_skips_without_allowlist(
-        self, tmp_path: Any, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        import logging
-
-        storage = FileCheckpointStorage(tmp_path / "plain")
-        checkpoint = self._checkpoint_with_azure_message_role()
-
-        await storage.save(checkpoint)
-        with caplog.at_level(logging.WARNING, logger="agent_framework"):
-            latest = await storage.get_latest(workflow_name="wf")
-
-        assert latest is None
-        assert any("MessageRole" in message for message in caplog.messages)
-
-    async def test_handle_inner_workflow_restores_message_role_checkpoint_from_previous_response(
-        self, tmp_path: Any
-    ) -> None:
-        from agent_framework import WorkflowAgent
-        from azure.ai.agentserver.responses import ResponseContext
-        from azure.ai.agentserver.responses.models import CreateResponse, ItemMessage
-
-        previous_response_id = "resp_previous"
-        response_id = "resp_current"
-        root = tmp_path / "root"
-        root.mkdir()
-        checkpoint_storage = self._helper()(str(root), previous_response_id)
-        checkpoint = self._checkpoint_with_azure_message_role()
-        await checkpoint_storage.save(checkpoint)
-
-        agent = MagicMock(spec=WorkflowAgent)
-        agent.id = "wf-agent"
-        agent.name = "wf"
-        agent.description = ""
-        agent.context_providers = []
-        agent.workflow = MagicMock()
-        agent.workflow.name = "wf"
-        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
-        agent.run = AsyncMock(
-            side_effect=[
-                AgentResponse(messages=[]),
-                AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
-            ]
-        )
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
-        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
-
-        request = CreateResponse(model="m", input="hi", previous_response_id=previous_response_id)
-        context = ResponseContext(
-            response_id=response_id, previous_response_id=previous_response_id, mode_flags=MagicMock()
-        )
-        input_item = ItemMessage({"type": "message", "role": "user", "content": "next turn"})
-
-        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[input_item])):
-            async for _ in server._handle_inner_workflow(request, context):  # pyright: ignore[reportPrivateUsage]
-                pass
-
-        assert agent.run.call_count == 2
-        restore_call = agent.run.call_args_list[0]
-        assert restore_call.kwargs["checkpoint_id"] == checkpoint.checkpoint_id
-        assert restore_call.kwargs["checkpoint_storage"].storage_path == (root / previous_response_id).resolve()
-
-        new_turn_call = agent.run.call_args_list[1]
-        new_turn_messages = new_turn_call.args[0]
-        assert len(new_turn_messages) == 1
-        assert new_turn_messages[0].text == "next turn"
-        assert new_turn_call.kwargs["checkpoint_storage"].storage_path == (root / response_id).resolve()
-
+class TestCheckpointContextValidation:
     @pytest.mark.parametrize(
-        "bad_id",
+        ("context_field", "bad_id"),
         [
-            # Original MSRC repro: traversal embedded inside an id-shaped value.
-            # The 14 ``A``s pad the suffix to mimic the exact length of the
-            # ``api-made-dir<14-char-suffix>`` segment from the original report.
-            "caresp_x/../../service-data/api-made-dir" + "A" * 14,
-            # Variant report repros.
-            "../../escape",
-            "..",
-            ".",
-            "...",
-            "/tmp/escape",
-            "/absolute/path",
-            "C:\\temp\\escape",
-            "..\\..\\escape",
-            "foo\\..\\bar",
-            "foo/bar",
-            "with\x00null",
-            "",
-        ],
-    )
-    def test_traversal_and_separator_payloads_are_rejected(self, tmp_path: Any, bad_id: str) -> None:
-        helper = self._helper()
-        # Use a dedicated root *inside* tmp_path so we can assert that nothing
-        # was created anywhere under tmp_path (root, siblings, or above).
-        # Asserting against tmp_path.parent would be flaky under parallel test
-        # execution because tmp_path.parent is shared across tests.
-        root = tmp_path / "root"
-        root.mkdir()
-        before = sorted(p.name for p in tmp_path.iterdir())
-        with pytest.raises(RuntimeError):
-            helper(str(root), bad_id)
-        # No sibling/escape directory should have been created next to the root.
-        after = sorted(p.name for p in tmp_path.iterdir())
-        assert before == after, f"Unexpected filesystem artifacts created for payload {bad_id!r}"
-        # And nothing inside the root either.
-        assert list(root.iterdir()) == []
-
-    def test_non_string_context_id_is_rejected(self, tmp_path: Any) -> None:
-        helper = self._helper()
-        with pytest.raises(RuntimeError):
-            helper(str(tmp_path), None)
-
-    def test_url_encoded_traversal_is_treated_as_literal_segment(self, tmp_path: Any) -> None:
-        """URL-encoded traversal should not decode to traversal at the filesystem layer.
-
-        The hosting layer never URL-decodes ids before using them; the helper
-        should accept ``%2e%2e`` as a single literal segment (no escape).
-        """
-        helper = self._helper()
-        root = tmp_path / "root"
-        root.mkdir()
-        storage = helper(str(root), "%2e%2e")
-        assert storage.storage_path.parent == root.resolve()
-        assert storage.storage_path.name == "%2e%2e"
-
-    def test_user_id_scopes_storage_under_user_partition(self, tmp_path: Any) -> None:
-        """A per-user partition key nests the context dir under ``<root>/<user_id>``."""
-        helper = self._helper()
-        root = tmp_path / "root"
-        root.mkdir()
-        storage = helper(str(root), "resp_abc123", user_id="user-A")
-        assert storage.storage_path.is_dir()
-        assert storage.storage_path == (root / "user-A" / "resp_abc123").resolve()
-
-    @pytest.mark.parametrize("absent_user_id", [None, ""])
-    def test_absent_user_id_uses_unscoped_layout(self, tmp_path: Any, absent_user_id: str | None) -> None:
-        """``None``/empty user id (local dev or protocol v1) falls back to the unscoped layout."""
-        helper = self._helper()
-        root = tmp_path / "root"
-        root.mkdir()
-        storage = helper(str(root), "resp_abc123", user_id=absent_user_id)
-        assert storage.storage_path == (root / "resp_abc123").resolve()
-
-    def test_distinct_users_get_isolated_storage(self, tmp_path: Any) -> None:
-        """Two users sharing a context id must not resolve to the same directory."""
-        helper = self._helper()
-        root = tmp_path / "root"
-        root.mkdir()
-        a = helper(str(root), "shared_context", user_id="user-A")
-        b = helper(str(root), "shared_context", user_id="user-B")
-        assert a.storage_path != b.storage_path
-        assert a.storage_path.is_relative_to((root / "user-A").resolve())
-        assert b.storage_path.is_relative_to((root / "user-B").resolve())
-
-    @pytest.mark.parametrize(
-        "bad_user_id",
-        [
-            "../../escape",
-            "..",
-            ".",
-            "/tmp/escape",
-            "C:\\temp\\escape",
-            "user/../../escape",
-            "with\x00null",
-            "a/b",
-        ],
-    )
-    def test_malicious_user_id_is_rejected(self, tmp_path: Any, bad_user_id: str) -> None:
-        helper = self._helper()
-        root = tmp_path / "root"
-        root.mkdir()
-        before = sorted(p.name for p in tmp_path.iterdir())
-        with pytest.raises(RuntimeError):
-            helper(str(root), "resp_abc123", user_id=bad_user_id)
-        after = sorted(p.name for p in tmp_path.iterdir())
-        assert before == after, f"Unexpected filesystem artifacts created for user id {bad_user_id!r}"
-        assert list(root.iterdir()) == []
-
-    @pytest.mark.parametrize(
-        "context_field,bad_id",
-        [
-            # Restore sink: caller-controlled previous_response_id.
             ("previous_response_id", "../../escape"),
-            ("previous_response_id", "/tmp/escape-abs"),
-            ("previous_response_id", "caresp_x/../../service-data/api-made-dir" + "A" * 14),
-            # Restore sink: server-issued conversation_id (defense in depth).
-            ("conversation_id", "../../escape"),
-            # Write sink: malicious response_id (defense in depth).
-            ("response_id", "../../escape"),
+            ("conversation_id", "foo/bar"),
+            ("response_id", "..\\..\\escape"),
         ],
     )
-    async def test_handle_inner_workflow_rejects_malicious_context_id(
-        self, tmp_path: Any, context_field: str, bad_id: str
+    async def test_workflow_rejects_invalid_checkpoint_scope(
+        self,
+        context_field: str,
+        bad_id: str,
     ) -> None:
-        """End-to-end: ``_handle_inner_workflow`` must reject malicious ids on
-        both the restore sink (``previous_response_id`` / ``conversation_id``)
-        and the write sink (``response_id``) without creating any directories.
-        """
-        from unittest.mock import patch
-
-        from agent_framework import WorkflowAgent
-        from azure.ai.agentserver.responses import ResponseContext
-        from azure.ai.agentserver.responses.models import CreateResponse
-
-        # Build a mock that satisfies isinstance(agent, WorkflowAgent) and the
-        # constructor's "no existing checkpointing" guard.
         agent = MagicMock(spec=WorkflowAgent)
-        agent.id = "wf-agent"
-        agent.name = "wf"
-        agent.description = ""
         agent.context_providers = []
         agent.workflow = MagicMock()
-        agent.workflow.name = "wf"
-        agent.workflow._runner_context.has_checkpointing = MagicMock(return_value=False)
-
-        # Constructor inspects WorkflowAgent.workflow internals; bypass setup
-        # by feeding a configured mock through a normal init.
+        agent.workflow.name = "workflow"
+        agent.workflow._runner_context.has_checkpointing.return_value = False
         server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
-        # Re-root checkpoint storage at our isolated tmp_path so we can detect
-        # any escape attempt on the filesystem.
-        root = tmp_path / "root"
-        root.mkdir()
-        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
 
-        # Build a ResponseContext with the malicious id targeting the chosen sink.
-        kwargs: dict[str, Any] = {
-            "response_id": "resp_" + "a" * 48,
-            "mode_flags": MagicMock(),
-        }
+        context_kwargs: dict[str, Any] = {"response_id": "response-current", "mode_flags": MagicMock()}
+        request = CreateResponse(model="m", input="hi")
         if context_field == "previous_response_id":
             request = CreateResponse(model="m", input="hi", previous_response_id=bad_id)
-            kwargs["previous_response_id"] = bad_id
-        elif context_field == "conversation_id":
-            request = CreateResponse(model="m", input="hi")
-            kwargs["conversation_id"] = bad_id
-        else:  # response_id (write sink)
-            request = CreateResponse(model="m", input="hi")
-            kwargs["response_id"] = bad_id
-
-        # Avoid invoking the real input-resolution machinery, which would need
-        # a configured provider; we never reach the workflow run on rejection.
-        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
-            context = ResponseContext(**kwargs)
-            before = sorted(p.name for p in tmp_path.iterdir())
-            # The handler converts the underlying ``RuntimeError`` into a
-            # terminal ``response.failed`` event whose error message names
-            # the rejected context id, so the SSE / non-streaming consumer
-            # observes a well-formed failure rather than a raw exception.
-            events = [event async for event in server._handle_inner_workflow(request, context)]  # pyright: ignore[reportPrivateUsage]
-            after = sorted(p.name for p in tmp_path.iterdir())
-
-        failed = [e for e in events if getattr(e, "type", None) == "response.failed"]
-        assert len(failed) == 1, (
-            f"Expected exactly one response.failed event, got types={[getattr(e, 'type', None) for e in events]}"
-        )
-        response_obj = getattr(failed[0], "response", None)
-        error = getattr(response_obj, "error", None) if response_obj is not None else None
-        assert error is not None
-        assert "Invalid context id" in (error.message or "")
-        assert before == after, f"Unexpected filesystem artifacts created for {context_field}={bad_id!r}"
-        assert list(root.iterdir()) == [], f"Checkpoint dir created inside root for {context_field}={bad_id!r}"
-
-    @pytest.mark.parametrize(
-        "context_field,bad_id",
-        [
-            # Restore sink: caller-controlled previous_response_id. These are
-            # rejected by request validation (HTTP 400) before the checkpoint
-            # code is reached.
-            ("previous_response_id", "../../escape"),
-            ("previous_response_id", "/tmp/escape-abs"),
-            ("previous_response_id", "caresp_x/../../service-data/api-made-dir" + "A" * 14),
-            # Restore sink: server-issued conversation id (defense in depth).
-            # Reaches the checkpoint code and is rejected there, surfacing as
-            # a terminal ``response.failed`` (HTTP 200, status="failed")
-            # without creating any filesystem artifacts.
-            ("conversation", "../../escape"),
-            ("conversation", "/tmp/escape-abs"),
-        ],
-    )
-    async def test_malicious_context_id_rejected_e2e(self, tmp_path: Any, context_field: str, bad_id: str) -> None:
-        """End-to-end (ASGI-in-process): malicious context ids must be rejected
-        through the full HTTP pipeline, and no checkpoint directory may be
-        created on disk for either the validation-layer rejection
-        (``previous_response_id``) or the deeper checkpoint-layer rejection
-        (``conversation``).
-
-        The ``response_id`` write-sink is server-generated and not reachable
-        via the public HTTP surface, so its defense-in-depth check is covered
-        by the helper-level test above.
-        """
-        from agent_framework import WorkflowAgent
-
-        # Build a mock that satisfies isinstance(agent, WorkflowAgent) and the
-        # constructor's "no existing checkpointing" guard.
-        agent = MagicMock(spec=WorkflowAgent)
-        agent.id = "wf-agent"
-        agent.name = "wf"
-        agent.description = ""
-        agent.context_providers = []
-        agent.workflow = MagicMock()
-        agent.workflow.name = "wf"
-        agent.workflow._runner_context.has_checkpointing = MagicMock(  # pyright: ignore[reportPrivateUsage]
-            return_value=False
-        )
-
-        server = ResponsesHostServer(agent, store=InMemoryResponseProvider())
-        # Re-root checkpoint storage at our isolated tmp_path so we can detect
-        # any escape attempt on the filesystem.
-        root = tmp_path / "root"
-        root.mkdir()
-        server._checkpoint_storage_path = str(root)  # pyright: ignore[reportPrivateUsage]
-
-        payload: dict[str, Any] = {"model": "m", "input": "hi"}
-        if context_field == "previous_response_id":
-            payload["previous_response_id"] = bad_id
-        else:  # conversation
-            payload["conversation"] = bad_id
-
-        before = sorted(p.name for p in tmp_path.iterdir())
-        transport = httpx.ASGITransport(app=server)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/responses", json=payload)
-        after = sorted(p.name for p in tmp_path.iterdir())
-
-        # The request must not succeed: either request validation rejects it
-        # (HTTP 4xx) before reaching the handler, or the checkpoint layer
-        # raises and the handler converts the failure into a
-        # ``response.failed`` terminal event (HTTP 200, status="failed").
-        # Either way, no successful response and no filesystem artifacts.
-        if resp.status_code == 200:
-            body = resp.json()
-            assert body.get("status") == "failed", (
-                f"Expected status='failed' for {context_field}={bad_id!r}, got {body.get('status')!r}"
-            )
+            context_kwargs["previous_response_id"] = bad_id
         else:
-            assert resp.status_code >= 400, (
-                f"Expected non-2xx for {context_field}={bad_id!r}, got {resp.status_code}: {resp.text[:200]}"
-            )
-        assert before == after, (
-            f"Unexpected filesystem artifacts under tmp_path for {context_field}={bad_id!r}: "
-            f"before={before} after={after}"
-        )
-        assert list(root.iterdir()) == [], f"Checkpoint directory created inside root for {context_field}={bad_id!r}"
+            context_kwargs[context_field] = bad_id
 
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            events = [
+                event
+                async for event in server._handle_inner_workflow(  # pyright: ignore[reportPrivateUsage]
+                    request,
+                    ResponseContext(**context_kwargs),
+                )
+            ]
 
-class TestApprovalStoragePathValidation:
-    """Path-traversal and per-user scoping tests for function approval storage.
+        failed_events = [event for event in events if event.get("type") == "response.failed"]
+        assert len(failed_events) == 1
+        failed_event = cast(Mapping[str, Any], failed_events[0])
+        response = cast(Mapping[str, Any], failed_event["response"])
+        error = cast(Mapping[str, Any], response["error"])
+        assert "Invalid context id" in error["message"]
+        agent.run.assert_not_called()
 
-    Mirrors the checkpoint validation: the per-user approval directory is
-    derived by joining the platform-injected ``x-agent-user-id`` partition key
-    under the base approval directory, and the user id must be a single safe
-    path segment (CWE-22).
-    """
-
-    @staticmethod
-    def _helper() -> Callable[..., str]:
-        from agent_framework_foundry_hosting._responses import (  # pyright: ignore[reportPrivateUsage]
-            _approval_storage_path_for_user,
-        )
-
-        return _approval_storage_path_for_user
-
-    def test_user_id_scopes_path_under_base_directory(self, tmp_path: Any) -> None:
-        from pathlib import Path
-
-        helper = self._helper()
-        base = tmp_path / "approvals" / "requests.json"
-        scoped = Path(helper(str(base), "user-A"))
-        assert scoped.name == "requests.json"
-        assert scoped.parent.name == "user-A"
-        assert scoped.parent.parent == (tmp_path / "approvals").resolve()
-
-    def test_distinct_users_get_isolated_paths(self, tmp_path: Any) -> None:
-        helper = self._helper()
-        base = tmp_path / "approvals" / "requests.json"
-        assert helper(str(base), "user-A") != helper(str(base), "user-B")
-
-    @pytest.mark.parametrize(
-        "bad_user_id",
-        [
-            "../../escape",
-            "..",
-            ".",
-            "/tmp/escape",
-            "C:\\temp\\escape",
-            "user/../../escape",
-            "with\x00null",
-            "a/b",
-        ],
-    )
-    def test_malicious_user_id_is_rejected(self, tmp_path: Any, bad_user_id: str) -> None:
-        helper = self._helper()
-        base = tmp_path / "approvals" / "requests.json"
-        with pytest.raises(RuntimeError):
-            helper(str(base), bad_user_id)
+    # endregion
 
 
 # region Agent lifecycle (lazy entry & OAuth consent surfacing)
@@ -4390,7 +3754,7 @@ class TestOAuthConsentSurfacing:
         resp = await _post(server, input_text="hello", stream=False)
         assert resp.status_code == 200
         body = resp.json()
-        assert body["status"] == "completed"
+        assert body["status"] == "incomplete"
 
         oauth_items = [it for it in body["output"] if it["type"] == "oauth_consent_request"]
         assert len(oauth_items) == 1
@@ -4412,7 +3776,7 @@ class TestOAuthConsentSurfacing:
 
         assert types[0] == "response.created"
         assert types[1] == "response.in_progress"
-        assert types[-1] == "response.completed"
+        assert types[-1] == "response.incomplete"
 
         added = [e for e in events if e["event"] == "response.output_item.added"]
         oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]
@@ -4441,7 +3805,7 @@ class TestOAuthConsentSurfacing:
         assert body["status"] == "failed"
         assert not any(it["type"] == "oauth_consent_request" for it in body.get("output", []))
         error: dict[str, Any] = body.get("error") or {}
-        assert error.get("message") == "boom"
+        assert error.get("message") == "An internal server error occurred."
         agent.run.assert_not_called()
 
     async def test_retry_after_consent_succeeds(self) -> None:
@@ -4466,7 +3830,7 @@ class TestOAuthConsentSurfacing:
         assert body2["status"] == "completed"
         assert any(it["type"] == "message" for it in body2["output"])
         assert agent.__aenter__.await_count == 2
-        agent.run.assert_awaited_once()
+        agent.run.assert_called_once()
 
 
 # endregion
@@ -4487,10 +3851,14 @@ class TestResponseFailedSurfacing:
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
         )
 
-        async def _raise(*args: Any, **kwargs: Any) -> AgentResponse:
-            raise RuntimeError("non-stream kaboom")
+        def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args, kwargs
+            return ResponseStream(
+                _raising_updates("non-stream kaboom"),
+                finalizer=AgentResponse.from_updates,
+            )
 
-        agent.run = AsyncMock(side_effect=_raise)
+        agent.run = MagicMock(side_effect=run_failure)
         server = _make_server(agent)
 
         resp = await _post(server, input_text="hello", stream=False)
@@ -4511,12 +3879,16 @@ class TestResponseFailedSurfacing:
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
         agent.context_providers = []
-        agent.create_session.side_effect = lambda *, session_id=None: AgentSession(session_id=session_id)
 
-        def run_streaming(*args: Any, **kwargs: Any) -> Any:
-            if kwargs.get("stream"):
-                return ResponseStream(_raise_stream())  # type: ignore[arg-type]
-            raise NotImplementedError("Only streaming is configured on this mock")
+        def create_session(*, session_id: str | None = None) -> AgentSession:
+            return AgentSession(session_id=session_id)
+
+        agent.create_session.side_effect = create_session
+
+        def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args
+            assert kwargs.get("stream") is True
+            return ResponseStream(_raise_stream(), finalizer=AgentResponse.from_updates)
 
         agent.run = MagicMock(side_effect=run_streaming)
         server = _make_server(agent)
@@ -4555,10 +3927,15 @@ class TestResponseFailedSurfacing:
         agent.name = "Test Agent"
         agent.description = "A mock agent for testing"
         agent.context_providers = []
-        agent.create_session.side_effect = lambda *, session_id=None: AgentSession(session_id=session_id)
 
-        def run_streaming(*args: Any, **kwargs: Any) -> Any:
-            return ResponseStream(_raise_stream())  # type: ignore[arg-type]
+        def create_session(*, session_id: str | None = None) -> AgentSession:
+            return AgentSession(session_id=session_id)
+
+        agent.create_session.side_effect = create_session
+
+        def run_streaming(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args, kwargs
+            return ResponseStream(_raise_stream(), finalizer=AgentResponse.from_updates)
 
         agent.run = MagicMock(side_effect=run_streaming)
         server = _make_server(agent)
@@ -4578,13 +3955,17 @@ class TestResponseFailedSurfacing:
         """
         workflow_agent = _build_text_workflow_agent("ignored")
 
-        async def _raise(*args: Any, **kwargs: Any) -> AgentResponse:
-            raise RuntimeError("workflow kaboom")
+        def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args, kwargs
+            return ResponseStream(
+                _raising_updates("workflow kaboom"),
+                finalizer=AgentResponse.from_updates,
+            )
 
         # Patch the public ``run`` to fail. ``_handle_inner_workflow`` only
         # invokes the agent once (no checkpoint to restore on a fresh
         # request), so this is the call that will raise.
-        with patch.object(workflow_agent, "run", side_effect=_raise):
+        with patch.object(workflow_agent, "run", side_effect=run_failure):
             server = _make_server(workflow_agent)
             resp = await _post(server, input_text="hello", stream=False)
 
@@ -4632,9 +4013,11 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         self.last_run_messages: list[Message] = []
 
     def create_session(self, **kwargs: Any) -> AgentSession:
+        del kwargs
         return AgentSession()
 
     def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
+        del service_session_id, session_id
         return AgentSession()
 
     def _next_request_id(self) -> str:
@@ -4685,9 +4068,9 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
         session: AgentSession | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
-        if stream:
-            return self._run_stream(messages=messages, **kwargs)
-        return self._run(messages=messages, **kwargs)
+        del session
+        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
+        return self._run_stream(messages=messages, **kwargs)
 
     @staticmethod
     def _normalize(
@@ -4715,24 +4098,12 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
     def _approval_responses_in(messages: list[Message]) -> list[Content]:
         return [c for m in messages for c in m.contents if c.type == "function_approval_response"]
 
-    async def _run(
-        self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
-        **kwargs: Any,
-    ) -> AgentResponse:
-        normalized = self._normalize(messages)
-        self.last_run_messages = normalized
-        self.run_count += 1
-        if self._approval_responses_in(normalized):
-            return AgentResponse(messages=[Message("assistant", [Content.from_text(text=self._final_text)])])
-        approval = self._build_approval_request()
-        return AgentResponse(messages=[Message("assistant", [approval])])
-
     def _run_stream(
         self,
         messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        del kwargs
         normalized = self._normalize(messages)
         self.last_run_messages = normalized
         self.run_count += 1
@@ -4766,11 +4137,13 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
             self._text = text
 
         def create_session(self, **kwargs: Any) -> AgentSession:
+            del kwargs
             return AgentSession()
 
         def get_session(
             self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None
         ) -> AgentSession:
+            del service_session_id, session_id
             return AgentSession()
 
         @overload
@@ -4801,11 +4174,10 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
             session: AgentSession | None = None,
             **kwargs: Any,
         ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del messages, session, kwargs
+            assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
             text = self._text
             name = self.name
-
-            async def _aresult() -> AgentResponse:
-                return AgentResponse(messages=[Message("assistant", [Content.from_text(text=text)])])
 
             async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
                 yield AgentResponseUpdate(
@@ -4814,9 +4186,7 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
                     author_name=name,
                 )
 
-            if stream:
-                return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
-            return _aresult()
+            return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
 
     inner = _TextAgent("text-agent", text)
 
@@ -4912,9 +4282,9 @@ class TestWorkflowAgentHosting:
         # builder; the original approval ``Content`` (carrying the inner
         # ``function_call``) must be persisted under that id so the next
         # turn can reconstruct it.
-        loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
-        )
+        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
+            config=server.config
+        ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert loaded.function_call is not None
         assert loaded.function_call.name == "delete_file"
@@ -4942,9 +4312,9 @@ class TestWorkflowAgentHosting:
                 break
         assert approval_request_id is not None
 
-        loaded = await server._approval_storage.load_approval_request(  # pyright: ignore[reportPrivateUsage]
-            approval_request_id
-        )
+        loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
+            config=server.config
+        ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert mock_agent.run_count == 1
 
@@ -5014,7 +4384,7 @@ class TestWorkflowAgentHosting:
             c for m in mock_agent.last_run_messages for c in m.contents if c.type == "function_approval_response"
         ]
         assert len(approval_responses) == 1
-        assert approval_responses[0].approved is True  # type: ignore[attr-defined]
+        assert approval_responses[0].approved is True
 
     async def test_round_trip_approval_response_streaming(self) -> None:
         """Streaming variant of the round-trip: turn 2 is requested with
@@ -5090,103 +4460,7 @@ class TestWorkflowAgentHosting:
             c for m in mock_agent.last_run_messages for c in m.contents if c.type == "function_approval_response"
         ]
         assert len(approval_responses) == 1
-        assert approval_responses[0].approved is False  # type: ignore[attr-defined]
-
-
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-class TestCheckpointStoragePath:
-    """
-    In hosted mode, WorkflowAgent checkpoints must be stored under
-    $HOME/.checkpoints (durable across compute recreation), not
-    /.checkpoints (ephemeral root path that is wiped on idle).
-    """
-
-    @staticmethod
-    def _make_mock_workflow_agent() -> MagicMock:
-        """Create a mock WorkflowAgent for path-only tests."""
-        mock_workflow = MagicMock()
-        mock_workflow._runner_context.has_checkpointing.return_value = False
-        mock_workflow.name = "test-checkpoint-path"
-
-        mock_agent = MagicMock(spec=WorkflowAgent)
-        mock_agent.workflow = mock_workflow
-        mock_agent.context_providers = []
-
-        return mock_agent
-
-    def test_local_checkpoint_path_uses_cwd(self) -> None:
-        """In local mode, checkpoints should be under cwd, NOT root `/`."""
-        mock_agent = self._make_mock_workflow_agent()
-        _original_isinstance = isinstance
-
-        def _patched_isinstance(obj: Any, cls: Any) -> bool:
-            if cls is WorkflowAgent:
-                return True
-            return _original_isinstance(obj, cls)
-
-        with patch(
-            "agent_framework_foundry_hosting._responses.isinstance",
-            side_effect=_patched_isinstance,
-        ):
-            server = _make_server(mock_agent)
-
-        assert server._checkpoint_storage_path == os.path.join(os.getcwd(), ".checkpoints")
-
-    def test_hosted_checkpoint_path_uses_home(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """In hosted mode with valid HOME, checkpoints must be under $HOME/.checkpoints."""
-        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
-        monkeypatch.setenv("HOME", "/home/testuser")
-        mock_agent = self._make_mock_workflow_agent()
-        _original_isinstance = isinstance
-
-        def _patched_isinstance(obj: Any, cls: Any) -> bool:
-            if cls is WorkflowAgent:
-                return True
-            return _original_isinstance(obj, cls)
-
-        with patch(
-            "agent_framework_foundry_hosting._responses.isinstance",
-            side_effect=_patched_isinstance,
-        ):
-            server = ResponsesHostServer(mock_agent, store=InMemoryResponseProvider())
-
-        checkpoint_path = server._checkpoint_storage_path
-        assert checkpoint_path is not None
-        actual_normalized = checkpoint_path.replace("\\", "/")
-        assert actual_normalized.endswith("/home/testuser/.checkpoints")
-        assert not actual_normalized.startswith("/.checkpoints")
-
-    def test_hosted_without_home_env_uses_default_session_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When HOME is unset in hosted mode, fall back to /home/session/.checkpoints."""
-        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
-        monkeypatch.delenv("HOME", raising=False)
-        mock_agent = self._make_mock_workflow_agent()
-
-        with patch(
-            "agent_framework_foundry_hosting._responses.isinstance",
-            side_effect=lambda o, c: c is WorkflowAgent or isinstance(o, c),
-        ):
-            server = ResponsesHostServer(mock_agent, store=InMemoryResponseProvider())
-
-        assert server._checkpoint_storage_path == "/home/session/.checkpoints"
-
-    @pytest.mark.parametrize("bad_home", ["/", "", "   "])
-    def test_hosted_with_unusable_home_falls_back_to_default(
-        self, monkeypatch: pytest.MonkeyPatch, bad_home: str
-    ) -> None:
-        """Filesystem-root or empty HOME must NOT produce /.checkpoints."""
-        monkeypatch.setenv("FOUNDRY_HOSTING_ENVIRONMENT", "true")
-        monkeypatch.setenv("HOME", bad_home)
-        mock_agent = self._make_mock_workflow_agent()
-
-        with patch(
-            "agent_framework_foundry_hosting._responses.isinstance",
-            side_effect=lambda o, c: c is WorkflowAgent or isinstance(o, c),
-        ):
-            server = ResponsesHostServer(mock_agent, store=InMemoryResponseProvider())
-
-        assert server._checkpoint_storage_path == "/home/session/.checkpoints"
-        assert server._checkpoint_storage_path != "/.checkpoints"
+        assert approval_responses[0].approved is False
 
 
 # endregion
