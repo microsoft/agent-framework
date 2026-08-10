@@ -160,6 +160,27 @@ _AZURE_AI_SEARCH_OUTPUT_EVENT_PREFIX = "response.azure_ai_search_call_output."
 # item before returning, dropping any that are unmatched.
 _AF_MCP_PENDING_OUTPUT_KEY = "__af_pending_mcp_result__"
 
+# Fragment of the Responses API 400 returned when a function_call_output is submitted against a
+# predecessor the service will not pair it with. The error body carries no `code`, so the message
+# is the only available signal.
+_TOOL_OUTPUT_PAIRING_ERROR_FRAGMENT = "no tool call found for function call output"
+
+
+def _is_background_tool_output_pairing_error(ex: Exception, run_options: Mapping[str, Any] | None) -> bool:
+    """Return whether a failure is the background-predecessor tool-output pairing rejection.
+
+    The service rejects a `function_call_output` chained with `previous_response_id` when the
+    predecessor response was created with `background=True`, even though retrieving that
+    predecessor returns the matching `function_call`. The same chaining succeeds for a foreground
+    predecessor, so the combination of all three signals is required: the pairing error, a
+    `previous_response_id` continuation, and a background request.
+    """
+    if not isinstance(ex, BadRequestError) or run_options is None:
+        return False
+    if _TOOL_OUTPUT_PAIRING_ERROR_FRAGMENT not in str(ex).lower():
+        return False
+    return bool(run_options.get("background")) and bool(run_options.get("previous_response_id"))
+
 
 class OpenAIContinuationToken(ContinuationToken):
     """Continuation token for OpenAI Responses API background operations."""
@@ -633,11 +654,32 @@ class RawOpenAIChatClient(
         run_options = await self._prepare_options(messages, validated_options)
         return client, run_options, validated_options
 
-    def _handle_request_error(self, ex: Exception) -> NoReturn:
-        """Convert exceptions to appropriate service exceptions. Always raises."""
+    def _handle_request_error(self, ex: Exception, run_options: Mapping[str, Any] | None = None) -> NoReturn:
+        """Convert exceptions to appropriate service exceptions. Always raises.
+
+        Args:
+            ex: The exception raised by the underlying client.
+            run_options: The request options that produced the failure, when the failure came from
+                a request this client built. Omitted for retrieve-only calls, which carry no request
+                body to attribute the failure to.
+        """
         if isinstance(ex, BadRequestError) and ex.code == "content_filter":
             raise OpenAIContentFilterException(
                 f"{type(self)} service encountered a content error: {ex}",
+                inner_exception=ex,
+            ) from ex
+        if _is_background_tool_output_pairing_error(ex, run_options):
+            raise ChatClientException(
+                maybe_append_azure_endpoint_guidance(
+                    f"{type(self)} service rejected the tool result for a background response: {ex} "
+                    "The service does not accept a function_call_output chained with "
+                    "previous_response_id when the preceding response was created with "
+                    "background=True, even though that response contains the matching function_call. "
+                    "Run the tool-calling turn with background=False, which supports the same "
+                    "previous_response_id chaining. This is a service-side limitation tracked in "
+                    "Azure/azure-sdk-for-python#46092 and microsoft/agent-framework#7538.",
+                    azure_endpoint=self.azure_endpoint,
+                ),
                 inner_exception=ex,
             ) from ex
         raise ChatClientException(
@@ -750,7 +792,7 @@ class RawOpenAIChatClient(
                                         update.model = served_model
                                     yield update
                     except Exception as ex:
-                        self._handle_request_error(ex)
+                        self._handle_request_error(ex, run_options)
 
             return ResponseStream(_stream(), finalizer=_finalize_with_captured_format)
 
@@ -794,7 +836,7 @@ class RawOpenAIChatClient(
                     raw_response = await client.responses.with_raw_response.create(stream=False, **run_options)
                 response = raw_response.parse()
             except Exception as ex:
-                self._handle_request_error(ex)
+                self._handle_request_error(ex, run_options)
             chat_response = self._parse_response_from_openai(response, options=validated_options)
             # See note above on ``raw_stream_response.headers``.
             served_model = self._extract_served_model(getattr(raw_response, "headers", None))

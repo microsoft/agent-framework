@@ -1374,6 +1374,90 @@ async def test_bad_request_error_non_content_filter() -> None:
         assert "failed to complete the prompt" in str(exc_info.value)
 
 
+def _tool_output_pairing_error() -> BadRequestError:
+    """Build the 400 the Responses API returns for an unpaired function_call_output."""
+    message = "No tool call found for function call output with call_id call_abc123."
+    error = BadRequestError(
+        message=message,
+        response=MagicMock(),
+        body={"error": {"code": None, "message": message, "param": "input"}},
+    )
+    error.code = None
+    return error
+
+
+async def test_background_tool_output_pairing_error_reports_background_limitation() -> None:
+    """A background predecessor rejecting a tool result is reported with the actionable cause."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", side_effect=_tool_output_pairing_error()),
+        pytest.raises(ChatClientException) as exc_info,
+    ):
+        await client.get_response(
+            messages=[Message(role="user", contents=["Test message"])],
+            options={"background": True, "conversation_id": "resp_abc123"},
+        )
+
+    message = str(exc_info.value)
+    assert "background=True" in message
+    assert "background=False" in message
+    assert "microsoft/agent-framework#7538" in message
+
+
+async def test_streaming_background_tool_output_pairing_error_reports_background_limitation() -> None:
+    """The streaming path reports the same background limitation as the non-streaming path."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", side_effect=_tool_output_pairing_error()),
+        pytest.raises(ChatClientException, match="background=False"),
+    ):
+        response_stream = client.get_response(
+            stream=True,
+            messages=[Message(role="user", contents=["Test message"])],
+            options={"background": True, "conversation_id": "resp_abc123"},
+        )
+        async for _ in response_stream:
+            break
+
+
+async def test_foreground_tool_output_pairing_error_keeps_generic_message() -> None:
+    """A foreground predecessor keeps the generic message, since that chaining is supported."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", side_effect=_tool_output_pairing_error()),
+        pytest.raises(ChatClientException) as exc_info,
+    ):
+        await client.get_response(
+            messages=[Message(role="user", contents=["Test message"])],
+            options={"conversation_id": "resp_abc123"},
+        )
+
+    message = str(exc_info.value)
+    assert "failed to complete the prompt" in message
+    assert "background=False" not in message
+
+
+async def test_background_without_previous_response_keeps_generic_message() -> None:
+    """A background request that is not a continuation keeps the generic message."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", side_effect=_tool_output_pairing_error()),
+        pytest.raises(ChatClientException) as exc_info,
+    ):
+        await client.get_response(
+            messages=[Message(role="user", contents=["Test message"])],
+            options={"background": True},
+        )
+
+    message = str(exc_info.value)
+    assert "failed to complete the prompt" in message
+    assert "background=False" not in message
+
+
 async def test_streaming_content_filter_exception_handling() -> None:
     """Test that content filter errors in get_response(..., stream=True) are properly handled."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
