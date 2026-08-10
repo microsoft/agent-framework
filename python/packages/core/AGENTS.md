@@ -213,8 +213,8 @@ agent_framework/
 ### Foundry (`foundry/`)
 
 - **`FoundryChatClient`** - Chat client for Microsoft Foundry project endpoints
-- **`FoundrySessionStore`** - Experimental Foundry-hosting session store, lazily re-exported from
-  `agent-framework-foundry-hosting`; currently file-backed and scoped by Agent Server request context
+- **`FoundryAgentSessionStore`** - Experimental Foundry-hosting session store, lazily re-exported from
+  `agent-framework-foundry-hosting`; currently backed by `azure.ai.agentserver.core.storage.FoundryStateStore`
 
 ## Key Patterns
 

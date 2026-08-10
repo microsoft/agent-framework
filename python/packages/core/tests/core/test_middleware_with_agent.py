@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -68,6 +68,51 @@ class TestChatAgentClassBasedMiddleware:
 
         # Verify middleware execution order
         assert execution_order == ["agent_middleware_before", "agent_middleware_after"]
+
+    async def test_bare_middleware_at_construction_is_installed(self, client: SupportsChatGetResponse) -> None:
+        """A single middleware object passed bare (not in a list) at construction is installed.
+
+        Construction-time middleware mirrors categorize_middleware's single-source
+        handling, matching the run-level ``middleware=`` behavior instead of silently
+        dropping the middleware.
+        """
+        execution_order: list[str] = []
+
+        class TrackingAgentMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                execution_order.append("before")
+                await call_next()
+                execution_order.append("after")
+
+        agent = Agent(client=client, middleware=TrackingAgentMiddleware())
+
+        response = await agent.run([Message(role="user", contents=["test message"])])
+
+        assert response is not None
+        assert execution_order == ["before", "after"]
+
+    async def test_bare_middleware_assigned_to_attribute_is_installed(self, client: SupportsChatGetResponse) -> None:
+        """A single middleware object assigned bare to ``agent.middleware`` executes.
+
+        categorize_middleware owns the bare-source rule (a non-sequence source is a
+        one-element list) and ``run()`` passes the raw attribute straight to it, so a
+        bare attribute assignment — which used to be silently ignored — now executes.
+        """
+        execution_order: list[str] = []
+
+        class TrackingAgentMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                execution_order.append("before")
+                await call_next()
+                execution_order.append("after")
+
+        agent = Agent(client=client)
+        agent.middleware = cast("Any", TrackingAgentMiddleware())
+
+        response = await agent.run([Message(role="user", contents=["test message"])])
+
+        assert response is not None
+        assert execution_order == ["before", "after"]
 
     async def test_class_based_function_middleware_with_chat_agent(self, client: "MockChatClient") -> None:
         """Test class-based function middleware with Agent."""

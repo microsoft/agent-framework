@@ -42,6 +42,7 @@ $ErrorActionPreference = 'Stop'
 $Scenarios = @(
     'happy-path',
     'store-config',
+    'downstream-store',
     'tool-calling',
     'tool-calling-approval',
     'mcp-toolbox',

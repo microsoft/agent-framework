@@ -13,7 +13,7 @@ public class IsolationKeyScopedAgentSessionStoreOptions
     /// <remarks>
     /// <para>
     /// If <see langword="true"/> (default), the store will throw an <see cref="System.InvalidOperationException"/>
-    /// when <see cref="SessionIsolationKeyProvider.GetSessionIsolationKeyAsync"/> returns <see langword="null"/>.
+    /// when <see cref="AgentIsolationKeyProvider.GetIsolationKeyAsync"/> returns <see langword="null"/>.
     /// </para>
     /// <para>
     /// If <see langword="false"/>, the conversation ID is passed through unmodified when the isolation key is absent,
