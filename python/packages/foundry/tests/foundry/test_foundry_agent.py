@@ -539,6 +539,32 @@ async def test_raw_foundry_agent_chat_client_prepare_options_no_tool_warning_whe
     assert not any("cannot be sent when an agent is specified" in record.message for record in caplog.records)
 
 
+async def test_raw_foundry_agent_chat_client_prepare_options_warns_for_deprecated_isolation_key() -> None:
+    """Test that isolation_key remains accepted as a deprecated no-op."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={"model": "gpt-4.1"},
+        ) as mock_prepare_options,
+        pytest.warns(DeprecationWarning, match="isolation_key.*no longer has any effect"),
+    ):
+        await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"isolation_key": "tenant-123"},
+        )
+
+    assert "isolation_key" not in mock_prepare_options.await_args.args[1]
+
+
 async def test_raw_foundry_agent_chat_client_prepare_options_strips_model_for_hosted_session() -> None:
     """Test that model is stripped when using a hosted agent session (not a PromptAgent)."""
 
@@ -557,6 +583,7 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_model_for_ho
         return_value={
             "model": "gpt-4.1",
             "previous_response_id": "resp_abc",
+            "extra_body": {"agent_session_id": "agent-session-123"},
         },
     ):
         result = await client._prepare_options(
@@ -838,6 +865,7 @@ def test_raw_foundry_agent_chat_client_parse_chunk_preserves_conversation_and_ag
         )
 
     assert result.conversation_id == "caresp_123"
+    assert result.additional_properties
     assert result.additional_properties["agent_session_id"] == "agent-session-123"
 
 
@@ -1093,6 +1121,7 @@ async def test_raw_foundry_agent_prepare_run_context_injects_agent_session_id_fr
 
     assert result == {"ok": True}
     assert session.service_session_id == "caresp_123"
+    assert mock_prepare_run_context.await_args
     assert mock_prepare_run_context.await_args.kwargs["options"]["extra_body"] == {
         "default": "value",
         "runtime": "value",

@@ -6,7 +6,7 @@ import asyncio
 import os
 
 from agent_framework import AgentSession
-from agent_framework.foundry import FoundryAgent
+from agent_framework.foundry import FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY, FoundryAgent
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
@@ -55,6 +55,9 @@ async def main() -> None:
         # Create a new session to manage the response chain (from a Responses API)
         # and to persist the Foundry hosted-agent session ID across multiple calls to the agent.
         session = AgentSession()
+        # The Foundry Hosted Agent session ID is created automatically by the Foundry
+        # service when the first request is made to the agent.
+        print(f"Before first request: {session.state.get(FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY)}")
 
         # 1. Send the first turn. Foundry creates the hosted-agent session.
         query = "Hi!"
@@ -63,6 +66,9 @@ async def main() -> None:
         async for chunk in agent.run(query, session=session, stream=True):
             if chunk.text:
                 print(chunk.text, end="", flush=True)
+
+        # After the first request, the Foundry hosted-agent session ID is available in the session state.
+        print(f"\nAfter first request: {session.state.get(FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY)}")
 
         # 2. Continue the conversation with the service-created session.
         query = "Your name is Javis. What can you do?"

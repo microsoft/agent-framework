@@ -1923,27 +1923,6 @@ def _update_conversation_id(
         options["conversation_id"] = conversation_id
 
 
-def _update_continuation_state(
-    kwargs: dict[str, Any],
-    response: ChatResponse[Any],
-    *,
-    session: AgentSession | None,
-    options: dict[str, Any] | None = None,
-) -> None:
-    """Update in-flight and persisted continuation state from a response."""
-    conversation_id = response.conversation_id
-    if conversation_id is None:
-        return
-
-    _update_conversation_id(kwargs, conversation_id, options)
-    if (
-        session is not None
-        and not response.has_internal_conversation_id()
-        and session.service_session_id != conversation_id
-    ):
-        session.service_session_id = conversation_id
-
-
 def _clear_internal_conversation_id(response: ChatResponse[Any]) -> ChatResponse[Any]:
     if response.has_internal_conversation_id():
         response.conversation_id = None
@@ -2876,7 +2855,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         options: dict[str, Any] | None = None,
     ) -> None:
         """Update continuation state after a function-loop service call."""
-        _update_continuation_state(kwargs, response, session=session, options=options)
+        conversation_id = response.conversation_id
+        if conversation_id is None:
+            return
+
+        _update_conversation_id(kwargs, conversation_id, options)
+        if (
+            session is not None
+            and not response.has_internal_conversation_id()
+            and session.service_session_id != conversation_id
+        ):
+            session.service_session_id = conversation_id
 
     def _get_function_middleware_pipeline(
         self,

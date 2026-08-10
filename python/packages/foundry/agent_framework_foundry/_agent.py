@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import warnings
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
 
@@ -104,9 +105,11 @@ class FoundryAgentOptions(OpenAIChatOptions, total=False):
 
     Keyword Args:
         extra_body: Additional request body values sent to the Responses API.
+        isolation_key: Deprecated. This option no longer has any effect.
     """
 
     extra_body: dict[str, Any]
+    isolation_key: str
 
 
 FoundryAgentOptionsT = TypeVar(
@@ -341,6 +344,13 @@ class RawFoundryAgentChatClient(
     ) -> dict[str, Any]:
         """Prepare options for the Responses API and validate client-side tools."""
         caller_requested_encrypted_reasoning = "reasoning.encrypted_content" in (options.get("include") or [])
+        prepared_options = dict(options)
+        if prepared_options.pop("isolation_key", None) is not None:
+            warnings.warn(
+                "The 'isolation_key' option is deprecated and no longer has any effect.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         # Validate tools — only FunctionTool allowed
         tools = options.get("tools", [])
@@ -357,7 +367,7 @@ class RawFoundryAgentChatClient(
         prepared_messages, _instructions = self._prepare_messages_for_azure_ai(messages)
 
         # Call parent prepare_options (OpenAI Responses API format)
-        run_options = await super()._prepare_options(prepared_messages, options, **kwargs)
+        run_options = await super()._prepare_options(prepared_messages, prepared_options, **kwargs)
 
         # Foundry Agent deployments can reject the OpenAI client's automatic encrypted-reasoning
         # opt-in even when the configured model otherwise supports reasoning. Preserve an explicit
