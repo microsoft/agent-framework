@@ -37,6 +37,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AgentSessionStoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "CheckpointStoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FoundryCheckpointStore": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
+    "ContextScopedStoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FoundryFunctionApprovalStore": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FunctionApprovalStore": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),
     "FunctionApprovalStoreProvider": ("agent_framework_foundry_hosting", "agent-framework-foundry-hosting"),

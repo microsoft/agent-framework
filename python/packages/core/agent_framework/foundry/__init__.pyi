@@ -32,6 +32,7 @@ from agent_framework_foundry import (
 from agent_framework_foundry_hosting import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
+    ContextScopedStoreProvider,
     FoundryAgentSessionStore,
     FoundryCheckpointStore,
     FoundryFunctionApprovalStore,
@@ -54,6 +55,7 @@ __all__ = [
     "AnthropicFoundryClient",
     "CheckpointStoreProvider",
     "ContentUnderstandingContextProvider",
+    "ContextScopedStoreProvider",
     "DocumentStatus",
     "FileSearchBackend",
     "FileSearchConfig",
