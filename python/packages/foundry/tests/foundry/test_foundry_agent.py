@@ -562,6 +562,7 @@ async def test_raw_foundry_agent_chat_client_prepare_options_warns_for_deprecate
             options={"isolation_key": "tenant-123"},
         )
 
+    assert mock_prepare_options.await_args
     assert "isolation_key" not in mock_prepare_options.await_args.args[1]
 
 
