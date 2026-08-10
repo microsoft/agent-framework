@@ -39,9 +39,9 @@ dev = [
     "pytest-retry==1.7.0",
     "mypy==2.3.0",
     "pyright==1.1.411",
-    "pyrefly==1.1.1",
+    "pyrefly==1.2.0",
     "ty==0.0.64",
-    "zuban==0.9.0",
+    "zuban==0.9.1",
     "opentelemetry-sdk",
     #tasks
     "poethepoet==0.48.0",
@@ -52,6 +52,9 @@ dev = [
 test = [
     "azure-monitor-opentelemetry",
     "mcp[ws]",
+    # Optional SDK behind core's `agent-hooks` extra; declared here (like mcp[ws]) so
+    # isolated source checks (dependency-pyright) can resolve its API.
+    "agent-hooks-sdk>=0.1.0a4,<0.2",
 ]
 
 [tool.uv]
@@ -60,7 +63,7 @@ prerelease = "if-necessary-or-explicit"
 # Security floors for transitive deps; overrides bypass litellm[proxy]'s strict pins.
 constraint-dependencies = ["litellm>=1.83.7", "fastapi-sso>=0.19.0"]
 # python-multipart>=0.0.31 overrides litellm[proxy]'s exact pin of <=0.0.27 for security.
-override-dependencies = ["mcp[ws]>=1.27.0", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
+override-dependencies = ["mcp[ws]>=1.27.0,<2", "uvicorn[standard]>=0.34.0", "python-multipart>=0.0.31"]
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
