@@ -1,0 +1,3 @@
+agent-framework-core @ https://github.com/microsoft/agent-framework/archive/refs/heads/taochen/lra-refresh.zip#subdirectory=python/packages/core
+agent-framework-foundry @ https://github.com/microsoft/agent-framework/archive/refs/heads/taochen/lra-refresh.zip#subdirectory=python/packages/foundry
+agent-framework-foundry-hosting @ https://github.com/microsoft/agent-framework/archive/refs/heads/taochen/lra-refresh.zip#subdirectory=python/packages/foundry_hosting
