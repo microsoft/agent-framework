@@ -18,6 +18,7 @@ from agent_framework import (
     Agent,
     AgentExecutor,
     AgentResponse,
+    AgentResponseUpdate,
     AgentSession,
     ChatContext,
     ChatMiddleware,
