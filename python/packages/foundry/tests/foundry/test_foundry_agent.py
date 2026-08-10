@@ -537,8 +537,8 @@ async def test_raw_foundry_agent_chat_client_prepare_options_no_tool_warning_whe
     assert not any("cannot be sent when an agent is specified" in record.message for record in caplog.records)
 
 
-async def test_raw_foundry_agent_chat_client_prepare_options_strips_model_for_hosted_session() -> None:
-    """Test that model is stripped when using a hosted agent session (not a PromptAgent)."""
+async def test_raw_foundry_agent_chat_client_preserves_separate_compute_and_conversation_ids() -> None:
+    """Test that compute-session and conversation IDs use separate request fields."""
 
     mock_project = MagicMock()
     mock_openai = MagicMock()
@@ -555,15 +555,16 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_model_for_ho
         return_value={
             "model": "gpt-4.1",
             "previous_response_id": "resp_abc",
+            "extra_body": {"agent_session_id": "agent-session-123"},
         },
     ):
         result = await client._prepare_options(
             messages=[Message(role="user", contents="hi")],
-            options={"conversation_id": "agent-session-123"},
+            options={"conversation_id": "resp_abc"},
         )
 
     assert "model" not in result
-    assert "previous_response_id" not in result
+    assert result["previous_response_id"] == "resp_abc"
     assert result["extra_body"]["agent_session_id"] == "agent-session-123"
     assert result["extra_body"]["agent_reference"] == {"name": "test-agent", "type": "agent_reference"}
 
@@ -745,8 +746,8 @@ async def test_raw_foundry_agent_chat_client_prepare_options_preserves_model_for
     assert "extra_body" not in result or "agent_session_id" not in result.get("extra_body", {})
 
 
-async def test_raw_foundry_agent_chat_client_prepare_options_maps_agent_session_id_to_extra_body() -> None:
-    """Test that service_session_id is forwarded as agent_session_id for hosted sessions."""
+async def test_raw_foundry_agent_chat_client_prepare_options_preserves_conversation_continuation() -> None:
+    """Test that conversation IDs are not treated as hosted-agent compute session IDs."""
 
     mock_project = MagicMock()
     mock_openai = MagicMock()
@@ -767,21 +768,19 @@ async def test_raw_foundry_agent_chat_client_prepare_options_maps_agent_session_
     ):
         result = await client._prepare_options(
             messages=[Message(role="user", contents="hi")],
-            options={"conversation_id": "agent-session-123", "isolation_key": "iso-key"},
+            options={"conversation_id": "conversation-123", "isolation_key": "iso-key"},
         )
 
     assert result["extra_body"] == {
         "custom": "value",
-        "agent_session_id": "agent-session-123",
         "agent_reference": {"name": "test-agent", "type": "agent_reference"},
     }
-    assert "previous_response_id" not in result
-    assert "conversation" not in result
+    assert result["previous_response_id"] == "should-be-removed"
     assert "isolation_key" not in result
 
 
-def test_raw_foundry_agent_chat_client_parse_response_suppresses_conversation_id_for_agent_sessions() -> None:
-    """Test that agent-session continuations do not overwrite session.service_session_id."""
+def test_raw_foundry_agent_chat_client_parse_response_preserves_conversation_id() -> None:
+    """Test that response conversation IDs remain available for framework continuation."""
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
@@ -798,14 +797,14 @@ def test_raw_foundry_agent_chat_client_parse_response_suppresses_conversation_id
     ):
         result = client._parse_response_from_openai(
             response=MagicMock(),
-            options={"conversation_id": "agent-session-123"},
+            options={"conversation_id": "conversation-123"},
         )
 
-    assert result.conversation_id is None
+    assert result.conversation_id == "resp_123"
 
 
-def test_raw_foundry_agent_chat_client_parse_chunk_suppresses_conversation_id_for_agent_sessions() -> None:
-    """Test that agent-session stream updates do not overwrite session.service_session_id."""
+def test_raw_foundry_agent_chat_client_parse_chunk_preserves_conversation_id() -> None:
+    """Test that streaming conversation IDs remain available for framework continuation."""
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
@@ -822,11 +821,11 @@ def test_raw_foundry_agent_chat_client_parse_chunk_suppresses_conversation_id_fo
     ):
         result = client._parse_chunk_from_openai(
             event=MagicMock(type="response.output_text.delta"),
-            options={"conversation_id": "agent-session-123"},
+            options={"conversation_id": "conversation-123"},
             function_call_ids={},
         )
 
-    assert result.conversation_id is None
+    assert result.conversation_id == "resp_123"
 
 
 def test_raw_foundry_agent_chat_client_check_model_presence_is_noop() -> None:
@@ -1051,8 +1050,8 @@ def test_raw_foundry_agent_init_with_function_tools() -> None:
     assert agent.default_options.get("tools") is not None
 
 
-async def test_raw_foundry_agent_prepare_run_context_creates_service_session_from_isolation_key() -> None:
-    """Test that RawFoundryAgent lazily creates a hosted session and stores it on service_session_id."""
+async def test_raw_foundry_agent_prepare_run_context_creates_agent_session_from_isolation_key() -> None:
+    """Test that a compute session is stored in state without replacing the conversation ID."""
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
@@ -1069,7 +1068,7 @@ async def test_raw_foundry_agent_prepare_run_context_creates_service_session_fro
         agent_version="1.0",
         allow_preview=True,
     )
-    session = AgentSession()
+    session = AgentSession(service_session_id="conv_123")
 
     with patch(
         "agent_framework._agents.RawAgent._prepare_run_context",
@@ -1087,16 +1086,21 @@ async def test_raw_foundry_agent_prepare_run_context_creates_service_session_fro
         )
 
     assert result == {"ok": True}
-    assert session.service_session_id == "agent-session-123"
+    assert session.service_session_id == "conv_123"
+    assert session.state["agent_framework_foundry.agent_session_id"] == "agent-session-123"
     mock_project.beta.agents.create_session.assert_awaited_once()
     create_session_kwargs = mock_project.beta.agents.create_session.await_args.kwargs
     assert create_session_kwargs["agent_name"] == "test-agent"
     assert create_session_kwargs["isolation_key"] == "iso-key"
     assert "version_indicator" in create_session_kwargs
+    assert mock_prepare_run_context.await_args.kwargs["options"] == {
+        "isolation_key": "iso-key",
+        "extra_body": {"agent_session_id": "agent-session-123"},
+    }
     mock_prepare_run_context.assert_awaited_once()
 
 
-async def test_raw_foundry_agent_create_service_session_uses_stable_agents_operations() -> None:
+async def test_raw_foundry_agent_create_agent_session_uses_stable_agents_operations() -> None:
     """Test that hosted sessions use the stable agents operations when available."""
 
     create_session = AsyncMock(return_value=SimpleNamespace(agent_session_id="agent-session-123"))
@@ -1111,7 +1115,7 @@ async def test_raw_foundry_agent_create_service_session_uses_stable_agents_opera
         allow_preview=True,
     )
 
-    result = await agent._create_service_session_id(isolation_key="iso-key")
+    result = await agent._create_agent_session_id(isolation_key="iso-key")
 
     assert result == "agent-session-123"
     create_session.assert_awaited_once()
@@ -1122,7 +1126,7 @@ async def test_raw_foundry_agent_create_service_session_uses_stable_agents_opera
     assert "version_indicator" in create_session_kwargs
 
 
-async def test_raw_foundry_agent_prepare_run_context_requires_preview_for_hosted_sessions() -> None:
+async def test_raw_foundry_agent_prepare_run_context_requires_preview_for_agent_sessions() -> None:
     """Test that hosted-agent sessions require allow_preview=True."""
 
     mock_project = MagicMock()

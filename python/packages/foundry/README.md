@@ -126,9 +126,10 @@ session = await agent.create_conversation()
 response = await agent.run("Help me plan a trip to Seattle.", session=session)
 ```
 
-This is separate from hosted-agent `isolation_key` sessions: the created
-conversation ID is stored on `AgentSession.service_session_id`, while the local
-`session_id` remains available for application/session storage.
+This is separate from hosted-agent compute sessions. The conversation ID is
+stored on `AgentSession.service_session_id`, while a pre-created Foundry
+`agent_session_id` is stored in `AgentSession.state`. Reusing a Foundry session
+routes requests to the same hosted compute and does not continue a conversation.
 
 ## Publishing an agent as a Foundry prompt agent
 

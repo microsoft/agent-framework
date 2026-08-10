@@ -69,6 +69,8 @@ if TYPE_CHECKING:
 
 logger: logging.Logger = logging.getLogger("agent_framework.foundry")
 
+_FOUNDRY_AGENT_SESSION_ID_STATE_KEY = "agent_framework_foundry.agent_session_id"
+
 AzureTokenProvider = Callable[[], str | Awaitable[str]]
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
@@ -126,16 +128,6 @@ def _merge_extra_body(extra_body: Any | None, *, additions: Mapping[str, Any] | 
     if additions:
         merged.update(additions)
     return merged
-
-
-def _uses_foundry_agent_session(conversation_id: Any) -> bool:
-    """Return whether a conversation_id should be treated as a Foundry agent session id."""
-    return (
-        isinstance(conversation_id, str)
-        and bool(conversation_id)
-        and not conversation_id.startswith("resp_")
-        and not conversation_id.startswith("conv_")
-    )
 
 
 def _build_agent_reference(agent_name: str, agent_version: str | None) -> dict[str, str]:
@@ -375,23 +367,14 @@ class RawFoundryAgentChatClient(
             run_options["input"] = self._transform_input_for_azure_ai(cast(list[dict[str, Any]], run_options["input"]))
 
         # Merge caller-supplied extra_body with any agent-specific request payload.
-        conversation_id = options.get("conversation_id")
         extra_body = _merge_extra_body(run_options.pop("extra_body", None))
-        if _uses_foundry_agent_session(conversation_id):
-            run_options.pop("previous_response_id", None)
-            run_options.pop("conversation", None)
-            run_options.pop("model", None)
-            extra_body["agent_session_id"] = conversation_id
         # Non-preview Prompt/Hosted Agent calls need agent_reference in the request body to
         # tell the Responses API which Foundry agent (and version) is in use, since ``model``
         # is stripped below. The preview path injects the reference via the OpenAI client kwarg
         # ``agent_name`` instead, so skip there. See issue #5582.
         if not self.allow_preview:
             extra_body.setdefault("agent_reference", _build_agent_reference(self.agent_name, self.agent_version))
-            should_strip_model = _uses_foundry_agent_session(conversation_id) or (
-                conversation_id is None and not options.get("model")
-            )
-            if should_strip_model:
+            if not options.get("model"):
                 run_options.pop("model", None)
         if extra_body:
             run_options["extra_body"] = extra_body
@@ -425,10 +408,7 @@ class RawFoundryAgentChatClient(
         response: Any,
         options: dict[str, Any],
     ) -> Any:
-        parsed_response = super()._parse_response_from_openai(response, options)
-        if _uses_foundry_agent_session(options.get("conversation_id")):
-            parsed_response.conversation_id = None
-        return parsed_response
+        return super()._parse_response_from_openai(response, options)
 
     @override
     def _parse_chunk_from_openai(
@@ -438,7 +418,7 @@ class RawFoundryAgentChatClient(
         function_call_ids: dict[int, tuple[str, str]],
         seen_reasoning_delta_item_ids: set[str] | None = None,
     ) -> ChatResponseUpdate:
-        """Parse streaming events while preserving hosted-agent session state."""
+        """Parse streaming events, including Foundry OAuth consent events."""
         update = try_parse_oauth_consent_event(event, self.model)
         if update is None:
             update = super()._parse_chunk_from_openai(
@@ -447,8 +427,6 @@ class RawFoundryAgentChatClient(
                 function_call_ids,
                 seen_reasoning_delta_item_ids,
             )
-        if _uses_foundry_agent_session(options.get("conversation_id")):
-            update.conversation_id = None
         return update
 
     @override
@@ -752,7 +730,7 @@ class RawFoundryAgent(
             additional_properties=dict(additional_properties) if additional_properties is not None else None,
         )
 
-    def _resolve_service_session_isolation_key(self, isolation_key: str | None = None) -> str:
+    def _resolve_agent_session_isolation_key(self, isolation_key: str | None = None) -> str:
         """Resolve the isolation key from an explicit value or default_options."""
         resolved_isolation_key = (
             isolation_key if isolation_key is not None else self.default_options.get("isolation_key")
@@ -761,20 +739,20 @@ class RawFoundryAgent(
             raise ValueError("isolation_key is required. Pass it explicitly or set default_options['isolation_key'].")
         return resolved_isolation_key
 
-    async def _create_service_session_id(
+    async def _create_agent_session_id(
         self,
         *,
         isolation_key: str | None = None,
     ) -> str:
-        """Create a hosted Foundry service session and return the service session ID."""
+        """Create a hosted Foundry compute session and return its agent session ID."""
         if not isinstance(self.client, RawFoundryAgentChatClient):
-            raise TypeError("_create_service_session_id requires a RawFoundryAgentChatClient-based client.")
+            raise TypeError("_create_agent_session_id requires a RawFoundryAgentChatClient-based client.")
         if not self.client.allow_preview:
             raise RuntimeError("Hosted Foundry service sessions require allow_preview=True.")
 
         create_session_kwargs: dict[str, Any] = {
             "agent_name": self.client.agent_name,
-            "isolation_key": self._resolve_service_session_isolation_key(isolation_key),
+            "isolation_key": self._resolve_agent_session_isolation_key(isolation_key),
         }
         if version := await self.client.get_agent_version():
             from azure.ai.projects.models import VersionRefIndicator
@@ -831,14 +809,20 @@ class RawFoundryAgent(
             **{key: value for key, value in runtime_options.items() if value is not None},
         }
 
-        if (
-            session is not None
-            and session.service_session_id is None
-            and effective_options.get("isolation_key") is not None
-        ):
-            session.service_session_id = await self._create_service_session_id(
-                isolation_key=cast(str | None, effective_options.get("isolation_key")),
-            )
+        if session is not None:
+            agent_session_id = session.state.get(_FOUNDRY_AGENT_SESSION_ID_STATE_KEY)
+            if agent_session_id is None and effective_options.get("isolation_key") is not None:
+                agent_session_id = await self._create_agent_session_id(
+                    isolation_key=cast(str | None, effective_options.get("isolation_key")),
+                )
+                session.state[_FOUNDRY_AGENT_SESSION_ID_STATE_KEY] = agent_session_id
+            if agent_session_id is not None:
+                if not isinstance(agent_session_id, str) or not agent_session_id:
+                    raise ValueError("Foundry agent session state must contain a non-empty string ID.")
+                runtime_options["extra_body"] = _merge_extra_body(
+                    effective_options.get("extra_body"),
+                    additions={"agent_session_id": agent_session_id},
+                )
 
         return await super()._prepare_run_context(
             messages=messages,
@@ -999,10 +983,12 @@ class FoundryAgent(  # type: ignore[misc]
         already be configured for preview APIs before being passed to
         ``FoundryAgent``.
 
-        To lazily create HostedAgent service sessions inside the agent, pass an
+        To lazily create a HostedAgent compute session inside the agent, pass an
         ``isolation_key`` through ``default_options`` (or per-run options). The
-        agent stores the resulting HostedAgent session ID in
-        ``AgentSession.service_session_id`` and reuses it on subsequent runs.
+        agent stores the resulting Foundry ``agent_session_id`` in
+        ``AgentSession.state`` and reuses it on subsequent runs. This is separate
+        from ``AgentSession.service_session_id``, which tracks conversation
+        continuation.
 
         Keyword Args:
             project_endpoint: The Foundry project endpoint URL.
