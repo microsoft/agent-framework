@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import cast
 
 from agent_framework import AgentSession
 from agent_framework.foundry import FoundryAgent
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import VersionRefIndicator
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -34,39 +32,6 @@ agents, as this is a preview feature in Foundry.
 """
 
 
-async def create_hosted_agent_session(
-    *,
-    agent: FoundryAgent,
-    project_client: AIProjectClient,
-    agent_name: str,
-    agent_version: str | None,
-) -> AgentSession:
-    """Create a hosted-agent service session and wrap it in an AgentSession."""
-    resolved_agent_version = agent_version
-    if resolved_agent_version is None:
-        agent_details = await project_client.agents.get(agent_name)
-        resolved_agent_version = agent_details.versions.latest.version
-
-    service_session = await project_client.agents.create_session(
-        agent_name,
-        version_indicator=VersionRefIndicator(agent_version=resolved_agent_version),
-    )
-    return agent.get_session(service_session.agent_session_id)
-
-
-async def delete_hosted_agent_session(
-    *,
-    project_client: AIProjectClient,
-    agent_name: str,
-    session: AgentSession,
-) -> None:
-    """Delete a hosted-agent service session."""
-    await project_client.agents.delete_session(
-        agent_name,
-        cast(str, session.service_session_id),
-    )
-
-
 async def main() -> None:
     credential = AzureCliCredential()
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
@@ -87,43 +52,33 @@ async def main() -> None:
             allow_preview=True,
         ) as agent,
     ):
-        session = await create_hosted_agent_session(
-            agent=agent,
-            project_client=project_client,
-            agent_name=agent_name,
-            agent_version=agent_version,
-        )
+        # Create a new session to manage the response chain (from a Responses API)
+        # and to persist the Foundry hosted-agent session ID across multiple calls to the agent.
+        session = AgentSession()
 
-        try:
-            # 1. Send the first turn.
-            query = "Hi!"
-            print(f"User: {query}")
-            print("Agent: ", end="", flush=True)
-            async for chunk in agent.run(query, session=session, stream=True):
-                if chunk.text:
-                    print(chunk.text, end="", flush=True)
+        # 1. Send the first turn. Foundry creates the hosted-agent session.
+        query = "Hi!"
+        print(f"User: {query}")
+        print("Agent: ", end="", flush=True)
+        async for chunk in agent.run(query, session=session, stream=True):
+            if chunk.text:
+                print(chunk.text, end="", flush=True)
 
-            # 2. Continue the conversation with the same deployed agent session.
-            query = "Your name is Javis. What can you do?"
-            print(f"\nUser: {query}")
-            print("Agent: ", end="", flush=True)
-            async for chunk in agent.run(query, session=session, stream=True):
-                if chunk.text:
-                    print(chunk.text, end="", flush=True)
+        # 2. Continue the conversation with the service-created session.
+        query = "Your name is Javis. What can you do?"
+        print(f"\nUser: {query}")
+        print("Agent: ", end="", flush=True)
+        async for chunk in agent.run(query, session=session, stream=True):
+            if chunk.text:
+                print(chunk.text, end="", flush=True)
 
-            # 3. Ask a follow-up question in the same session.
-            query = "What is your name?"
-            print(f"\nUser: {query}")
-            print("Agent: ", end="", flush=True)
-            async for chunk in agent.run(query, session=session, stream=True):
-                if chunk.text:
-                    print(chunk.text, end="", flush=True)
-        finally:
-            await delete_hosted_agent_session(
-                project_client=project_client,
-                agent_name=agent_name,
-                session=session,
-            )
+        # 3. Ask a follow-up question in the same session.
+        query = "What is your name?"
+        print(f"\nUser: {query}")
+        print("Agent: ", end="", flush=True)
+        async for chunk in agent.run(query, session=session, stream=True):
+            if chunk.text:
+                print(chunk.text, end="", flush=True)
 
 
 if __name__ == "__main__":

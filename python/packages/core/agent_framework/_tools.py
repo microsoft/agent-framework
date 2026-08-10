@@ -2867,6 +2867,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             kwargs["middleware"] = chat_middleware
         super().__init__(**kwargs)
 
+    def _update_function_invocation_continuation_state(
+        self,
+        kwargs: dict[str, Any],
+        response: ChatResponse[Any],
+        *,
+        session: AgentSession | None,
+        options: dict[str, Any] | None = None,
+    ) -> None:
+        """Update continuation state after a function-loop service call."""
+        _update_continuation_state(kwargs, response, session=session, options=options)
+
     def _get_function_middleware_pipeline(
         self,
         runtime_middleware: Sequence[FunctionMiddlewareTypes],
@@ -2953,7 +2964,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ):
                 _ensure_function_invocation_limit_fallback_response(response)
             aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
-            _update_continuation_state(
+            self._update_function_invocation_continuation_state(
                 request_kwargs,
                 response,
                 session=invocation_session,
@@ -3004,7 +3015,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         _ensure_function_invocation_limit_fallback_response(response)
         aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
-        _update_continuation_state(
+        self._update_function_invocation_continuation_state(
             request_kwargs,
             response,
             session=invocation_session,
@@ -3094,7 +3105,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             fallback_added = False
             if function_call_limit_reached:
                 fallback_added = _ensure_function_invocation_limit_fallback_response(response)
-            _update_continuation_state(
+            self._update_function_invocation_continuation_state(
                 request_kwargs,
                 response,
                 session=invocation_session,
@@ -3161,7 +3172,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             yield update
         final_response = await final_inner_stream.get_final_response()
         fallback_added = _ensure_function_invocation_limit_fallback_response(final_response)
-        _update_continuation_state(
+        self._update_function_invocation_continuation_state(
             request_kwargs,
             final_response,
             session=invocation_session,
