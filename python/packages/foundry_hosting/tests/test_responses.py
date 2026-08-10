@@ -4361,6 +4361,22 @@ class TestWorkflowAgentHosting:
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert any(e["data"]["text"] == "hello stream" for e in text_done)
 
+    async def test_previous_response_requires_existing_workflow_checkpoint(self) -> None:
+        workflow_agent = _build_text_workflow_agent("should not run")
+        server = _make_server(workflow_agent)
+        missing_response_id = "caresp_aaaaaaaaaaaaaaaa00" + "1" * 32
+
+        response = await _post(server, previous_response_id=missing_response_id)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "failed"
+        assert (
+            f"Cannot find an existing workflow checkpoint for previous_response_id={missing_response_id}."
+            in body["error"]["message"]
+        )
+        assert body["output"] == []
+
     @pytest.mark.parametrize("stream", [False, True])
     async def test_conversation_response_checkpoints_support_branching(self, stream: bool) -> None:
         @executor

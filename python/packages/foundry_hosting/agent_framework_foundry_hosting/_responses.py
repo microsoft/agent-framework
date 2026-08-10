@@ -511,9 +511,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if are_options_set:
                 logger.warning("Workflow agent doesn't support runtime options. They will be ignored.")
 
-            if request.get("previous_response_id") is not None and context.conversation_id is not None:
+            previous_response_id = request.get("previous_response_id")
+            if previous_response_id is not None and context.conversation_id is not None:
                 raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
-            context_id = request.get("previous_response_id") or context.conversation_id
+            context_id = previous_response_id or context.conversation_id
 
             if not isinstance(self._agent, WorkflowAgent):
                 raise RuntimeError("Agent is not a workflow agent.")
@@ -544,6 +545,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
                 if latest_checkpoint is not None:
                     latest_checkpoint_id = latest_checkpoint.checkpoint_id
+                elif previous_response_id is not None:
+                    raise RuntimeError(
+                        f"Cannot find an existing workflow checkpoint for "
+                        f"previous_response_id={previous_response_id}. "
+                        "Ensure that the previous response was created successfully and that the ID is correct."
+                    )
 
             # Storage that will receive checkpoints written during this turn.
             # Every turn writes under its current response_id so a later request
