@@ -15,15 +15,19 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    Executor,
     Message,
+    WorkflowContext,
     WorkflowEvent,
     WorkflowRunState,
+    handler,
 )
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework._workflows._message_utils import normalize_messages_input
 from agent_framework.orchestrations import (
     AgentRequestInfoResponse,
     GroupChatBuilder,
+    GroupChatRequestMessage,
     GroupChatState,
     MagenticContext,
     MagenticManagerBase,
@@ -32,6 +36,7 @@ from agent_framework.orchestrations import (
 )
 
 from agent_framework_orchestrations import BaseGroupChatOrchestrator
+from agent_framework_orchestrations._base_group_chat_orchestrator import GroupChatResponseMessage
 from agent_framework_orchestrations._group_chat import (  # pyright: ignore[reportPrivateUsage]
     _CONTINUATION_DEFAULT_INSTRUCTION,
 )
@@ -1267,32 +1272,63 @@ class ToolOnlyStubAgent(BaseAgent):
         yield AgentResponseUpdate(contents=self._contents(), role="assistant", author_name=self.name)
 
 
-async def test_group_chat_empty_cleaned_broadcast_sends_non_empty_messages() -> None:
-    """A broadcast cleaned down to nothing must not leave the next speaker with an empty cache.
+async def test_group_chat_tool_only_first_speaker_keeps_initial_task() -> None:
+    """An empty broadcast must not displace context the next speaker already holds.
 
-    ``clean_conversation_for_handoff`` drops messages with no text content, so a tool-only
-    response broadcasts nothing and the next speaker is a *different* participant than the
-    one that just spoke.
+    ``clean_conversation_for_handoff`` drops messages with no text, so a tool-only first
+    response broadcasts nothing. The next speaker still has the initial task cached and must
+    receive it, rather than a continuation instruction that would replace it.
     """
     alpha = RecordingStubAgent("alpha", "reply from alpha")
     beta = ToolOnlyStubAgent("beta")
 
-    speakers = iter(["alpha", "beta", "alpha"])
+    speakers = iter(["beta", "alpha"])
 
     workflow = GroupChatBuilder(
         participants=[alpha, beta],
-        max_rounds=3,
+        max_rounds=2,
         selection_func=lambda state: next(speakers),
     ).build()
 
     async for _ in workflow.run("kickoff", stream=True):
         pass
 
-    assert len(alpha.received_messages) == 2, "Expected alpha to be invoked twice"
-    assert all(received for received in alpha.received_messages), "Participant was invoked with empty messages"
-    assert any(_CONTINUATION_DEFAULT_INSTRUCTION in (message.text or "") for message in alpha.received_messages[1]), (
-        "Second invocation should carry the continuation instruction"
-    )
+    assert len(alpha.received_messages) == 1, "Expected alpha to be invoked once"
+    received = alpha.received_messages[0]
+    assert any("kickoff" in (message.text or "") for message in received), "Initial task was dropped"
+    assert all(_CONTINUATION_DEFAULT_INSTRUCTION not in (message.text or "") for message in received)
+
+
+class RecordingCustomExecutor(Executor):
+    """Custom executor participant that records the request envelopes it receives."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.received_instructions: list[str | None] = []
+
+    @handler
+    async def _respond(self, message: GroupChatRequestMessage, ctx: WorkflowContext[GroupChatResponseMessage]) -> None:
+        self.received_instructions.append(message.additional_instruction)
+        await ctx.send_message(
+            GroupChatResponseMessage(message=Message(role="assistant", contents=["custom reply"], author_name=self.id))
+        )
+
+
+async def test_group_chat_consecutive_custom_executor_gets_no_continuation_instruction() -> None:
+    """Custom executors have no agent cache, so re-selecting one must not add the instruction."""
+    custom = RecordingCustomExecutor("custom")
+
+    workflow = GroupChatBuilder(
+        participants=[custom],
+        max_rounds=2,
+        selection_func=lambda state: "custom",
+    ).build()
+
+    async for _ in workflow.run("kickoff", stream=True):
+        pass
+
+    assert len(custom.received_instructions) == 2, "Expected the participant to be invoked twice"
+    assert custom.received_instructions == [None, None]
 
 
 # endregion

@@ -69,11 +69,11 @@ else:
 
 logger = logging.getLogger(__name__)
 
-# Sent when the selected speaker would otherwise receive no messages at all: either it just
-# spoke (it gets no broadcast, since its own reply is already in its session) or the broadcast
-# itself was empty because cleaning stripped every message. Its executor cache is cleared after
-# each run, so in both cases the request would carry nothing and some agents (for example
-# A2AAgent) reject empty input.
+# Sent when the agent participant that just spoke is selected again. It is excluded from the
+# broadcast (its own reply is already in its session) and AgentExecutor clears its cache after
+# each run, so the request would otherwise carry no messages and some agents (for example
+# A2AAgent) reject empty input. Custom executors are excluded: they have no such cache and
+# receive full context in the request envelope.
 _CONTINUATION_DEFAULT_INSTRUCTION = "Continue the conversation."
 
 
@@ -241,7 +241,9 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
             next_speaker,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
             additional_instruction=(
-                _CONTINUATION_DEFAULT_INSTRUCTION if next_speaker == participant or not messages else None
+                _CONTINUATION_DEFAULT_INSTRUCTION
+                if next_speaker == participant and self._participant_registry.is_agent(participant)
+                else None
             ),
         )
         self._increment_round()
@@ -425,7 +427,9 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             next_speaker,  # type: ignore[arg-type]
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
             additional_instruction=(
-                _CONTINUATION_DEFAULT_INSTRUCTION if next_speaker == participant or not messages else None
+                _CONTINUATION_DEFAULT_INSTRUCTION
+                if next_speaker == participant and self._participant_registry.is_agent(participant)
+                else None
             ),
         )
         self._increment_round()
