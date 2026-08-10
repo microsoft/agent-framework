@@ -2784,6 +2784,7 @@ class TestNormalizeApproveForSession:
         handler = _with_normalized_permission_decisions(async_handler)
         result = await handler(shell_request(["ls"]), {"session_id": "test-session"})
 
+        assert isinstance(result, PermissionDecisionApproveForSession)
         assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCommands)
 
     async def test_handler_exceptions_propagate(self) -> None:

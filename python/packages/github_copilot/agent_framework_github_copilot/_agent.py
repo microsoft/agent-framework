@@ -109,6 +109,9 @@ PermissionHandlerType = Callable[
 ]
 """Type for permission request handlers. Supports both sync and async callbacks."""
 
+AsyncPermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], "Awaitable[PermissionRequestResult]"]
+"""Type for permission request handlers that are always asynchronous."""
+
 
 FunctionApprovalCallback = Callable[[Content], "bool | Awaitable[bool]"]
 """Deprecated approval callback for ``FunctionTool`` instances declared with
@@ -278,7 +281,7 @@ def _normalize_permission_decision(
     return PermissionDecisionApproveForSession(approval=approval)
 
 
-def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> PermissionHandlerType:
+def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> AsyncPermissionHandlerType:
     """Wrap a permission handler so its decisions are normalized before reaching the SDK.
 
     Exceptions raised by ``handler`` deliberately propagate: the SDK already catches them
