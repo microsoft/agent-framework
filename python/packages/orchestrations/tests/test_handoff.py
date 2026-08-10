@@ -1483,6 +1483,18 @@ class TextlessHandoffChatClient(FunctionInvocationLayer[Any], ChatMiddlewareLaye
         return ResponseStream(_stream(), finalizer=_finalize)
 
 
+class TextlessHandoffAgent(Agent):
+    """Mock agent that hands off with no text content at all."""
+
+    def __init__(self, *, name: str, handoff_to: str) -> None:
+        super().__init__(
+            client=TextlessHandoffChatClient(handoff_to=handoff_to),
+            name=name,
+            id=name,
+            require_per_service_call_history_persistence=True,
+        )
+
+
 class _RecordingWorkflowContext:
     """Stand-in for WorkflowContext that just records what a handler sends.
 
@@ -1532,12 +1544,7 @@ async def test_handoff_sends_continuation_instruction_when_cleaned_response_is_e
     carry the continuation instruction instead, so agents that reject empty input are never
     invoked with nothing at all.
     """
-    agent = Agent(
-        client=TextlessHandoffChatClient(handoff_to="specialist"),
-        name="triage",
-        id="triage",
-        require_per_service_call_history_persistence=True,
-    )
+    agent = TextlessHandoffAgent(name="triage", handoff_to="specialist")
     executor = HandoffAgentExecutor(agent=agent, handoffs=[HandoffConfiguration(target="specialist")])
     ctx = _RecordingWorkflowContext(streaming=stream)
 
@@ -1555,12 +1562,7 @@ async def test_handoff_sends_continuation_instruction_when_cleaned_response_is_e
 
 async def test_handoff_no_continuation_instruction_when_cleaned_response_has_text() -> None:
     """The continuation instruction must only be injected when the cleaned response is empty."""
-    agent = Agent(
-        client=MockChatClient(name="triage", handoff_to="specialist"),
-        name="triage",
-        id="triage",
-        require_per_service_call_history_persistence=True,
-    )
+    agent = MockHandoffAgent(name="triage", handoff_to="specialist")
     executor = HandoffAgentExecutor(agent=agent, handoffs=[HandoffConfiguration(target="specialist")])
     ctx = _RecordingWorkflowContext()
 
