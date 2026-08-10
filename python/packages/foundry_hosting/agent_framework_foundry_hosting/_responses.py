@@ -6,21 +6,16 @@ import asyncio
 import base64
 import json
 import logging
-import os
-import tempfile
-import threading
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import asdict, dataclass, is_dataclass
-from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Literal, cast
 
 from agent_framework import (
-    AgentSession,
     ChatOptions,
+    CheckpointStorage,
     Content,
     ContextProvider,
-    FileCheckpointStorage,
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
@@ -34,80 +29,26 @@ from agent_framework.exceptions import AgentFrameworkException
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
     ResponseContext,
-    ResponseEventStream,
     ResponseProviderProtocol,
     ResponsesServerOptions,
 )
 from azure.ai.agentserver.responses._id_generator import IdGenerator
+from azure.ai.agentserver.responses.aio import ResponseEventStream
 from azure.ai.agentserver.responses.hosting import ResponsesAgentServerHost
 from azure.ai.agentserver.responses.models import (
-    ApplyPatchToolCallItemParam,
-    ApplyPatchToolCallOutputItemParam,
-    ComputerCallOutputItemParam,
-    ComputerScreenshotContent,
     CreateResponse,
-    FunctionCallOutputItemParam,
     FunctionShellAction,
-    FunctionShellCallItemParam,
     FunctionShellCallOutputContent,
     FunctionShellCallOutputExitOutcome,
-    FunctionShellCallOutputItemParam,
     Item,
-    ItemCodeInterpreterToolCall,
-    ItemComputerToolCall,
-    ItemCustomToolCall,
-    ItemCustomToolCallOutput,
-    ItemFileSearchToolCall,
-    ItemFunctionToolCall,
-    ItemImageGenToolCall,
-    ItemLocalShellToolCall,
-    ItemLocalShellToolCallOutput,
-    ItemMcpApprovalRequest,
-    ItemMcpToolCall,
-    ItemMessage,
-    ItemOutputMessage,
     ItemReasoningItem,
-    ItemWebSearchToolCall,
     LocalEnvironmentResource,
-    MCPApprovalResponse,
     MessageContent,
-    MessageContentInputFileContent,
-    MessageContentInputImageContent,
-    MessageContentInputTextContent,
-    MessageContentOutputTextContent,
-    MessageContentReasoningTextContent,
-    MessageContentRefusalContent,
-    MessageRole,
     OAuthConsentRequestOutputItem,
     OutputItem,
-    OutputItemApplyPatchToolCall,
-    OutputItemApplyPatchToolCallOutput,
-    OutputItemCodeInterpreterToolCall,
-    OutputItemComputerToolCall,
-    OutputItemComputerToolCallOutputResource,
-    OutputItemCustomToolCall,
-    OutputItemCustomToolCallOutput,
-    OutputItemFileSearchToolCall,
-    OutputItemFunctionShellCall,
-    OutputItemFunctionShellCallOutput,
-    OutputItemFunctionToolCall,
-    OutputItemImageGenToolCall,
-    OutputItemLocalShellToolCall,
-    OutputItemLocalShellToolCallOutput,
-    OutputItemMcpApprovalRequest,
-    OutputItemMcpApprovalResponseResource,
-    OutputItemMcpToolCall,
-    OutputItemMessage,
-    OutputItemOutputMessage,
     OutputItemReasoningItem,
-    OutputItemWebSearchToolCall,
     OutputMessageContent,
-    OutputMessageContentOutputTextContent,
-    OutputMessageContentRefusalContent,
     ResponseStreamEvent,
-    StructuredOutputsOutputItem,
-    SummaryTextContent,
-    TextContent,
 )
 from azure.ai.agentserver.responses.streaming._builders import (
     OutputItemBuilder,
@@ -125,106 +66,18 @@ from ._request_context import (
     validate_foundry_request_context,
     validate_path_segment,
 )
-from ._session_store import FoundrySessionStore
+from ._state_store import (
+    AgentSessionStoreProvider,
+    CheckpointStoreProvider,
+    ContextScopedStoreProvider,
+    FunctionApprovalStore,
+    FunctionApprovalStoreProvider,
+    StoreProvider,
+)
 
 logger = logging.getLogger(__name__)
 
-_AZURE_RESPONSES_MESSAGE_ROLE_TYPE = f"{MessageRole.__module__}:{MessageRole.__qualname__}"
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
-
-
-# region Approval Storage
-class ApprovalStorage(Protocol):
-    """Storage for saving function approval requests."""
-
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        """Save a function approval request under the given ID."""
-        ...
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        """Load a function approval request by its ID."""
-        ...
-
-
-class InMemoryFunctionApprovalStorage:
-    """An in-memory storage for function approval requests."""
-
-    def __init__(self) -> None:
-        self._store: dict[str, Content] = {}
-
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        if approval_request_id in self._store:
-            raise ValueError(f"Approval request with ID '{approval_request_id}' already exists.")
-        self._store[approval_request_id] = request
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        if approval_request_id not in self._store:
-            raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
-        return self._store[approval_request_id]
-
-
-class FileBasedFunctionApprovalStorage:
-    """A simple file-based storage for function approval requests.
-
-    Concurrent writes from multiple threads in the same process are
-    serialized by a ``threading.Lock``, and the on-disk JSON file is
-    updated atomically (write to a temp file, then ``os.replace``) so a
-    crash mid-write cannot leave a partially written file behind.
-    """
-
-    def __init__(self, storage_path: str) -> None:
-        self._storage_path = storage_path
-        self._lock = threading.Lock()
-
-    def _create_storage_file_if_not_exists_sync(self) -> None:
-        """Lazy-create the storage file (and its parent directory) if it does not already exist.
-
-        Uses exclusive-create mode (``"x"``) so a concurrent creator cannot
-        be truncated by an ``open(..., "w")`` after a stale existence check.
-        """
-        os.makedirs(os.path.dirname(self._storage_path) or ".", exist_ok=True)
-        with suppress(FileExistsError), open(self._storage_path, "x") as f:
-            json.dump({}, f)
-
-    def _atomic_write(self, data: dict[str, Any]) -> None:
-        """Atomically replace the storage file with the serialized ``data``."""
-        directory = os.path.dirname(self._storage_path) or "."
-        # Serialize first so any error doesn't leave a partial file behind.
-        serialized = json.dumps(data)
-        fd, tmp_path = tempfile.mkstemp(prefix=".approvals-", suffix=".tmp", dir=directory)
-        try:
-            with os.fdopen(fd, "w") as tmp:
-                tmp.write(serialized)
-            os.replace(tmp_path, self._storage_path)
-        except BaseException:
-            with suppress(OSError):
-                os.unlink(tmp_path)
-            raise
-
-    def _save_sync(self, approval_request_id: str, request: Content) -> None:
-        with self._lock:
-            self._create_storage_file_if_not_exists_sync()
-            with open(self._storage_path) as f:
-                data = json.load(f)
-            if approval_request_id in data:
-                raise ValueError(f"Approval request with ID '{approval_request_id}' already exists.")
-            data[approval_request_id] = request.to_dict()
-            self._atomic_write(data)
-
-    def _load_sync(self, approval_request_id: str) -> Content:
-        with self._lock:
-            self._create_storage_file_if_not_exists_sync()
-            with open(self._storage_path) as f:
-                data = json.load(f)
-        if approval_request_id not in data:
-            raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
-        return Content.from_dict(data[approval_request_id])
-
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        await asyncio.to_thread(self._save_sync, approval_request_id, request)
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        return await asyncio.to_thread(self._load_sync, approval_request_id)
 
 
 def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
@@ -238,69 +91,6 @@ def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
         and provider.store_outputs
     )
 
-
-def _checkpoint_storage_for_context(
-    root: str,
-    context_id: str,
-    *,
-    user_id: str | None = None,
-) -> FileCheckpointStorage:
-    """Build a ``FileCheckpointStorage`` for ``context_id`` rooted under ``root``.
-
-    When the platform supplies a per-user partition key (``user_id``, from the
-    ``x-agent-user-id`` header on container protocol v2), the per-conversation
-    checkpoint directory is nested under it: ``<root>/<user_id>/<context_id>``.
-    This isolates each tenant's workflow state so one user can never restore or
-    observe another user's checkpoint, even with a guessed or forged
-    ``context_id``. An absent (``None``) or empty ``user_id`` -- local
-    development or protocol v1 -- falls back to the unscoped
-    ``<root>/<context_id>`` layout.
-
-    Both ``context_id`` and ``user_id`` are validated as single safe path
-    segments, and each resolved directory is verified to stay under its parent
-    before any directory is created on disk (CWE-22).
-    """
-    validate_path_segment(context_id, kind="context id")
-
-    base_path = Path(root).resolve()
-    if user_id:
-        validate_path_segment(user_id, kind="user id")
-        user_path = (base_path / user_id).resolve()
-        if not user_path.is_relative_to(base_path):
-            raise RuntimeError(f"Invalid user id: {user_id!r}")
-        base_path = user_path
-
-    storage_path = (base_path / context_id).resolve()
-    if not storage_path.is_relative_to(base_path):
-        raise RuntimeError(f"Invalid context id: {context_id!r}")
-    return FileCheckpointStorage(
-        storage_path,
-        # Keep this provider-specific allowlist narrow. Hosted workflow
-        # checkpoints can persist Azure's role enum inside Message objects.
-        allowed_checkpoint_types=[_AZURE_RESPONSES_MESSAGE_ROLE_TYPE],
-    )
-
-
-def _approval_storage_path_for_user(base_path: str, user_id: str) -> str:
-    """Return the per-user approval storage file path under the base directory.
-
-    Inserts the validated ``user_id`` as a directory segment between the base
-    directory and the file name (``<dir>/<user_id>/<file>``), mirroring the
-    per-user checkpoint partitioning so one tenant can never read another
-    tenant's saved approval requests. The user id is validated as a single safe
-    path segment and the resulting directory is verified to stay under the base
-    directory before use (CWE-22).
-    """
-    validate_path_segment(user_id, kind="user id")
-    directory, filename = os.path.split(base_path)
-    base_dir = Path(directory or ".").resolve()
-    user_dir = (base_dir / user_id).resolve()
-    if not user_dir.is_relative_to(base_dir):
-        raise RuntimeError(f"Invalid user id: {user_id!r}")
-    return str(user_dir / filename)
-
-
-# endregion Approval Storage
 
 # Foundry Toolbox Auth integration
 # Consent-URL error code returned by the Foundry MCP gateway when calling `/list`
@@ -381,32 +171,6 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
 class ResponsesHostServer(ResponsesAgentServerHost):
     """A responses server host for an agent."""
 
-    # TODO(@taochen): Allow a different checkpoint storage that stores checkpoints externally
-    CHECKPOINT_STORAGE_PATH = "/.checkpoints"
-    FUNCTION_APPROVAL_STORAGE_PATH = "/.function_approvals/approval_requests.json"
-    SESSION_STORAGE_PATH = "/.sessions"
-
-    @staticmethod
-    def _resolve_checkpoint_root(is_hosted: bool) -> str:
-        """Resolve checkpoint storage path.
-
-        Hosted: $HOME/.checkpoints (or /home/session/.checkpoints).
-        Local: {cwd}/.checkpoints.
-        """
-        if not is_hosted:
-            return os.path.join(os.getcwd(), ".checkpoints")
-
-        home = os.environ.get("HOME", "").strip()
-        if home and home != "/":
-            try:
-                resolved = Path(home).resolve()
-                if str(resolved) != str(resolved.root):
-                    return str(resolved / ".checkpoints")
-            except (OSError, ValueError):
-                pass
-
-        return "/home/session/.checkpoints"
-
     def __init__(
         self,
         agent: SupportsAgentRun,
@@ -414,6 +178,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         prefix: str = "",
         options: ResponsesServerOptions | None = None,
         store: ResponseProviderProtocol | None = None,
+        agent_session_store_provider: StoreProvider[SessionStore] | None = None,
+        checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
+        function_approval_store_provider: StoreProvider[FunctionApprovalStore] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a ResponsesHostServer.
@@ -422,7 +189,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             agent: The agent to handle responses for.
             prefix: The URL prefix for the server.
             options: Optional server options.
-            store: Optional response store.
+            store: Optional response store for input and history look up.
+            agent_session_store_provider: Optional provider for MAF agent session storage.
+                If not provided, a default `AgentSessionStoreProvider` will be used.
+            checkpoint_store_provider: Optional provider for workflow checkpoint storage.
+                If not provided, a default `CheckpointStoreProvider` will be used.
+            function_approval_store_provider: Optional provider for function approval storage.
+                If not provided, a default `FunctionApprovalStoreProvider` will be used.
             **kwargs: Additional keyword arguments.
 
         Note:
@@ -450,14 +223,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
 
         self._is_workflow_agent = False
-        self._checkpoint_storage_path = None
         if isinstance(agent, WorkflowAgent):
             if agent.workflow._runner_context.has_checkpointing():  # pyright: ignore[reportPrivateUsage]
                 raise RuntimeError(
                     "There should not be a checkpoint storage already present in the workflow agent. "
                     "The hosting infrastructure will manage checkpoints instead."
                 )
-            self._checkpoint_storage_path = self._resolve_checkpoint_root(self.config.is_hosted)
             self._is_workflow_agent = True
 
         self._uses_hosted_responses_history = False
@@ -479,29 +250,30 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
 
         self._agent: SupportsAgentRun = agent
-        self._session_store: SessionStore | None = (
-            (
-                FoundrySessionStore(Path.home() / self.SESSION_STORAGE_PATH.lstrip("/"))
-                if self.config.is_hosted
-                else SessionStore()
-            )
-            if not self._is_workflow_agent
-            else None
+
+        # Storage providers
+        self._checkpoint_storage_provider = (
+            CheckpointStoreProvider() if checkpoint_store_provider is None else checkpoint_store_provider
         )
-        self._approval_storage: ApprovalStorage = (
-            FileBasedFunctionApprovalStorage(self.FUNCTION_APPROVAL_STORAGE_PATH)
-            if self.config.is_hosted
-            else InMemoryFunctionApprovalStorage()
+        self._session_storage_provider = (
+            AgentSessionStoreProvider() if agent_session_store_provider is None else agent_session_store_provider
         )
-        self._approval_storages_by_user: dict[str, ApprovalStorage] = {}
+        self._function_approval_storage_provider = (
+            FunctionApprovalStoreProvider()
+            if function_approval_store_provider is None
+            else function_approval_store_provider
+        )
+
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
         # failures during MCP connect can be surfaced to the client as an
         # `oauth_consent_request` stream event instead of crashing the server.
         self._agent_stack: AsyncExitStack | None = None
         self._agent_init_lock = asyncio.Lock()
+
         self.shutdown_handler(self._cleanup_agent)
         self.response_handler(self._handle_response)
+
         mark_feature_used(FeatureIndex.FOUNDRY_HOSTING)
 
     async def _ensure_agent_ready(self) -> None:
@@ -532,19 +304,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._agent_stack = None
             await stack.aclose()
 
-    def _approval_storage_for_request(self) -> ApprovalStorage:
-        """Return the hosted approval store for the active request user."""
-        user_id = get_request_context().user_id
-        if not self.config.is_hosted or not user_id:
-            return self._approval_storage
-        storage = self._approval_storages_by_user.get(user_id)
-        if storage is None:
-            storage = FileBasedFunctionApprovalStorage(
-                _approval_storage_path_for_user(self.FUNCTION_APPROVAL_STORAGE_PATH, user_id)
-            )
-            self._approval_storages_by_user[user_id] = storage
-        return storage
-
     async def _handle_response(
         self,
         request: CreateResponse,
@@ -567,56 +326,89 @@ class ResponsesHostServer(ResponsesAgentServerHost):
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle a regular agent with Responses-managed MAF session continuity.
 
-        Foundry sessions govern hosted compute and filesystem lifetime and may
-        serve multiple users and Responses conversations. Conversation mode
-        reads and writes one MAF session snapshot under ``conversation_id``.
-        Response chaining reads the snapshot under ``previous_response_id`` and
-        writes the updated session under the current ``response_id``, allowing
-        branches without changing the MAF session's own identifier. The request
-        user provides the storage isolation boundary.
+        Conversation mode reads and writes one MAF session snapshot under
+        ``conversation_id``. Response chaining reads the snapshot under
+        ``previous_response_id`` and writes the updated session under the current
+        ``response_id``, allowing branches without changing the MAF session's own
+        identifier. Hosted storage uses the request user as its isolation boundary.
         """
-        response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
+        response_event_stream = ResponseEventStream(response_id=context.response_id)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
-        # Track the current active output item builder for streaming;
-        # lazily created on matching content, closed when a different type arrives.
-        tracker: _OutputItemTracker | None = None
-        session: AgentSession | None = None
-        request_failure: Exception | None = None
-        request_interrupted = False
-        response_messages: Sequence[Message] | None = None
-        consent_errors_to_emit: list[ConsentError] | None = None
-        approval_storage: ApprovalStorage | None = None
+        # Lazy-enter the agent (and any MCP tools it owns). The MCP client wraps gateway
+        # consent failures (and other connection-time errors) in AgentFrameworkException; if
+        # one of those is a consent error we surface the consent link to the client through
+        # the already-opened response stream instead of failing the request. Other exception
+        # types fall through to the outer handler below and become ``response.failed``.
+        try:
+            await self._ensure_agent_ready()
+        except AgentFrameworkException as ex:
+            consent_errors_to_emit = consent_url_from_error(ex)
+            if consent_errors_to_emit is None or len(consent_errors_to_emit) == 0:
+                logger.error("Failed to prepare agent: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
+                for event in self._emit_failure(response_event_stream, None, ex):
+                    yield event
+                return
+
+            for consent_error in consent_errors_to_emit:
+                logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
+                oauth_item = OAuthConsentRequestOutputItem(
+                    id=IdGenerator.new_id("oacr"),
+                    response_id=context.response_id,
+                    type="oauth_consent_request",
+                    consent_link=consent_error.consent_url,
+                    server_label=consent_error.name,
+                )
+                builder = response_event_stream.add_output_item(oauth_item["id"])
+                yield builder.emit_added(oauth_item)
+                yield builder.emit_done(oauth_item)
+
+            yield response_event_stream.emit_incomplete(
+                reason=f"OAuth consent required for {len(consent_errors_to_emit)} tool(s)."
+            )
+            return
 
         try:
-            approval_storage = self._approval_storage_for_request()
-            read_session_id = context.conversation_id or request.previous_response_id
-            if self._session_store is None:
-                if read_session_id is not None:
+            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
+            session_storage = self._session_storage_provider.get_store(config=self.config)
+            # Agent sessions are either tied to the conversation_id (for multi-turn conversation mode)
+            # or the previous_response_id (for response chaining). If neither is present, a new session
+            # is created for this request and stored under the current response_id. The current response_id
+            # will become the previous_response_id for the next request in a response chain, allowing the
+            # session to be retrieved.
+            if (previous_response_id := request.get("previous_response_id")) is not None:
+                session = await session_storage.get(previous_response_id)
+                if session is None:
                     raise RuntimeError(
-                        "Session storage is required when using conversation_id or previous_response_id."
+                        f"Cannot find an existing agent session for previous_response_id={previous_response_id}. "
+                        "Ensure that the previous response was created successfully and that the ID is correct."
                     )
+            elif (conversation_id := context.conversation_id) is not None:
+                session = await session_storage.get(conversation_id)
+                if session is None:
+                    # Note that we cannot determine if the session was deleted or never existed,
+                    # so we log a warning and create a new session.
+                    logger.info(
+                        "Cannot find an existing agent session for id=%s. Creating a new session.",
+                        conversation_id,
+                    )
+                    session = self._agent.create_session()
             else:
-                previous_session = (
-                    await self._session_store.get(read_session_id) if read_session_id is not None else None
-                )
-                # check if a previous response was tried to be used, that should raise if not found
-                # likely because the wrong user tried to use it.
-                if request.previous_response_id is not None and previous_session is None:
-                    message = (
-                        "No Agent Framework session snapshot was found for previous_response_id "
-                        f"{request.previous_response_id!r}."
-                    )
-                    if isinstance(self._session_store, FoundrySessionStore):
-                        message += (
-                            " Reuse the response's agent_session_id so the request is routed to the same "
-                            "persistent Foundry sandbox."
-                        )
-                    raise RuntimeError(message)
-                session = previous_session if previous_session is not None else self._agent.create_session()
+                session = self._agent.create_session()
+        except Exception as ex:
+            logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
+            for event in self._emit_failure(response_event_stream, None, ex):
+                yield event
+            return
 
-            if session is not None and self._uses_hosted_responses_history:
+        tracker = _OutputItemTracker(response_event_stream)
+        request_failure: Exception | None = None
+        save_failure: Exception | None = None
+        request_interrupted = False
+
+        try:
+            if self._uses_hosted_responses_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
 
             input_items = await context.get_input_items()
@@ -628,11 +420,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     *(await _output_items_to_messages(history, approval_storage=approval_storage)),
                     *input_messages,
                 ],
+                "session": session,
             }
-            if session is not None:
-                run_kwargs["session"] = session
-            is_streaming_request = request.stream is not None and request.stream is True
-
             chat_options, are_options_set = _to_chat_options(request)
 
             if are_options_set and not isinstance(self._agent, RawAgent):
@@ -640,101 +429,59 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             else:
                 run_kwargs["options"] = chat_options
 
-            # Lazy-enter the agent (and any MCP tools it owns). The MCP client wraps gateway
-            # consent failures (and other connection-time errors) in AgentFrameworkException; if
-            # one of those is a consent error we surface the consent link to the client through
-            # the already-opened response stream instead of failing the request. Other exception
-            # types fall through to the outer handler below and become ``response.failed``.
-            try:
-                await self._ensure_agent_ready()
-            except AgentFrameworkException as ex:
-                consent_errors_to_emit = consent_url_from_error(ex)
-                if consent_errors_to_emit is None:
-                    raise
-
-            if consent_errors_to_emit is None:
-                tracker = _OutputItemTracker(response_event_stream) if is_streaming_request else None
-
-                if not is_streaming_request:
-                    # Run the agent in non-streaming mode
-                    response = await self._agent.run(stream=False, **run_kwargs)  # type: ignore[reportUnknownMemberType]
-                    response_messages = response.messages
-                else:
-                    if tracker is None:  # pragma: no cover - defensive, set above
-                        raise RuntimeError("Streaming tracker was not initialized.")
-                    # Run the agent in streaming mode
-                    async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
-                        for content in update.contents:
-                            for event in tracker.handle(content):
-                                yield event
-                            if tracker.needs_async:
-                                async for item in _to_outputs(
-                                    response_event_stream,
-                                    content,
-                                    approval_storage=approval_storage,
-                                ):
-                                    yield item
-                                tracker.needs_async = False
-        except asyncio.CancelledError:
-            request_interrupted = True
-            raise
-        except GeneratorExit:
+            async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
+                for content in update.contents:
+                    for event in tracker.handle(content):
+                        yield event
+                    if tracker.needs_async:
+                        async for item in _to_outputs(
+                            response_event_stream,
+                            content,
+                            approval_storage=approval_storage,
+                        ):
+                            yield item
+                        tracker.needs_async = False
+            for event in tracker.close():
+                yield event
+        except (asyncio.CancelledError, GeneratorExit):
             request_interrupted = True
             raise
         except Exception as ex:
             request_failure = ex
-        finally:
-            if session is not None and self._uses_hosted_responses_history:
-                session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
-            if session is not None and self._session_store is not None:
-                try:
-                    await self._session_store.set(context.conversation_id or context.response_id, session)
-                except Exception as save_error:
-                    if request_interrupted:
-                        logger.error(
-                            "Failed to persist the Agent Framework session while unwinding an interrupted request",
-                            exc_info=(type(save_error), save_error, save_error.__traceback__),
-                        )
-                    elif request_failure is None:
-                        request_failure = save_error
-                    else:
-                        logger.error(
-                            "Failed to persist the Agent Framework session after an agent failure",
-                            exc_info=(type(save_error), save_error, save_error.__traceback__),
-                        )
-
-        if request_failure is not None:
             logger.error(
                 "Failed to produce response for agent",
-                exc_info=(type(request_failure), request_failure, request_failure.__traceback__),
+                exc_info=(type(ex), ex, ex.__traceback__),
             )
+        finally:
+            if self._uses_hosted_responses_history:
+                session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
+            try:
+                await session_storage.set(context.conversation_id or context.response_id, session)
+            except Exception as save_error:
+                save_failure = save_error
+                if request_interrupted:
+                    message = "Failed to persist the Agent Framework session while unwinding an interrupted request"
+                elif request_failure is not None:
+                    message = "Failed to persist the Agent Framework session after an agent failure"
+                else:
+                    message = "Failed to persist the Agent Framework session after a successful request"
+                logger.error(message, exc_info=(type(save_error), save_error, save_error.__traceback__))
+
+        if request_failure is not None and save_failure is not None:
+            failure = RuntimeError(
+                f"Agent request failed: {str(request_failure) or type(request_failure).__name__}; "
+                f"session persistence also failed: {str(save_failure) or type(save_failure).__name__}"
+            )
+            for event in self._emit_failure(response_event_stream, tracker, failure):
+                yield event
+        elif request_failure is not None:
             for event in self._emit_failure(response_event_stream, tracker, request_failure):
                 yield event
-            return
-
-        if consent_errors_to_emit is not None:
-            for consent_error in consent_errors_to_emit:
-                logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
-                oauth_item = OAuthConsentRequestOutputItem(
-                    id=IdGenerator.new_id("oacr"),
-                    consent_link=consent_error.consent_url,
-                    server_label=consent_error.name,
-                )
-                builder = response_event_stream.add_output_item(oauth_item.id)
-                yield builder.emit_added(oauth_item)
-                yield builder.emit_done(oauth_item)
-        elif response_messages is not None:
-            async for item in _to_outputs_for_messages(
-                response_event_stream,
-                response_messages,
-                approval_storage=approval_storage,
-            ):
-                yield item
-        elif tracker is not None:
-            for event in tracker.close():
+        elif save_failure is not None:
+            for event in self._emit_failure(response_event_stream, tracker, save_failure):
                 yield event
-
-        yield response_event_stream.emit_completed()
+        else:
+            yield response_event_stream.emit_completed()
 
     async def _handle_inner_workflow(
         self,
@@ -742,7 +489,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         context: ResponseContext,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response for a workflow agent."""
-        response_event_stream = ResponseEventStream(response_id=context.response_id, model=request.model)
+        response_event_stream = ResponseEventStream(response_id=context.response_id)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
@@ -751,23 +498,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker: _OutputItemTracker | None = None
 
         try:
-            approval_storage = self._approval_storage_for_request()
+            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
-            is_streaming_request = request.stream is not None and request.stream is True
 
             _, are_options_set = _to_chat_options(request)
             if are_options_set:
                 logger.warning("Workflow agent doesn't support runtime options. They will be ignored.")
 
-            if request.previous_response_id is not None and context.conversation_id is not None:
+            if request.get("previous_response_id") is not None and context.conversation_id is not None:
                 raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
-            context_id = request.previous_response_id or context.conversation_id
+            context_id = request.get("previous_response_id") or context.conversation_id
 
-            # The following should never happen due to the checks above.
-            # This is for type safety and defensive programming.
-            if self._checkpoint_storage_path is None:
-                raise RuntimeError("Checkpoint storage path is not configured for workflow agent.")
             if not isinstance(self._agent, WorkflowAgent):
                 raise RuntimeError("Agent is not a workflow agent.")
 
@@ -775,15 +517,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # but call _ensure_agent_ready for symmetry with the regular path so
             # any future async resources owned by the workflow are entered here.
             await self._ensure_agent_ready()
-
-            # Per-user checkpoint isolation for multi-tenant hosting (container
-            # protocol v2): the request-scoped ``x-agent-user-id`` value scopes
-            # every checkpoint directory for this turn,
-            # so one tenant can never restore or observe another tenant's workflow
-            # state -- even with a guessed or forged context id. The key is stable
-            # per user across turns, so multi-turn continuity is preserved. Absent
-            # (``None``)/empty in local development or protocol v1, where the
-            # unscoped single-tenant layout is used.
 
             # Determine the latest checkpoint (if any) so we can resume the
             # workflow's prior state for this turn. The directory is keyed by
@@ -795,14 +528,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # on every turn we restore the latest checkpoint and feed the new
             # input back into the start executor as a continuation rather than
             # a fresh run.
-            user_id = get_request_context().user_id
             latest_checkpoint_id: str | None = None
-            restore_storage: FileCheckpointStorage | None = None
+            restore_storage: CheckpointStorage | None = None
             if context_id is not None:
-                restore_storage = _checkpoint_storage_for_context(
-                    self._checkpoint_storage_path,
-                    context_id,
-                    user_id=user_id,
+                validate_path_segment(context_id, kind="context id")
+                restore_storage = self._checkpoint_storage_provider.get_store(
+                    config=self.config,
+                    context_id=context_id,
                 )
                 latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
                 if latest_checkpoint is not None:
@@ -817,10 +549,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # supplied, restore_storage points at the *prior* response's
             # directory and write_storage points at the *current* response's.
             write_context_id = context.conversation_id or context.response_id
-            write_storage = _checkpoint_storage_for_context(
-                self._checkpoint_storage_path,
-                write_context_id,
-                user_id=user_id,
+            validate_path_segment(write_context_id, kind="context id")
+            write_storage = self._checkpoint_storage_provider.get_store(
+                config=self.config,
+                context_id=write_context_id,
             )
 
             # Multi-turn pattern: when we have a prior checkpoint, restore it
@@ -840,38 +572,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # items (carried as FunctionResult/FunctionApprovalResponse content)
             # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
             if latest_checkpoint_id is not None:
-                if is_streaming_request:
-                    async for _ in self._agent.run(
-                        stream=True,
-                        checkpoint_id=latest_checkpoint_id,
-                        checkpoint_storage=restore_storage,
-                    ):
-                        pass
-                else:
-                    await self._agent.run(
-                        stream=False,
-                        checkpoint_id=latest_checkpoint_id,
-                        checkpoint_storage=restore_storage,
-                    )
-
-            if not is_streaming_request:
-                # Run the agent in non-streaming mode with the new user input.
-                response = await self._agent.run(
-                    input_messages,
-                    stream=False,
-                    checkpoint_storage=write_storage,
-                )
-
-                async for item in _to_outputs_for_messages(
-                    response_event_stream,
-                    response.messages,
-                    approval_storage=approval_storage,
+                async for _ in self._agent.run(
+                    stream=True,
+                    checkpoint_id=latest_checkpoint_id,
+                    checkpoint_storage=restore_storage,
                 ):
-                    yield item
-
-                await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
-                yield response_event_stream.emit_completed()
-                return
+                    pass
 
             tracker = _OutputItemTracker(response_event_stream)
 
@@ -903,7 +609,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield event
 
     @staticmethod
-    async def _delete_not_latest_checkpoints(checkpoint_storage: FileCheckpointStorage, workflow_name: str) -> None:
+    async def _delete_not_latest_checkpoints(checkpoint_storage: CheckpointStorage, workflow_name: str) -> None:
         """Delete all checkpoints except the latest one.
 
         We only need the last checkpoint for each invocation.
@@ -1153,17 +859,17 @@ def _to_chat_options(request: CreateResponse) -> tuple[ChatOptions, bool]:
     chat_options = ChatOptions()
     are_options_set = False
 
-    if request.temperature is not None:
-        chat_options["temperature"] = request.temperature
+    if (temperature := request.get("temperature")) is not None:
+        chat_options["temperature"] = temperature
         are_options_set = True
-    if request.top_p is not None:
-        chat_options["top_p"] = request.top_p
+    if (top_p := request.get("top_p")) is not None:
+        chat_options["top_p"] = top_p
         are_options_set = True
-    if request.max_output_tokens is not None:
-        chat_options["max_tokens"] = request.max_output_tokens
+    if (max_output_tokens := request.get("max_output_tokens")) is not None:
+        chat_options["max_tokens"] = max_output_tokens
         are_options_set = True
-    if request.parallel_tool_calls is not None:
-        chat_options["allow_multiple_tool_calls"] = request.parallel_tool_calls
+    if (parallel_tool_calls := request.get("parallel_tool_calls")) is not None:
+        chat_options["allow_multiple_tool_calls"] = parallel_tool_calls
         are_options_set = True
 
     return chat_options, are_options_set
@@ -1176,7 +882,7 @@ def _to_chat_options(request: CreateResponse) -> tuple[ChatOptions, bool]:
 
 
 async def _items_to_messages(
-    input_items: Sequence[Item], *, approval_storage: ApprovalStorage | None = None
+    input_items: Sequence[Item], *, approval_storage: FunctionApprovalStore | None = None
 ) -> list[Message]:
     """Converts a sequence of input items to a list of Messages, one per item.
 
@@ -1196,20 +902,20 @@ async def _items_to_messages(
 
 def _reasoning_item_to_contents(reasoning: ItemReasoningItem | OutputItemReasoningItem) -> list[Content]:
     """Convert a hosted reasoning item without losing its stateless replay metadata."""
-    encrypted_content = getattr(reasoning, "encrypted_content", None)
-    if reasoning.summary:
+    encrypted_content = reasoning.get("encrypted_content")
+    if summary_parts := reasoning.get("summary"):
         return [
             Content.from_text_reasoning(
-                id=reasoning.id,
-                text=summary.text,
+                id=reasoning["id"],
+                text=summary["text"],
                 protected_data=encrypted_content if index == 0 else None,
             )
-            for index, summary in enumerate(reasoning.summary)
+            for index, summary in enumerate(summary_parts)
         ]
-    return [Content.from_text_reasoning(id=reasoning.id, protected_data=encrypted_content)]
+    return [Content.from_text_reasoning(id=reasoning["id"], protected_data=encrypted_content)]
 
 
-async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | None = None) -> Message:
+async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStore | None = None) -> Message:
     """Converts an Item to a Message.
 
     Args:
@@ -1223,64 +929,55 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
     Raises:
         ValueError: If the Item type is not supported.
     """
-    if item.type == "message":
-        msg = cast(ItemMessage, item)
-        if isinstance(msg.content, str):
-            return Message(role=msg.role, contents=[Content.from_text(msg.content)])
-        return Message(role=msg.role, contents=[_convert_message_content(part) for part in msg.content])
+    if item["type"] == "message":
+        if isinstance(item["content"], str):
+            return Message(role=item["role"], contents=[Content.from_text(item["content"])])
+        return Message(role=item["role"], contents=[_convert_message_content(part) for part in item["content"]])
 
-    if item.type == "output_message":
-        output_msg = cast(ItemOutputMessage, item)
-        return Message(
-            role=output_msg.role, contents=[_convert_output_message_content(part) for part in output_msg.content]
-        )
+    if item["type"] == "output_message":
+        return Message(role=item["role"], contents=[_convert_output_message_content(part) for part in item["content"]])
 
-    if item.type == "function_call":
-        fc = cast(ItemFunctionToolCall, item)
+    if item["type"] == "function_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
-                    fc.call_id,
-                    fc.name,
-                    arguments=fc.arguments,
+                    item["call_id"],
+                    item["name"],
+                    arguments=item["arguments"],
                 )
             ],
         )
 
-    if item.type == "function_call_output":
-        fco = cast(FunctionCallOutputItemParam, item)
-        output = fco.output if isinstance(fco.output, str) else str(fco.output)
+    if item["type"] == "function_call_output":
+        output = item["output"] if isinstance(item["output"], str) else str(item["output"])
         return Message(
             role="tool",
-            contents=[Content.from_function_result(fco.call_id, result=output)],
+            contents=[Content.from_function_result(item["call_id"], result=output)],
         )
 
-    if item.type == "reasoning":
-        reasoning = cast(ItemReasoningItem, item)
-        return Message(role="assistant", contents=_reasoning_item_to_contents(reasoning))
+    if item["type"] == "reasoning":
+        return Message(role="assistant", contents=_reasoning_item_to_contents(item))
 
-    if item.type == "mcp_call":
-        mcp = cast(ItemMcpToolCall, item)
+    if item["type"] == "mcp_call":
         contents = [
             Content.from_mcp_server_tool_call(
-                mcp.id,
-                mcp.name,
-                server_name=mcp.server_label,
-                arguments=mcp.arguments,
+                item["id"],
+                item["name"],
+                server_name=item["server_label"],
+                arguments=item["arguments"],
             )
         ]
-        if getattr(mcp, "output", None) is not None:
-            contents.append(Content.from_mcp_server_tool_result(call_id=mcp.id, output=mcp.output))
+        if (output := item.get("output")) is not None:
+            contents.append(Content.from_mcp_server_tool_result(call_id=item["id"], output=output))
         return Message(
             role="assistant",
             contents=contents,
         )
 
-    if item.type == "mcp_approval_request":
-        mcp_req = cast(ItemMcpApprovalRequest, item)
+    if item["type"] == "mcp_approval_request":
         if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(mcp_req.id)
+            function_approval_request_content = await approval_storage.load_approval_request(item["id"])
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
         return Message(
@@ -1288,152 +985,139 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
             contents=[function_approval_request_content],
         )
 
-    if item.type == "mcp_approval_response":
-        mcp_resp = cast(MCPApprovalResponse, item)
+    if item["type"] == "mcp_approval_response":
         if approval_storage is not None:
             function_approval_request_content = await approval_storage.load_approval_request(
-                mcp_resp.approval_request_id
+                item["approval_request_id"]
             )
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
         return Message(
             role="user",
-            contents=[function_approval_request_content.to_function_approval_response(mcp_resp.approve)],
+            contents=[function_approval_request_content.to_function_approval_response(item["approve"])],
         )
 
-    if item.type == "code_interpreter_call":
-        ci = cast(ItemCodeInterpreterToolCall, item)
+    if item["type"] == "code_interpreter_call":
         return Message(
             role="assistant",
-            contents=[Content.from_code_interpreter_tool_call(call_id=ci.id)],
+            contents=[Content.from_code_interpreter_tool_call(call_id=item["id"])],
         )
 
-    if item.type == "image_generation_call":
-        ig = cast(ItemImageGenToolCall, item)
+    if item["type"] == "image_generation_call":
         return Message(
             role="assistant",
-            contents=[Content.from_image_generation_tool_call(image_id=ig.id)],
+            contents=[Content.from_image_generation_tool_call(image_id=item["id"])],
         )
 
-    if item.type == "shell_call":
-        sc = cast(FunctionShellCallItemParam, item)
+    if item["type"] == "shell_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_shell_tool_call(
-                    call_id=sc.call_id,
-                    commands=sc.action.commands,
-                    status=str(sc.status),
+                    call_id=item["call_id"],
+                    commands=item["action"]["commands"],
+                    status=str(item.get("status")),
                 )
             ],
         )
 
-    if item.type == "shell_call_output":
-        sco = cast(FunctionShellCallOutputItemParam, item)
+    if item["type"] == "shell_call_output":
         outputs = [
             Content.from_shell_command_output(
-                stdout=out.stdout or "",
-                stderr=out.stderr or "",
-                exit_code=getattr(out.outcome, "exit_code", None) if hasattr(out, "outcome") else None,
+                stdout=out["stdout"] or "",
+                stderr=out["stderr"] or "",
+                exit_code=out["outcome"].get("exit_code"),
             )
-            for out in (sco.output or [])
+            for out in (item["output"] or [])
         ]
         return Message(
             role="tool",
             contents=[
                 Content.from_shell_tool_result(
-                    call_id=sco.call_id,
+                    call_id=item["call_id"],
                     outputs=outputs,
-                    max_output_length=sco.max_output_length,
+                    max_output_length=item.get("max_output_length"),
                 )
             ],
         )
 
-    if item.type == "local_shell_call":
-        lsc = cast(ItemLocalShellToolCall, item)
-        commands = lsc.action.command if hasattr(lsc.action, "command") and lsc.action.command else []
+    if item["type"] == "local_shell_call":
+        commands = item["action"].get("command") or []
         return Message(
             role="assistant",
             contents=[
                 Content.from_shell_tool_call(
-                    call_id=lsc.call_id,
+                    call_id=item["call_id"],
                     commands=commands,
-                    status=str(lsc.status),
+                    status=str(item["status"]),
                 )
             ],
         )
 
-    if item.type == "local_shell_call_output":
-        lsco = cast(ItemLocalShellToolCallOutput, item)
+    if item["type"] == "local_shell_call_output":
         return Message(
             role="tool",
             contents=[
                 Content.from_shell_tool_result(
-                    call_id=lsco.id,
-                    outputs=[Content.from_shell_command_output(stdout=lsco.output)],
+                    call_id=item["id"],
+                    outputs=[Content.from_shell_command_output(stdout=item["output"])],
                 )
             ],
         )
 
-    if item.type == "file_search_call":
-        fs = cast(ItemFileSearchToolCall, item)
+    if item["type"] == "file_search_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
-                    fs.id,
+                    item["id"],
                     "file_search",
-                    arguments=json.dumps({"queries": fs.queries}),
+                    arguments=json.dumps({"queries": item["queries"]}),
                     informational_only=True,
                 )
             ],
         )
 
-    if item.type == "web_search_call":
-        ws = cast(ItemWebSearchToolCall, item)
+    if item["type"] == "web_search_call":
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search", informational_only=True)],
+            contents=[Content.from_function_call(item["id"], "web_search", informational_only=True)],
         )
 
-    if item.type == "computer_call":
-        cc = cast(ItemComputerToolCall, item)
+    if item["type"] == "computer_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
-                    cc.call_id,
+                    item["call_id"],
                     "computer_use",
-                    arguments=str(cc.action),
+                    arguments=str(item.get("action")),
                     informational_only=True,
                 )
             ],
         )
 
-    if item.type == "computer_call_output":
-        cco = cast(ComputerCallOutputItemParam, item)
+    if item["type"] == "computer_call_output":
         return Message(
             role="tool",
-            contents=[Content.from_function_result(cco.call_id, result=str(cco.output))],
+            contents=[Content.from_function_result(item["call_id"], result=str(item["output"]))],
         )
 
-    if item.type == "custom_tool_call":
-        ct = cast(ItemCustomToolCall, item)
+    if item["type"] == "custom_tool_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
-                    ct.call_id,
-                    ct.name,
-                    arguments=ct.input,
+                    item["call_id"],
+                    item["name"],
+                    arguments=item["input"],
                     informational_only=True,
                 )
             ],
         )
 
-    if item.type == "custom_tool_call_output":
-        cto = cast(ItemCustomToolCallOutput, item)
-        output = cto.output if isinstance(cto.output, str) else str(cto.output)
+    if item["type"] == "custom_tool_call_output":
+        output = item["output"] if isinstance(item["output"], str) else str(item["output"])
         # Hosted-MCP results land here because the host writes them via
         # `aoutput_item_custom_tool_call_output` (see `_to_outputs` for
         # `mcp_server_tool_result`). The persisted `call_id` keeps its
@@ -1441,44 +1125,42 @@ async def _item_to_message(item: Item, *, approval_storage: ApprovalStorage | No
         # Content so the chat-client serialize layer can coalesce them
         # onto a single `mcp_call` input item with `output` populated.
         # Issue #5546.
-        if cto.call_id and cto.call_id.startswith("mcp_"):
+        if item["call_id"] and item["call_id"].startswith("mcp_"):
             return Message(
                 role="tool",
-                contents=[Content.from_mcp_server_tool_result(call_id=cto.call_id, output=output)],
+                contents=[Content.from_mcp_server_tool_result(call_id=item["call_id"], output=output)],
             )
         return Message(
             role="tool",
-            contents=[Content.from_function_result(cto.call_id, result=output)],
+            contents=[Content.from_function_result(item["call_id"], result=output)],
         )
 
-    if item.type == "apply_patch_call":
-        ap = cast(ApplyPatchToolCallItemParam, item)
+    if item["type"] == "apply_patch_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
-                    ap.call_id,
+                    item["call_id"],
                     "apply_patch",
-                    arguments=str(ap.operation),
+                    arguments=str(item["operation"]),
                     informational_only=True,
                 )
             ],
         )
 
-    if item.type == "apply_patch_call_output":
-        apo = cast(ApplyPatchToolCallOutputItemParam, item)
+    if item["type"] == "apply_patch_call_output":
         return Message(
             role="tool",
-            contents=[Content.from_function_result(apo.call_id, result=apo.output or "")],
+            contents=[Content.from_function_result(item["call_id"], result=item.get("output") or "")],
         )
 
-    raise ValueError(f"Unsupported Item type: {item.type}")
+    raise ValueError(f"Unsupported Item type: {item['type']}")
 
 
 async def _output_items_to_messages(
     history: Sequence[OutputItem],
     *,
-    approval_storage: ApprovalStorage | None = None,
+    approval_storage: FunctionApprovalStore | None = None,
 ) -> list[Message]:
     """Converts a sequence of OutputItem objects to a list of Message objects.
 
@@ -1496,7 +1178,9 @@ async def _output_items_to_messages(
     return messages
 
 
-async def _output_item_to_message(item: OutputItem, *, approval_storage: ApprovalStorage | None = None) -> Message:
+async def _output_item_to_message(
+    item: OutputItem, *, approval_storage: FunctionApprovalStore | None = None
+) -> Message:
     """Converts an OutputItem to a Message.
 
     Args:
@@ -1510,62 +1194,53 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
     Raises:
         ValueError: If the OutputItem type is not supported.
     """
-    if item.type == "output_message":
-        output_msg = cast(OutputItemOutputMessage, item)
-        return Message(
-            role=output_msg.role, contents=[_convert_output_message_content(part) for part in output_msg.content]
-        )
+    if item["type"] == "output_message":
+        return Message(role=item["role"], contents=[_convert_output_message_content(part) for part in item["content"]])
 
-    if item.type == "message":
-        msg = cast(OutputItemMessage, item)
-        return Message(role=msg.role, contents=[_convert_message_content(part) for part in msg.content])
+    if item["type"] == "message":
+        return Message(role=item["role"], contents=[_convert_message_content(part) for part in item["content"]])
 
-    if item.type == "function_call":
-        fc = cast(OutputItemFunctionToolCall, item)
+    if item["type"] == "function_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
-                    fc.call_id,
-                    fc.name,
-                    arguments=fc.arguments,
+                    item["call_id"],
+                    item["name"],
+                    arguments=item["arguments"],
                 )
             ],
         )
 
-    if item.type == "function_call_output":
-        fco = cast(FunctionCallOutputItemParam, item)
-        output = fco.output if isinstance(fco.output, str) else str(fco.output)
+    if item["type"] == "function_call_output":
+        output = item["output"] if isinstance(item["output"], str) else str(item["output"])
         return Message(
             role="tool",
-            contents=[Content.from_function_result(fco.call_id, result=output)],
+            contents=[Content.from_function_result(item["call_id"], result=output)],
         )
 
-    if item.type == "reasoning":
-        reasoning = cast(OutputItemReasoningItem, item)
-        return Message(role="assistant", contents=_reasoning_item_to_contents(reasoning))
+    if item["type"] == "reasoning":
+        return Message(role="assistant", contents=_reasoning_item_to_contents(item))
 
-    if item.type == "mcp_call":
-        mcp = cast(OutputItemMcpToolCall, item)
+    if item["type"] == "mcp_call":
         contents = [
             Content.from_mcp_server_tool_call(
-                mcp.id,
-                mcp.name,
-                server_name=mcp.server_label,
-                arguments=mcp.arguments,
+                item["id"],
+                item["name"],
+                server_name=item["server_label"],
+                arguments=item["arguments"],
             )
         ]
-        if getattr(mcp, "output", None) is not None:
-            contents.append(Content.from_mcp_server_tool_result(call_id=mcp.id, output=mcp.output))
+        if (output := item.get("output")) is not None:
+            contents.append(Content.from_mcp_server_tool_result(call_id=item["id"], output=output))
         return Message(
             role="assistant",
             contents=contents,
         )
 
-    if item.type == "mcp_approval_request":
-        mcp_req = cast(OutputItemMcpApprovalRequest, item)
+    if item["type"] == "mcp_approval_request":
         if approval_storage is not None:
-            function_approval_request_content = await approval_storage.load_approval_request(mcp_req.id)
+            function_approval_request_content = await approval_storage.load_approval_request(item["id"])
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
         return Message(
@@ -1573,202 +1248,185 @@ async def _output_item_to_message(item: OutputItem, *, approval_storage: Approva
             contents=[function_approval_request_content],
         )
 
-    if item.type == "mcp_approval_response":
-        mcp_resp = cast(OutputItemMcpApprovalResponseResource, item)
+    if item["type"] == "mcp_approval_response":
         if approval_storage is not None:
             function_approval_request_content = await approval_storage.load_approval_request(
-                mcp_resp.approval_request_id
+                item["approval_request_id"]
             )
         else:
             raise ValueError("ApprovalStorage is required to load approval request.")
 
         return Message(
             role="user",
-            contents=[function_approval_request_content.to_function_approval_response(mcp_resp.approve)],
+            contents=[function_approval_request_content.to_function_approval_response(item["approve"])],
         )
 
-    if item.type == "code_interpreter_call":
-        ci = cast(OutputItemCodeInterpreterToolCall, item)
+    if item["type"] == "code_interpreter_call":
         return Message(
             role="assistant",
-            contents=[Content.from_code_interpreter_tool_call(call_id=ci.id)],
+            contents=[Content.from_code_interpreter_tool_call(call_id=item["id"])],
         )
 
-    if item.type == "image_generation_call":
-        ig = cast(OutputItemImageGenToolCall, item)
+    if item["type"] == "image_generation_call":
         return Message(
             role="assistant",
-            contents=[Content.from_image_generation_tool_call(image_id=ig.id)],
+            contents=[Content.from_image_generation_tool_call(image_id=item["id"])],
         )
 
-    if item.type == "shell_call":
-        sc = cast(OutputItemFunctionShellCall, item)
+    if item["type"] == "shell_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_shell_tool_call(
-                    call_id=sc.call_id,
-                    commands=sc.action.commands,
-                    status=str(sc.status),
+                    call_id=item["call_id"],
+                    commands=item["action"]["commands"],
+                    status=str(item.get("status")),
                 )
             ],
         )
 
-    if item.type == "shell_call_output":
-        sco = cast(OutputItemFunctionShellCallOutput, item)
+    if item["type"] == "shell_call_output":
         outputs = [
             Content.from_shell_command_output(
-                stdout=out.stdout or "",
-                stderr=out.stderr or "",
-                exit_code=getattr(out.outcome, "exit_code", None) if hasattr(out, "outcome") else None,
+                stdout=out["stdout"] or "",
+                stderr=out["stderr"] or "",
+                exit_code=out["outcome"].get("exit_code"),
             )
-            for out in (sco.output or [])
+            for out in (item.get("output") or [])
         ]
         return Message(
             role="tool",
             contents=[
                 Content.from_shell_tool_result(
-                    call_id=sco.call_id,
+                    call_id=item["call_id"],
                     outputs=outputs,
-                    max_output_length=sco.max_output_length,
+                    max_output_length=item.get("max_output_length"),
                 )
             ],
         )
 
-    if item.type == "local_shell_call":
-        lsc = cast(OutputItemLocalShellToolCall, item)
-        commands = lsc.action.command if hasattr(lsc.action, "command") and lsc.action.command else []
+    if item["type"] == "local_shell_call":
+        commands = item["action"].get("command") or []
         return Message(
             role="assistant",
             contents=[
                 Content.from_shell_tool_call(
-                    call_id=lsc.call_id,
+                    call_id=item["call_id"],
                     commands=commands,
-                    status=str(lsc.status),
+                    status=str(item["status"]),
                 )
             ],
         )
 
-    if item.type == "local_shell_call_output":
-        lsco = cast(OutputItemLocalShellToolCallOutput, item)
+    if item["type"] == "local_shell_call_output":
         return Message(
             role="tool",
             contents=[
                 Content.from_shell_tool_result(
-                    call_id=lsco.id,
-                    outputs=[Content.from_shell_command_output(stdout=lsco.output)],
+                    call_id=item["id"],
+                    outputs=[Content.from_shell_command_output(stdout=item["output"])],
                 )
             ],
         )
 
-    if item.type == "file_search_call":
-        fs = cast(OutputItemFileSearchToolCall, item)
+    if item["type"] == "file_search_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
-                    fs.id,
+                    item["id"],
                     "file_search",
-                    arguments=json.dumps({"queries": fs.queries}),
+                    arguments=json.dumps({"queries": item["queries"]}),
                     informational_only=True,
                 )
             ],
         )
 
-    if item.type == "web_search_call":
-        ws = cast(OutputItemWebSearchToolCall, item)
+    if item["type"] == "web_search_call":
         return Message(
             role="assistant",
-            contents=[Content.from_function_call(ws.id, "web_search", informational_only=True)],
+            contents=[Content.from_function_call(item["id"], "web_search", informational_only=True)],
         )
 
-    if item.type == "computer_call":
-        cc = cast(OutputItemComputerToolCall, item)
+    if item["type"] == "computer_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
-                    cc.call_id,
+                    item["call_id"],
                     "computer_use",
-                    arguments=str(cc.action),
+                    arguments=str(item.get("action")),
                     informational_only=True,
                 )
             ],
         )
 
-    if item.type == "computer_call_output":
-        cco = cast(OutputItemComputerToolCallOutputResource, item)
+    if item["type"] == "computer_call_output":
         return Message(
             role="tool",
-            contents=[Content.from_function_result(cco.call_id, result=str(cco.output))],
+            contents=[Content.from_function_result(item["call_id"], result=str(item["output"]))],
         )
 
-    if item.type == "custom_tool_call":
-        ct = cast(OutputItemCustomToolCall, item)
+    if item["type"] == "custom_tool_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
-                    ct.call_id,
-                    ct.name,
-                    arguments=ct.input,
+                    item["call_id"],
+                    item["name"],
+                    arguments=item["input"],
                     informational_only=True,
                 )
             ],
         )
 
-    if item.type == "custom_tool_call_output":
-        cto = cast(OutputItemCustomToolCallOutput, item)
-        output = cto.output if isinstance(cto.output, str) else str(cto.output)
+    if item["type"] == "custom_tool_call_output":
+        output = item["output"] if isinstance(item["output"], str) else str(item["output"])
         # Hosted-MCP results land here because the host writes them via
         # `aoutput_item_custom_tool_call_output`. Route `mcp_*` call_ids
         # back to a hosted-MCP result Content so the chat-client serialize
         # layer can coalesce onto the matching `mcp_call` input item.
         # Issue #5546.
-        if cto.call_id and cto.call_id.startswith("mcp_"):
+        if item["call_id"] and item["call_id"].startswith("mcp_"):
             return Message(
                 role="tool",
-                contents=[Content.from_mcp_server_tool_result(call_id=cto.call_id, output=output)],
+                contents=[Content.from_mcp_server_tool_result(call_id=item["call_id"], output=output)],
             )
         return Message(
             role="tool",
-            contents=[Content.from_function_result(cto.call_id, result=output)],
+            contents=[Content.from_function_result(item["call_id"], result=output)],
         )
 
-    if item.type == "apply_patch_call":
-        ap = cast(OutputItemApplyPatchToolCall, item)
+    if item["type"] == "apply_patch_call":
         return Message(
             role="assistant",
             contents=[
                 Content.from_function_call(
-                    ap.call_id,
+                    item["call_id"],
                     "apply_patch",
-                    arguments=str(ap.operation),
+                    arguments=str(item["operation"]),
                     informational_only=True,
                 )
             ],
         )
 
-    if item.type == "apply_patch_call_output":
-        apo = cast(OutputItemApplyPatchToolCallOutput, item)
+    if item["type"] == "apply_patch_call_output":
         return Message(
             role="tool",
-            contents=[Content.from_function_result(apo.call_id, result=apo.output or "")],
+            contents=[Content.from_function_result(item["call_id"], result=item.get("output") or "")],
         )
 
-    if item.type == "oauth_consent_request":
-        oauth = cast(OAuthConsentRequestOutputItem, item)
+    if item["type"] == "oauth_consent_request":
         return Message(
             role="assistant",
-            contents=[Content.from_oauth_consent_request(oauth.consent_link)],
+            contents=[Content.from_oauth_consent_request(item["consent_link"])],
         )
 
-    if item.type == "structured_outputs":
-        so = cast(StructuredOutputsOutputItem, item)
-        text = json.dumps(so.output) if not isinstance(so.output, str) else so.output
+    if item["type"] == "structured_outputs":
+        text = json.dumps(item["output"]) if not isinstance(item["output"], str) else item["output"]
         return Message(role="assistant", contents=[Content.from_text(text)])
 
-    raise ValueError(f"Unsupported OutputItem type: {item.type}")
+    raise ValueError(f"Unsupported OutputItem type: {item['type']}")
 
 
 def _convert_output_message_content(content: OutputMessageContent) -> Content:
@@ -1783,14 +1441,14 @@ def _convert_output_message_content(content: OutputMessageContent) -> Content:
     Raises:
         ValueError: If the OutputMessageContent type is not supported.
     """
-    if content.type == "output_text":
-        text_content = cast(OutputMessageContentOutputTextContent, content)
-        return Content.from_text(text_content.text)
-    if content.type == "refusal":
-        refusal_content = cast(OutputMessageContentRefusalContent, content)
-        return Content.from_text(refusal_content.refusal)
+    if content["type"] == "output_text":
+        return Content.from_text(content["text"])
+    if content["type"] == "refusal":
+        return Content.from_text(content["refusal"])
 
-    raise ValueError(f"Unsupported OutputMessageContent type: {content.type}")
+    # Defensive: `OutputMessageContent` currently only supports `output_text` and `refusal`,
+    # but if new types are added in the future, this will catch them.
+    raise ValueError(f"Unsupported OutputMessageContent type: {content['type']}")
 
 
 def _convert_file_data(data_uri: str, filename: str | None = None) -> Content:
@@ -1830,45 +1488,39 @@ def _convert_message_content(content: MessageContent) -> Content:
     Raises:
         ValueError: If the MessageContent type is not supported.
     """
-    if content.type == "input_text":
-        input_text = cast(MessageContentInputTextContent, content)
-        return Content.from_text(input_text.text)
-    if content.type == "output_text":
-        output_text = cast(MessageContentOutputTextContent, content)
-        return Content.from_text(output_text.text)
-    if content.type == "text":
-        text = cast(TextContent, content)
-        return Content.from_text(text.text)
-    if content.type == "summary_text":
-        summary = cast(SummaryTextContent, content)
-        return Content.from_text(summary.text)
-    if content.type == "refusal":
-        refusal = cast(MessageContentRefusalContent, content)
-        return Content.from_text(refusal.refusal)
-    if content.type == "reasoning_text":
-        reasoning = cast(MessageContentReasoningTextContent, content)
-        return Content.from_text_reasoning(text=reasoning.text)
-    if content.type == "input_image":
-        image = cast(MessageContentInputImageContent, content)
-        if image.image_url:
-            if image.image_url.startswith("data:"):
-                return Content.from_uri(image.image_url)
-            return Content.from_uri(image.image_url, media_type="image/*")
-        if image.file_id:
-            return Content.from_hosted_file(image.file_id)
-    if content.type == "input_file":
-        file = cast(MessageContentInputFileContent, content)
-        if file.file_url:
-            return Content.from_uri(file.file_url)
-        if file.file_id:
-            return Content.from_hosted_file(file.file_id, name=file.filename)
-        if file.file_data:
-            return _convert_file_data(file.file_data, file.filename)
-    if content.type == "computer_screenshot":
-        screenshot = cast(ComputerScreenshotContent, content)
-        return Content.from_uri(screenshot.image_url)
+    if content["type"] == "input_text":
+        return Content.from_text(content["text"])
+    if content["type"] == "output_text":
+        return Content.from_text(content["text"])
+    if content["type"] == "text":
+        return Content.from_text(content["text"])
+    if content["type"] == "summary_text":
+        return Content.from_text(content["text"])
+    if content["type"] == "refusal":
+        return Content.from_text(content["refusal"])
+    if content["type"] == "reasoning_text":
+        return Content.from_text_reasoning(text=content["text"])
+    if content["type"] == "input_image":
+        if image_url := content.get("image_url"):
+            if image_url.startswith("data:"):
+                return Content.from_uri(image_url)
+            return Content.from_uri(image_url, media_type="image/*")
+        if file_id := content.get("file_id"):
+            return Content.from_hosted_file(file_id)
+    if content["type"] == "input_file":
+        if file_url := content.get("file_url"):
+            return Content.from_uri(file_url)
+        if file_id := content.get("file_id"):
+            return Content.from_hosted_file(file_id, name=content.get("filename"))
+        if file_data := content.get("file_data"):
+            return _convert_file_data(file_data, content.get("filename"))
+    if content["type"] == "computer_screenshot":
+        if image_url := content.get("image_url"):
+            return Content.from_uri(image_url)
+        if file_id := content.get("file_id"):
+            return Content.from_hosted_file(file_id, name=content.get("filename"))
 
-    raise ValueError(f"Unsupported MessageContent type: {content.type}")
+    raise ValueError(f"Unsupported MessageContent type: {content['type']}")
 
 
 # endregion
@@ -1967,7 +1619,7 @@ async def _to_outputs(
     stream: ResponseEventStream,
     content: Content,
     *,
-    approval_storage: ApprovalStorage | None = None,
+    approval_storage: FunctionApprovalStore | None = None,
 ) -> AsyncIterator[ResponseStreamEvent]:
     """Converts a Content object to an async sequence of ResponseStreamEvent objects.
 
@@ -1983,26 +1635,26 @@ async def _to_outputs(
         ValueError: If the Content type is not supported.
     """
     if content.type == "text" and content.text is not None:
-        async for event in stream.aoutput_item_message(content.text):
+        async for event in stream.output_item_message(content.text):
             yield event
     elif content.type == "text_reasoning":
         for event in _emit_reasoning_output(stream, [content]):
             yield event
     elif content.type == "function_call":
-        async for event in stream.aoutput_item_function_call(
+        async for event in stream.output_item_function_call(
             content.name,  # type: ignore[arg-type]
             content.call_id,  # type: ignore[arg-type]
             _arguments_to_str(content.arguments),
         ):
             yield event
     elif content.type == "function_result":
-        async for event in stream.aoutput_item_function_call_output(
+        async for event in stream.output_item_function_call_output(
             content.call_id,  # type: ignore[arg-type]
             str(content.result or ""),
         ):
             yield event
     elif content.type == "image_generation_tool_result" and content.outputs is not None:
-        async for event in stream.aoutput_item_image_gen_call(str(content.outputs)):
+        async for event in stream.output_item_image_gen_call(str(content.outputs)):
             yield event
     elif content.type == "mcp_server_tool_call":
         mcp_call = stream.add_output_item_mcp_call(
@@ -2011,7 +1663,7 @@ async def _to_outputs(
             item_id=content.call_id,
         )
         yield mcp_call.emit_added()
-        async for event in mcp_call.aarguments(_arguments_to_str(content.arguments)):
+        async for event in mcp_call.arguments(_arguments_to_str(content.arguments)):
             yield event
         yield mcp_call.emit_completed()
         yield mcp_call.emit_done()
@@ -2023,14 +1675,14 @@ async def _to_outputs(
             if content.output is not None
             else ""
         )
-        async for event in stream.aoutput_item_custom_tool_call_output(content.call_id or "", output):
+        async for event in stream.output_item_custom_tool_call_output(content.call_id or "", output):
             yield event
     elif content.type == "shell_tool_call":
         action = FunctionShellAction(commands=content.commands or [], timeout_ms=0, max_output_length=0)
-        async for event in stream.aoutput_item_function_shell_call(
+        async for event in stream.output_item_function_shell_call(
             content.call_id or "",
             action,
-            LocalEnvironmentResource(),
+            LocalEnvironmentResource(type="local"),
             status=content.status or "completed",
         ):
             yield event
@@ -2043,10 +1695,13 @@ async def _to_outputs(
                     FunctionShellCallOutputContent(
                         stdout=getattr(out, "stdout", "") or "",
                         stderr=getattr(out, "stderr", "") or "",
-                        outcome=FunctionShellCallOutputExitOutcome(exit_code=exit_code if exit_code is not None else 0),
+                        outcome=FunctionShellCallOutputExitOutcome(
+                            type="exit",
+                            exit_code=exit_code if exit_code is not None else 0,
+                        ),
                     )
                 )
-        async for event in stream.aoutput_item_function_shell_call_output(
+        async for event in stream.output_item_function_shell_call_output(
             content.call_id or "",
             output_items,
             status=content.status or "completed",
@@ -2057,7 +1712,7 @@ async def _to_outputs(
         function_call: Content = content.function_call  # type: ignore
         server_label = function_call.additional_properties.get("server_label", "agent_framework")
         request_saved = False
-        async for event in stream.aoutput_item_mcp_approval_request(
+        async for event in stream.output_item_mcp_approval_request(
             server_label,
             function_call.name,  # type: ignore
             _arguments_to_str(function_call.arguments),
@@ -2067,9 +1722,11 @@ async def _to_outputs(
                 # when the approval request item is added to the stream. Save the
                 # approval request to the approval storage so it can be retrieved later
                 # for round trips where the original approval request needs to be looked up.
-                item = getattr(event, "item", None)
-                if item is not None and getattr(item, "id", None) is not None:
-                    approval_request_id = cast(str, item.id)
+                item = event.get("item") if isinstance(event, Mapping) else getattr(event, "item", None)
+                approval_request_id = (
+                    cast(Mapping[str, Any], item).get("id") if isinstance(item, Mapping) else getattr(item, "id", None)
+                )
+                if isinstance(approval_request_id, str):
                     await approval_storage.save_approval_request(approval_request_id, content)
                     request_saved = True
             yield event
@@ -2104,88 +1761,6 @@ def _stringify_mcp_output(output: Any) -> str:
             parts.append(_stringify_mcp_output(entry))
         return "".join(parts)
     return str(output)
-
-
-def _emit_completed_mcp_call(
-    stream: ResponseEventStream,
-    call_content: Content,
-    *,
-    arguments: str,
-    output: str,
-) -> Generator[ResponseStreamEvent]:
-    """Emit a single completed MCP call item carrying both arguments and output."""
-    mcp_call = stream.add_output_item_mcp_call(
-        server_label=call_content.server_name or "default",
-        name=call_content.tool_name or "",
-        item_id=call_content.call_id,
-    )
-    yield mcp_call.emit_added()
-    yield mcp_call.emit_arguments_done(arguments)
-    yield mcp_call.emit_completed()
-    yield mcp_call.emit_done(output=output)
-
-
-async def _to_outputs_for_messages(
-    stream: ResponseEventStream,
-    messages: Sequence[Message],
-    *,
-    approval_storage: ApprovalStorage | None = None,
-) -> AsyncIterator[ResponseStreamEvent]:
-    """Convert messages to output events with hosted-MCP call/result coalescing.
-
-    Parse once in message/content order and emit either:
-    - a single canonical completed ``mcp_call`` when adjacent hosted MCP
-      call/result content are encountered, or
-    - standard output items for all other content types.
-    """
-    pending_reasoning: list[Content] = []
-    pending_mcp_call: Content | None = None
-
-    for message in messages:
-        for content in message.contents:
-            if pending_reasoning:
-                reasoning_id = pending_reasoning[0].id
-                if content.type == "text_reasoning" and reasoning_id is not None and content.id == reasoning_id:
-                    pending_reasoning.append(content)
-                    continue
-                for event in _emit_reasoning_output(stream, pending_reasoning):
-                    yield event
-                pending_reasoning.clear()
-
-            if pending_mcp_call is not None:
-                if content.type == "mcp_server_tool_result" and content.call_id == pending_mcp_call.call_id:
-                    for event in _emit_completed_mcp_call(
-                        stream,
-                        pending_mcp_call,
-                        arguments=_arguments_to_str(pending_mcp_call.arguments),
-                        output=_stringify_mcp_output(content.output),
-                    ):
-                        yield event
-                    pending_mcp_call = None
-                    continue
-
-                async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):
-                    yield event
-                pending_mcp_call = None
-
-            if content.type == "text_reasoning":
-                pending_reasoning.append(content)
-                continue
-
-            if content.type == "mcp_server_tool_call" and content.call_id:
-                pending_mcp_call = content
-                continue
-
-            async for event in _to_outputs(stream, content, approval_storage=approval_storage):
-                yield event
-
-    if pending_reasoning:
-        for event in _emit_reasoning_output(stream, pending_reasoning):
-            yield event
-
-    if pending_mcp_call is not None:
-        async for event in _to_outputs(stream, pending_mcp_call, approval_storage=approval_storage):
-            yield event
 
 
 # endregion

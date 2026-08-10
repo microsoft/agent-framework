@@ -140,8 +140,8 @@ listed below.
 
 - `agent-framework-core`: `SessionStore` and `FileSessionStore` from
   `agent_framework/_sessions.py`
-- `agent-framework-foundry-hosting`: `FoundrySessionStore` from
-  `agent_framework_foundry_hosting/_session_store.py`
+- `agent-framework-foundry-hosting`: `FoundryAgentSessionStore` from
+  `agent_framework_foundry_hosting/_state_store.py`
 
 #### `TO_PROMPT_AGENT`
 
