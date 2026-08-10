@@ -520,10 +520,6 @@ def run_aggregate_test(project_pattern: str, cov: bool, extra_args: list[str]) -
             return
 
     test_dirs = [relative_path(path) for path in collect_test_dirs(projects)]
-    if project_pattern == "*":
-        script_test_dir = WORKSPACE_ROOT / "scripts" / "tests"
-        if script_test_dir.is_dir():
-            test_dirs.append(relative_path(script_test_dir))
     if not test_dirs:
         print("[yellow]No test directories found for the selected projects, skipping pytest.[/yellow]")
         return
