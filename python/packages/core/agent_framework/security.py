@@ -69,6 +69,8 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _BRACKETED_VAR_REF_RE = re.compile(r"^\[\s*(var_[0-9a-fA-F]+)\s*\]$")
+_FIDES_TURN_NUMBER_KEY = "_fides_turn_number"
+_FIDES_CALL_INDEX_KEY = "_fides_call_index"
 
 # Tools that consume variable IDs literally (as opaque references) and therefore
 # must NOT have ``var_xxx`` arguments expanded to stored content before execution.
@@ -112,7 +114,8 @@ def _fides_session_state(session: Any) -> dict[str, Any]:
     state.setdefault("audit_log", [])
     state.setdefault("pending_policy_approvals", {})
     state.setdefault("turn_counter", 0)
-    state.setdefault("call_counter", 0)
+    state.setdefault("variables", {})
+    state.setdefault("variable_metadata", {})
     return state
 
 
@@ -375,9 +378,9 @@ class ContentVariableStore:
             print(content)  # "potentially malicious content"
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, _storage: dict[str, Any] | None = None) -> None:
         """Initialize an empty ContentVariableStore."""
-        self._storage: dict[str, tuple[Any, ContentLabel]] = {}
+        self._storage = _storage if _storage is not None else {}
 
     def store(self, content: Any, label: ContentLabel) -> str:
         """Store content and return a variable ID.
@@ -390,7 +393,7 @@ class ContentVariableStore:
             A unique variable ID string.
         """
         var_id = f"var_{uuid.uuid4().hex[:16]}"
-        self._storage[var_id] = (content, label)
+        self._storage[var_id] = {"content": content, "label": label.to_dict()}
         logger.info(f"Stored content in variable {var_id} with label {label}")
         return var_id
 
@@ -409,7 +412,23 @@ class ContentVariableStore:
         if var_id not in self._storage:
             raise KeyError(f"Variable {var_id} not found in store")
 
-        content, label = self._storage[var_id]
+        record = self._storage[var_id]
+        legacy_record = cast(list[Any] | tuple[Any, ...], record) if isinstance(record, (list, tuple)) else None
+        if legacy_record is not None and len(legacy_record) == 2:
+            # Compatibility with stores created by an older in-memory implementation.
+            content: Any = legacy_record[0]
+            label_data: Any = legacy_record[1]
+        elif isinstance(record, dict):
+            record_map = cast(dict[str, Any], record)
+            content = record_map["content"]
+            label_data = record_map["label"]
+        else:
+            raise TypeError(f"Variable {var_id} has an invalid stored representation")
+        label = (
+            label_data
+            if isinstance(label_data, ContentLabel)
+            else ContentLabel.from_dict(cast(MutableMapping[str, Any], label_data))
+        )
         logger.info(f"Retrieved content from variable {var_id} with label {label}")
         return content, label
 
@@ -815,12 +834,6 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
 
         # Context labels and variable stores are scoped to the active AgentSession.
         # The fallback stores are retained only for calls made without a session.
-        self._session_stores: weakref.WeakKeyDictionary[Any, ContentVariableStore] = weakref.WeakKeyDictionary()
-        self._session_metadata: weakref.WeakKeyDictionary[Any, dict[str, Any]] = weakref.WeakKeyDictionary()
-        # A stable session_id is the fallback only for custom, non-weak-referenceable
-        # session implementations. AgentSession itself uses the weak-key path.
-        self._session_stores_by_id: dict[str, ContentVariableStore] = {}
-        self._session_metadata_by_id: dict[str, dict[str, Any]] = {}
         self._variable_store = ContentVariableStore()
         self._variable_metadata: dict[str, dict[str, Any]] = {}
 
@@ -860,25 +873,14 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         """Resolve the variable store for a session, with a no-session fallback."""
         if session is None:
             return self._variable_store
-        try:
-            return self._session_stores.setdefault(session, ContentVariableStore())
-        except TypeError:
-            key = getattr(session, "session_id", None)
-            if not key:
-                raise TypeError("Session must be weak-referenceable or expose a stable session_id") from None
-            return self._session_stores_by_id.setdefault(str(key), ContentVariableStore())
+        storage = cast(dict[str, Any], _fides_session_state(session)["variables"])
+        return ContentVariableStore(_storage=storage)
 
     def _resolve_metadata(self, session: Any = None) -> dict[str, dict[str, Any]]:
         """Resolve variable metadata for a session, with a no-session fallback."""
         if session is None:
             return self._variable_metadata
-        try:
-            return self._session_metadata.setdefault(session, {})
-        except TypeError:
-            key = getattr(session, "session_id", None)
-            if not key:
-                raise TypeError("Session must be weak-referenceable or expose a stable session_id") from None
-            return self._session_metadata_by_id.setdefault(str(key), {})
+        return cast(dict[str, dict[str, Any]], _fides_session_state(session)["variable_metadata"])
 
     def get_context_label(self, session: Any = None) -> ContentLabel:
         """Get the current context-level security label.
@@ -1757,6 +1759,15 @@ def _resolve_active_session(session: Any = None) -> Any:
     return session or get_current_session() or _remembered_session(_fides_active_session)
 
 
+class _FidesAuditRunContext:
+    """Mutable audit counters shared by calls in one async run context."""
+
+    def __init__(self, scope: object, turn_number: int) -> None:
+        self.scope = scope
+        self.turn_number = turn_number
+        self.call_index = 0
+
+
 @experimental(feature_id=ExperimentalFeature.FIDES)
 class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
     """Middleware that enforces security policies on tool invocations.
@@ -1831,7 +1842,10 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         self._fallback_audit_log: list[dict[str, Any]] = []
         self._fallback_pending_policy_approvals: dict[str, dict[str, Any]] = {}
         self._fallback_turn_counter = 0
-        self._fallback_call_counter = 0
+        self._fallback_audit_scope = object()
+        self._direct_audit_run: ContextVar[_FidesAuditRunContext | None] = ContextVar(
+            f"_fides_direct_audit_run_{id(self)}", default=None
+        )
 
     @property
     def _pending_policy_approvals(self) -> dict[str, dict[str, Any]]:
@@ -1873,35 +1887,42 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         return cast(dict[str, dict[str, Any]], approvals)
 
     def begin_turn(self, session: Any) -> int:
-        """Advance the durable turn counter once at the start of an agent run."""
+        """Advance the turn counter and bind direct middleware calls to the new turn."""
+        turn = self._advance_turn(session)
+        self._direct_audit_run.set(_FidesAuditRunContext(self._audit_scope(session), turn))
+        return turn
+
+    def _audit_scope(self, session: Any) -> object:
+        state = self._fides_state(session)
+        return state if state is not None else self._fallback_audit_scope
+
+    def _advance_turn(self, session: Any) -> int:
+        """Return the next turn without binding it to the current async context."""
         state = self._fides_state(session)
         if state is None:
             self._fallback_turn_counter += 1
             return self._fallback_turn_counter
         turn = int(state["turn_counter"]) + 1
         state["turn_counter"] = turn
-        state["call_counter"] = 0
         return turn
+
+    def _resolve_direct_audit_run(self, session: Any = None) -> _FidesAuditRunContext:
+        scope = self._audit_scope(session)
+        run = self._direct_audit_run.get(None)
+        if run is None or run.scope is not scope:
+            self.begin_turn(session)
+            run = self._direct_audit_run.get(None)
+        if run is None:  # pragma: no cover - begin_turn always binds a context
+            raise RuntimeError("FIDES audit run context was not initialized")
+        return run
 
     def _resolve_turn_counter(self, session: Any = None) -> int:
-        state = self._fides_state(session)
-        if state is None:
-            self._fallback_turn_counter += 1
-            return self._fallback_turn_counter
-        turn = int(state["turn_counter"])
-        if turn == 0:
-            turn = 1
-            state["turn_counter"] = turn
-        return turn
+        return self._resolve_direct_audit_run(session).turn_number
 
     def _resolve_call_counter(self, session: Any = None) -> int:
-        state = self._fides_state(session)
-        if state is None:
-            self._fallback_call_counter += 1
-            return self._fallback_call_counter
-        call_counter = int(state["call_counter"]) + 1
-        state["call_counter"] = call_counter
-        return call_counter
+        run = self._resolve_direct_audit_run(session)
+        run.call_index += 1
+        return run.call_index
 
     def _get_call_id(self, context: FunctionInvocationContext) -> str:
         """Get the tool call id for this invocation context."""
@@ -2128,7 +2149,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         additional_properties["_fides_violations"] = [v["violation_type"] for v in violations]
         context.result = Content.from_function_approval_request(
             id=call_id,
-            function_call=self.build_function_call_content(context),
+            function_call=self._build_function_call_content(context),
             additional_properties=additional_properties,
         )
         raise MiddlewareTermination("Policy approval required")
@@ -2175,8 +2196,17 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         """
         function_name = context.function.name
         _remember_session(_fides_active_session, context.session)
-        turn_number = self._resolve_turn_counter(context.session) if self.enable_audit_log else None
-        call_index = self._resolve_call_counter(context.session) if self.enable_audit_log else None
+        turn_number: int | None = None
+        call_index: int | None = None
+        if self.enable_audit_log:
+            run_turn = context.metadata.get(_FIDES_TURN_NUMBER_KEY)
+            run_call_index = context.metadata.get(_FIDES_CALL_INDEX_KEY)
+            if type(run_turn) is int and type(run_call_index) is int:
+                turn_number = run_turn
+                call_index = run_call_index
+            else:
+                turn_number = self._resolve_turn_counter(context.session)
+                call_index = self._resolve_call_counter(context.session)
 
         # Get the context label (cumulative security state of the conversation)
         # This is set by LabelTrackingFunctionMiddleware and represents the
@@ -2408,6 +2438,41 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         self._resolve_audit_log(active_session).clear()
 
 
+class _FidesRunContextFunctionMiddleware(FunctionMiddleware):
+    """Bind per-run audit metadata and the configured quarantine client."""
+
+    def __init__(
+        self,
+        *,
+        turn_number: int | None,
+        quarantine_client: SupportsChatGetResponse | None,
+        bind_quarantine_client: bool,
+    ) -> None:
+        self._turn_number = turn_number
+        self._call_index = 0
+        self._quarantine_client = quarantine_client
+        self._bind_quarantine_client = bind_quarantine_client
+
+    async def process(
+        self,
+        context: FunctionInvocationContext,
+        call_next: Callable[[], Awaitable[None]],
+    ) -> None:
+        if self._turn_number is not None:
+            self._call_index += 1
+            context.metadata[_FIDES_TURN_NUMBER_KEY] = self._turn_number
+            context.metadata[_FIDES_CALL_INDEX_KEY] = self._call_index
+
+        quarantine_token = (
+            _quarantine_chat_client.set(self._quarantine_client) if self._bind_quarantine_client else None
+        )
+        try:
+            await call_next()
+        finally:
+            if quarantine_token is not None:
+                _quarantine_chat_client.reset(quarantine_token)
+
+
 @experimental(feature_id=ExperimentalFeature.FIDES)
 class SecureAgentConfig(ContextProvider):
     """Context provider for creating a secure agent with prompt injection defense.
@@ -2421,9 +2486,9 @@ class SecureAgentConfig(ContextProvider):
         auto_hide_untrusted: Whether to automatically hide untrusted content.
 
     Note:
-        Each quarantine client is bound to the async context of the active run in
-        ``before_run``. Concurrent agents therefore resolve their own client without a
-        process-global last-writer-wins race.
+        Each quarantine client is bound and restored around tool execution. Concurrent
+        agents therefore resolve their own client without a process-global
+        last-writer-wins race or leaking it into a later run.
 
     Examples:
         .. code-block:: python
@@ -2495,7 +2560,7 @@ class SecureAgentConfig(ContextProvider):
                 instead of returning placeholder responses. This client should ideally be
                 a separate instance using a cheaper model (e.g., gpt-4o-mini) since it
                 processes untrusted content. It is bound to the current async context
-                when the agent runs.
+                while tools execute.
             source_id: Optional source identifier for context provider attribution.
                 Defaults to "secure_agent".
             max_audit_log_entries: Maximum retained audit records per session. Set to ``None``
@@ -2534,8 +2599,8 @@ class SecureAgentConfig(ContextProvider):
         else:
             self.policy_enforcer = None
 
-        # Store the client on this configuration. It is bound to the current async
-        # context in before_run(), not at construction time.
+        # Store the client on this configuration. It is bound and restored by the
+        # per-run function middleware, not at construction time.
         self._quarantine_chat_client = quarantine_chat_client
 
     async def before_run(
@@ -2562,14 +2627,23 @@ class SecureAgentConfig(ContextProvider):
         if fides_state["context_label"] is None:
             self.label_tracker.reset_context_label(session)
         _remember_session(_fides_active_session, session)
+        turn_number = None
         if self.policy_enforcer is not None and self.policy_enforcer.enable_audit_log:
-            self.policy_enforcer.begin_turn(session)
-        if self.enable_quarantine and self._quarantine_chat_client is not None:
-            set_quarantine_client(self._quarantine_chat_client)
+            turn_number = self.policy_enforcer.begin_turn(session)
 
         context.extend_tools(self.source_id, self.get_tools())
         context.extend_instructions(self.source_id, self.get_instructions())
-        context.extend_middleware(self.source_id, self.get_middleware())
+        middleware = self.get_middleware()
+        if turn_number is not None or self.enable_quarantine:
+            middleware = [
+                _FidesRunContextFunctionMiddleware(
+                    turn_number=turn_number,
+                    quarantine_client=self._quarantine_chat_client,
+                    bind_quarantine_client=self.enable_quarantine,
+                ),
+                *middleware,
+            ]
+        context.extend_middleware(self.source_id, middleware)
 
     def get_tools(self) -> list[FunctionTool]:
         """Get the security tools for agent integration.
@@ -2660,8 +2734,8 @@ class SecureAgentConfig(ContextProvider):
 # Global variable store instance (can be made per-session or injected)
 _global_variable_store = ContentVariableStore()
 
-# Async-context-local quarantine chat client. Each SecureAgentConfig binds its
-# own client in before_run(), so concurrent sessions do not overwrite one another.
+# Async-context-local quarantine chat client. Each SecureAgentConfig binds and
+# restores its own client around tool execution.
 _quarantine_chat_client: ContextVar[Any] = ContextVar("_quarantine_chat_client", default=None)
 
 

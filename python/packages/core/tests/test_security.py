@@ -11,7 +11,13 @@ from typing import Any, cast
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import AgentSession, ExperimentalFeature, FunctionInvocationContext, FunctionMiddleware
+from agent_framework import (
+    AgentSession,
+    ExperimentalFeature,
+    FunctionInvocationContext,
+    FunctionMiddleware,
+    SessionContext,
+)
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
 from agent_framework._tools import (
     FunctionInvocationConfiguration,
@@ -667,7 +673,6 @@ class TestPolicyEnforcementMiddleware:
         initial_count = len(middleware.get_audit_log())
         assert initial_count == 0
 
-    @pytest.mark.asyncio
     async def test_audit_accessors_use_remembered_session(self) -> None:
         tool = FunctionTool(name="get_config", description="test", fn=lambda: "secret")
         middleware = PolicyEnforcementFunctionMiddleware(block_on_violation=True)
@@ -1501,7 +1506,6 @@ class TestPolicyEnforcementMiddleware:
         assert isinstance(replay_context.result, Content)
         assert replay_context.result.type == "function_approval_request"
 
-    @pytest.mark.asyncio
     async def test_policy_block_returns_content_and_audit_is_per_session(self) -> None:
         tool = FunctionTool(name="get_config", description="test", fn=lambda: "secret")
         middleware = PolicyEnforcementFunctionMiddleware(block_on_violation=True)
@@ -1533,7 +1537,6 @@ class TestPolicyEnforcementMiddleware:
         assert [entry["call_index"] for entry in audit] == [1, 2]
         assert middleware.get_audit_log(session_b) == []
 
-    @pytest.mark.asyncio
     async def test_blocked_result_is_visible_through_function_invoker(self) -> None:
         async def get_config() -> str:
             raise AssertionError("blocked tool was executed")
@@ -1589,7 +1592,6 @@ class TestPolicyEnforcementMiddleware:
         assert response.messages[-1].contents[0].call_id == "call-a2"
         assert _extract_function_calls(response) == []
 
-    @pytest.mark.asyncio
     async def test_public_approval_builder_is_used_for_policy_requests(self) -> None:
         class CustomPolicy(PolicyEnforcementFunctionMiddleware):
             def build_function_call_content(self, context):  # type: ignore[no-untyped-def]
@@ -1608,15 +1610,35 @@ class TestPolicyEnforcementMiddleware:
         assert context.result.type == "function_approval_request"
         assert context.result.function_call.additional_properties["host_marker"] == "custom"
 
+    async def test_private_approval_builder_override_remains_compatible(self) -> None:
+        class LegacyPolicy(PolicyEnforcementFunctionMiddleware):
+            def _build_function_call_content(self, context):  # type: ignore[no-untyped-def]
+                function_call = super()._build_function_call_content(context)
+                function_call.additional_properties["legacy_host_marker"] = "custom"
+                return function_call
+
+        tool = FunctionTool(name="write_file", description="test", fn=lambda: "written")
+        middleware = LegacyPolicy(approval_on_violation=True)
+        context = _context(_Session("b4-legacy"), tool, UNTRUSTED)
+        context.metadata["call_id"] = "call-b4-legacy"
+
+        with contextlib.suppress(MiddlewareTermination):
+            await middleware.process(context, _noop)
+
+        assert context.result.type == "function_approval_request"
+        assert context.result.function_call.additional_properties["legacy_host_marker"] == "custom"
+
     def test_no_session_fallback_counters_are_independent(self) -> None:
         middleware = PolicyEnforcementFunctionMiddleware()
 
         assert middleware._resolve_turn_counter() == 1
         assert middleware._resolve_call_counter() == 1
-        assert middleware._resolve_turn_counter() == 2
+        assert middleware._resolve_turn_counter() == 1
         assert middleware._resolve_call_counter() == 2
+        assert middleware.begin_turn(None) == 2
+        assert middleware._resolve_turn_counter() == 2
+        assert middleware._resolve_call_counter() == 1
 
-    @pytest.mark.asyncio
     async def test_pending_approvals_are_json_persistible(self) -> None:
         tool = FunctionTool(name="write_file", description="test", fn=lambda: "written")
         middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
@@ -1635,7 +1657,6 @@ class TestPolicyEnforcementMiddleware:
             dict,
         )
 
-    @pytest.mark.asyncio
     async def test_denylist_takes_precedence_over_allowlist(self) -> None:
         tool = FunctionTool(name="sensitive_tool", description="test", fn=lambda: "secret")
         middleware = PolicyEnforcementFunctionMiddleware(
@@ -2041,10 +2062,40 @@ class TestSecureAgentConfig:
             "audit_log": [],
             "pending_policy_approvals": {},
             "turn_counter": 0,
-            "call_counter": 0,
+            "variables": {},
+            "variable_metadata": {},
         }
 
         assert _fides_session_state(session) is state
+
+    def test_variable_store_survives_session_round_trip(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        session = AgentSession(session_id="durable-variables")
+        label = ContentLabel(
+            integrity=IntegrityLabel.UNTRUSTED,
+            confidentiality=ConfidentialityLabel.PRIVATE,
+        )
+        variable_id = tracker.get_variable_store(session).store({"secret": "value"}, label)
+        tracker._resolve_metadata(session)[variable_id] = {"function_name": "load_secret"}
+
+        restored = AgentSession.from_dict(session.to_dict())
+        content, restored_label = tracker.get_variable_store(restored).retrieve(variable_id)
+
+        assert content == {"secret": "value"}
+        assert restored_label.integrity == IntegrityLabel.UNTRUSTED
+        assert restored_label.confidentiality == ConfidentialityLabel.PRIVATE
+        assert tracker.get_variable_metadata(variable_id, restored) == {"function_name": "load_secret"}
+
+    def test_variable_store_is_shared_with_a_propagated_child_session(self) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        parent = AgentSession(session_id="shared-variables")
+        variable_id = tracker.get_variable_store(parent).store("hidden", UNTRUSTED)
+        child = AgentSession(session_id=parent.session_id)
+        child.state = parent.state
+
+        content, label = tracker.get_variable_store(child).retrieve(variable_id)
+        assert content == "hidden"
+        assert label.to_dict() == UNTRUSTED.to_dict()
 
     def test_create_config_defaults(self):
         """Test creating config with default values."""
@@ -2126,7 +2177,6 @@ class TestSecureAgentConfig:
         else:
             raise AssertionError("Disabling quarantine must not leave hidden content without a handler")
 
-    @pytest.mark.asyncio
     async def test_tool_labels_apply_to_harness_tools(self) -> None:
         tool = FunctionTool(name="external_tool", description="test", fn=lambda: "external")
         config = SecureAgentConfig(tool_labels={"external_tool": UNTRUSTED})
@@ -2142,7 +2192,6 @@ class TestSecureAgentConfig:
         result = context.result[0] if isinstance(context.result, list) else context.result
         assert result.additional_properties["security_label"]["integrity"] == "untrusted"
 
-    @pytest.mark.asyncio
     async def test_before_run_does_not_clear_an_external_quarantine_client(self) -> None:
         sentinel = object()
         set_quarantine_client(cast(Any, sentinel))
@@ -2163,7 +2212,6 @@ class TestSecureAgentConfig:
 
         assert get_quarantine_client() is sentinel
 
-    @pytest.mark.asyncio
     async def test_public_accessors_use_the_last_session_in_the_async_context(self) -> None:
         config = SecureAgentConfig(enable_quarantine=False, auto_hide_untrusted=False)
         session = AgentSession(session_id="public-accessors")
@@ -2185,7 +2233,6 @@ class TestSecureAgentConfig:
 
         assert config.get_audit_log() == [{"type": "test"}]
 
-    @pytest.mark.asyncio
     async def test_tool_labels_preserve_server_supplied_result_labels(self) -> None:
         server_label = ContentLabel(
             integrity=IntegrityLabel.TRUSTED,
@@ -2210,7 +2257,6 @@ class TestSecureAgentConfig:
         result = context.result[0]
         assert result.additional_properties["security_label"] == server_label.to_dict()
 
-    @pytest.mark.asyncio
     async def test_tool_labels_do_not_leak_between_configs(self) -> None:
         tool = FunctionTool(name="external_tool", description="test", fn=lambda: "external")
         config_a = SecureAgentConfig(tool_labels={"external_tool": UNTRUSTED})
@@ -2231,6 +2277,91 @@ class TestSecureAgentConfig:
         assert result_a.additional_properties["security_label"]["integrity"] == "untrusted"
         assert result_b.additional_properties["security_label"]["integrity"] == "trusted"
         assert tool.additional_properties is None
+
+    async def test_propagated_child_run_does_not_change_parent_audit_coordinates(self) -> None:
+        config = SecureAgentConfig(enable_quarantine=False, auto_hide_untrusted=False)
+        policy = config.policy_enforcer
+        assert policy is not None
+        tool = FunctionTool(name="write_file", description="test", fn=lambda: "written")
+        parent = AgentSession(session_id="shared-audit")
+        parent_run = SessionContext(session_id=parent.session_id, input_messages=[])
+        await config.before_run(agent=None, session=parent, context=parent_run, state={})
+        parent_binder = cast(FunctionMiddleware, parent_run.get_middleware()[0])
+
+        async def invoke(binder: FunctionMiddleware, session: AgentSession) -> None:
+            context = _context(session, tool, UNTRUSTED)
+
+            async def enforce() -> None:
+                await policy.process(context, _noop)
+
+            with contextlib.suppress(MiddlewareTermination):
+                await binder.process(context, enforce)
+
+        await invoke(parent_binder, parent)
+
+        child = AgentSession(session_id=parent.session_id)
+        child.state = parent.state
+        child_run = SessionContext(session_id=child.session_id, input_messages=[])
+        await config.before_run(agent=None, session=child, context=child_run, state={})
+        child_binder = cast(FunctionMiddleware, child_run.get_middleware()[0])
+        await invoke(child_binder, child)
+        await invoke(parent_binder, parent)
+
+        assert [(entry["turn"], entry["call_index"]) for entry in policy.get_audit_log(parent)] == [
+            (1, 1),
+            (2, 1),
+            (1, 2),
+        ]
+
+    async def test_run_quarantine_binding_is_nested_and_restored(self) -> None:
+        external_client = object()
+        configured_client = object()
+        set_quarantine_client(cast(Any, external_client))
+        try:
+            configured = SecureAgentConfig(quarantine_chat_client=cast(Any, configured_client))
+            configured_session = AgentSession(session_id="configured-quarantine")
+            configured_run = SessionContext(session_id=configured_session.session_id, input_messages=[])
+            await configured.before_run(
+                agent=None,
+                session=configured_session,
+                context=configured_run,
+                state={},
+            )
+            configured_binder = cast(FunctionMiddleware, configured_run.get_middleware()[0])
+
+            no_client = SecureAgentConfig()
+            no_client_session = AgentSession(session_id="empty-quarantine")
+            no_client_run = SessionContext(session_id=no_client_session.session_id, input_messages=[])
+            await no_client.before_run(
+                agent=None,
+                session=no_client_session,
+                context=no_client_run,
+                state={},
+            )
+            no_client_binder = cast(FunctionMiddleware, no_client_run.get_middleware()[0])
+            tool = FunctionTool(name="observe_client", description="test", fn=lambda: None)
+            observed: list[object | None] = []
+
+            async def observe_empty_client() -> None:
+                observed.append(get_quarantine_client())
+
+            async def observe_configured_client() -> None:
+                observed.append(get_quarantine_client())
+                await no_client_binder.process(
+                    _context(no_client_session, tool, TRUSTED),
+                    observe_empty_client,
+                )
+                observed.append(get_quarantine_client())
+
+            await configured_binder.process(
+                _context(configured_session, tool, TRUSTED),
+                observe_configured_client,
+            )
+
+            assert observed == [configured_client, None, configured_client]
+            assert get_quarantine_client() is external_client
+        finally:
+            set_quarantine_client(None)
 
 
 class TestGetSecurityTools:
@@ -3097,7 +3228,6 @@ class TestQuarantineClient:
             _current_middleware.set(None)
             set_quarantine_client(None)
 
-    @pytest.mark.asyncio
     async def test_quarantine_client_isolated_between_async_tasks(self) -> None:
         async def run(client: object) -> None:
             set_quarantine_client(cast(Any, client))
@@ -4227,7 +4357,6 @@ class TestMCPIFCMetaLabels:
         _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
         assert func_tool.func is wrapped_once
 
-    @pytest.mark.asyncio
     async def test_mcp_read_only_sink_cap_has_a_granular_opt_out(self) -> None:
         from agent_framework.security import apply_mcp_security_labels
 
@@ -4244,7 +4373,6 @@ class TestMCPIFCMetaLabels:
 
         assert "max_allowed_confidentiality" not in tool.additional_properties
 
-    @pytest.mark.asyncio
     async def test_mcp_explicit_override_cap_survives_read_only_sink_opt_out(self) -> None:
         from agent_framework.security import apply_mcp_security_labels
 

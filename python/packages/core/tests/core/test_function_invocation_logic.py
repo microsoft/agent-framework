@@ -4757,6 +4757,74 @@ class TerminateLoopMiddleware(FunctionMiddleware):
         raise MiddlewareTermination
 
 
+class BlockedPolicyMiddleware(FunctionMiddleware):
+    """Return a correlated policy refusal without executing the tool."""
+
+    async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        context.result = {
+            "error": "Policy violation: tool execution blocked",
+            "blocked_violation": True,
+            "policy_violation": True,
+        }
+        raise MiddlewareTermination("Policy violation blocked tool execution")
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_blocked_policy_result_continues_function_loop(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """A blocked policy result closes its call and gives the model another turn."""
+    executions = 0
+
+    @tool(name="blocked_tool", approval_mode="never_require")
+    def blocked_tool() -> str:
+        nonlocal executions
+        executions += 1
+        return "should not execute"
+
+    function_call = Content.from_function_call(call_id="blocked-call", name="blocked_tool", arguments="{}")
+    final_text = "I could not run that tool because policy blocked it."
+    messages = [Message(role="user", contents=["run the blocked tool"])]
+    options: ChatOptions = {"tools": [blocked_tool]}
+    client_kwargs: dict[str, Any] = {"middleware": [BlockedPolicyMiddleware()]}
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text(final_text)])],
+        ]
+        stream = chat_client_base.get_response(
+            messages,
+            stream=True,
+            options=options,
+            client_kwargs=client_kwargs,
+        )
+        async for _ in stream:
+            pass
+        response = await stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=[final_text])),
+        ]
+        response = await chat_client_base.get_response(
+            messages,
+            options=options,
+            client_kwargs=client_kwargs,
+        )
+
+    function_results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert executions == 0
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert len(function_results) == 1
+    assert function_results[0].call_id == "blocked-call"
+    assert function_results[0].exception == "Policy violation: tool execution blocked"
+    assert function_results[0].additional_properties["blocked_violation"] is True
+    assert response.text == final_text
+
+
 @pytest.mark.parametrize("approved", [True, False], ids=["approved", "rejected"])
 async def test_streaming_approval_resume_yields_terminal_result_before_model_text(
     chat_client_base: SupportsChatGetResponse,
