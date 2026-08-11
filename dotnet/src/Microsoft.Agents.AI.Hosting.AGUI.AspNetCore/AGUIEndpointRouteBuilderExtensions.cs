@@ -91,9 +91,9 @@ public static class AGUIEndpointRouteBuilderExtensions
     /// principal dimension into the lookup key. The recommended way is to wrap the
     /// keyed <see cref="AgentSessionStore"/> in
     /// <see cref="IsolationKeyScopedAgentSessionStore"/>, typically by calling
-    /// <c>UseClaimsBasedSessionIsolation(...)</c> from
+    /// <c>UseClaimsBasedAgentIsolation(...)</c> from
     /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c> (or by registering a custom
-    /// <see cref="SessionIsolationKeyProvider"/>) and registering the store via the
+    /// <see cref="AgentIsolationKeyProvider"/>) and registering the store via the
     /// <c>WithSessionStore(...)</c> / <c>WithInMemorySessionStore(...)</c> helpers on
     /// <see cref="IHostedAgentBuilder"/> so that the wrapper is applied. When no
     /// isolation provider is registered, behavior is unchanged — the bare
@@ -113,7 +113,7 @@ public static class AGUIEndpointRouteBuilderExtensions
         var agentSessionStore = endpoints.ServiceProvider.GetKeyedService<AgentSessionStore>(aiAgent.Name);
 
         // Ensure that we have an IsolationKeyScopedAgentSessionStore registered.
-        var isolationKeyProvider = endpoints.ServiceProvider.GetService<SessionIsolationKeyProvider>();
+        var isolationKeyProvider = endpoints.ServiceProvider.GetService<AgentIsolationKeyProvider>();
         if (agentSessionStore?.GetService<IsolationKeyScopedAgentSessionStore>() is null)
         {
             agentSessionStore ??= new NoopAgentSessionStore();

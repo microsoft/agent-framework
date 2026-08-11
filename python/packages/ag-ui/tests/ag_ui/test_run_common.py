@@ -14,7 +14,7 @@ from ag_ui.core.events import (
 from agent_framework import Content
 
 from agent_framework_ag_ui import state_update
-from agent_framework_ag_ui._orchestration._predictive_state import PredictiveStateHandler
+from agent_framework_ag_ui._predictive_state import PredictiveStateHandler
 from agent_framework_ag_ui._run_common import (
     FlowState,
     _build_run_finished_event,

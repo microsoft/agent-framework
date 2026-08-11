@@ -11,14 +11,17 @@ from __future__ import annotations
 
 import logging
 import sys
+import warnings
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
 
 from agent_framework import (
     AgentMiddlewareLayer,
+    AgentResponseUpdate,
     AgentSession,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
+    ChatResponse,
     ChatResponseUpdate,
     ContextProvider,
     FunctionInvocationConfiguration,
@@ -29,7 +32,7 @@ from agent_framework import (
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import IS_TELEMETRY_ENABLED, get_user_agent
 from agent_framework.observability import AgentTelemetryLayer, ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -38,6 +41,11 @@ from azure.core.credentials_async import AsyncTokenCredential
 
 from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 
+from ._feature_usage import (
+    FeatureIndex,
+    create_feature_usage_policy,
+    create_foundry_feature_usage_http_client,
+)
 from ._tools import _sanitize_foundry_response_tool  # pyright: ignore[reportPrivateUsage]
 
 if sys.version_info >= (3, 13):
@@ -64,6 +72,7 @@ if TYPE_CHECKING:
 
 logger: logging.Logger = logging.getLogger("agent_framework.foundry")
 
+
 AzureTokenProvider = Callable[[], str | Awaitable[str]]
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
@@ -85,6 +94,9 @@ class FoundryAgentSettings(TypedDict, total=False):
     agent_version: str | None
 
 
+FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY = "foundry_hosted_agent_session_id"
+
+
 class FoundryAgentOptions(OpenAIChatOptions, total=False):
     """Microsoft Foundry agent-specific chat options.
 
@@ -93,8 +105,7 @@ class FoundryAgentOptions(OpenAIChatOptions, total=False):
 
     Keyword Args:
         extra_body: Additional request body values sent to the Responses API.
-        isolation_key: Isolation key used when lazily creating a hosted-agent
-            session through the project's agent operations.
+        isolation_key: Deprecated. This option no longer has any effect.
     """
 
     extra_body: dict[str, Any]
@@ -123,14 +134,10 @@ def _merge_extra_body(extra_body: Any | None, *, additions: Mapping[str, Any] | 
     return merged
 
 
-def _uses_foundry_agent_session(conversation_id: Any) -> bool:
-    """Return whether a conversation_id should be treated as a Foundry agent session id."""
-    return (
-        isinstance(conversation_id, str)
-        and bool(conversation_id)
-        and not conversation_id.startswith("resp_")
-        and not conversation_id.startswith("conv_")
-    )
+def _extract_foundry_hosted_agent_session_id(response: Any) -> str | None:
+    """Extract a Foundry hosted-agent session ID from a service response."""
+    agent_session_id = getattr(response, "agent_session_id", None)
+    return agent_session_id if isinstance(agent_session_id, str) and agent_session_id else None
 
 
 def _build_agent_reference(agent_name: str, agent_version: str | None) -> dict[str, str]:
@@ -174,6 +181,7 @@ class RawFoundryAgentChatClient(
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.FOUNDRY_AGENT
 
     def __init__(
         self,
@@ -251,8 +259,10 @@ class RawFoundryAgentChatClient(
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": resolved_endpoint,
                 "credential": credential,
-                "user_agent": get_user_agent(),
+                "per_retry_policies": [create_feature_usage_policy()],
             }
+            if IS_TELEMETRY_ENABLED:
+                project_client_kwargs["user_agent"] = get_user_agent()
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             self.project_client = AIProjectClient(**project_client_kwargs)
@@ -261,6 +271,8 @@ class RawFoundryAgentChatClient(
         openai_client_kwargs: dict[str, Any] = {}
         if default_headers:
             openai_client_kwargs["default_headers"] = dict(default_headers)
+        if self._should_close_client:
+            openai_client_kwargs["http_client"] = create_foundry_feature_usage_http_client()
         if allow_preview:
             openai_client_kwargs["agent_name"] = self.agent_name
         openai_client = self.project_client.get_openai_client(**openai_client_kwargs)
@@ -274,6 +286,7 @@ class RawFoundryAgentChatClient(
             tokenizer=tokenizer,
             additional_properties=additional_properties,
         )
+        self.model = ""  # Foundry agents resolve model server-side; ignore env vars (issue #7272).
 
     @override
     def as_agent(
@@ -286,7 +299,7 @@ class RawFoundryAgentChatClient(
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: Sequence[MiddlewareTypes] | None = None,
+        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -331,6 +344,13 @@ class RawFoundryAgentChatClient(
     ) -> dict[str, Any]:
         """Prepare options for the Responses API and validate client-side tools."""
         caller_requested_encrypted_reasoning = "reasoning.encrypted_content" in (options.get("include") or [])
+        prepared_options = dict(options)
+        if prepared_options.pop("isolation_key", None) is not None:
+            warnings.warn(
+                "The 'isolation_key' option is deprecated and no longer has any effect.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         # Validate tools — only FunctionTool allowed
         tools = options.get("tools", [])
@@ -347,7 +367,7 @@ class RawFoundryAgentChatClient(
         prepared_messages, _instructions = self._prepare_messages_for_azure_ai(messages)
 
         # Call parent prepare_options (OpenAI Responses API format)
-        run_options = await super()._prepare_options(prepared_messages, options, **kwargs)
+        run_options = await super()._prepare_options(prepared_messages, prepared_options, **kwargs)
 
         # Foundry Agent deployments can reject the OpenAI client's automatic encrypted-reasoning
         # opt-in even when the configured model otherwise supports reasoning. Preserve an explicit
@@ -364,28 +384,21 @@ class RawFoundryAgentChatClient(
             run_options["input"] = self._transform_input_for_azure_ai(cast(list[dict[str, Any]], run_options["input"]))
 
         # Merge caller-supplied extra_body with any agent-specific request payload.
-        conversation_id = options.get("conversation_id")
         extra_body = _merge_extra_body(run_options.pop("extra_body", None))
-        if _uses_foundry_agent_session(conversation_id):
-            run_options.pop("previous_response_id", None)
-            run_options.pop("conversation", None)
-            run_options.pop("model", None)
-            extra_body["agent_session_id"] = conversation_id
+        agent_session_id = extra_body.get("agent_session_id")
         # Non-preview Prompt/Hosted Agent calls need agent_reference in the request body to
         # tell the Responses API which Foundry agent (and version) is in use, since ``model``
         # is stripped below. The preview path injects the reference via the OpenAI client kwarg
         # ``agent_name`` instead, so skip there. See issue #5582.
         if not self.allow_preview:
             extra_body.setdefault("agent_reference", _build_agent_reference(self.agent_name, self.agent_version))
-            should_strip_model = _uses_foundry_agent_session(conversation_id) or (
-                conversation_id is None and options.get("model") is None
+            should_strip_model = agent_session_id is not None or (
+                options.get("conversation_id") is None and not options.get("model")
             )
             if should_strip_model:
                 run_options.pop("model", None)
         if extra_body:
             run_options["extra_body"] = extra_body
-
-        run_options.pop("isolation_key", None)
 
         # Strip tool fields from the request body. This client always targets a pre-provisioned
         # Foundry agent (agent_name is required), and the service rejects requests that carry both
@@ -415,8 +428,8 @@ class RawFoundryAgentChatClient(
         options: dict[str, Any],
     ) -> Any:
         parsed_response = super()._parse_response_from_openai(response, options)
-        if _uses_foundry_agent_session(options.get("conversation_id")):
-            parsed_response.conversation_id = None
+        if agent_session_id := _extract_foundry_hosted_agent_session_id(response):
+            parsed_response.additional_properties["agent_session_id"] = agent_session_id
         return parsed_response
 
     @override
@@ -436,8 +449,10 @@ class RawFoundryAgentChatClient(
                 function_call_ids,
                 seen_reasoning_delta_item_ids,
             )
-        if _uses_foundry_agent_session(options.get("conversation_id")):
-            update.conversation_id = None
+        if agent_session_id := _extract_foundry_hosted_agent_session_id(getattr(event, "response", None)):
+            if update.additional_properties is None:
+                update.additional_properties = {}
+            update.additional_properties["agent_session_id"] = agent_session_id
         return update
 
     @override
@@ -497,24 +512,6 @@ class RawFoundryAgentChatClient(
             transformed.append(new_item)
 
         return transformed
-
-    async def get_agent_version(self) -> str | None:
-        """Return the agent version if available, else None."""
-        if self.agent_version is not None:
-            return self.agent_version
-        if not self.allow_preview:
-            return None
-        agent_details = await cast(Any, self.project_client.beta.agents).get(agent_name=self.agent_name)
-        versions_object = getattr(agent_details, "versions", None)
-        if not isinstance(versions_object, Mapping):
-            raise TypeError("Foundry agent details did not include a versions mapping.")
-        versions = cast(Mapping[str, Any], versions_object)
-        latest_version = versions.get("latest")
-        agent_version = getattr(cast(Any, latest_version), "version", None)
-        if not isinstance(agent_version, str):
-            raise TypeError("Foundry agent details did not include a latest version string.")
-        self.agent_version = agent_version
-        return agent_version
 
     async def close(self) -> None:
         """Close the project client if we created it."""
@@ -611,6 +608,33 @@ class _FoundryAgentChatClient(
             timeout=timeout,
         )
 
+    @override
+    def _update_function_invocation_continuation_state(
+        self,
+        kwargs: dict[str, Any],
+        response: ChatResponse[Any],
+        *,
+        session: AgentSession | None,
+        options: dict[str, Any] | None = None,
+    ) -> None:
+        super()._update_function_invocation_continuation_state(
+            kwargs,
+            response,
+            session=session,
+            options=options,
+        )
+        agent_session_id = response.additional_properties.get("agent_session_id")
+        if not isinstance(agent_session_id, str) or not agent_session_id:
+            return
+        # Persist the ID for later runs and inject it into the current options because function
+        # invocation can make another service call before the agent prepares a new run context.
+        if session is not None:
+            session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = agent_session_id
+        if options is not None:
+            extra_body = _merge_extra_body(options.get("extra_body"))
+            extra_body["agent_session_id"] = agent_session_id
+            options["extra_body"] = extra_body
+
 
 class RawFoundryAgent(
     RawAgent[FoundryAgentOptionsT],
@@ -647,7 +671,7 @@ class RawFoundryAgent(
         default_headers: Mapping[str, str] | None = None,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: Sequence[MiddlewareTypes] | None = None,
+        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
         client_type: type[RawFoundryAgentChatClient] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -741,48 +765,6 @@ class RawFoundryAgent(
             additional_properties=dict(additional_properties) if additional_properties is not None else None,
         )
 
-    def _resolve_service_session_isolation_key(self, isolation_key: str | None = None) -> str:
-        """Resolve the isolation key from an explicit value or default_options."""
-        resolved_isolation_key = (
-            isolation_key if isolation_key is not None else self.default_options.get("isolation_key")
-        )
-        if resolved_isolation_key is None:
-            raise ValueError("isolation_key is required. Pass it explicitly or set default_options['isolation_key'].")
-        return resolved_isolation_key
-
-    async def _create_service_session_id(
-        self,
-        *,
-        isolation_key: str | None = None,
-    ) -> str:
-        """Create a hosted Foundry service session and return the service session ID."""
-        if not isinstance(self.client, RawFoundryAgentChatClient):
-            raise TypeError("_create_service_session_id requires a RawFoundryAgentChatClient-based client.")
-        if not self.client.allow_preview:
-            raise RuntimeError("Hosted Foundry service sessions require allow_preview=True.")
-
-        create_session_kwargs: dict[str, Any] = {
-            "agent_name": self.client.agent_name,
-            "isolation_key": self._resolve_service_session_isolation_key(isolation_key),
-        }
-        if version := await self.client.get_agent_version():
-            from azure.ai.projects.models import VersionRefIndicator
-
-            create_session_kwargs["version_indicator"] = VersionRefIndicator(agent_version=version)
-
-        session_agents = cast(Any, self.client.project_client.agents)
-        create_session = getattr(session_agents, "create_session", None)
-        if create_session is None:
-            session_agents = cast(Any, self.client.project_client.beta.agents)
-            create_session = session_agents.create_session
-
-        service_session = await create_session(**create_session_kwargs)
-        agent_session_id = getattr(service_session, "agent_session_id", None)
-        if not isinstance(agent_session_id, str) or not agent_session_id:
-            raise ValueError("Hosted Foundry session creation did not return a non-empty agent_session_id.")
-
-        return agent_session_id
-
     async def create_conversation(self, *, session_id: str | None = None) -> AgentSession:
         """Create a project-level Foundry conversation session.
 
@@ -798,7 +780,7 @@ class RawFoundryAgent(
             Foundry conversation ID.
         """
         client = cast(RawFoundryAgentChatClient, self.client)
-        conversation = await client.project_client.get_openai_client().conversations.create()
+        conversation = await client.client.conversations.create()
         return self.get_session(service_session_id=conversation.id, session_id=session_id)
 
     @override
@@ -815,19 +797,12 @@ class RawFoundryAgent(
         client_kwargs: Mapping[str, Any] | None,
     ) -> _RunContext:
         runtime_options = dict(options) if options else {}
-        effective_options = {
-            **{key: value for key, value in self.default_options.items() if value is not None},
-            **{key: value for key, value in runtime_options.items() if value is not None},
-        }
-
-        if (
-            session is not None
-            and session.service_session_id is None
-            and effective_options.get("isolation_key") is not None
-        ):
-            session.service_session_id = await self._create_service_session_id(
-                isolation_key=cast(str | None, effective_options.get("isolation_key")),
-            )
+        agent_session_id = session.state.get(FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY) if session is not None else None
+        if isinstance(agent_session_id, str) and agent_session_id:
+            extra_body = _merge_extra_body(self.default_options.get("extra_body"))
+            extra_body.update(_merge_extra_body(runtime_options.get("extra_body")))
+            extra_body.setdefault("agent_session_id", agent_session_id)
+            runtime_options["extra_body"] = extra_body
 
         return await super()._prepare_run_context(
             messages=messages,
@@ -839,6 +814,30 @@ class RawFoundryAgent(
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=client_kwargs,
         )
+
+    @override
+    def _update_session_from_chat_response(
+        self,
+        session: AgentSession | None,
+        response: ChatResponse[Any],
+    ) -> None:
+        super()._update_session_from_chat_response(session, response)
+        agent_session_id = response.additional_properties.get("agent_session_id")
+        if session is not None and isinstance(agent_session_id, str) and agent_session_id:
+            session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = agent_session_id
+
+    @override
+    def _update_session_from_chat_response_update(
+        self,
+        session: AgentSession | None,
+        update: AgentResponseUpdate,
+    ) -> None:
+        super()._update_session_from_chat_response_update(session, update)
+        agent_session_id = (
+            update.additional_properties.get("agent_session_id") if update.additional_properties is not None else None
+        )
+        if session is not None and isinstance(agent_session_id, str) and agent_session_id:
+            session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = agent_session_id
 
     async def configure_azure_monitor(
         self,
@@ -962,7 +961,7 @@ class FoundryAgent(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: Sequence[MiddlewareTypes] | None = None,
+        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
         client_type: type[RawFoundryAgentChatClient] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -988,10 +987,11 @@ class FoundryAgent(  # type: ignore[misc]
         already be configured for preview APIs before being passed to
         ``FoundryAgent``.
 
-        To lazily create HostedAgent service sessions inside the agent, pass an
-        ``isolation_key`` through ``default_options`` (or per-run options). The
-        agent stores the resulting HostedAgent session ID in
-        ``AgentSession.service_session_id`` and reuses it on subsequent runs.
+        For HostedAgents, the service creates an agent session when the first
+        request does not specify one. The agent stores that infrastructure ID in
+        ``AgentSession.state["foundry_hosted_agent_session_id"]`` and sends it through
+        ``extra_body`` on later requests. ``AgentSession.service_session_id``
+        remains the conversation continuation handle.
 
         Keyword Args:
             project_endpoint: The Foundry project endpoint URL.
@@ -1000,9 +1000,7 @@ class FoundryAgent(  # type: ignore[misc]
             credential: Azure credential for authentication.
             project_client: An existing AIProjectClient to use.
             allow_preview: Enables preview opt-in on internally-created AIProjectClient.
-                Set this to ``True`` for HostedAgents that need preview-only
-                session APIs, including lazy service session creation from
-                ``isolation_key``.
+                Set this to ``True`` for HostedAgents that need preview APIs.
             default_headers: Additional HTTP headers for requests made through the OpenAI client.
             tools: Function tools to provide to the agent. Only ``FunctionTool`` objects are accepted.
             context_providers: Optional context providers.
@@ -1015,8 +1013,8 @@ class FoundryAgent(  # type: ignore[misc]
             description: Optional local description for the local agent wrapper.
             instructions: Optional instructions for the local agent wrapper.
             default_options: Default chat options for the local agent wrapper.
-                ``FoundryAgentOptions`` can include ``isolation_key`` and
-                ``extra_body`` when working with HostedAgents.
+                ``FoundryAgentOptions`` can include ``extra_body`` when working
+                with HostedAgents.
             require_per_service_call_history_persistence: Whether to require per-service-call
                 chat history persistence when using local history providers.
             function_invocation_configuration: Optional function invocation configuration override.

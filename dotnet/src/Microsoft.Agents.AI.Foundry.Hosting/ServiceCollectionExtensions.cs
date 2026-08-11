@@ -3,13 +3,16 @@
 using System;
 using System.ClientModel.Primitives;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -48,12 +51,18 @@ public static class FoundryHostingExtensions
     /// </para>
     /// </remarks>
     /// <param name="services">The service collection.</param>
+    /// <param name="configure">
+    /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
+    /// agent's own service to store the responses it produces.
+    /// </param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryResponses(this IServiceCollection services)
+    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, Action<FoundryResponsesOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddResponsesServer();
         services.AddHealthChecks();
+        ConfigureFoundryListenPort(services);
+        ConfigureFoundryResponsesOptions(services, configure);
         services.TryAddSingleton<AgentSessionStore>(_ => FileSystemAgentSessionStore.CreateDefault());
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
@@ -82,14 +91,24 @@ public static class FoundryHostingExtensions
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
     /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, a file-system session store is used, rooted at <c>/.checkpoints</c> when running in a Foundry hosted environment and <c>{cwd}/.checkpoints</c> locally.</param>
+    /// <param name="configure">
+    /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
+    /// agent's own service to store the responses it produces.
+    /// </param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, AIAgent agent, AgentSessionStore? agentSessionStore = null)
+    public static IServiceCollection AddFoundryResponses(
+        this IServiceCollection services,
+        AIAgent agent,
+        AgentSessionStore? agentSessionStore = null,
+        Action<FoundryResponsesOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(agent);
 
         services.AddResponsesServer();
         services.AddHealthChecks();
+        ConfigureFoundryListenPort(services);
+        ConfigureFoundryResponsesOptions(services, configure);
         agentSessionStore ??= FileSystemAgentSessionStore.CreateDefault();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
@@ -105,6 +124,41 @@ public static class FoundryHostingExtensions
 
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
+    }
+
+    /// <summary>
+    /// Applies the caller's <see cref="FoundryResponsesOptions"/> and registers the readiness check that
+    /// reports an agent configured to have its own service store the responses it produces.
+    /// </summary>
+    /// <remarks>
+    /// The check is registered on the same <c>/readiness</c> pipeline that <see cref="MapFoundryResponses"/>
+    /// maps, so a container that would record the conversation twice never takes traffic.
+    /// <c>AddCheck</c> does not dedupe by name, so a repeated registration is guarded here.
+    /// </remarks>
+    private static void ConfigureFoundryResponsesOptions(IServiceCollection services, Action<FoundryResponsesOptions>? configure)
+    {
+        if (configure is not null)
+        {
+            services.Configure(configure);
+        }
+
+        const string HealthCheckName = "foundry-stored-output";
+        services.Configure<HealthCheckServiceOptions>(opts =>
+        {
+            foreach (var existing in opts.Registrations)
+            {
+                if (string.Equals(existing.Name, HealthCheckName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            opts.Registrations.Add(new HealthCheckRegistration(
+                name: HealthCheckName,
+                factory: sp => ActivatorUtilities.CreateInstance<HostedStoredOutputHealthCheck>(sp),
+                failureStatus: HealthStatus.Unhealthy,
+                tags: ["foundry", "responses", "readiness"]));
+        });
     }
 
     /// <summary>
@@ -247,6 +301,104 @@ public static class FoundryHostingExtensions
         endpoints.MapResponsesServer(prefix);
         MapReadinessIfMissing(endpoints);
         return endpoints;
+    }
+
+    /// <summary>
+    /// Configuration key the Foundry hosting platform populates with a non-empty value inside a
+    /// hosted container. It is the documented way for container code to detect a Foundry context.
+    /// </summary>
+    internal const string FoundryHostingEnvironmentKey = "FOUNDRY_HOSTING_ENVIRONMENT";
+
+    /// <summary>
+    /// Configuration key holding the HTTP listen port, matching the Agent Server SDK.
+    /// </summary>
+    internal const string ListenPortKey = "PORT";
+
+    /// <summary>
+    /// Port the Foundry hosted runtime probes and routes to when <see cref="ListenPortKey"/> is
+    /// not set, matching <see cref="FoundryEnvironment.Port"/>.
+    /// </summary>
+    internal const int DefaultListenPort = 8088;
+
+    /// <summary>
+    /// Marker registered once per <see cref="IServiceCollection"/> so the Foundry listen-port
+    /// configuration is applied at most once, even across multiple <c>AddFoundryResponses</c> calls.
+    /// </summary>
+    private sealed class FoundryListenPortMarker;
+
+    /// <summary>
+    /// Binds Kestrel to the port the Foundry hosted runtime probes and routes to, so a plain
+    /// <c>WebApplication.CreateBuilder</c> host (Tier 3) works with no Dockerfile. Mirrors
+    /// <c>AgentHostBuilder</c>, which listens on the <c>PORT</c> value (default 8088).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The listener is added only when configuration reports a Foundry container through
+    /// <see cref="FoundryHostingEnvironmentKey"/>. A listener configured in code overrides the
+    /// addresses a host resolves from configuration, so adding it everywhere would silently move
+    /// any non-Foundry app off its configured address.
+    /// </para>
+    /// <para>
+    /// Both values come from <see cref="IConfiguration"/> rather than from
+    /// <see cref="FoundryEnvironment"/>, which caches every value in a static constructor. Reading
+    /// through configuration keeps the decision observable when the host is built, honours the
+    /// host's configuration sources, and lets tests supply values without mutating the process
+    /// environment.
+    /// </para>
+    /// <para>
+    /// Inside a Foundry container the listener cannot be skipped based on <c>ASPNETCORE_URLS</c>:
+    /// the .NET base image always sets it to port 80, so such a guard would always trip and leave
+    /// the container failing the readiness probe with HTTP 424. It cannot key off the presence of
+    /// <c>PORT</c> either, because the platform sets that value only when it needs a port other
+    /// than the default.
+    /// </para>
+    /// <para>
+    /// Idempotent, and harmless when no Kestrel server is present (for example under
+    /// <c>TestServer</c>): the <see cref="KestrelServerOptions"/> callback only runs when Kestrel
+    /// is resolved.
+    /// </para>
+    /// </remarks>
+    private static void ConfigureFoundryListenPort(IServiceCollection services)
+    {
+        if (services.Any(static d => d.ServiceType == typeof(FoundryListenPortMarker)))
+        {
+            return;
+        }
+
+        services.AddSingleton<FoundryListenPortMarker>();
+        services.AddOptions<KestrelServerOptions>()
+            .Configure<IConfiguration>(static (options, configuration) =>
+            {
+                if (string.IsNullOrEmpty(configuration[FoundryHostingEnvironmentKey]))
+                {
+                    return;
+                }
+
+                options.ListenAnyIP(ResolveListenPort(configuration));
+            });
+    }
+
+    /// <summary>
+    /// Reads the listen port from configuration, applying the same contract as
+    /// <see cref="FoundryEnvironment.Port"/>: <see cref="DefaultListenPort"/> when unset, otherwise
+    /// a port number in the range 1-65535.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The configured value is not a valid port.</exception>
+    private static int ResolveListenPort(IConfiguration configuration)
+    {
+        var value = configuration[ListenPortKey];
+        if (string.IsNullOrEmpty(value))
+        {
+            return DefaultListenPort;
+        }
+
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port) || port is < 1 or > 65535)
+        {
+            throw new InvalidOperationException(
+                $"The {ListenPortKey} environment variable value '{value}' is not a valid port number (1-65535).");
+        }
+
+        return port;
     }
 
     /// <summary>

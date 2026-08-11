@@ -11,7 +11,7 @@ from agent_framework import AgentResponseUpdate, Content, FunctionTool
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._agent import AgentConfig
-from agent_framework_ag_ui._agent_run import run_agent_stream
+from agent_framework_ag_ui._agent_run import PendingApprovalEntry, PendingApprovalKey, run_agent_stream
 
 
 def _make_weather_tool() -> FunctionTool:
@@ -522,6 +522,773 @@ async def test_resolve_approval_responses_returns_only_approved() -> None:
     rejection_results = [c for c in all_contents if c.type == "function_result" and c.call_id == rejected_call_id]
     assert len(rejection_results) == 1
     assert "rejected" in str(rejection_results[0].result).lower()
+
+
+async def test_resolve_approval_responses_preserves_follow_up_user_input_group() -> None:
+    """Approval-time follow-up requests stay grouped and do not emit a synthetic tool result."""
+    from agent_framework import Message
+    from agent_framework.exceptions import UserInputRequiredException
+
+    from agent_framework_ag_ui._agent_run import _resolve_approval_responses
+
+    def request_consent() -> str:
+        raise UserInputRequiredException(
+            contents=[
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent-1"),
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent-2"),
+            ]
+        )
+
+    consent_tool = FunctionTool(
+        name="request_consent",
+        description="Request two consent steps",
+        func=request_consent,
+        approval_mode="always_require",
+    )
+    function_call = Content.from_function_call(call_id="call_consent", name="request_consent", arguments="{}")
+    approval_request = Content.from_function_approval_request(id="approval_consent", function_call=function_call)
+    messages: list[Any] = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)]),
+    ]
+    agent = StubAgent(updates=[], default_options={"tools": [consent_tool]})
+
+    results = await _resolve_approval_responses(messages, [consent_tool], agent, {})
+
+    follow_up_requests = [content for message in messages for content in message.contents if content.user_input_request]
+    assert results == []
+    assert [request.consent_link for request in follow_up_requests] == [
+        "https://example.com/consent-1",
+        "https://example.com/consent-2",
+    ]
+    assert not [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert any(message.role == "assistant" and message.contents == follow_up_requests for message in messages)
+
+
+async def test_resolve_approval_responses_returns_failure_when_grouped_execution_raises(
+    monkeypatch: Any,
+) -> None:
+    """A grouped-execution failure produces one deterministic result for the approved call."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import _resolve_approval_responses
+
+    async def fail_grouped_execution(**kwargs: Any) -> tuple[list[list[Content]], bool]:
+        del kwargs
+        raise RuntimeError("execution failed")
+
+    monkeypatch.setattr(
+        "agent_framework_ag_ui._agent_run._try_execute_function_call_groups",
+        fail_grouped_execution,
+    )
+    weather_tool = _make_weather_tool()
+    function_call = Content.from_function_call(
+        call_id="call_execution_failure",
+        name="get_weather",
+        arguments='{"city": "Seattle"}',
+    )
+    approval_request = Content.from_function_approval_request(
+        id="approval_execution_failure",
+        function_call=function_call,
+    )
+    messages: list[Any] = [
+        Message(role="assistant", contents=[approval_request]),
+        Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)]),
+    ]
+    agent = StubAgent(updates=[], default_options={"tools": [weather_tool]})
+
+    results = await _resolve_approval_responses(messages, [weather_tool], agent, {})
+
+    assert len(results) == 1
+    assert results[0].type == "function_result"
+    assert results[0].call_id == "call_execution_failure"
+    assert results[0].result == "Error: Tool call invocation failed."
+    assert [
+        content.result for message in messages for content in message.contents if content.type == "function_result"
+    ] == ["Error: Tool call invocation failed."]
+
+
+async def test_resolve_approval_responses_keeps_fresh_occurrence_when_canonical_id_is_reused() -> None:
+    """A completed occurrence cannot consume a later approval that reuses its canonical call id."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import (
+        _make_pending_approval_entry,
+        _pending_approval_key,
+        _resolve_approval_responses,
+    )
+
+    executions: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executions.append(value)
+        return f"wrote:{value}"
+
+    tool = FunctionTool(
+        name="guarded_write",
+        description="Write a value",
+        func=guarded_write,
+        approval_mode="always_require",
+    )
+    call_id = "call_reused"
+    first_call = Content.from_function_call(call_id=call_id, name="guarded_write", arguments={"value": "same"})
+    second_call = Content.from_function_call(call_id=call_id, name="guarded_write", arguments={"value": "same"})
+    messages = [
+        Message(role="assistant", contents=[first_call]),
+        Message(role="tool", contents=[Content.from_function_result(call_id=call_id, result="already wrote")]),
+        Message(
+            role="user",
+            contents=[Content.from_function_approval_response(approved=True, id=call_id, function_call=first_call)],
+        ),
+        Message(role="assistant", contents=[second_call]),
+        Message(
+            role="user",
+            contents=[Content.from_function_approval_response(approved=True, id=call_id, function_call=second_call)],
+        ),
+    ]
+    thread_id = "thread-reused"
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        _pending_approval_key(thread_id, call_id): _make_pending_approval_entry(
+            "guarded_write",
+            '{"value":"same"}',
+            request_id=call_id,
+            interrupt_id=call_id,
+        )
+    }
+    agent = StubAgent(updates=[], default_options={"tools": [tool]})
+
+    results = await _resolve_approval_responses(
+        messages,
+        [tool],
+        agent,
+        {},
+        pending_approvals,
+        thread_id,
+    )
+
+    assert executions == ["same"]
+    assert [result.result for result in results] == ["wrote:same"]
+    assert pending_approvals == {}
+    assert not [
+        content for message in messages for content in message.contents if content.type == "function_approval_response"
+    ]
+
+
+async def test_resolve_approval_responses_uses_fresh_decision_when_canonical_id_is_reused() -> None:
+    """A historical approval does not conflict with a fresh rejection for a reused call id."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import (
+        _make_pending_approval_entry,
+        _pending_approval_key,
+        _resolve_approval_responses,
+    )
+
+    executions: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executions.append(value)
+        return f"wrote:{value}"
+
+    tool = FunctionTool(
+        name="guarded_write",
+        description="Write a value",
+        func=guarded_write,
+        approval_mode="always_require",
+    )
+    call_id = "call_reused_decision"
+    first_call = Content.from_function_call(call_id=call_id, name="guarded_write", arguments={"value": "same"})
+    second_call = Content.from_function_call(call_id=call_id, name="guarded_write", arguments={"value": "same"})
+    messages = [
+        Message(role="assistant", contents=[first_call]),
+        Message(role="tool", contents=[Content.from_function_result(call_id=call_id, result="already wrote")]),
+        Message(
+            role="user",
+            contents=[Content.from_function_approval_response(approved=True, id=call_id, function_call=first_call)],
+        ),
+        Message(role="assistant", contents=[second_call]),
+        Message(
+            role="user",
+            contents=[Content.from_function_approval_response(approved=False, id=call_id, function_call=second_call)],
+        ),
+    ]
+    thread_id = "thread-reused-decision"
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        _pending_approval_key(thread_id, call_id): _make_pending_approval_entry(
+            "guarded_write",
+            '{"value":"same"}',
+            request_id=call_id,
+            interrupt_id=call_id,
+        )
+    }
+    agent = StubAgent(updates=[], default_options={"tools": [tool]})
+
+    results = await _resolve_approval_responses(
+        messages,
+        [tool],
+        agent,
+        {},
+        pending_approvals,
+        thread_id,
+    )
+
+    assert executions == []
+    assert results == []
+    assert pending_approvals == {}
+    assert [
+        content.result for message in messages for content in message.contents if content.type == "function_result"
+    ] == ["already wrote", "Error: Tool call invocation was rejected by user."]
+    assert not [
+        content for message in messages for content in message.contents if content.type == "function_approval_response"
+    ]
+
+
+async def test_resolve_approval_responses_does_not_fall_back_when_fresh_reused_response_is_invalid() -> None:
+    """An invalid fresh response cannot consume pending state through a valid historical response."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import (
+        _make_pending_approval_entry,
+        _pending_approval_key,
+        _resolve_approval_responses,
+    )
+
+    executions: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executions.append(value)
+        return f"wrote:{value}"
+
+    tool = FunctionTool(
+        name="guarded_write",
+        description="Write a value",
+        func=guarded_write,
+        approval_mode="always_require",
+    )
+    call_id = "call_reused_invalid"
+    first_call = Content.from_function_call(call_id=call_id, name="guarded_write", arguments={"value": "same"})
+    edited_second_call = Content.from_function_call(
+        call_id=call_id,
+        name="guarded_write",
+        arguments={"value": "tampered"},
+    )
+    messages = [
+        Message(role="assistant", contents=[first_call]),
+        Message(role="tool", contents=[Content.from_function_result(call_id=call_id, result="already wrote")]),
+        Message(
+            role="user",
+            contents=[Content.from_function_approval_response(approved=True, id=call_id, function_call=first_call)],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id=call_id,
+                    name="guarded_write",
+                    arguments={"value": "same"},
+                )
+            ],
+        ),
+        Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(
+                    approved=True,
+                    id=call_id,
+                    function_call=edited_second_call,
+                )
+            ],
+        ),
+    ]
+    thread_id = "thread-reused-invalid"
+    pending_entry = _make_pending_approval_entry(
+        "guarded_write",
+        '{"value":"same"}',
+        request_id=call_id,
+        interrupt_id=call_id,
+    )
+    pending_key = _pending_approval_key(thread_id, call_id)
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {pending_key: pending_entry}
+    agent = StubAgent(updates=[], default_options={"tools": [tool]})
+
+    results = await _resolve_approval_responses(
+        messages,
+        [tool],
+        agent,
+        {},
+        pending_approvals,
+        thread_id,
+    )
+
+    assert executions == []
+    assert results == []
+    assert pending_approvals == {pending_key: pending_entry}
+    assert not [
+        content for message in messages for content in message.contents if content.type == "function_approval_response"
+    ]
+
+
+async def test_resolve_approval_responses_consumes_trusted_hosted_pending_entry() -> None:
+    """A server-collected hosted response remains provider-bound but cannot be replayed."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import (
+        _make_pending_approval_entry,
+        _pending_approval_key,
+        _resolve_approval_responses,
+    )
+
+    call_id = "mcpr_hosted"
+    server_label = "hosted-mcp"
+    hosted_call = Content.from_function_call(
+        call_id=call_id,
+        name="hosted_write",
+        arguments={"value": "same"},
+        additional_properties={"server_label": server_label},
+    )
+    hosted_response = Content.from_function_approval_response(
+        approved=True,
+        id=call_id,
+        function_call=hosted_call,
+    )
+    messages = [Message(role="user", contents=[hosted_response])]
+    thread_id = "thread-hosted-collected"
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        _pending_approval_key(thread_id, call_id): _make_pending_approval_entry(
+            "hosted_write",
+            '{"value":"same"}',
+            request_id=call_id,
+            interrupt_id=call_id,
+            server_label=server_label,
+        )
+    }
+
+    results = await _resolve_approval_responses(
+        messages,
+        [],
+        StubAgent(updates=[]),
+        {},
+        pending_approvals,
+        thread_id,
+    )
+
+    assert results == []
+    assert pending_approvals == {}
+    assert len(messages) == 1
+    assert messages[0].role == "user"
+    assert messages[0].contents == [hosted_response]
+
+
+async def test_resolve_approval_responses_uses_fresh_response_across_pending_aliases() -> None:
+    """The interrupt-id response wins over historical replay under the request-id alias."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import (
+        _make_pending_approval_entry,
+        _pending_approval_key,
+        _resolve_approval_responses,
+    )
+
+    executions: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executions.append(value)
+        return f"wrote:{value}"
+
+    tool = FunctionTool(name="guarded_write", description="Write a value", func=guarded_write)
+    request_id = "approval_alias"
+    interrupt_id = "call_alias"
+    function_call = Content.from_function_call(
+        call_id=interrupt_id,
+        name="guarded_write",
+        arguments={"value": "same"},
+    )
+    messages = [
+        Message(role="assistant", contents=[function_call]),
+        Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(
+                    approved=True,
+                    id=request_id,
+                    function_call=function_call,
+                )
+            ],
+        ),
+        Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(
+                    approved=False,
+                    id=interrupt_id,
+                    function_call=function_call,
+                )
+            ],
+        ),
+    ]
+    thread_id = "thread-alias"
+    pending_entry = _make_pending_approval_entry(
+        "guarded_write",
+        '{"value":"same"}',
+        request_id=request_id,
+        interrupt_id=interrupt_id,
+    )
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        _pending_approval_key(thread_id, request_id): pending_entry,
+        _pending_approval_key(thread_id, interrupt_id): pending_entry,
+    }
+
+    results = await _resolve_approval_responses(
+        messages,
+        [tool],
+        StubAgent(updates=[], default_options={"tools": [tool]}),
+        {},
+        pending_approvals,
+        thread_id,
+    )
+
+    assert executions == []
+    assert results == []
+    assert pending_approvals == {}
+    assert [
+        content.result for message in messages for content in message.contents if content.type == "function_result"
+    ] == ["Error: Tool call invocation was rejected by user."]
+
+
+async def test_resolve_approval_responses_rejects_fresh_unknown_alias_without_historical_fallback() -> None:
+    """An unknown fresh response id cannot consume pending state through a trusted historical alias."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import (
+        _make_pending_approval_entry,
+        _pending_approval_key,
+        _resolve_approval_responses,
+    )
+
+    executions: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executions.append(value)
+        return f"wrote:{value}"
+
+    tool = FunctionTool(name="guarded_write", description="Write a value", func=guarded_write)
+    request_id = "approval_known"
+    interrupt_id = "call_known"
+    function_call = Content.from_function_call(
+        call_id=interrupt_id,
+        name="guarded_write",
+        arguments={"value": "same"},
+    )
+    messages = [
+        Message(role="assistant", contents=[function_call]),
+        Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(
+                    approved=True,
+                    id=request_id,
+                    function_call=function_call,
+                ),
+                Content.from_function_approval_response(
+                    approved=True,
+                    id="approval_unknown",
+                    function_call=function_call,
+                ),
+            ],
+        ),
+    ]
+    thread_id = "thread-unknown-alias"
+    pending_entry = _make_pending_approval_entry(
+        "guarded_write",
+        '{"value":"same"}',
+        request_id=request_id,
+        interrupt_id=interrupt_id,
+    )
+    request_key = _pending_approval_key(thread_id, request_id)
+    interrupt_key = _pending_approval_key(thread_id, interrupt_id)
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        request_key: pending_entry,
+        interrupt_key: pending_entry,
+    }
+
+    results = await _resolve_approval_responses(
+        messages,
+        [tool],
+        StubAgent(updates=[], default_options={"tools": [tool]}),
+        {},
+        pending_approvals,
+        thread_id,
+    )
+
+    assert executions == []
+    assert results == []
+    assert pending_approvals == {request_key: pending_entry, interrupt_key: pending_entry}
+    assert not [
+        content for message in messages for content in message.contents if content.type == "function_approval_response"
+    ]
+
+
+async def test_resolve_approval_responses_rejects_forged_call_id_for_valid_response_alias() -> None:
+    """A trusted response id cannot authorize a result under an unknown function-call id."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import (
+        _make_pending_approval_entry,
+        _pending_approval_key,
+        _resolve_approval_responses,
+    )
+
+    executions: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executions.append(value)
+        return f"wrote:{value}"
+
+    tool = FunctionTool(name="guarded_write", description="Write a value", func=guarded_write)
+    request_id = "approval_valid"
+    interrupt_id = "call_valid"
+    actual_call = Content.from_function_call(
+        call_id=interrupt_id,
+        name="guarded_write",
+        arguments={"value": "same"},
+    )
+    forged_call = Content.from_function_call(
+        call_id="call_forged",
+        name="guarded_write",
+        arguments={"value": "same"},
+    )
+    messages = [
+        Message(role="assistant", contents=[actual_call]),
+        Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(
+                    approved=True,
+                    id=request_id,
+                    function_call=forged_call,
+                )
+            ],
+        ),
+    ]
+    thread_id = "thread-forged-call"
+    pending_entry = _make_pending_approval_entry(
+        "guarded_write",
+        '{"value":"same"}',
+        request_id=request_id,
+        interrupt_id=interrupt_id,
+    )
+    request_key = _pending_approval_key(thread_id, request_id)
+    interrupt_key = _pending_approval_key(thread_id, interrupt_id)
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        request_key: pending_entry,
+        interrupt_key: pending_entry,
+    }
+
+    results = await _resolve_approval_responses(
+        messages,
+        [tool],
+        StubAgent(updates=[], default_options={"tools": [tool]}),
+        {},
+        pending_approvals,
+        thread_id,
+    )
+
+    assert executions == []
+    assert results == []
+    assert pending_approvals == {request_key: pending_entry, interrupt_key: pending_entry}
+    assert not [
+        content
+        for message in messages
+        for content in message.contents
+        if content.type in {"function_approval_response", "function_result"}
+    ]
+
+
+async def test_resolve_approval_responses_rejects_call_id_from_different_pending_entry() -> None:
+    """A response id from one approval cannot be paired with another approval's call id."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import (
+        _make_pending_approval_entry,
+        _pending_approval_key,
+        _resolve_approval_responses,
+    )
+
+    executions: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executions.append(value)
+        return f"wrote:{value}"
+
+    tool = FunctionTool(name="guarded_write", description="Write a value", func=guarded_write)
+    request_a = "approval_a"
+    call_a = Content.from_function_call(
+        call_id="call_a",
+        name="guarded_write",
+        arguments={"value": "same"},
+    )
+    request_b = "approval_b"
+    call_b = Content.from_function_call(
+        call_id="call_b",
+        name="guarded_write",
+        arguments={"value": "same"},
+    )
+    messages = [
+        Message(role="assistant", contents=[call_a]),
+        Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(approved=True, id=request_a, function_call=call_a),
+                Content.from_function_approval_response(approved=False, id=request_a, function_call=call_b),
+            ],
+        ),
+    ]
+    thread_id = "thread-crossed-aliases"
+    pending_a = _make_pending_approval_entry(
+        "guarded_write",
+        '{"value":"same"}',
+        request_id=request_a,
+        interrupt_id="call_a",
+    )
+    pending_b = _make_pending_approval_entry(
+        "guarded_write",
+        '{"value":"same"}',
+        request_id=request_b,
+        interrupt_id="call_b",
+    )
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        _pending_approval_key(thread_id, request_a): pending_a,
+        _pending_approval_key(thread_id, "call_a"): pending_a,
+        _pending_approval_key(thread_id, request_b): pending_b,
+        _pending_approval_key(thread_id, "call_b"): pending_b,
+    }
+    expected_pending = dict(pending_approvals)
+
+    results = await _resolve_approval_responses(
+        messages,
+        [tool],
+        StubAgent(updates=[], default_options={"tools": [tool]}),
+        {},
+        pending_approvals,
+        thread_id,
+    )
+
+    assert executions == []
+    assert results == []
+    assert pending_approvals == expected_pending
+    assert not [
+        content
+        for message in messages
+        for content in message.contents
+        if content.type in {"function_approval_response", "function_result"}
+    ]
+
+
+async def test_resolve_approval_responses_without_registry_uses_latest_duplicate_decision() -> None:
+    """The optional no-registry path preserves the established last-response-wins behavior."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import _resolve_approval_responses
+
+    executions: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executions.append(value)
+        return f"wrote:{value}"
+
+    tool = FunctionTool(name="guarded_write", description="Write a value", func=guarded_write)
+    call_id = "call_no_registry"
+    function_call = Content.from_function_call(
+        call_id=call_id,
+        name="guarded_write",
+        arguments={"value": "same"},
+    )
+    messages = [
+        Message(role="assistant", contents=[function_call]),
+        Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(approved=True, id=call_id, function_call=function_call),
+                Content.from_function_approval_response(approved=False, id=call_id, function_call=function_call),
+            ],
+        ),
+    ]
+
+    results = await _resolve_approval_responses(
+        messages,
+        [tool],
+        StubAgent(updates=[], default_options={"tools": [tool]}),
+        {},
+    )
+
+    assert executions == []
+    assert results == []
+    assert [
+        content.result for message in messages for content in message.contents if content.type == "function_result"
+    ] == ["Error: Tool call invocation was rejected by user."]
+
+
+async def test_resolve_approval_responses_legacy_registry_uses_latest_duplicate_decision() -> None:
+    """Legacy string entries group duplicate decisions by their matched response id."""
+    from agent_framework import Message
+
+    from agent_framework_ag_ui._agent_run import _pending_approval_key, _resolve_approval_responses
+
+    executions: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executions.append(value)
+        return f"wrote:{value}"
+
+    tool = FunctionTool(name="guarded_write", description="Write a value", func=guarded_write)
+    approval_id = "approval_legacy"
+    first_call = Content.from_function_call(
+        call_id="call_legacy_old",
+        name="guarded_write",
+        arguments={"value": "same"},
+    )
+    latest_call = Content.from_function_call(
+        call_id="call_legacy_new",
+        name="guarded_write",
+        arguments={"value": "same"},
+    )
+    messages = [
+        Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(
+                    approved=True,
+                    id=approval_id,
+                    function_call=first_call,
+                ),
+                Content.from_function_approval_response(
+                    approved=False,
+                    id=approval_id,
+                    function_call=latest_call,
+                ),
+            ],
+        )
+    ]
+    thread_id = "thread-legacy"
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
+        _pending_approval_key(thread_id, approval_id): "guarded_write"
+    }
+
+    results = await _resolve_approval_responses(
+        messages,
+        [tool],
+        StubAgent(updates=[], default_options={"tools": [tool]}),
+        {},
+        pending_approvals,
+        thread_id,
+    )
+
+    assert executions == []
+    assert results == []
+    assert pending_approvals == {}
+    assert [
+        content.result for message in messages for content in message.contents if content.type == "function_result"
+    ] == ["Error: Tool call invocation was rejected by user."]
 
 
 class TestApprovalToolResultDisplayChannel:

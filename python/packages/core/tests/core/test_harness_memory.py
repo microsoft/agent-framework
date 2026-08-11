@@ -194,11 +194,7 @@ async def test_memory_file_store_writes_topics_index_state_and_transcripts(tmp_p
         source_id=DEFAULT_MEMORY_SOURCE_ID,
     )["sessions_since_consolidation"] == ["session-1"]
 
-    history_provider = FileHistoryProvider(
-        store.get_transcripts_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID),
-        dumps=lambda value: json.dumps(value, separators=(",", ":"), sort_keys=True),
-        loads=json.loads,
-    )
+    history_provider = FileHistoryProvider(store.get_transcripts_directory(session, source_id=DEFAULT_MEMORY_SOURCE_ID))
     await history_provider.save_messages(
         session.session_id,
         [
@@ -861,3 +857,21 @@ async def test_memory_extraction_propagates_programmer_errors(tmp_path) -> None:
             context=context,
             now=datetime(2026, 4, 22, tzinfo=timezone.utc),
         )
+
+
+def test_extract_keywords_handles_non_english_text() -> None:
+    """Keyword extraction yields tokens for non-English input (#6989).
+
+    The pattern used to be ASCII-only, so CJK/Cyrillic messages produced an
+    empty keyword set and therefore never matched any topic file.
+    """
+    from agent_framework._harness._memory import _extract_keywords  # pyright: ignore[reportPrivateUsage]
+
+    cjk = _extract_keywords([Message(role="user", contents=["こんにちは 元気ですか"])])
+    cyrillic = _extract_keywords([Message(role="user", contents=["привет мир друзья"])])
+    english = _extract_keywords([Message(role="user", contents=["hello world"])])
+
+    assert cjk == {"こんにちは", "元気ですか"}
+    assert cyrillic == {"привет", "мир", "друзья"}
+    # English extraction is unchanged.
+    assert english == {"hello", "world"}

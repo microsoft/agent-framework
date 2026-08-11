@@ -17,6 +17,7 @@ from typing_extensions import NotRequired, TypedDict
 from .._feature_stage import ExperimentalFeature, experimental
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import tool
 from .._types import Message
 
@@ -498,6 +499,7 @@ class TodoProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject todo tools and instructions before the model runs."""
+        mark_feature_used(FeatureIndex.CORE_TODO_PROVIDER)
         del agent, state
 
         @tool(name="todos_add", approval_mode="never_require")

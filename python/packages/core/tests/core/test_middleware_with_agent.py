@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -68,6 +68,51 @@ class TestChatAgentClassBasedMiddleware:
 
         # Verify middleware execution order
         assert execution_order == ["agent_middleware_before", "agent_middleware_after"]
+
+    async def test_bare_middleware_at_construction_is_installed(self, client: SupportsChatGetResponse) -> None:
+        """A single middleware object passed bare (not in a list) at construction is installed.
+
+        Construction-time middleware mirrors categorize_middleware's single-source
+        handling, matching the run-level ``middleware=`` behavior instead of silently
+        dropping the middleware.
+        """
+        execution_order: list[str] = []
+
+        class TrackingAgentMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                execution_order.append("before")
+                await call_next()
+                execution_order.append("after")
+
+        agent = Agent(client=client, middleware=TrackingAgentMiddleware())
+
+        response = await agent.run([Message(role="user", contents=["test message"])])
+
+        assert response is not None
+        assert execution_order == ["before", "after"]
+
+    async def test_bare_middleware_assigned_to_attribute_is_installed(self, client: SupportsChatGetResponse) -> None:
+        """A single middleware object assigned bare to ``agent.middleware`` executes.
+
+        categorize_middleware owns the bare-source rule (a non-sequence source is a
+        one-element list) and ``run()`` passes the raw attribute straight to it, so a
+        bare attribute assignment — which used to be silently ignored — now executes.
+        """
+        execution_order: list[str] = []
+
+        class TrackingAgentMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                execution_order.append("before")
+                await call_next()
+                execution_order.append("after")
+
+        agent = Agent(client=client)
+        agent.middleware = cast("Any", TrackingAgentMiddleware())
+
+        response = await agent.run([Message(role="user", contents=["test message"])])
+
+        assert response is not None
+        assert execution_order == ["before", "after"]
 
     async def test_class_based_function_middleware_with_chat_agent(self, client: "MockChatClient") -> None:
         """Test class-based function middleware with Agent."""
@@ -2302,3 +2347,54 @@ class TestChatAgentChatMiddleware:
 #     response = await agent.run("test message")
 #     assert response is not None
 #     assert execution_order == ["before", "after"]
+
+
+class TestCallableClassMiddlewareErrorHandling:
+    """Tests for exception handling when using callable class instances as middleware."""
+
+    def test_callable_class_middleware_insufficient_params_raises_middleware_exception(self) -> None:
+        """Test that callable class instance with insufficient params raises MiddlewareException."""
+
+        class InsufficientParamsMiddleware:
+            async def __call__(self, ctx: Any) -> None:
+                pass
+
+        client = MockBaseChatClient()
+        insufficient_middleware: list[Any] = [InsufficientParamsMiddleware()]
+        with pytest.raises(MiddlewareException) as exc_info:
+            Agent(client=client, middleware=insufficient_middleware)
+
+        assert "InsufficientParamsMiddleware" in str(exc_info.value)
+        assert "must have at least 2 parameters" in str(exc_info.value)
+
+    def test_callable_class_middleware_type_mismatch_raises_middleware_exception(self) -> None:
+        """Test that callable class instance with decorator/annotation mismatch raises MiddlewareException."""
+
+        class MismatchedCallableMiddleware:
+            _middleware_type = MiddlewareType.AGENT
+
+            async def __call__(self, context: FunctionInvocationContext, call_next: Any) -> None:
+                await call_next()
+
+        client = MockBaseChatClient()
+        mismatched_middleware: list[Any] = [MismatchedCallableMiddleware()]
+        with pytest.raises(MiddlewareException) as exc_info:
+            Agent(client=client, middleware=mismatched_middleware)
+
+        assert "MismatchedCallableMiddleware" in str(exc_info.value)
+        assert "MiddlewareTypes type mismatch" in str(exc_info.value)
+
+    def test_callable_class_middleware_undetermined_type_raises_middleware_exception(self) -> None:
+        """Test that a callable class instance without annotations or decorator raises MiddlewareException."""
+
+        class UndeterminedCallableMiddleware:
+            async def __call__(self, arg1: Any, arg2: Any) -> None:
+                pass
+
+        client = MockBaseChatClient()
+        undetermined_middleware: list[Any] = [UndeterminedCallableMiddleware()]
+        with pytest.raises(MiddlewareException) as exc_info:
+            Agent(client=client, middleware=undetermined_middleware)
+
+        assert "UndeterminedCallableMiddleware" in str(exc_info.value)
+        assert "Cannot determine middleware type" in str(exc_info.value)
