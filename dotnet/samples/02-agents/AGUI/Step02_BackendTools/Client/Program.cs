@@ -113,6 +113,9 @@ try
             }
         }
 
+        // The session owns prior history, so the next run sends only the new user message.
+        messages.Clear();
+
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("\n[Run Finished]");
         Console.ResetColor();

@@ -18,7 +18,7 @@ static string GetUserLocation()
 }
 
 // Create frontend tools
-AITool[] frontendTools = [AIFunctionFactory.Create(GetUserLocation)];
+AITool[] frontendTools = [AIFunctionFactory.Create(GetUserLocation, name: "get_user_location")];
 
 // Create the AG-UI client agent with tools
 using HttpClient httpClient = new()
@@ -105,6 +105,9 @@ try
                 }
             }
         }
+
+        // The session owns prior history, so the next run sends only the new user message.
+        messages.Clear();
 
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("\n[Run Finished]");
