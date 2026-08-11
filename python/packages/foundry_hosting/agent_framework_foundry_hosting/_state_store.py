@@ -10,7 +10,6 @@ from agent_framework import (
     CheckpointID,
     CheckpointStorage,
     Content,
-    InMemoryCheckpointStorage,
     SessionStore,
     WorkflowCheckpoint,
     WorkflowCheckpointException,
@@ -169,13 +168,11 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
     collection boundary used to list checkpoints, restore the latest checkpoint,
     and clean up older checkpoints without affecting another workflow context.
 
-    This will default to using the `FoundryCheckpointStore` when hosted in Foundry,
-    and an in-memory store otherwise.
+    This defaults to using the `FoundryCheckpointStore` in all environments.
     """
 
     def __init__(self) -> None:
-        self._foundry_storages: dict[str, CheckpointStorage] = {}
-        self._in_memory_storages: dict[str, CheckpointStorage] = {}
+        self._storages: dict[str, CheckpointStorage] = {}
 
     def get_store(
         self,
@@ -184,14 +181,12 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
         context_id: str,
     ) -> CheckpointStorage:
         """Get checkpoint store for the requested hosting environment."""
-        stores = self._foundry_storages if config.is_hosted else self._in_memory_storages
-
         if not context_id:
             raise ValueError("context_id must be provided to get a checkpoint store.")
 
-        if context_id not in stores:
-            stores[context_id] = FoundryCheckpointStore(context_id) if config.is_hosted else InMemoryCheckpointStorage()
-        return stores[context_id]
+        if context_id not in self._storages:
+            self._storages[context_id] = FoundryCheckpointStore(context_id)
+        return self._storages[context_id]
 
 
 # endregion Checkpoint persistence
@@ -242,43 +237,20 @@ class FoundryFunctionApprovalStore:
         return Content.from_dict(item.value)
 
 
-class InMemoryFunctionApprovalStore:
-    """An in-memory store for function approval requests."""
-
-    def __init__(self) -> None:
-        self._store: dict[str, Content] = {}
-
-    async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
-        if approval_request_id in self._store:
-            raise ValueError(f"Approval request with ID '{approval_request_id}' already exists.")
-        self._store[approval_request_id] = request
-
-    async def load_approval_request(self, approval_request_id: str) -> Content:
-        if approval_request_id not in self._store:
-            raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
-        return self._store[approval_request_id]
-
-
 class FunctionApprovalStoreProvider(StoreProvider[FunctionApprovalStore]):
     """Provide function approval store for the active hosting environment.
 
-    This will default to using the `FoundryFunctionApprovalStore` when hosted in Foundry,
-    and an in-memory store otherwise.
+    This defaults to using the `FoundryFunctionApprovalStore` in all environments.
     """
 
     def __init__(self) -> None:
-        self._foundry_storage: FunctionApprovalStore | None = None
-        self._in_memory_storage: FunctionApprovalStore | None = None
+        self._storage: FunctionApprovalStore | None = None
 
     def get_store(self, *, config: AgentConfig) -> FunctionApprovalStore:
         """Get function approval store for the requested hosting environment."""
-        if config.is_hosted:
-            if self._foundry_storage is None:
-                self._foundry_storage = FoundryFunctionApprovalStore()
-            return self._foundry_storage
-        if self._in_memory_storage is None:
-            self._in_memory_storage = InMemoryFunctionApprovalStore()
-        return self._in_memory_storage
+        if self._storage is None:
+            self._storage = FoundryFunctionApprovalStore()
+        return self._storage
 
 
 # endregion Function approval persistence
@@ -316,23 +288,17 @@ class FoundryAgentSessionStore(SessionStore):
 class AgentSessionStoreProvider(StoreProvider[SessionStore]):
     """Provide agent session store for the active hosting environment.
 
-    This will default to using the `FoundryAgentSessionStore` when hosted in Foundry,
-    and an in-memory store otherwise.
+    This defaults to using the `FoundryAgentSessionStore` in all environments.
     """
 
     def __init__(self) -> None:
-        self._foundry_storage: SessionStore | None = None
-        self._in_memory_storage: SessionStore | None = None
+        self._storage: SessionStore | None = None
 
     def get_store(self, *, config: AgentConfig) -> SessionStore:
         """Get agent session store for the requested hosting environment."""
-        if config.is_hosted:
-            if self._foundry_storage is None:
-                self._foundry_storage = FoundryAgentSessionStore()
-            return self._foundry_storage
-        if self._in_memory_storage is None:
-            self._in_memory_storage = SessionStore()
-        return self._in_memory_storage
+        if self._storage is None:
+            self._storage = FoundryAgentSessionStore()
+        return self._storage
 
 
 # endregion Agent session persistence

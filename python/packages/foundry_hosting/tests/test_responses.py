@@ -70,8 +70,13 @@ from agent_framework_foundry_hosting._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
     FunctionApprovalStoreProvider,
-    InMemoryFunctionApprovalStore,
 )
+
+
+def _function_approval_store(request: Content) -> MagicMock:
+    storage = MagicMock()
+    storage.load_approval_request = AsyncMock(return_value=request)
+    return storage
 
 
 def _make_function_approval_request_content(
@@ -1483,9 +1488,8 @@ class TestOutputItemToMessage:
     async def test_mcp_approval_request(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = OutputItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -1501,9 +1505,8 @@ class TestOutputItemToMessage:
     async def test_mcp_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = OutputItemMcpApprovalResponseResource({
             "type": "mcp_approval_response",
@@ -1993,9 +1996,8 @@ class TestItemToMessage:
     async def test_mcp_approval_request(self) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = ItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -2012,9 +2014,8 @@ class TestItemToMessage:
     async def test_mcp_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import MCPApprovalResponse
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = MCPApprovalResponse({
             "type": "mcp_approval_response",
@@ -3244,39 +3245,14 @@ class TestMultiTurnMixedContent:
 # region Function approval round-trip
 
 
-class TestFunctionApprovalStore:
-    """Unit tests for the function approval storage classes."""
-
-    async def test_in_memory_save_and_load(self) -> None:
-        storage = InMemoryFunctionApprovalStore()
-        request = _make_function_approval_request_content(request_id="apr_1")
-        await storage.save_approval_request("apr_1", request)
-        loaded = await storage.load_approval_request("apr_1")
-        assert loaded.type == "function_approval_request"
-        assert loaded.id == "apr_1"
-
-    async def test_in_memory_duplicate_save_raises(self) -> None:
-        storage = InMemoryFunctionApprovalStore()
-        request = _make_function_approval_request_content(request_id="apr_1")
-        await storage.save_approval_request("apr_1", request)
-        with pytest.raises(ValueError, match="already exists"):
-            await storage.save_approval_request("apr_1", request)
-
-    async def test_in_memory_missing_load_raises(self) -> None:
-        storage = InMemoryFunctionApprovalStore()
-        with pytest.raises(KeyError):
-            await storage.load_approval_request("missing")
-
-
 class TestFunctionApprovalConversion:
     """Tests for the approval-aware paths in `_item_to_message` / `_output_item_to_message`."""
 
     async def test_output_item_mcp_approval_request_loads_from_storage(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = OutputItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -3311,9 +3287,8 @@ class TestFunctionApprovalConversion:
     async def test_output_item_mcp_approval_response_resolves_to_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = OutputItemMcpApprovalResponseResource({
             "type": "mcp_approval_response",
@@ -3346,9 +3321,8 @@ class TestFunctionApprovalConversion:
     async def test_input_item_mcp_approval_request_loads_from_storage(self) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = ItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -3365,9 +3339,8 @@ class TestFunctionApprovalConversion:
     async def test_input_item_mcp_approval_response_resolves_to_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import MCPApprovalResponse
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = MCPApprovalResponse({
             "type": "mcp_approval_response",

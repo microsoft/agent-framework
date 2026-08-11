@@ -5,7 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentSession, Content, SessionStore, WorkflowCheckpoint, WorkflowCheckpointException
+from agent_framework import AgentSession, Content, WorkflowCheckpoint, WorkflowCheckpointException
 from azure.ai.agentserver.core import AgentConfig
 from azure.ai.agentserver.core.storage import FoundryStorageConflictError
 
@@ -17,7 +17,6 @@ from agent_framework_foundry_hosting._state_store import (
     FoundryCheckpointStore,
     FoundryFunctionApprovalStore,
     FunctionApprovalStoreProvider,
-    InMemoryFunctionApprovalStore,
 )
 
 
@@ -180,10 +179,8 @@ def test_checkpoint_storage_provider_caches_storage_by_context(is_hosted: bool) 
     first = provider.get_store(config=config, context_id="context-1")
     second = provider.get_store(config=config, context_id="context-2")
 
-    if is_hosted:
-        assert type(first) is FoundryCheckpointStore
-        assert type(second) is FoundryCheckpointStore
-
+    assert type(first) is FoundryCheckpointStore
+    assert type(second) is FoundryCheckpointStore
     assert provider.get_store(config=config, context_id="context-1") is first
     assert second is not first
 
@@ -261,36 +258,26 @@ async def test_load_missing_function_approval_request_raises() -> None:
         await FoundryFunctionApprovalStore().load_approval_request("missing")
 
 
-@pytest.mark.parametrize(
-    ("is_hosted", "expected_type"),
-    [(True, FoundryFunctionApprovalStore), (False, InMemoryFunctionApprovalStore)],
-)
-def test_function_approval_storage_provider_selects_backend(
-    is_hosted: bool,
-    expected_type: type[FoundryFunctionApprovalStore] | type[InMemoryFunctionApprovalStore],
-) -> None:
+@pytest.mark.parametrize("is_hosted", [True, False])
+def test_function_approval_storage_provider_uses_foundry_store(is_hosted: bool) -> None:
     provider = FunctionApprovalStoreProvider()
     config = _config(is_hosted=is_hosted)
 
     storage = provider.get_store(config=config)
 
-    assert type(storage) is expected_type
+    assert type(storage) is FoundryFunctionApprovalStore
     assert provider.get_store(config=config) is storage
 
 
-def test_function_approval_storage_provider_creates_only_requested_backend() -> None:
-    with (
-        patch("agent_framework_foundry_hosting._state_store.FoundryFunctionApprovalStore") as foundry_storage_type,
-        patch("agent_framework_foundry_hosting._state_store.InMemoryFunctionApprovalStore") as in_memory_storage_type,
-    ):
+def test_function_approval_storage_provider_creates_storage_once() -> None:
+    with patch("agent_framework_foundry_hosting._state_store.FoundryFunctionApprovalStore") as storage_type:
         provider = FunctionApprovalStoreProvider()
-        config = _config(is_hosted=True)
+        config = _config(is_hosted=False)
         storage = provider.get_store(config=config)
 
         assert provider.get_store(config=config) is storage
 
-    foundry_storage_type.assert_called_once_with()
-    in_memory_storage_type.assert_not_called()
+    storage_type.assert_called_once_with()
 
 
 async def test_set_agent_session_uses_scoped_store() -> None:
@@ -352,33 +339,23 @@ async def test_delete_agent_session_is_idempotent() -> None:
     store.delete_item.assert_awaited_once_with("storage-session-1")
 
 
-@pytest.mark.parametrize(
-    ("is_hosted", "expected_type"),
-    [(True, FoundryAgentSessionStore), (False, SessionStore)],
-)
-def test_agent_session_storage_provider_selects_backend(
-    is_hosted: bool,
-    expected_type: type[FoundryAgentSessionStore] | type[SessionStore],
-) -> None:
+@pytest.mark.parametrize("is_hosted", [True, False])
+def test_agent_session_storage_provider_uses_foundry_store(is_hosted: bool) -> None:
     provider = AgentSessionStoreProvider()
     config = _config(is_hosted=is_hosted)
 
     storage = provider.get_store(config=config)
 
-    assert type(storage) is expected_type
+    assert type(storage) is FoundryAgentSessionStore
     assert provider.get_store(config=config) is storage
 
 
-def test_agent_session_storage_provider_creates_only_requested_backend() -> None:
-    with (
-        patch("agent_framework_foundry_hosting._state_store.FoundryAgentSessionStore") as foundry_storage_type,
-        patch("agent_framework_foundry_hosting._state_store.SessionStore") as in_memory_storage_type,
-    ):
+def test_agent_session_storage_provider_creates_storage_once() -> None:
+    with patch("agent_framework_foundry_hosting._state_store.FoundryAgentSessionStore") as storage_type:
         provider = AgentSessionStoreProvider()
         config = _config(is_hosted=False)
         storage = provider.get_store(config=config)
 
         assert provider.get_store(config=config) is storage
 
-    foundry_storage_type.assert_not_called()
-    in_memory_storage_type.assert_called_once_with()
+    storage_type.assert_called_once_with()
