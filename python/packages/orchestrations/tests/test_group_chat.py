@@ -1299,6 +1299,32 @@ async def test_group_chat_tool_only_first_speaker_keeps_initial_task() -> None:
     assert all(_CONTINUATION_DEFAULT_INSTRUCTION not in (message.text or "") for message in received)
 
 
+async def test_group_chat_empty_broadcast_after_earlier_speaker_sends_non_empty_messages() -> None:
+    """A non-consecutive speaker whose cache is empty must still receive messages.
+
+    ``alpha`` speaks and its cache is cleared. ``beta`` then returns tool-only content, which
+    ``clean_conversation_for_handoff`` strips to nothing, so the broadcast back to ``alpha``
+    adds nothing. Re-selecting ``alpha`` would otherwise invoke it with no messages at all.
+    """
+    alpha = RecordingStubAgent("alpha", "reply from alpha")
+    beta = ToolOnlyStubAgent("beta")
+
+    speakers = iter(["alpha", "beta", "alpha"])
+
+    workflow = GroupChatBuilder(
+        participants=[alpha, beta],
+        max_rounds=3,
+        selection_func=lambda state: next(speakers),
+    ).build()
+
+    async for _ in workflow.run("kickoff", stream=True):
+        pass
+
+    assert len(alpha.received_messages) == 2, "Expected alpha to be invoked twice"
+    assert all(received for received in alpha.received_messages), "Participant was invoked with empty messages"
+    assert any(_CONTINUATION_DEFAULT_INSTRUCTION in (message.text or "") for message in alpha.received_messages[1])
+
+
 class RecordingCustomExecutor(Executor):
     """Custom executor participant that records the request envelopes it receives."""
 

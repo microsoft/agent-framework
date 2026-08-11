@@ -446,6 +446,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         ctx: WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage],
         *,
         additional_instruction: str | None = None,
+        fallback_instruction: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Send a request to a participant.
@@ -459,6 +460,9 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             ctx: Workflow context for message routing
             additional_instruction: Optional additional instruction for the participant.
                 This can be used to provide guidance to steer the participant's response.
+            fallback_instruction: Optional instruction applied only if the agent would
+                otherwise run with no messages at all. Ignored for custom executors, which
+                keep no message cache and always receive the full context envelope.
             metadata: Optional metadata dict
 
         Raises:
@@ -469,7 +473,13 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             messages: list[Message] = []
             if additional_instruction:
                 messages.append(Message(role="user", contents=[additional_instruction]))
-            request = AgentExecutorRequest(messages=messages, should_respond=True)
+            request = AgentExecutorRequest(
+                messages=messages,
+                should_respond=True,
+                fallback_messages=(
+                    [Message(role="user", contents=[fallback_instruction])] if fallback_instruction else []
+                ),
+            )
             await ctx.send_message(request, target_id=target)
             await ctx.add_event(
                 WorkflowEvent(

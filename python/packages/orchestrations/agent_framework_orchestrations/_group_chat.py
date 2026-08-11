@@ -69,11 +69,11 @@ else:
 
 logger = logging.getLogger(__name__)
 
-# Sent when the agent participant that just spoke is selected again. It is excluded from the
-# broadcast (its own reply is already in its session) and AgentExecutor clears its cache after
-# each run, so the request would otherwise carry no messages and some agents (for example
-# A2AAgent) reject empty input. Custom executors are excluded: they have no such cache and
-# receive full context in the request envelope.
+# Applied only when the selected agent would otherwise run with no messages at all. This
+# happens when it just spoke (it is excluded from the broadcast) or when cleaning stripped
+# every broadcast message, since AgentExecutor clears its cache after each response. Some
+# agents (for example A2AAgent) reject empty input. AgentExecutor drops this whenever real
+# context is present, so it never displaces the conversation.
 _CONTINUATION_DEFAULT_INSTRUCTION = "Continue the conversation."
 
 
@@ -240,11 +240,7 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         await self._send_request_to_participant(
             next_speaker,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
-            additional_instruction=(
-                _CONTINUATION_DEFAULT_INSTRUCTION
-                if next_speaker == participant and self._participant_registry.is_agent(participant)
-                else None
-            ),
+            fallback_instruction=_CONTINUATION_DEFAULT_INSTRUCTION,
         )
         self._increment_round()
 
@@ -421,16 +417,11 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             participants=[p for p in self._participant_registry.participants if p != participant],
         )
         # Send request to selected participant
-        next_speaker = agent_orchestration_output.next_speaker
         await self._send_request_to_participant(
             # If not terminating, next_speaker must be provided thus will not be None
-            next_speaker,  # type: ignore[arg-type]
+            agent_orchestration_output.next_speaker,  # type: ignore[arg-type]
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
-            additional_instruction=(
-                _CONTINUATION_DEFAULT_INSTRUCTION
-                if next_speaker == participant and self._participant_registry.is_agent(participant)
-                else None
-            ),
+            fallback_instruction=_CONTINUATION_DEFAULT_INSTRUCTION,
         )
         self._increment_round()
 

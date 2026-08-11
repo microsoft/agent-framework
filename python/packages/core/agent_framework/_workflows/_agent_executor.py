@@ -3,7 +3,7 @@
 import logging
 import sys
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from typing_extensions import Never
@@ -37,10 +37,15 @@ class AgentExecutorRequest:
         messages: A list of chat messages to be processed by the agent.
         should_respond: A flag indicating whether the agent should respond to the messages.
             If False, the messages will be saved to the executor's cache but not sent to the agent.
+        fallback_messages: Messages used only if the agent would otherwise run with an empty
+            cache. The cache is cleared after every response, so a caller that cannot know
+            whether earlier context survived can supply a fallback here instead of guessing.
+            Ignored whenever the cache holds anything, so valid context is never displaced.
     """
 
     messages: list[Message]
     should_respond: bool = True
+    fallback_messages: list[Message] = field(default_factory=lambda: list[Message]())
 
 
 @dataclass
@@ -208,6 +213,8 @@ class AgentExecutor(Executor):
         self._cache.extend(request.messages)
 
         if request.should_respond:
+            if not self._cache:
+                self._cache.extend(request.fallback_messages)
             await self._run_agent_and_emit(ctx)
 
     @handler

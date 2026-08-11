@@ -7,6 +7,7 @@ import pytest
 
 from agent_framework import (
     AgentExecutor,
+    AgentExecutorRequest,
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
@@ -867,3 +868,38 @@ async def test_agent_executor_request_info_uses_user_input_request_id() -> None:
 
 
 # endregion Tool approval emission
+
+
+async def _run_request(agent: _MessageCapturingAgent, request: AgentExecutorRequest) -> None:
+    executor = AgentExecutor(agent, id="exec")
+    wf = WorkflowBuilder(start_executor=executor).build()
+    async for ev in wf.run(request, stream=True):
+        if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
+            break
+
+
+async def test_fallback_messages_used_when_cache_is_empty() -> None:
+    """A request carrying no messages must fall back rather than invoke the agent with nothing."""
+    agent = _MessageCapturingAgent(id="a", name="A")
+
+    await _run_request(
+        agent,
+        AgentExecutorRequest(messages=[], fallback_messages=[Message("user", ["carry on"])]),
+    )
+
+    assert [m.text for m in agent.last_messages] == ["carry on"]
+
+
+async def test_fallback_messages_ignored_when_cache_has_content() -> None:
+    """Fallback messages must never displace real context."""
+    agent = _MessageCapturingAgent(id="a", name="A")
+
+    await _run_request(
+        agent,
+        AgentExecutorRequest(
+            messages=[Message("user", ["real task"])],
+            fallback_messages=[Message("user", ["carry on"])],
+        ),
+    )
+
+    assert [m.text for m in agent.last_messages] == ["real task"]
