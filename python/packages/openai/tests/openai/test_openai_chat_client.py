@@ -1405,6 +1405,32 @@ async def test_background_tool_output_pairing_error_reports_background_limitatio
     assert "microsoft/agent-framework#7538" in message
 
 
+async def test_background_tool_output_pairing_error_does_not_assert_predecessor_was_background() -> None:
+    """The guidance is conditional, since an orphaned call_id reaches this branch identically.
+
+    `background` in the run options describes this request, not the response named by
+    `previous_response_id`. A caller submitting a genuinely orphaned `call_id` on a background
+    continuation produces the same three signals, so the message must state the background
+    limitation as a condition to check and name the orphaned-call_id alternative, rather than
+    claim the predecessor was a background response.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    with (
+        patch.object(client.client.responses.with_raw_response, "create", side_effect=_tool_output_pairing_error()),
+        pytest.raises(ChatClientException) as exc_info,
+    ):
+        await client.get_response(
+            messages=[Message(role="user", contents=["Test message"])],
+            options={"background": True, "conversation_id": "resp_abc123"},
+        )
+
+    message = str(exc_info.value)
+    assert "If the preceding response was created with background=True" in message
+    assert "If the preceding response was not a background response" in message
+    assert "does not match a function_call on it" in message
+
+
 async def test_streaming_background_tool_output_pairing_error_reports_background_limitation() -> None:
     """The streaming path reports the same background limitation as the non-streaming path."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

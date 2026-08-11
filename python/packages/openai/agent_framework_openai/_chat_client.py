@@ -167,13 +167,19 @@ _TOOL_OUTPUT_PAIRING_ERROR_FRAGMENT = "no tool call found for function call outp
 
 
 def _is_background_tool_output_pairing_error(ex: Exception, run_options: Mapping[str, Any] | None) -> bool:
-    """Return whether a failure is the background-predecessor tool-output pairing rejection.
+    """Return whether a failure could be the background-predecessor tool-output pairing rejection.
 
     The service rejects a `function_call_output` chained with `previous_response_id` when the
     predecessor response was created with `background=True`, even though retrieving that
     predecessor returns the matching `function_call`. The same chaining succeeds for a foreground
-    predecessor, so the combination of all three signals is required: the pairing error, a
-    `previous_response_id` continuation, and a background request.
+    predecessor, so all three signals are required: the pairing error, a `previous_response_id`
+    continuation, and a background request.
+
+    `background` describes *this* request, not the response named by `previous_response_id`, and a
+    stateless client cannot know how that predecessor was created -- it may have been produced by a
+    different process. So a genuinely orphaned `call_id` on a background continuation reaches this
+    branch too. The added guidance is therefore phrased as a condition the caller can check rather
+    than as an assertion about the predecessor, and it names the orphaned-`call_id` alternative.
     """
     if not isinstance(ex, BadRequestError) or run_options is None:
         return False
@@ -671,13 +677,15 @@ class RawOpenAIChatClient(
         if _is_background_tool_output_pairing_error(ex, run_options):
             raise ChatClientException(
                 maybe_append_azure_endpoint_guidance(
-                    f"{type(self)} service rejected the tool result for a background response: {ex} "
-                    "The service does not accept a function_call_output chained with "
-                    "previous_response_id when the preceding response was created with "
-                    "background=True, even though that response contains the matching function_call. "
-                    "Run the tool-calling turn with background=False, which supports the same "
-                    "previous_response_id chaining. This is a service-side limitation tracked in "
-                    "Azure/azure-sdk-for-python#46092 and microsoft/agent-framework#7538.",
+                    f"{type(self)} service rejected the tool result: {ex} "
+                    "If the preceding response was created with background=True, this is a "
+                    "service-side limitation: it does not accept a function_call_output chained to "
+                    "a background response with previous_response_id, even though that response "
+                    "contains the matching function_call. Run the tool-calling turn with "
+                    "background=False, which supports the same previous_response_id chaining. "
+                    "Tracked in Azure/azure-sdk-for-python#46092 and microsoft/agent-framework#7538. "
+                    "If the preceding response was not a background response, the call_id above "
+                    "does not match a function_call on it.",
                     azure_endpoint=self.azure_endpoint,
                 ),
                 inner_exception=ex,
