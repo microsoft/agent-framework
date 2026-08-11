@@ -86,23 +86,6 @@ def _get_additional_properties(obj: Any) -> dict[str, Any]:
     return cast(dict[str, Any], props) if isinstance(props, dict) else {}
 
 
-def _remember_session(session_var: ContextVar[Any], session: Any) -> None:
-    """Remember the current session without keeping it alive after the task ends."""
-    if session is None:
-        session_var.set(None)
-        return
-    with contextlib.suppress(TypeError):
-        session_var.set(weakref.ref(session))
-        return
-    session_var.set(None)
-
-
-def _remembered_session(session_var: ContextVar[Any]) -> Any:
-    """Return the weakly remembered session for the current async context."""
-    reference = session_var.get(None)
-    return cast(weakref.ReferenceType[Any], reference)() if isinstance(reference, weakref.ReferenceType) else None
-
-
 def _fides_session_state(session: Any) -> dict[str, Any]:
     """Return the initialized ``session.state["_fides"]`` durable-state mapping.
 
@@ -737,10 +720,36 @@ class LabeledMessage(Message):
 # Async-safe storage for the active FIDES middleware and session.
 _current_middleware: ContextVar[Any] = ContextVar("_current_middleware", default=None)
 _current_middleware_session: ContextVar[Any] = ContextVar("_current_middleware_session", default=None)
-# The most recently observed session in the current async context.  Keep this
-# ContextVar at module scope: creating one per middleware/config instance makes
-# each Context retain a strong reference to a distinct ContextVar forever.
-_fides_active_session: ContextVar[Any] = ContextVar("_fides_active_session", default=None)
+# Remember one strong session per config/middleware owner in each async context.
+# Weak owner keys avoid retaining discarded owners, while copy-on-write updates
+# prevent child tasks from mutating a mapping inherited from their parent context.
+_fides_sessions_by_owner: ContextVar[weakref.WeakKeyDictionary[Any, Any] | None] = ContextVar(
+    "_fides_sessions_by_owner", default=None
+)
+
+
+def _remember_session(owner: Any, session: Any) -> None:
+    """Remember a session for one config or middleware in this async context."""
+    current = _fides_sessions_by_owner.get(None)
+    sessions = weakref.WeakKeyDictionary[Any, Any]()
+    if current is not None:
+        sessions.update(current)
+    if session is None:
+        sessions.pop(owner, None)
+    else:
+        sessions[owner] = session
+    _fides_sessions_by_owner.set(sessions)
+
+
+def _remembered_session(owner: Any) -> Any:
+    """Return the strongly remembered session for one owner in this async context."""
+    sessions = _fides_sessions_by_owner.get(None)
+    return sessions.get(owner) if sessions is not None else None
+
+
+def _resolve_owner_session(owner: Any, session: Any = None) -> Any:
+    """Prefer an explicit session, otherwise resolve the session remembered for ``owner``."""
+    return session if session is not None else _remembered_session(owner)
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -895,7 +904,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         return self._get_context_label(self._resolve_public_session(session))
 
     def _resolve_public_session(self, session: Any = None) -> Any:
-        return _resolve_active_session(session)
+        return _resolve_owner_session(self, session)
 
     def reset_context_label(self, session: Any = None) -> None:
         """Reset the context label to initial state (TRUSTED + PUBLIC).
@@ -1314,7 +1323,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         """
         # Set thread-local middleware reference for tools to access
         middleware_token = _current_middleware.set(self)
-        _remember_session(_fides_active_session, context.session)
+        _remember_session(self, context.session)
         session_token = _current_middleware_session.set(context.session)
 
         try:
@@ -1749,16 +1758,6 @@ def get_current_session() -> Any:
     return _current_middleware_session.get(None)
 
 
-def _resolve_active_session(session: Any = None) -> Any:
-    """Resolve the session to operate on.
-
-    Order of preference: an explicitly supplied session, else the framework's current
-    async-context session, else the last session remembered for the current async context.
-    Single owner so read/write accessors resolve the session consistently.
-    """
-    return session or get_current_session() or _remembered_session(_fides_active_session)
-
-
 class _FidesAuditRunContext:
     """Mutable audit counters shared by calls in one async run context."""
 
@@ -1766,6 +1765,27 @@ class _FidesAuditRunContext:
         self.scope = scope
         self.turn_number = turn_number
         self.call_index = 0
+
+
+_fides_audit_runs_by_owner: ContextVar[weakref.WeakKeyDictionary[Any, _FidesAuditRunContext] | None] = ContextVar(
+    "_fides_audit_runs_by_owner", default=None
+)
+
+
+def _set_direct_audit_run(owner: Any, run: _FidesAuditRunContext) -> None:
+    """Bind a direct-call audit run to one middleware in this async context."""
+    current = _fides_audit_runs_by_owner.get(None)
+    runs = weakref.WeakKeyDictionary[Any, _FidesAuditRunContext]()
+    if current is not None:
+        runs.update(current)
+    runs[owner] = run
+    _fides_audit_runs_by_owner.set(runs)
+
+
+def _get_direct_audit_run(owner: Any) -> _FidesAuditRunContext | None:
+    """Return the direct-call audit run bound to one middleware."""
+    runs = _fides_audit_runs_by_owner.get(None)
+    return runs.get(owner) if runs is not None else None
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -1843,9 +1863,6 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         self._fallback_pending_policy_approvals: dict[str, dict[str, Any]] = {}
         self._fallback_turn_counter = 0
         self._fallback_audit_scope = object()
-        self._direct_audit_run: ContextVar[_FidesAuditRunContext | None] = ContextVar(
-            f"_fides_direct_audit_run_{id(self)}", default=None
-        )
 
     @property
     def _pending_policy_approvals(self) -> dict[str, dict[str, Any]]:
@@ -1889,7 +1906,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
     def begin_turn(self, session: Any) -> int:
         """Advance the turn counter and bind direct middleware calls to the new turn."""
         turn = self._advance_turn(session)
-        self._direct_audit_run.set(_FidesAuditRunContext(self._audit_scope(session), turn))
+        _set_direct_audit_run(self, _FidesAuditRunContext(self._audit_scope(session), turn))
         return turn
 
     def _audit_scope(self, session: Any) -> object:
@@ -1908,10 +1925,10 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
 
     def _resolve_direct_audit_run(self, session: Any = None) -> _FidesAuditRunContext:
         scope = self._audit_scope(session)
-        run = self._direct_audit_run.get(None)
+        run = _get_direct_audit_run(self)
         if run is None or run.scope is not scope:
             self.begin_turn(session)
-            run = self._direct_audit_run.get(None)
+            run = _get_direct_audit_run(self)
         if run is None:  # pragma: no cover - begin_turn always binds a context
             raise RuntimeError("FIDES audit run context was not initialized")
         return run
@@ -2195,7 +2212,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             call_next: Callback to continue to next middleware or function execution.
         """
         function_name = context.function.name
-        _remember_session(_fides_active_session, context.session)
+        _remember_session(self, context.session)
         turn_number: int | None = None
         call_index: int | None = None
         if self.enable_audit_log:
@@ -2429,12 +2446,12 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         Returns:
             List of violation records.
         """
-        active_session = _resolve_active_session(session)
+        active_session = _resolve_owner_session(self, session)
         return self._resolve_audit_log(active_session).copy()
 
     def clear_audit_log(self, session: Any = None) -> None:
         """Clear the audit log."""
-        active_session = _resolve_active_session(session)
+        active_session = _resolve_owner_session(self, session)
         self._resolve_audit_log(active_session).clear()
 
 
@@ -2626,7 +2643,10 @@ class SecureAgentConfig(ContextProvider):
         fides_state = _fides_session_state(session)
         if fides_state["context_label"] is None:
             self.label_tracker.reset_context_label(session)
-        _remember_session(_fides_active_session, session)
+        _remember_session(self, session)
+        _remember_session(self.label_tracker, session)
+        if self.policy_enforcer is not None:
+            _remember_session(self.policy_enforcer, session)
         turn_number = None
         if self.policy_enforcer is not None and self.policy_enforcer.enable_audit_log:
             turn_number = self.policy_enforcer.begin_turn(session)
@@ -2696,7 +2716,7 @@ class SecureAgentConfig(ContextProvider):
             List of violation records, or empty list if policy enforcement disabled.
         """
         if self.policy_enforcer:
-            active_session = session or _remembered_session(_fides_active_session)
+            active_session = _resolve_owner_session(self, session)
             return self.policy_enforcer.get_audit_log(active_session)
         return []
 
@@ -2706,7 +2726,7 @@ class SecureAgentConfig(ContextProvider):
         Returns:
             The ContentVariableStore instance.
         """
-        active_session = session or _remembered_session(_fides_active_session)
+        active_session = _resolve_owner_session(self, session)
         return self.label_tracker.get_variable_store(active_session)
 
     def list_variables(self, session: Any = None) -> list[str]:
@@ -2715,7 +2735,7 @@ class SecureAgentConfig(ContextProvider):
         Returns:
             List of variable ID strings.
         """
-        active_session = session or _remembered_session(_fides_active_session)
+        active_session = _resolve_owner_session(self, session)
         return self.label_tracker.list_variables(active_session)
 
     def get_quarantine_client(self) -> SupportsChatGetResponse | None:

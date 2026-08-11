@@ -4,7 +4,9 @@
 
 import asyncio
 import contextlib
+import gc
 import json
+import weakref
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -12,6 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from agent_framework import (
+    Agent,
     AgentSession,
     ExperimentalFeature,
     FunctionInvocationContext,
@@ -685,6 +688,25 @@ class TestPolicyEnforcementMiddleware:
         assert middleware.get_audit_log()
         middleware.clear_audit_log()
         assert middleware.get_audit_log(session) == []
+
+    async def test_audit_accessors_remember_their_own_middleware_session(self) -> None:
+        middleware_a = PolicyEnforcementFunctionMiddleware(block_on_violation=True)
+        middleware_b = PolicyEnforcementFunctionMiddleware(block_on_violation=True)
+        session_a = _Session("policy-a")
+        session_b = _Session("policy-b")
+        tool_a = FunctionTool(name="tool_a", description="test", fn=lambda: "a")
+        tool_b = FunctionTool(name="tool_b", description="test", fn=lambda: "b")
+
+        with contextlib.suppress(MiddlewareTermination):
+            await middleware_a.process(_context(session_a, tool_a, UNTRUSTED), _noop)
+        with contextlib.suppress(MiddlewareTermination):
+            await middleware_b.process(_context(session_b, tool_b, UNTRUSTED), _noop)
+
+        assert [entry["function"] for entry in middleware_a.get_audit_log()] == ["tool_a"]
+        assert [entry["function"] for entry in middleware_b.get_audit_log()] == ["tool_b"]
+        middleware_a.clear_audit_log()
+        assert middleware_a.get_audit_log() == []
+        assert [entry["function"] for entry in middleware_b.get_audit_log()] == ["tool_b"]
 
     async def test_untrusted_call_requests_policy_approval(self, mock_function):
         """Test that policy violations can become approval requests."""
@@ -2232,6 +2254,87 @@ class TestSecureAgentConfig:
         policy_enforcer._log_violation({"type": "test"}, session)
 
         assert config.get_audit_log() == [{"type": "test"}]
+
+    async def test_public_accessors_remember_each_configs_own_session(self) -> None:
+        config_a = SecureAgentConfig(enable_quarantine=False, auto_hide_untrusted=False)
+        config_b = SecureAgentConfig(enable_quarantine=False, auto_hide_untrusted=False)
+        session_a = AgentSession(session_id="public-config-a")
+        session_b = AgentSession(session_id="public-config-b")
+        run_a = SessionContext(session_id=session_a.session_id, input_messages=[])
+        run_b = SessionContext(session_id=session_b.session_id, input_messages=[])
+
+        await config_a.before_run(agent=None, session=session_a, context=run_a, state={})
+        await config_b.before_run(agent=None, session=session_b, context=run_b, state={})
+        policy_a = config_a.policy_enforcer
+        policy_b = config_b.policy_enforcer
+        assert policy_a is not None
+        assert policy_b is not None
+        policy_a._log_violation({"owner": "a"}, session_a)
+        policy_b._log_violation({"owner": "b"}, session_b)
+        variable_a = config_a.get_variable_store(session_a).store("a", UNTRUSTED)
+        variable_b = config_b.get_variable_store(session_b).store("b", TRUSTED)
+        config_a.label_tracker._set_context_label(session_a, UNTRUSTED)
+        config_b.label_tracker._set_context_label(session_b, TRUSTED)
+
+        assert config_a.get_audit_log() == [{"owner": "a"}]
+        assert config_b.get_audit_log() == [{"owner": "b"}]
+        assert policy_a.get_audit_log() == [{"owner": "a"}]
+        assert policy_b.get_audit_log() == [{"owner": "b"}]
+        assert config_a.list_variables() == [variable_a]
+        assert config_b.list_variables() == [variable_b]
+        assert config_a.label_tracker.list_variables() == [variable_a]
+        assert config_b.label_tracker.list_variables() == [variable_b]
+        assert config_a.label_tracker.get_context_label().to_dict() == UNTRUSTED.to_dict()
+        assert config_b.label_tracker.get_context_label().to_dict() == TRUSTED.to_dict()
+
+    async def test_public_accessors_keep_an_implicit_session_alive(self) -> None:
+        class RecordingConfig(SecureAgentConfig):
+            session_reference: weakref.ReferenceType[Any] | None = None
+
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: Any,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
+                await super().before_run(agent=agent, session=session, context=context, state=state)
+                self.session_reference = weakref.ref(session)
+                policy = self.policy_enforcer
+                assert policy is not None
+                policy._log_violation({"type": "retained"}, session)
+
+        class ChatClient:
+            async def get_response(self, messages: Any, **kwargs: Any) -> ChatResponse:
+                return ChatResponse(messages=Message(role="assistant", contents=["done"]))
+
+        config = RecordingConfig(enable_quarantine=False, auto_hide_untrusted=False)
+        agent = Agent(client=cast(Any, ChatClient()), context_providers=[config])
+        await agent.run("hello")
+        gc.collect()
+
+        assert config.session_reference is not None
+        assert config.session_reference() is not None
+        assert config.get_audit_log() == [{"type": "retained"}]
+
+    async def test_public_accessors_remain_task_local_for_a_shared_config(self) -> None:
+        config = SecureAgentConfig(enable_quarantine=False, auto_hide_untrusted=False)
+        policy = config.policy_enforcer
+        assert policy is not None
+
+        async def run(marker: str) -> list[dict[str, Any]]:
+            session = AgentSession(session_id=f"shared-config-{marker}")
+            run_context = SessionContext(session_id=session.session_id, input_messages=[])
+            await config.before_run(agent=None, session=session, context=run_context, state={})
+            policy._log_violation({"owner": marker}, session)
+            await asyncio.sleep(0)
+            return config.get_audit_log()
+
+        audit_a, audit_b = await asyncio.gather(run("a"), run("b"))
+
+        assert audit_a == [{"owner": "a"}]
+        assert audit_b == [{"owner": "b"}]
 
     async def test_tool_labels_preserve_server_supplied_result_labels(self) -> None:
         server_label = ContentLabel(
