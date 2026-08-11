@@ -344,7 +344,7 @@ class BackgroundAgentsProvider(ContextProvider):
 
     async def release_session(
         self,
-        session_id: str,
+        session: AgentSession,
         *,
         cancel_running: bool = True,
         timeout: float | None = 30.0,
@@ -352,32 +352,42 @@ class BackgroundAgentsProvider(ContextProvider):
         """Release all runtime state for a session to prevent runtime leaks.
 
         Args:
-            session_id: The session ID to release.
+            session: The agent session whose runtime state should be released.
             cancel_running: If True, cancel pending asyncio.Tasks safely.
             timeout: Maximum seconds to wait for tasks to finish cancellation.
                 If None, wait indefinitely. The default is bounded so a buggy
                 task cannot wedge host eviction or shutdown.
         """
+        session_id = session.session_id
         runtime = self._runtime.get(session_id)
-        if runtime is None:
+
+        if runtime is None or runtime.closed:
             return
 
-        if runtime.closed:
-            return
-
-        pending = [task for task in list(runtime.in_flight_tasks.values()) if not task.done()]
+        pending = [
+            task
+            for task in list(runtime.in_flight_tasks.values())
+            if not task.done()
+        ]
 
         if pending and not cancel_running:
-            raise RuntimeError(f"Cannot release session {session_id}: {len(pending)} tasks still running.")
+            raise RuntimeError(
+                f"Cannot release session {session_id}: {len(pending)} tasks still running."
+            )
 
         runtime.closed = True
 
         try:
-            await self._drain_runtime(
-                runtime,
-                cancel_running=cancel_running,
-                timeout=timeout,
-            )
+            if pending:
+                await self._drain_runtime(
+                    runtime,
+                    cancel_running=cancel_running,
+                    timeout=timeout,
+                )
+            else:
+                completed = list(runtime.in_flight_tasks.values())
+                if completed:
+                    await asyncio.gather(*completed, return_exceptions=True)
         finally:
             runtime.in_flight_tasks.clear()
             runtime.background_sessions.clear()

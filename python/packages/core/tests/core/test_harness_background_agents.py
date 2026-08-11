@@ -564,7 +564,7 @@ async def test_release_session_cancels_and_clears() -> None:
 
     task = next(iter(runtime.in_flight_tasks.values()))
 
-    await provider.release_session(session.session_id, cancel_running=True)
+    await provider.release_session(session, cancel_running=True)
 
     assert task.done()
     assert task.cancelled()
@@ -588,10 +588,10 @@ async def test_release_session_raises_if_cancel_running_false() -> None:
     )
 
     with pytest.raises(RuntimeError, match="tasks still running"):
-        await provider.release_session(session.session_id, cancel_running=False)
+        await provider.release_session(session, cancel_running=False)
 
     assert session.session_id in provider._runtime
-    await provider.release_session(session.session_id, cancel_running=True)
+    await provider.release_session(session, cancel_running=True)
 
 
 async def test_release_session_idempotent() -> None:
@@ -599,10 +599,10 @@ async def test_release_session_idempotent() -> None:
     provider = _make_provider(_FakeAgent("Worker"))
     session = _make_session()
 
-    await provider.release_session("non_existent_session")
+    await provider.release_session(AgentSession(session_id="non_existent_session"))
 
-    await provider.release_session(session.session_id)
-    await provider.release_session(session.session_id)
+    await provider.release_session(session)
+    await provider.release_session(session)
 
 
 async def test_release_session_isolation() -> None:
@@ -627,12 +627,12 @@ async def test_release_session_isolation() -> None:
         description="B",
     )
 
-    await provider.release_session("session_a", cancel_running=True)
+    await provider.release_session(session_a, cancel_running=True)
 
     assert "session_a" not in provider._runtime
     assert "session_b" in provider._runtime
 
-    await provider.release_session("session_b", cancel_running=True)
+    await provider.release_session(session_b, cancel_running=True)
 
 
 async def test_get_runtime_replaces_closed_runtime() -> None:
@@ -657,7 +657,10 @@ async def test_track_task_rejects_when_runtime_closed() -> None:
     runtime = provider._get_runtime(session)
     runtime.closed = True
 
-    task = asyncio.create_task(asyncio.sleep(0))
+    async def _dummy() -> Any:
+        await asyncio.sleep(0)
+
+    task = asyncio.create_task(_dummy())
 
     with pytest.raises(RuntimeError, match="closed"):
         runtime.track_task(1, task)
@@ -727,7 +730,7 @@ async def test_release_session_times_out_if_task_ignores_cancellation() -> None:
     runtime = provider._get_runtime(session)
     unblock = asyncio.Event()
 
-    async def _ignore_cancel() -> None:
+    async def _ignore_cancel() -> Any:
         try:
             await unblock.wait()
         except asyncio.CancelledError:
@@ -741,7 +744,7 @@ async def test_release_session_times_out_if_task_ignores_cancellation() -> None:
 
     await asyncio.wait_for(
         provider.release_session(
-            session.session_id,
+            session,
             cancel_running=True,
             timeout=0.05,
         ),
@@ -766,7 +769,7 @@ async def test_release_session_does_not_pop_replacement_runtime() -> None:
     old_runtime = provider._get_runtime(session)
     unblock = asyncio.Event()
 
-    async def _blocked_task() -> None:
+    async def _blocked_task() -> Any:
         try:
             await unblock.wait()
         except asyncio.CancelledError:
@@ -778,7 +781,7 @@ async def test_release_session_does_not_pop_replacement_runtime() -> None:
 
     release_task = asyncio.create_task(
         provider.release_session(
-            session.session_id,
+            session,
             cancel_running=True,
             timeout=5.0,
         )
@@ -804,7 +807,39 @@ async def test_release_session_does_not_pop_replacement_runtime() -> None:
         await asyncio.wait_for(task, timeout=1.0)
 
     await provider.release_session(
-        session.session_id,
+        session,
         cancel_running=True,
         timeout=1.0,
     )
+
+
+async def test_release_session_skips_drain_when_no_pending_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Should not invoke the drain path when there are no pending tasks."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+    runtime = provider._get_runtime(session)
+
+    async def completed_task() -> Any:
+        return None
+
+    task = asyncio.create_task(completed_task())
+    await task
+
+    runtime.in_flight_tasks[1] = task
+
+    drain_called = False
+    original_drain = provider._drain_runtime
+
+    async def fake_drain(*args: Any, **kwargs: Any) -> None:
+        nonlocal drain_called
+        drain_called = True
+        await original_drain(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "_drain_runtime", fake_drain)
+
+    await provider.release_session(session)
+
+    assert drain_called is False
+    assert session.session_id not in provider._runtime
