@@ -84,4 +84,9 @@ public sealed class OpenAIChatCompletionRequestInfo
     /// Gets or sets the tools supplied on the request, if any.
     /// </summary>
     public IReadOnlyList<AITool>? Tools { get; set; }
+
+    /// <summary>
+    /// Gets or sets the web search options (<c>web_search_options</c>) supplied on the request, if any.
+    /// </summary>
+    public object? WebSearchOptions { get; set; }
 }

@@ -109,6 +109,11 @@ public sealed class OpenAIChatCompletionsMapOptions
             LocalAdd("tool_choice");
         }
 
+        if (request.WebSearchOptions is not null)
+        {
+            LocalAdd("web_search_options");
+        }
+
         if (unsupported is not null)
         {
             throw new NotSupportedException(

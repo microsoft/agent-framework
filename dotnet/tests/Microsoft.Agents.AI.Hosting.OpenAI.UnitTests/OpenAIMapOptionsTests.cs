@@ -182,6 +182,25 @@ public sealed class OpenAIMapOptionsTests
     }
 
     [Fact]
+    public async Task ChatCompletions_DefaultEndpoint_RejectsWebSearchOptionsAsync()
+    {
+        // Arrange
+        using var app = await CreateChatCompletionsServerAsync("reject-agent", mapOptions: null);
+        HttpClient client = GetClient(app);
+
+        // Act
+        HttpResponseMessage response = await client.PostAsync(
+            new Uri("/reject-agent/v1/chat/completions", UriKind.Relative),
+            new StringContent("""{"model":"myModel","messages":[{"role":"user","content":"hello"}],"web_search_options":{}}""", Encoding.UTF8, "application/json"));
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        string body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("web_search_options", body, StringComparison.Ordinal);
+        Assert.Contains("invalid_request_error", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ChatCompletions_ConfiguredEndpoint_HonorsRequestSettingsAsync()
     {
         // Arrange

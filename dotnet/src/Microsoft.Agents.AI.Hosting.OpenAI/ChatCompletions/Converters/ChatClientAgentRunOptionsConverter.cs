@@ -29,6 +29,7 @@ internal static class ChatClientAgentRunOptionsConverter
         Model = request.Model,
         ToolChoice = request.ToolChoice?.ToChatToolMode(),
         Tools = request.Tools is { Count: > 0 } tools ? tools.Select(x => x.ToAITool()).ToList() : null,
+        WebSearchOptions = request.WebSearchOptions,
     };
 
     private static ChatResponseFormat ToChatResponseFormat(this ResponseFormat responseFormat)
