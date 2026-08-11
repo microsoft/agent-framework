@@ -187,6 +187,7 @@
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step05_BoundedChatHistory/AgentWithMemory_Step05_BoundedChatHistory.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step06_MemoryUsingAgentMemory/AgentWithMemory_Step06_MemoryUsingAgentMemory.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step07_FileMemoryProvider/AgentWithMemory_Step07_FileMemoryProvider.csproj" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step08_MemoryUsingCosmosNoSql/AgentWithMemory_Step08_MemoryUsingCosmosNoSql.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AgentProviders/openai/">
     <File Path="samples/02-agents/AgentProviders/openai/README.md" />

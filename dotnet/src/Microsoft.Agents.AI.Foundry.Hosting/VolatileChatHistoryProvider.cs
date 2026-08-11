@@ -8,17 +8,17 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
-/// A <see cref="ChatHistoryProvider"/> that holds the turn's messages in a field, for the lifetime of
-/// one request and no longer.
+/// A <see cref="ChatHistoryProvider"/> that holds a conversation in a field, for the lifetime of one
+/// request and no longer.
 /// </summary>
 /// <remarks>
 /// <para>
 /// A hosted agent's conversation is recorded by the AgentServer SDK's own storage provider, which
 /// writes every turn the caller asked it to store and serves it back through
 /// <see cref="Azure.AI.AgentServer.Responses.ResponseContext.GetHistoryAsync"/>. That happens around
-/// the handler, not through it. The handler reads the conversation from there and passes it in as the
-/// run's input, so nothing has to be carried between requests, and a provider storing anything of its
-/// own would only add a copy the storage provider never sees.
+/// the handler, not through it. An agent with no provider of its own is given that record here, so it
+/// reads the conversation the way it reads any other history, and anything it stores back is dropped
+/// with this instance rather than kept somewhere the storage provider never sees.
 /// </para>
 /// <para>
 /// Within a single run the provider still does its ordinary work: an agent calling tools goes back to
@@ -26,14 +26,24 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Those live here until the run ends and the instance is dropped.
 /// </para>
 /// <para>
-/// Supplied as a run-scoped override through <see cref="ChatOptions.AdditionalProperties"/>, so it takes
-/// the place of the agent's own provider for the turn without changing the agent. An agent that does not
-/// read its history through a provider ignores it.
+/// Supplied as a run-scoped override through <see cref="AgentRunOptions.AdditionalProperties"/>, so it
+/// serves the turn without changing the agent. An agent that does not read its history through a
+/// provider ignores it.
 /// </para>
 /// </remarks>
 internal sealed class VolatileChatHistoryProvider : ChatHistoryProvider
 {
-    private readonly List<ChatMessage> _messages = [];
+    private readonly List<ChatMessage> _messages;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="VolatileChatHistoryProvider"/> class holding the
+    /// conversation so far.
+    /// </summary>
+    /// <param name="history">The turns of this conversation the hosting service has recorded.</param>
+    public VolatileChatHistoryProvider(IEnumerable<ChatMessage>? history = null)
+    {
+        this._messages = history is null ? [] : [.. history];
+    }
 
     /// <inheritdoc />
     protected override ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
@@ -42,8 +52,6 @@ internal sealed class VolatileChatHistoryProvider : ChatHistoryProvider
     /// <inheritdoc />
     protected override ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        // Only what this run produced arrives here: the base class filters out everything already marked
-        // as chat history, which covers the turns the handler took from the storage provider.
         this._messages.AddRange(context.RequestMessages);
         if (context.ResponseMessages is not null)
         {
