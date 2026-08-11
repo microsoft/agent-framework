@@ -856,9 +856,10 @@ def _agent_updates_from_response(response: AgentResponse[Any]) -> list[AgentResp
     return updates
 
 
-def _tool_names(context: AgentContext) -> list[str]:
+async def _tool_names(context: AgentContext) -> list[str]:
     """Project the registered tool names for ``agent_startup`` (spec ``tools_registered``)."""
-    from ._tools import _append_unique_tools, _get_tool_name, normalize_tools  # type: ignore[reportPrivateUsage]
+    from ._mcp import MCPTool
+    from ._tools import _append_unique_tools, _get_tool_name, normalize_tools  # pyright: ignore[reportPrivateUsage]
 
     default_options = getattr(context.agent, "default_options", None)
     if isinstance(default_options, Mapping) and "tools" in default_options:
@@ -874,13 +875,56 @@ def _tool_names(context: AgentContext) -> list[str]:
         run_tools = context.options.get("tools")
 
     try:
-        normalized = _append_unique_tools(
-            normalize_tools(configured_tools),
-            normalize_tools(run_tools),
-        )
+        configured = normalize_tools(configured_tools)
+        run = normalize_tools(run_tools)
     except Exception:
         logger.warning("agent-hooks could not normalize the agent's tools for the agent_startup projection.")
         return []
+
+    normalized: list[Any] = []
+    seen_mcp_tools: list[MCPTool] = []
+    mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
+
+    async def append_mcp_tools(mcp_tool: MCPTool) -> None:
+        if any(mcp_tool is seen_tool for seen_tool in seen_mcp_tools):
+            return
+        seen_mcp_tools.append(mcp_tool)
+
+        if not mcp_tool.is_connected:
+            exit_stack = getattr(context.agent, "_async_exit_stack", None)
+            if exit_stack is None:
+                logger.warning(
+                    "agent-hooks could not connect MCP tool %r for the agent_startup projection.", mcp_tool.name
+                )
+                return
+            await exit_stack.enter_async_context(mcp_tool)
+
+        _append_unique_tools(
+            normalized,
+            mcp_tool.functions,
+            duplicate_error_message=mcp_duplicate_message,
+        )
+
+    try:
+        for item in configured:
+            if isinstance(item, MCPTool):
+                await append_mcp_tools(item)
+            else:
+                _append_unique_tools(normalized, [item])
+
+        for item in run:
+            if isinstance(item, MCPTool):
+                await append_mcp_tools(item)
+            else:
+                _append_unique_tools(normalized, [item])
+
+        for item in getattr(context.agent, "mcp_tools", ()) or ():
+            if isinstance(item, MCPTool):
+                await append_mcp_tools(item)
+    except Exception:
+        logger.warning("agent-hooks could not resolve the agent's tools for the agent_startup projection.")
+        return []
+
     names: list[str] = []
     for item in normalized:
         name = _get_tool_name(item)
@@ -986,7 +1030,7 @@ class _AgentHooksAgentMiddleware(_AgentHooksMiddlewareBase, AgentMiddleware):
     async def _emit_run_start(self, context: AgentContext, state: _RunState) -> None:
         """Emit ``agent_startup`` (per-run sessions) and ``input``; apply input transforms."""
         if not state.session_scoped:
-            await state.emitter.emit(state.builder.agent_startup(tools_registered=_tool_names(context)))
+            await state.emitter.emit(state.builder.agent_startup(tools_registered=await _tool_names(context)))
         before = _InputCodec.to_wire(context.messages)
         outcome: EmitOutcome = await state.emitter.emit(
             state.builder.input(content=before["content"], role=before["role"])

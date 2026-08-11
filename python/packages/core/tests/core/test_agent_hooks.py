@@ -310,6 +310,28 @@ async def test_agent_startup_projects_constructor_registered_tools(chat_client_b
 
 
 @requires_sdk
+async def test_agent_startup_projects_constructor_mcp_tools(chat_client_base: MockBaseChatClient) -> None:
+    from agent_framework._mcp import MCPTool
+
+    mcp_tool = MCPTool(name="weather-server", load_tools=False, load_prompts=False)  # type: ignore[abstract]
+    mcp_tool.functions.append(weather_tool)
+    mcp_tool.is_connected = True
+
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        tools=[mcp_tool],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("hello")
+
+    startup = guard.contexts_for("agent_startup")
+    assert len(startup) == 1
+    assert startup[0]["agent_init"]["tools_registered"] == ["weather_tool"]
+
+
+@requires_sdk
 async def test_agent_startup_projects_configured_and_run_tools(chat_client_base: MockBaseChatClient) -> None:
     @tool(approval_mode="never_require")
     def runtime_tool(location: str) -> str:
