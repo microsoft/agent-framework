@@ -229,8 +229,8 @@ internal sealed class WorkflowTelemetryContext
         }
         // Telemetry must never fail workflow execution. Serialization can throw arbitrary exceptions
         // (unregistered polymorphic types, reflection-disabled AOT, throwing property getters, custom
-        // converters), so fall back for everything except cancellation.
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // converters), so fall back for every serialization failure.
+        catch (Exception)
         {
             return $"[Unserializable: {value.GetType().FullName}]";
         }

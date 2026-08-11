@@ -602,6 +602,7 @@ public sealed class ObservabilityTests : IDisposable
     [Theory]
     [InlineData(typeof(ArgumentException))]
     [InlineData(typeof(IOException))]
+    [InlineData(typeof(OperationCanceledException))]
     [InlineData(typeof(TimeoutException))]
     public void EnableSensitiveData_SerializationThrowsAnyException_UsesFallback(Type exceptionType)
     {
