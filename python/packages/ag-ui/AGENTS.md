@@ -53,6 +53,7 @@ add_agent_framework_fastapi_endpoint(app, agent)
 
 ```python
 from agent_framework.ag_ui import AGUIChatClient, add_agent_framework_fastapi_endpoint
+
 # or directly:
 from agent_framework_ag_ui import AGUIChatClient
 ```

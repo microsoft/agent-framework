@@ -40,16 +40,15 @@ public sealed class InMemoryAgentSessionStore : AgentSessionStore
     }
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, string? userId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession?> GetSessionAsync(AIAgent agent, string conversationId, string? userId, CancellationToken cancellationToken = default)
     {
         var key = GetKey(agent, conversationId, userId);
-        JsonElement? sessionContent = this._sessions.TryGetValue(key, out var existingSession) ? existingSession : null;
-
-        return sessionContent switch
+        if (!this._sessions.TryGetValue(key, out var existingSession))
         {
-            null => await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false),
-            _ => await agent.DeserializeSessionAsync(sessionContent.Value, cancellationToken: cancellationToken).ConfigureAwait(false),
-        };
+            return null;
+        }
+
+        return await agent.DeserializeSessionAsync(existingSession, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     // Keyed with the same a-/u-/c- prefix scheme as FileSystemAgentSessionStore so the in-memory store

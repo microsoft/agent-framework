@@ -17,6 +17,8 @@ from ._chat_client import (
 from ._chat_completion_client import (
     OpenAIChatCompletionClient,
     OpenAIChatCompletionOptions,
+    OpenAIChatMessagePreparer,
+    OpenAIChatResponseContentsParser,
     RawOpenAIChatCompletionClient,
 )
 from ._embedding_client import OpenAIEmbeddingClient, OpenAIEmbeddingOptions
@@ -33,7 +35,9 @@ __all__ = [
     "OpenAIChatClient",
     "OpenAIChatCompletionClient",
     "OpenAIChatCompletionOptions",
+    "OpenAIChatMessagePreparer",
     "OpenAIChatOptions",
+    "OpenAIChatResponseContentsParser",
     "OpenAIContentFilterException",
     "OpenAIContinuationToken",
     "OpenAIEmbeddingClient",

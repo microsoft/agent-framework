@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Sequence
-from typing import Any, Literal, TypedDict, overload
+from typing import Any, Literal, TypedDict, cast, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -25,6 +25,13 @@ from microsoft_agents.copilotstudio.client import AgentType, ConnectionSettings,
 
 from ._acquire_token import acquire_token
 from ._feature_usage import FeatureIndex
+
+# aiohttp caps how much it buffers while reading a single response line; at the default
+# read_bufsize this limit is 512 KB, which Copilot Studio can exceed for large activities
+# (for example, sizeable connector payloads), raising ``aiohttp.http_exceptions.LineTooLong``.
+# Copilot Studio streams each activity as one SSE ``data:`` line, so we raise the buffer to
+# lift that per-line limit well above the default. See https://github.com/microsoft/agent-framework/issues/7257.
+DEFAULT_READ_BUFSIZE = 1024 * 1024
 
 
 class CopilotStudioSettings(TypedDict, total=False):
@@ -72,6 +79,7 @@ class CopilotStudioAgent(BaseAgent):
         cloud: PowerPlatformCloud | None = None,
         agent_type: AgentType | None = None,
         custom_power_platform_cloud: str | None = None,
+        client_session_settings: dict[str, Any] | None = None,
         username: str | None = None,
         token_cache: Any | None = None,
         scopes: list[str] | None = None,
@@ -107,6 +115,15 @@ class CopilotStudioAgent(BaseAgent):
             agent_type: The type of Copilot Studio agent (Copilot, Agent, etc.).
             custom_power_platform_cloud: Custom Power Platform cloud URL if using
                 a custom environment.
+            client_session_settings: Optional keyword arguments forwarded to the underlying
+                aiohttp ``ClientSession`` used by the created client. Only used when the agent
+                builds the client from scratch (ignored when ``client`` or ``settings`` is provided).
+                Whenever the agent builds the client itself (including when only ``settings`` is
+                provided), ``read_bufsize`` defaults to ``DEFAULT_READ_BUFSIZE`` (1 MiB) so large
+                Copilot Studio activities do not trigger ``aiohttp`` ``LineTooLong`` errors; set
+                ``read_bufsize`` (here or on the provided ``settings.client_session_settings``) to
+                raise or lower that limit. When you pass a fully built ``client``, configure
+                ``read_bufsize`` on its ``ConnectionSettings.client_session_settings`` yourself.
             username: Optional username for token acquisition.
             token_cache: Optional token cache for storing authentication tokens.
             scopes: Optional list of authentication scopes. Defaults to Power Platform
@@ -152,13 +169,21 @@ class CopilotStudioAgent(BaseAgent):
                         "or 'COPILOTSTUDIOAGENT__SCHEMANAME' environment variable."
                     )
 
+                resolved_session_settings: dict[str, Any] = dict(client_session_settings or {})
+                resolved_session_settings.setdefault("read_bufsize", DEFAULT_READ_BUFSIZE)
                 settings = ConnectionSettings(
                     environment_id=resolved_environment_id,
                     agent_identifier=resolved_agent_identifier,
                     cloud=cloud,
                     copilot_agent_type=agent_type,
                     custom_power_platform_cloud=custom_power_platform_cloud,
+                    client_session_settings=resolved_session_settings,
                 )
+            else:
+                # User supplied their own ConnectionSettings but no client, so the agent still builds
+                # the client. Ensure the read_bufsize default is present without overriding an explicit value.
+                supplied_session_settings = cast("dict[str, Any]", settings.client_session_settings)  # pyright: ignore[reportUnknownMemberType]
+                supplied_session_settings.setdefault("read_bufsize", DEFAULT_READ_BUFSIZE)
 
             if not token:
                 if not resolved_client_id:

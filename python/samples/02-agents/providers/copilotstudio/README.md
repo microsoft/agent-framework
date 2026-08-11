@@ -78,7 +78,10 @@ settings = ConnectionSettings(
     agent_identifier="your-agent-schema-name",
     cloud=PowerPlatformCloud.PROD,
     copilot_agent_type=AgentType.PUBLISHED,
-    custom_power_platform_cloud=None
+    custom_power_platform_cloud=None,
+    # Raise aiohttp's per-line buffer above the 512 KB default so large Copilot Studio
+    # activities (for example, sizeable connector payloads) don't raise LineTooLong.
+    client_session_settings={"read_bufsize": 1024 * 1024},
 )
 
 client = CopilotClient(settings=settings, token=token)

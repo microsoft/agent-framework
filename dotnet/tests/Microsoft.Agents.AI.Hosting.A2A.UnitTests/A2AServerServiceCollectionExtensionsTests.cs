@@ -106,6 +106,85 @@ public sealed class A2AServerServiceCollectionExtensionsTests
     }
 
     /// <summary>
+    /// Verifies that when an AgentIsolationKeyProvider is registered, task operations
+    /// use scoped identifiers (DI wiring test).
+    /// </summary>
+    [Fact]
+    public async Task AddA2AServer_WithIsolationKeyProvider_TaskStoreReceivesScopedIdsAsync()
+    {
+        // Arrange
+        const string AgentName = "isolation-wiring-agent";
+        const string TaskId = "task-1";
+        const string IsolationKey = "alice";
+
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton(AgentName, (_, _) => CreateAgentMock(AgentName).Object);
+
+        var mockTaskStore = new Mock<ITaskStore>();
+        mockTaskStore
+            .Setup(s => s.GetTaskAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentTask { Id = TaskId, ContextId = $"{IsolationKey}::ctx-1", Status = new global::A2A.TaskStatus { State = TaskState.Completed } });
+        services.AddKeyedSingleton(AgentName, mockTaskStore.Object);
+
+        var mockKeyProvider = new Mock<AgentIsolationKeyProvider>();
+        mockKeyProvider
+            .Setup(p => p.GetIsolationKeyAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(IsolationKey);
+        services.AddSingleton(mockKeyProvider.Object);
+
+        services.AddA2AServer(AgentName);
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+
+        // Act
+        var result = await server.GetTaskAsync(new GetTaskRequest { Id = TaskId });
+
+        // Assert - the inner store received the scoped task ID
+        mockTaskStore.Verify(s => s.GetTaskAsync($"{IsolationKey}::{TaskId}", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Verifies that when an already-wrapped IsolationKeyScopedTaskStore is registered,
+    /// it is not double-wrapped (no double scoping of task IDs).
+    /// </summary>
+    [Fact]
+    public async Task AddA2AServer_WithAlreadyWrappedTaskStore_DoesNotDoubleWrapAsync()
+    {
+        // Arrange
+        const string AgentName = "no-double-wrap-agent";
+        const string TaskId = "task-1";
+        const string IsolationKey = "alice";
+
+        var services = new ServiceCollection();
+        services.AddKeyedSingleton(AgentName, (_, _) => CreateAgentMock(AgentName).Object);
+
+        var mockInnerStore = new Mock<ITaskStore>();
+        mockInnerStore
+            .Setup(s => s.GetTaskAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AgentTask { Id = TaskId, ContextId = $"{IsolationKey}::ctx-1", Status = new global::A2A.TaskStatus { State = TaskState.Completed } });
+
+        var mockKeyProvider = new Mock<AgentIsolationKeyProvider>();
+        mockKeyProvider
+            .Setup(p => p.GetIsolationKeyAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(IsolationKey);
+
+        // Pre-wrap the task store
+        var wrappedStore = new IsolationKeyScopedTaskStore(mockInnerStore.Object, mockKeyProvider.Object, strict: true);
+        services.AddKeyedSingleton<ITaskStore>(AgentName, wrappedStore);
+        services.AddSingleton(mockKeyProvider.Object);
+
+        services.AddA2AServer(AgentName);
+        await using var provider = services.BuildServiceProvider();
+        var server = provider.GetRequiredKeyedService<A2AServer>(AgentName);
+
+        // Act
+        var result = await server.GetTaskAsync(new GetTaskRequest { Id = TaskId });
+
+        // Assert - only single scoping occurred (not alice::alice::task-1)
+        mockInnerStore.Verify(s => s.GetTaskAsync($"{IsolationKey}::{TaskId}", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
     /// Verifies that when a custom AgentSessionStore is registered, AddA2AServer uses it
     /// instead of the default InMemoryAgentSessionStore.
     /// </summary>

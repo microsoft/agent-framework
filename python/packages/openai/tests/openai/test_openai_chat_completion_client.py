@@ -2468,3 +2468,244 @@ def test_prepare_options_prompt_cache_options_guarded_on_old_openai(monkeypatch:
 
 
 # endregion
+
+
+# region response_parser / message_preparer hooks
+
+_VLLM_REASONING_FIELD_KEY = "_source_reasoning_field"
+
+
+def _vllm_reasoning_parser(message: Any, contents: list[Content]) -> list[Content]:
+    """Example response_parser: surface a top-level ``reasoning`` field as reasoning content.
+
+    Receives the already-selected message/delta (no streaming dispatch needed) and tags the
+    surfaced content with its originating field name so a message_preparer can echo it back
+    and correlate it robustly.
+    """
+    reasoning = getattr(message, "reasoning", None)
+    if isinstance(reasoning, str) and reasoning:
+        return [
+            *contents,
+            Content.from_text_reasoning(
+                text=reasoning,
+                additional_properties={_VLLM_REASONING_FIELD_KEY: "reasoning"},
+            ),
+        ]
+    return contents
+
+
+def _vllm_reasoning_preparer(message: Message, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Example message_preparer: echo surfaced reasoning back under its originating key.
+
+    Correlates via ``message.contents`` markers instead of raw request-string matching: each
+    marked reasoning content maps to exactly one auto-emitted assistant text dict, removed
+    one-to-one in order, then the provider field is attached to the final message.
+    """
+    surfaced = [
+        (content.additional_properties[_VLLM_REASONING_FIELD_KEY], content.text)
+        for content in message.contents
+        if content.type == "text_reasoning"
+        and _VLLM_REASONING_FIELD_KEY in content.additional_properties
+        and content.text
+    ]
+    if not surfaced:
+        return messages
+
+    remaining = list(messages)
+    fields: dict[str, str] = {}
+    for field_name, text in surfaced:
+        # Remove exactly one auto-emitted assistant text dict matching this reasoning text.
+        for i, msg in enumerate(remaining):
+            if msg.get("role") == "assistant" and "tool_calls" not in msg and msg.get("content") == text:
+                remaining.pop(i)
+                break
+        fields[field_name] = fields.get(field_name, "") + text
+
+    if remaining:
+        for field_name, value in fields.items():
+            remaining[-1][field_name] = value
+    return remaining
+
+
+def _make_chat_completion(message: ChatCompletionMessage, model: str = "vllm-model") -> ChatCompletion:
+    return ChatCompletion(
+        id="test-response",
+        object="chat.completion",
+        created=1234567890,
+        model=model,
+        choices=[Choice(index=0, message=message, finish_reason="stop")],
+    )
+
+
+def test_response_parser_hook_transforms_contents(openai_unit_test_env: dict[str, str]) -> None:
+    """A response_parser can surface provider-specific fields (e.g. vLLM `reasoning`)."""
+    client = OpenAIChatCompletionClient(response_parser=_vllm_reasoning_parser)
+    message = ChatCompletionMessage.model_construct(role="assistant", content="Answer.", reasoning="Thinking...")
+
+    parsed = client._parse_response_from_openai(_make_chat_completion(message), {})
+
+    reasoning = [c for c in parsed.messages[0].contents if c.type == "text_reasoning"]
+    assert len(reasoning) == 1
+    assert reasoning[0].text == "Thinking..."
+
+
+def test_response_parser_hook_streaming(openai_unit_test_env: dict[str, str]) -> None:
+    """The response_parser is also applied on the streaming path."""
+    from openai.types.chat.chat_completion_chunk import ChatCompletionChunk, ChoiceDelta
+    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+
+    client = OpenAIChatCompletionClient(response_parser=_vllm_reasoning_parser)
+    delta = ChoiceDelta.model_construct(role="assistant", content=None, reasoning="step 1")
+    chunk = ChatCompletionChunk(
+        id="test-chunk",
+        object="chat.completion.chunk",
+        created=1234567890,
+        model="vllm-model",
+        choices=[ChunkChoice(index=0, delta=delta, finish_reason=None)],
+    )
+
+    update = client._parse_response_update_from_openai(chunk)
+
+    reasoning = [c for c in update.contents if c.type == "text_reasoning"]
+    assert len(reasoning) == 1
+    assert reasoning[0].text == "step 1"
+
+
+def test_message_preparer_hook_transforms_messages(openai_unit_test_env: dict[str, str]) -> None:
+    """A message_preparer can rewrite the outgoing request messages."""
+
+    def preparer(message: Message, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for msg in messages:
+            msg["custom_field"] = "injected"
+        return messages
+
+    client = OpenAIChatCompletionClient(message_preparer=preparer)
+    prepared = client._prepare_message_for_openai(Message(role="assistant", contents=[Content.from_text("hi")]))
+
+    assert prepared[-1]["custom_field"] == "injected"
+    assert prepared[-1]["content"] == "hi"
+
+
+@pytest.mark.parametrize("role", ["system", "developer"])
+def test_message_preparer_hook_runs_for_system_and_developer(role: str, openai_unit_test_env: dict[str, str]) -> None:
+    """The message_preparer runs once per Message, including system/developer roles."""
+    seen: list[str] = []
+
+    def preparer(message: Message, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        seen.append(str(message.role))
+        for msg in messages:
+            msg["gateway_field"] = "required"
+        return messages
+
+    client = OpenAIChatCompletionClient(message_preparer=preparer)
+    prepared = client._prepare_message_for_openai(Message(role=cast(Any, role), contents=[Content.from_text("sys")]))
+
+    assert seen == [role]
+    assert prepared[-1]["gateway_field"] == "required"
+    assert prepared[-1]["content"] == "sys"
+
+
+def test_message_preparer_correlation_does_not_drop_same_text_answer(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Marker-based correlation removes only one reasoning dict, even if the answer shares its text."""
+    client = OpenAIChatCompletionClient(message_preparer=_vllm_reasoning_preparer)
+    # Answer text is byte-identical to the reasoning text; only the surfaced reasoning
+    # (marked) content should be echoed back and its single dict removed.
+    same = "same text"
+    reasoning = Content.from_text_reasoning(text=same, additional_properties={_VLLM_REASONING_FIELD_KEY: "reasoning"})
+    message = Message(role="assistant", contents=[Content.from_text(same), reasoning])
+
+    prepared = client._prepare_message_for_openai(message)
+
+    # The answer message survives (one dict removed, not both) and carries the echoed field.
+    assert len(prepared) == 1
+    assert prepared[0]["content"] == same
+    assert prepared[0]["reasoning"] == same
+
+
+def test_hooks_roundtrip_vllm_reasoning(openai_unit_test_env: dict[str, str]) -> None:
+    """End-to-end: parser surfaces reasoning for display, preparer echoes it back under `reasoning`."""
+    client = OpenAIChatCompletionClient(
+        response_parser=_vllm_reasoning_parser,
+        message_preparer=_vllm_reasoning_preparer,
+    )
+    message = ChatCompletionMessage.model_construct(role="assistant", content="42.", reasoning="Because reasons.")
+
+    parsed = client._parse_response_from_openai(_make_chat_completion(message), {})
+    # Reasoning is surfaced for display.
+    assert any(c.type == "text_reasoning" and c.text == "Because reasons." for c in parsed.messages[0].contents)
+
+    prepared = client._prepare_message_for_openai(parsed.messages[0])
+    # A single assistant message carries the answer plus the reasoning echoed back under its key,
+    # and the reasoning is NOT duplicated as visible content.
+    assert len(prepared) == 1
+    assert prepared[0]["content"] == "42."
+    assert prepared[0]["reasoning"] == "Because reasons."
+
+
+def test_no_hooks_keeps_default_behavior(openai_unit_test_env: dict[str, str]) -> None:
+    """Without hooks, top-level `reasoning` is ignored and `reasoning_details` stays opaque."""
+    client = OpenAIChatCompletionClient()
+    message = ChatCompletionMessage.model_construct(
+        role="assistant",
+        content="Answer.",
+        reasoning="ignored without a parser",
+        reasoning_details=[{"type": "reasoning.text", "text": "opaque"}],
+    )
+
+    parsed = client._parse_response_from_openai(_make_chat_completion(message, model="some-model"), {})
+
+    reasoning = [c for c in parsed.messages[0].contents if c.type == "text_reasoning"]
+    # reasoning_details surfaces as a single opaque reasoning content (baseline behavior); no text.
+    assert len(reasoning) == 1
+    assert reasoning[0].text is None
+    assert reasoning[0].protected_data is not None
+
+
+def test_default_parsing_skips_non_string_content(openai_unit_test_env: dict[str, str]) -> None:
+    """Structured list `content` is skipped by default parsing (no malformed text Content)."""
+    client = OpenAIChatCompletionClient()
+    chunked = [
+        {"type": "thinking", "thinking": [{"type": "text", "text": "reasoning"}]},
+        {"type": "text", "text": "answer"},
+    ]
+    message = ChatCompletionMessage.model_construct(role="assistant", content=cast(Any, chunked))
+
+    parsed = client._parse_response_from_openai(_make_chat_completion(message, model="mistral-medium-latest"), {})
+
+    # The list is not wrapped as a text Content; nothing is emitted for it.
+    assert not any(c.type == "text" for c in parsed.messages[0].contents)
+
+
+def test_response_parser_can_expand_chunked_content(openai_unit_test_env: dict[str, str]) -> None:
+    """A response_parser receives the selected message and can expand structured list content."""
+
+    def chunk_parser(message: Any, contents: list[Content]) -> list[Content]:
+        if not isinstance(message.content, list):
+            return contents
+        expanded = list(contents)
+        for chunk in message.content:
+            if chunk.get("type") == "thinking":
+                text = "".join(part.get("text", "") for part in chunk.get("thinking", []))
+                expanded.append(Content.from_text_reasoning(text=text))
+            elif chunk.get("type") == "text":
+                expanded.append(Content.from_text(text=chunk["text"]))
+        return expanded
+
+    client = OpenAIChatCompletionClient(response_parser=chunk_parser)
+    chunked = [
+        {"type": "thinking", "thinking": [{"type": "text", "text": "reasoning"}]},
+        {"type": "text", "text": "answer"},
+    ]
+    message = ChatCompletionMessage.model_construct(role="assistant", content=cast(Any, chunked))
+
+    parsed = client._parse_response_from_openai(_make_chat_completion(message, model="mistral-medium-latest"), {})
+    contents = parsed.messages[0].contents
+
+    assert [c.type for c in contents] == ["text_reasoning", "text"]
+    assert contents[0].text == "reasoning"
+    assert contents[1].text == "answer"
+
+
+# endregion
