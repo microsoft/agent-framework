@@ -1656,6 +1656,34 @@ not valid JSON
         result = _extract_json_from_response(text)
         assert result == {"good": 1}
 
+    def test_rightmost_recovered_json_wins(self):
+        """Test recovery returns the rightmost valid JSON within its budget."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        text = '[[x {"earlier": 1} {"final": "this is the final longer value"}]]'
+        result = _extract_json_from_response(text)
+        assert result == {"final": "this is the final longer value"}
+
+    def test_recovered_outer_object_wins_over_nested_object(self):
+        """Test recovery prefers a valid outer object over its nested child."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('[[x {"final": {"nested": 1}}]]')
+        assert result == {"final": {"nested": 1}}
+
+    def test_recovered_outer_array_wins_over_nested_object(self):
+        """Test recovery prefers a valid outer array over its nested child."""
+        from agent_framework_declarative._workflows._executors_agents import (
+            _extract_json_from_response,
+        )
+
+        result = _extract_json_from_response('[[x [{"nested": 1}]]]')
+        assert result == [{"nested": 1}]
+
 
 class TestPowerFxConditionalImport:
     """The _declarative_base module should be importable without dotnet/powerfx."""

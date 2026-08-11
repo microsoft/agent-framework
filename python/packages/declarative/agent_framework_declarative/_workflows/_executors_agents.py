@@ -210,6 +210,8 @@ def _find_last_decodable_json(text: str) -> Any:
             group_candidates,
             key=lambda candidate: (candidate[1] - candidate[0], -candidate[0]),
         )
+        recovered_json: Any = _NO_JSON
+        recovered_range: tuple[int, int] | None = None
         for json_start, json_end in recovery_candidates:
             if recovery_decode_budget == 0:
                 break
@@ -222,10 +224,26 @@ def _find_last_decodable_json(text: str) -> Any:
 
             recovery_decode_budget -= candidate_length
             try:
-                return json.loads(text[json_start : json_end + 1])
+                candidate_json = json.loads(text[json_start : json_end + 1])
             except json.JSONDecodeError:
                 continue
 
+            candidate_contains_recovered = (
+                recovered_range is not None and json_start <= recovered_range[0] and json_end >= recovered_range[1]
+            )
+            recovered_contains_candidate = (
+                recovered_range is not None and recovered_range[0] <= json_start and recovered_range[1] >= json_end
+            )
+            if (
+                recovered_range is None
+                or candidate_contains_recovered
+                or (not recovered_contains_candidate and json_start > recovered_range[0])
+            ):
+                recovered_json = candidate_json
+                recovered_range = (json_start, json_end)
+
+        if recovered_json is not _NO_JSON:
+            return recovered_json
         if last_json is not _NO_JSON:
             return last_json
 
