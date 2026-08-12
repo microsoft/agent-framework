@@ -210,6 +210,41 @@ def _derive_session_approval(request: PermissionRequest) -> PermissionDecisionAp
     return None
 
 
+# Characters the WHATWG URL parser (used by the Copilot CLI) treats specially for
+# special-scheme URLs in ways that can move the authority boundary: backslashes are
+# normalized to forward slashes, and tabs/newlines/carriage returns are stripped before
+# parsing. Python's ``urlparse`` does none of this, so a URL containing any of them may
+# resolve to a different host than the CLI actually contacts.
+_WHATWG_AMBIGUOUS_URL_CHARS = ("\\", "\t", "\n", "\r")
+
+
+def _derive_url_session_domain(url: str) -> str | None:
+    """Return the domain to persist for a URL prompt, or ``None`` when it is unsafe to.
+
+    The persisted domain must match the host the Copilot CLI actually contacts, but the CLI
+    parses URLs with WHATWG semantics while this runs on Python's ``urlparse``. The two
+    disagree on crafted authorities -- a backslash before the ``@`` in
+    ``https://example.com<backslash>@evil.com`` resolves to ``example.com`` under the CLI
+    but ``evil.com`` under ``urlparse`` -- so trusting ``urlparse`` here could persist a
+    session-wide approval for an unrelated, attacker-chosen domain.
+
+    To keep the "narrow, never widen" guarantee, the domain is only returned when the URL
+    contains none of the characters the two parsers handle differently; any ambiguity (or a
+    URL with no derivable host) yields ``None`` so the caller can approve the single request
+    without persisting a domain.
+
+    Args:
+        url: The URL from the permission request.
+
+    Returns:
+        The lower-cased host to approve for the session, or ``None`` when the URL is
+        parser-ambiguous or has no host.
+    """
+    if any(char in url for char in _WHATWG_AMBIGUOUS_URL_CHARS):
+        return None
+    return urlparse(url).hostname or None
+
+
 def _normalize_permission_decision(
     decision: PermissionRequestResult,
     request: PermissionRequest,
@@ -243,12 +278,12 @@ def _normalize_permission_decision(
 
     try:
         if isinstance(request, PermissionRequestUrl):
-            domain = urlparse(request.url).hostname
+            domain = _derive_url_session_domain(request.url)
             if domain:
                 return PermissionDecisionApproveForSession(domain=domain)
             logger.warning(
                 "Permission handler returned an unscoped 'approve-for-session' decision for a URL prompt, "
-                "but no domain could be derived from '%s'. Approving this request only. Return "
+                "but no unambiguous domain could be derived from '%s'. Approving this request only. Return "
                 "PermissionDecisionApproveForSession(domain=...) to approve a domain for the session.",
                 request.url,
             )

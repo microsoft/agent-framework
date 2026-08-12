@@ -2739,6 +2739,41 @@ class TestNormalizeApproveForSession:
 
         assert isinstance(result, PermissionDecisionApproveOnce)
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com\\@evil.com/a",  # backslash moves the authority boundary under WHATWG
+            "https://example.com\t@evil.com/a",  # tab is stripped by WHATWG before parsing
+            "https://example.com\n@evil.com/a",  # newline is stripped by WHATWG before parsing
+            "https://example.com\r@evil.com/a",  # carriage return is stripped by WHATWG before parsing
+        ],
+    )
+    async def test_parser_ambiguous_url_falls_back_to_approve_once(self, url: str) -> None:
+        """A URL whose host Python and the CLI parse differently must not persist a domain.
+
+        The CLI (WHATWG) contacts ``example.com`` for these URLs while ``urlparse`` derives
+        ``evil.com``. Persisting ``evil.com`` would widen approval to an unrelated,
+        attacker-chosen domain, so the decision must narrow to a single-use approval.
+        """
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
+        from copilot.session_events import PermissionRequestUrl
+
+        request = PermissionRequestUrl(intention="fetch", url=url)
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_unambiguous_url_with_userinfo_derives_real_host(self) -> None:
+        """Userinfo without ambiguous characters is safe; the real host is persisted."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession
+        from copilot.session_events import PermissionRequestUrl
+
+        request = PermissionRequestUrl(intention="fetch", url="https://user:pass@example.com/a")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert result.domain == "example.com"
+
     async def test_shell_request_that_cannot_offer_session_approval_narrows_to_approve_once(self) -> None:
         """Never fabricate a session approval the prompt said it could not offer."""
         from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
