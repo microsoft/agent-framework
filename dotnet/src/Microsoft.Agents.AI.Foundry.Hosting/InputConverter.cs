@@ -7,9 +7,11 @@ using System.Text;
 using System.Text.Json;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
-using ChatCompletionOptions = OpenAI.Chat.ChatCompletionOptions;
-using CreateResponseOptions = OpenAI.Responses.CreateResponseOptions;
+using OpenAI.Chat;
+using OpenAI.Responses;
+using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
+using MessageRole = Azure.AI.AgentServer.Responses.Models.MessageRole;
 using SdkTextContent = Azure.AI.AgentServer.Responses.Models.TextContent;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
@@ -93,8 +95,15 @@ internal static class InputConverter
     /// The factory the agent carries on its own <see cref="ChatOptions"/>, if any, so a request that has
     /// to set one of its own can run it rather than replace it.
     /// </param>
+    /// <param name="hostingOptions">
+    /// How this container was configured. When it allows the agent's own service to store responses,
+    /// the setting is left exactly as the container configured it.
+    /// </param>
     /// <returns>A configured <see cref="ChatOptions"/> instance.</returns>
-    public static ChatOptions ConvertToChatOptions(CreateResponse request, Func<IChatClient, object?>? agentRawRepresentationFactory = null)
+    public static ChatOptions ConvertToChatOptions(
+        CreateResponse request,
+        Func<IChatClient, object?>? agentRawRepresentationFactory = null,
+        FoundryResponsesOptions? hostingOptions = null)
     {
         var options = new ChatOptions
         {
@@ -107,40 +116,19 @@ internal static class InputConverter
             // clients send placeholder values like "hosted-agent").
         };
 
-        // The service behind the agent's chat client is never asked to store a response. Recording a
-        // hosted turn is the AgentServer SDK's job, done by its storage provider around this handler,
-        // and a second recording downstream is a conversation nothing here reads and no one reconciles.
-        // The caller's own store flag is not carried across: it says what the hosting service should
-        // record, which is a separate question and one this handler has no say in.
-        //
-        // Both OpenAI request shapes carry the setting, so a chat client speaking either protocol is
-        // covered. Anything else is a request type with no notion of storing a response, and is handed
-        // back untouched; such a client keeping a conversation of its own is caught later by the
-        // conversation id check in the handler.
-        //
-        // The agent's own factory is invoked here and its result is what gets the setting, because
-        // ChatClientAgent chains the two by taking the agent's only when the request's returns null
-        // (ChatClientAgent.PrepareChatOptions). A request factory that always answers would otherwise
-        // drop whatever the container configured.
-        options.RawRepresentationFactory = chatClient =>
+        if (hostingOptions?.AllowStoredOutputEnabled is true)
         {
-            switch (agentRawRepresentationFactory?.Invoke(chatClient))
-            {
-                case CreateResponseOptions responseOptions:
-                    responseOptions.StoredOutputEnabled = false;
-                    return responseOptions;
+            // The container opted into keeping its own recording, so nothing here touches the setting,
+            // not even to pass the agent's own factory along: leaving it unset lets ChatClientAgent fall
+            // back to the agent's untouched.
+            return options;
+        }
 
-                case ChatCompletionOptions completionOptions:
-                    completionOptions.StoredOutputEnabled = false;
-                    return completionOptions;
-
-                case { } configuredByTheAgent:
-                    return configuredByTheAgent;
-
-                default:
-                    return new CreateResponseOptions { StoredOutputEnabled = false };
-            }
-        };
+        // The caller's own store flag is not carried across, this setting is the responsibility of the hosted agent implementation.
+        DisableStoredOutput(
+            options,
+            agentRawRepresentationFactory,
+            hostingOptions?.IncludeReasoningEncryptedContent ?? true);
 
         return options;
     }
@@ -174,6 +162,64 @@ internal static class InputConverter
         }
 
         return markers;
+    }
+
+    /// <summary>
+    /// Installs a factory on <paramref name="options"/> that turns storage off on the request the agent's
+    /// chat client is about to build.
+    /// </summary>
+    /// <param name="options">The chat options for this run.</param>
+    /// <param name="agentRawRepresentationFactory">
+    /// The factory the agent carries on its own <see cref="ChatOptions"/>, if any. It is invoked here and
+    /// its result is what gets the setting, because <c>ChatClientAgent</c> chains the two by taking the
+    /// agent's only when the request's returns null. A request factory that always answers would
+    /// otherwise drop whatever the container configured.
+    /// </param>
+    /// <param name="includeReasoningEncryptedContent">
+    /// Whether to ask for the encrypted form of the reasoning tokens, which is what keeps reasoning
+    /// usable across turns while storage is off.
+    /// </param>
+    /// <remarks>
+    /// Both OpenAI request shapes carry the setting, so a chat client speaking either protocol is
+    /// covered. Anything else is a request type with no notion of storing a response, and is handed back
+    /// untouched.
+    /// </remarks>
+    private static void DisableStoredOutput(
+        ChatOptions options,
+        Func<IChatClient, object?>? agentRawRepresentationFactory,
+        bool includeReasoningEncryptedContent)
+    {
+        options.RawRepresentationFactory = chatClient =>
+        {
+            switch (agentRawRepresentationFactory?.Invoke(chatClient))
+            {
+                case CreateResponseOptions responseOptions:
+                    return LocalDisableStoredOutput(responseOptions, includeReasoningEncryptedContent);
+
+                case ChatCompletionOptions completionOptions:
+                    completionOptions.StoredOutputEnabled = false;
+                    return completionOptions;
+
+                case { } configuredByTheAgent:
+                    return configuredByTheAgent;
+
+                default:
+                    return LocalDisableStoredOutput(new CreateResponseOptions(), includeReasoningEncryptedContent);
+            }
+        };
+
+        static CreateResponseOptions LocalDisableStoredOutput(CreateResponseOptions responseOptions, bool includeReasoningEncryptedContent)
+        {
+            responseOptions.StoredOutputEnabled = false;
+
+            if (includeReasoningEncryptedContent &&
+                !responseOptions.IncludedProperties.Contains(IncludedResponseProperty.ReasoningEncryptedContent))
+            {
+                responseOptions.IncludedProperties.Add(IncludedResponseProperty.ReasoningEncryptedContent);
+            }
+
+            return responseOptions;
+        }
     }
 
     private static ChatMessage? ConvertInputItemToMessage(Item item, AgentSessionStateBag? stateBag)

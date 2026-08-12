@@ -11,18 +11,21 @@ _foundry_local = pytest.importorskip("agent_framework_foundry_local")
 
 FoundryChatClient = _foundry.FoundryChatClient
 FoundryMemoryProvider = _foundry.FoundryMemoryProvider
+FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY = _foundry.FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY
 FoundryAgentSessionStore = _foundry_hosting.FoundryAgentSessionStore
 ResponsesHostServer = _foundry_hosting.ResponsesHostServer
 FoundryLocalClient = _foundry_local.FoundryLocalClient
 
 
 def test_foundry_namespace_exposes_cloud_and_local_symbols() -> None:
+    assert foundry.FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY is FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY
     assert foundry.FoundryChatClient is FoundryChatClient
     assert foundry.FoundryMemoryProvider is FoundryMemoryProvider
     assert foundry.FoundryAgentSessionStore is FoundryAgentSessionStore
     assert foundry.ResponsesHostServer is ResponsesHostServer
     assert foundry.FoundryLocalClient is FoundryLocalClient
     assert "FoundryChatClient" in dir(foundry)
+    assert "FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY" in dir(foundry)
     assert "FoundryLocalClient" in dir(foundry)
     assert "FoundryAgentSessionStore" in dir(foundry)
     assert "ResponsesHostServer" in dir(foundry)

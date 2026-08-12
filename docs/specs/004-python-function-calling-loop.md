@@ -120,6 +120,10 @@ Code-reading landmarks:
 - `_process_model_function_calls(...)` handles only calls from a completed model response.
 - `_try_execute_function_calls(...)` decides approval/declaration/execution behavior for a batch.
 - `_replace_approval_contents_with_results(...)` is the occurrence-aware approval transcript normalizer.
+- `FunctionInvocationLayer._update_function_invocation_continuation_state(...)` updates continuation state after
+  every service response. Provider layers may override it to carry provider-specific continuation metadata into
+  the next service call, but must delegate to the base implementation so generic conversation continuation remains
+  synchronized with the active `AgentSession`.
 
 ### Approval pause and resume
 
