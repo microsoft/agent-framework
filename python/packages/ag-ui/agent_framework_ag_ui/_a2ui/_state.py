@@ -9,8 +9,8 @@ The AG-UI A2UI middleware injects the component catalog and usage guidelines as
 the toolkit expects (:func:`build_ag_ui_context_slice`) and reads the enablement flag
 (:func:`read_inject_a2ui_flag`).
 
-The slice is handed to the A2UI wrappers (:class:`~.._context_agent.AGUIContextAgent`,
-``A2UIAgent``) directly at construction — NOT stamped onto run-option
+The slice is handed to the A2UI runner (``A2UIAgent``) directly per run — NOT stamped
+onto run-option
 ``additional_properties``. The wrappers feed it to the toolkit's
 ``build_context_prompt`` / ``prepare_a2ui_request``. (The old ``ChatOptions``
 ``additional_properties`` channel leaked the slice to the provider SDK on any run that

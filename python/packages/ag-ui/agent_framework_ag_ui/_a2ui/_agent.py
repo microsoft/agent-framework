@@ -334,43 +334,67 @@ class A2UIAgent:
         self.name = getattr(inner_agent, "name", None)
         self.description = getattr(inner_agent, "description", None)
 
+    # Delegate the run-loop-relevant attributes to the wrapped agent so a manually
+    # enable_a2ui()-wrapped runner (which the host reads these off of directly) keeps the
+    # inner agent's configured tools, provider-owned state protection, and approval /
+    # authorization middleware, matching the auto-injected path (which keeps the real
+    # agent bound).
+    @property
+    def client(self) -> Any:
+        return getattr(self.inner_agent, "client", None)
+
+    @property
+    def default_options(self) -> Any:
+        return getattr(self.inner_agent, "default_options", None)
+
+    @property
+    def context_providers(self) -> Any:
+        return getattr(self.inner_agent, "context_providers", [])
+
     # -- public run -------------------------------------------------------
 
     def run(self, messages: Any = None, *, stream: bool = False, **kwargs: Any) -> Any:
         """Run the wrapped agent with A2UI support.
 
         Prepends the forwarded AG-UI context as a system message, then dispatches to the
-        streaming or non-streaming path. Returns an async iterator (stream) or an
-        awaitable (non-stream), matching the inner agent's protocol.
+        streaming or non-streaming path. The AG-UI context slice is taken per run from an
+        ``a2ui_context`` kwarg when the host supplies one (so a reused runner never serves
+        stale catalog/guidelines), falling back to the constructor value. Returns an async
+        iterator (stream) or an awaitable (non-stream), matching the inner agent's protocol.
         """
-        messages = self._with_context_prompt(messages)
+        context_slice = kwargs.pop("a2ui_context", None)
+        if context_slice is None:
+            context_slice = self._context_slice
+        messages = self._with_context_prompt(messages, context_slice)
         if stream:
-            return self._run_streaming(messages, **kwargs)
-        return self._run_non_streaming(messages, **kwargs)
+            return self._run_streaming(messages, context_slice, **kwargs)
+        return self._run_non_streaming(messages, context_slice, **kwargs)
 
-    def _with_context_prompt(self, messages: Any) -> list[Message]:
+    def _with_context_prompt(self, messages: Any, context_slice: dict[str, Any]) -> list[Message]:
         """Prepend the forwarded component catalog + guidelines as a system message."""
         normalized = normalize_messages(messages)
-        if not self._context_slice:
+        if not context_slice:
             return normalized
-        prompt = build_context_prompt({"ag-ui": self._context_slice})
+        prompt = build_context_prompt({"ag-ui": context_slice})
         if not prompt:
             return normalized
         return [Message(role="system", contents=[Content.from_text(text=prompt)]), *normalized]
 
     # -- non-streaming ----------------------------------------------------
 
-    async def _run_non_streaming(self, messages: Any = None, **kwargs: Any) -> Any:
+    async def _run_non_streaming(
+        self, messages: Any = None, context_slice: dict[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
         """Advertise a real generate_a2ui tool and let auto-invocation run it."""
         normalized = _sanitize_unanswered_tool_calls(normalize_messages(messages))
         tools = _as_tool_list(kwargs.pop("tools", None))
-        generate_tool = self._build_generate_tool(normalized)
+        generate_tool = self._build_generate_tool(normalized, context_slice or {})
         merged = [*[t for t in tools if getattr(t, "name", None) != self.params["tool_name"]], generate_tool]
         return await self.inner_agent.run(normalized, stream=False, tools=merged, **kwargs)
 
-    def _build_generate_tool(self, conversation: list[Any]) -> FunctionTool:
+    def _build_generate_tool(self, conversation: list[Any], context_slice: dict[str, Any]) -> FunctionTool:
         """Build an EXECUTABLE generate_a2ui tool whose body runs the recovery loop."""
-        state = {"ag-ui": self._context_slice}
+        state = {"ag-ui": context_slice}
         history = to_history_messages(conversation)
         catalog = _resolve_catalog(state, self.params["catalog"])
 
@@ -521,7 +545,9 @@ class A2UIAgent:
 
     # -- streaming --------------------------------------------------------
 
-    async def _run_streaming(self, messages: Any = None, **kwargs: Any) -> Any:
+    async def _run_streaming(
+        self, messages: Any = None, context_slice: dict[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
         from agent_framework import AgentResponseUpdate
 
         history = _sanitize_unanswered_tool_calls(normalize_messages(messages))
@@ -529,7 +555,7 @@ class A2UIAgent:
         incoming_tools = [
             t for t in _as_tool_list(kwargs.pop("tools", None)) if getattr(t, "name", None) != self.params["tool_name"]
         ]
-        state = {"ag-ui": self._context_slice}
+        state = {"ag-ui": context_slice or {}}
         generate_decl = FunctionTool(
             name=self.params["tool_name"],
             description=self.params["tool_description"],

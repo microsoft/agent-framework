@@ -24,7 +24,7 @@ from ._types import AgentState, AGUIChatOptions, AGUIRequest, PredictStateConfig
 from ._workflow import AgentFrameworkWorkflow, WorkflowFactory
 
 if TYPE_CHECKING:
-    from ._a2ui import A2UIAgent, AGUIContextAgent, enable_a2ui, plan_a2ui_injection
+    from ._a2ui import A2UIAgent, enable_a2ui, plan_a2ui_injection
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -59,14 +59,13 @@ __all__ = [
     "__version__",
     # A2UI (lazy — require ag-ui-a2ui-toolkit)
     "A2UIAgent",
-    "AGUIContextAgent",
     "enable_a2ui",
     "plan_a2ui_injection",
 ]
 
 # A2UI symbols are loaded lazily so importing this package does not require
 # ag-ui-a2ui-toolkit unless A2UI is actually used.
-_A2UI_LAZY = {"A2UIAgent", "AGUIContextAgent", "enable_a2ui", "plan_a2ui_injection"}
+_A2UI_LAZY = {"A2UIAgent", "enable_a2ui", "plan_a2ui_injection"}
 
 
 def __getattr__(name: str) -> Any:

@@ -175,7 +175,7 @@ def test_a2ui_agent_prepends_catalog_system_message():
         [{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": '{"components":{"Card":{}}}'}]
     )
     agent = A2UIAgent(_GenerateOnceInner(), _RenderSub(), context_slice=slice_)
-    msgs = agent._with_context_prompt("hi")
+    msgs = agent._with_context_prompt("hi", slice_)
     assert _role(msgs[0]) == "system"
     assert "Available Components" in msgs[0].text and "Card" in msgs[0].text
     assert _role(msgs[-1]) == "user"
@@ -183,7 +183,7 @@ def test_a2ui_agent_prepends_catalog_system_message():
 
 def test_a2ui_agent_passthrough_without_context():
     agent = A2UIAgent(_GenerateOnceInner(), _RenderSub())
-    msgs = agent._with_context_prompt("hi")
+    msgs = agent._with_context_prompt("hi", {})
     assert [_role(m) for m in msgs] == ["user"]
 
 
@@ -372,7 +372,7 @@ def test_non_streaming_tool_body_runs_recovery():
     agent = A2UIAgent(
         inner_agent=type("I", (), {"id": "i", "name": "n", "description": "d"})(), subagent_chat_client=NonStreamSub()
     )
-    tool = agent._build_generate_tool([Message(role="user", contents=[Content.from_text(text="card")])])
+    tool = agent._build_generate_tool([Message(role="user", contents=[Content.from_text(text="card")])], {})
     assert tool.func is not None  # executable on the non-streaming path
     env = json.loads(asyncio.run(tool.func(intent="create")))
     assert "a2ui_operations" in env
@@ -1120,3 +1120,69 @@ async def test_bridge_client_tool_with_generate_surfaces_resumable_not_synthesiz
     # terminal MESSAGES_SNAPSHOT is emitted for the A2UI run (streamed order preserved).
     assert "RUN_FINISHED" in types
     assert "MESSAGES_SNAPSHOT" not in types
+
+
+# --------------------------------------------------------------------------- #
+# Manual enable_a2ui() path: attribute delegation + per-request context
+# --------------------------------------------------------------------------- #
+
+
+def test_a2ui_agent_delegates_run_loop_attrs_to_inner():
+    # The host reads client / default_options / context_providers off the runner in the
+    # manual path; delegating them preserves configured tools, provider-state protection,
+    # and approval middleware that the auto-injected path keeps.
+    class _Inner:
+        id = name = description = "p"
+        client = object()
+        default_options = {"tools": []}
+        context_providers = ["cp"]
+
+    inner = _Inner()
+    runner = A2UIAgent(inner, _RenderSub())
+    assert runner.client is inner.client
+    assert runner.default_options is inner.default_options
+    assert runner.context_providers is inner.context_providers
+
+
+def test_a2ui_agent_uses_per_request_context_over_constructor():
+    # A reused runner must serve the CURRENT request's catalog, not a stale constructor one.
+    old = build_ag_ui_context_slice(
+        [{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": '{"components":{"OldCard":{}}}'}]
+    )
+    new = build_ag_ui_context_slice(
+        [{"description": A2UI_SCHEMA_CONTEXT_DESCRIPTION, "value": '{"components":{"NewCard":{}}}'}]
+    )
+
+    class _RecordInner:
+        id = name = description = "p"
+
+        def __init__(self):
+            self.seen = None
+
+        def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+            self.seen = messages
+
+            async def gen():
+                yield AgentResponseUpdate(role="assistant", contents=[Content.from_text(text="Done.")])
+
+            return gen()
+
+    inner = _RecordInner()
+    runner = A2UIAgent(inner, _RenderSub(), context_slice=old)
+
+    async def go():
+        async for _ in runner.run("hi", stream=True, a2ui_context=new):
+            pass
+
+    asyncio.run(go())
+    sys_text = inner.seen[0].text  # prepended system message
+    assert "NewCard" in sys_text and "OldCard" not in sys_text
+
+
+def test_facade_no_longer_advertises_removed_context_agent():
+    import agent_framework_ag_ui as pkg
+
+    assert "AGUIContextAgent" not in pkg.__all__
+    assert pkg.A2UIAgent is A2UIAgent  # A2UI symbols still lazily importable
+    with pytest.raises(AttributeError):
+        _ = pkg.AGUIContextAgent

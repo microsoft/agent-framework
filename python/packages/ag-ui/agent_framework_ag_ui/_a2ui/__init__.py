@@ -2,11 +2,10 @@
 
 """A2UI (agent-generated UI) support for the AG-UI Agent Framework adapter.
 
-Toolkit-dependent exports (``AGUIContextAgent`` and, later, ``A2UIAgent`` /
-``get_a2ui_tools`` / ``plan_a2ui_injection``) are loaded lazily via PEP 562 so this
-package — and the toolkit-free context-plumbing helpers in :mod:`._state` it
-re-exports — can be imported by the hosting loop even when ``ag-ui-a2ui-toolkit`` is
-not installed.
+Toolkit-dependent exports (``A2UIAgent`` / ``enable_a2ui`` / ``plan_a2ui_injection`` /
+``is_a2ui_runner``) are loaded lazily via PEP 562 so this package — and the toolkit-free
+context-plumbing helpers in :mod:`._state` it re-exports — can be imported by the hosting
+loop even when ``ag-ui-a2ui-toolkit`` is not installed.
 """
 
 from __future__ import annotations

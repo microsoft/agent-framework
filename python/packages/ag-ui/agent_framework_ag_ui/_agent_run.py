@@ -2399,6 +2399,12 @@ async def run_agent_stream(
     run_kwargs: dict[str, Any] = {"session": session}
     if tools:
         run_kwargs["tools"] = tools
+    # Hand the forwarded AG-UI context to the A2UI runner PER REQUEST (not just at
+    # construction), so a reused manually enable_a2ui()-wrapped runner never serves stale
+    # catalog/guidelines. Only when A2UI actually drives the run — a plain agent's run()
+    # would reject the unknown kwarg.
+    if a2ui_active:
+        run_kwargs["a2ui_context"] = build_ag_ui_context_slice(input_data.get("context"))
     # Filter out AG-UI internal metadata keys before passing to chat client
     # These are used internally for orchestration and should not be sent to the LLM provider
     session_metadata = cast(dict[str, Any], getattr(session, "metadata", None) or {})
