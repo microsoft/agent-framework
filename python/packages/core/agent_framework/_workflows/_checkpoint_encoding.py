@@ -68,8 +68,11 @@ _RESERVED_DICT_KEYS: frozenset[str] = frozenset({
 # Types that are natively JSON-serializable and don't need pickling
 _JSON_NATIVE_TYPES = (str, int, float, bool, type(None))
 
-# Module prefix for framework-internal types that are always allowed
-_FRAMEWORK_MODULE_PREFIX = "agent_framework."
+# Module prefixes for framework-internal types that are always allowed
+_FRAMEWORK_MODULE_PREFIXES = (
+    "agent_framework.",
+    "agent_framework_orchestrations.",
+)
 
 # Module prefix for OpenAI SDK types that are always allowed
 _OPENAI_MODULE_PREFIX = "openai.types."
@@ -150,7 +153,7 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
         return (
             type_key in _BUILTIN_ALLOWED_TYPE_KEYS
             or type_key in self._allowed_types
-            or resolved.__module__.startswith(_FRAMEWORK_MODULE_PREFIX)
+            or resolved.__module__.startswith(_FRAMEWORK_MODULE_PREFIXES)
             or resolved.__module__.startswith(_OPENAI_MODULE_PREFIX)
         )
 
@@ -197,7 +200,7 @@ class _RestrictedUnpickler(pickle.Unpickler):  # ruff:ignore[suspicious-pickle-u
                 return resolved
             raise pickle.UnpicklingError(f"Checkpoint deserialization blocked for non-type global '{type_key}'.")
 
-        if module.startswith(_FRAMEWORK_MODULE_PREFIX) or module.startswith(_OPENAI_MODULE_PREFIX):
+        if module.startswith(_FRAMEWORK_MODULE_PREFIXES) or module.startswith(_OPENAI_MODULE_PREFIX):
             # Pickle dotted names traverse attributes on an allowed module; keep the prefix allowlist to concrete
             # top-level classes rather than helper callables reachable through module attributes.
             if "." in name:
