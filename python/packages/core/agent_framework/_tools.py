@@ -72,6 +72,7 @@ if TYPE_CHECKING:
         FunctionInvocationContext,
         FunctionMiddlewarePipeline,
         FunctionMiddlewareTypes,
+        MiddlewareTypes,
     )
     from ._sessions import AgentSession
     from ._types import (
@@ -1656,18 +1657,26 @@ async def _execute_single_function_call(
     live_tools: list[ToolTypes] | None,
 ) -> tuple[list[Content], bool]:
     from ._middleware import MiddlewareTermination
+    from ._sessions import _suspend_run_persistence_gate  # pyright: ignore[reportPrivateUsage]
     from ._types import Content
 
     try:
-        result = await _auto_invoke_function(
-            function_call_content=function_call,
-            custom_args=custom_args,
-            tool_map=tool_map,
-            invocation_session=invocation_session,
-            middleware_pipeline=middleware_pipeline,
-            config=config,
-            live_tools=live_tools,
-        )
+        # A run-persistence gate defers only the gated run's own persistence; nested
+        # agent runs persist inline at their own boundaries. Run-identity ownership
+        # (see _sessions._RunPersistenceGate.accepts) enforces that for every run that
+        # stamps an identity; suspending the gate around the tool invocation (the most
+        # common nesting seam) additionally covers nested agents with fully custom run
+        # loops, which never stamp one and would otherwise inherit the outer identity.
+        with _suspend_run_persistence_gate():
+            result = await _auto_invoke_function(
+                function_call_content=function_call,
+                custom_args=custom_args,
+                tool_map=tool_map,
+                invocation_session=invocation_session,
+                middleware_pipeline=middleware_pipeline,
+                config=config,
+                live_tools=live_tools,
+            )
         return [result], False
     except MiddlewareTermination as exc:
         if isinstance(exc.result, Content):
@@ -1912,27 +1921,6 @@ def _update_conversation_id(
     # Also update options since some clients (e.g., AssistantsClient) read conversation_id from options
     if options is not None:
         options["conversation_id"] = conversation_id
-
-
-def _update_continuation_state(
-    kwargs: dict[str, Any],
-    response: ChatResponse[Any],
-    *,
-    session: AgentSession | None,
-    options: dict[str, Any] | None = None,
-) -> None:
-    """Update in-flight and persisted continuation state from a response."""
-    conversation_id = response.conversation_id
-    if conversation_id is None:
-        return
-
-    _update_conversation_id(kwargs, conversation_id, options)
-    if (
-        session is not None
-        and not response.has_internal_conversation_id()
-        and session.service_session_id != conversation_id
-    ):
-        session.service_session_id = conversation_id
 
 
 def _clear_internal_conversation_id(response: ChatResponse[Any]) -> ChatResponse[Any]:
@@ -2845,7 +2833,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     ) -> None:
         from ._middleware import categorize_middleware
 
-        categorized_middleware = categorize_middleware(middleware)
+        # Chat clients install only chat and function middleware. Agent middleware in
+        # a bundle raises (a bundle must never be partially installed); bare agent
+        # middleware is warned about and skipped inside categorize_middleware.
+        categorized_middleware = categorize_middleware(middleware, supported_categories=("chat", "function"))
         self.function_middleware: list[FunctionMiddlewareTypes] = list(categorized_middleware["function"])
         self._cached_function_middleware_pipeline: FunctionMiddlewarePipeline | None = None
         self.function_invocation_configuration = normalize_function_invocation_configuration(
@@ -2854,6 +2845,27 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         if (chat_middleware := (categorized_middleware["chat"] or None)) is not None:
             kwargs["middleware"] = chat_middleware
         super().__init__(**kwargs)
+
+    def _update_function_invocation_continuation_state(
+        self,
+        kwargs: dict[str, Any],
+        response: ChatResponse[Any],
+        *,
+        session: AgentSession | None,
+        options: dict[str, Any] | None = None,
+    ) -> None:
+        """Update continuation state after a function-loop service call."""
+        conversation_id = response.conversation_id
+        if conversation_id is None:
+            return
+
+        _update_conversation_id(kwargs, conversation_id, options)
+        if (
+            session is not None
+            and not response.has_internal_conversation_id()
+            and session.service_session_id != conversation_id
+        ):
+            session.service_session_id = conversation_id
 
     def _get_function_middleware_pipeline(
         self,
@@ -2941,7 +2953,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ):
                 _ensure_function_invocation_limit_fallback_response(response)
             aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
-            _update_continuation_state(
+            self._update_function_invocation_continuation_state(
                 request_kwargs,
                 response,
                 session=invocation_session,
@@ -2992,7 +3004,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         _ensure_function_invocation_limit_fallback_response(response)
         aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
-        _update_continuation_state(
+        self._update_function_invocation_continuation_state(
             request_kwargs,
             response,
             session=invocation_session,
@@ -3082,7 +3094,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             fallback_added = False
             if function_call_limit_reached:
                 fallback_added = _ensure_function_invocation_limit_fallback_response(response)
-            _update_continuation_state(
+            self._update_function_invocation_continuation_state(
                 request_kwargs,
                 response,
                 session=invocation_session,
@@ -3149,7 +3161,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             yield update
         final_response = await final_inner_stream.get_final_response()
         fallback_added = _ensure_function_invocation_limit_fallback_response(final_response)
-        _update_continuation_state(
+        self._update_function_invocation_continuation_state(
             request_kwargs,
             final_response,
             session=invocation_session,
@@ -3212,7 +3224,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-        from ._middleware import categorize_middleware
+        from ._middleware import _as_middleware_list, categorize_middleware  # pyright: ignore[reportPrivateUsage]
         from ._types import (
             ChatResponse,
             ResponseStream,
@@ -3226,16 +3238,18 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         # Build the run-local middleware pipeline and recover shared budget/session state for approval re-entry.
         request_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if middleware is not None:
-            existing_middleware = request_kwargs.get("middleware", [])
             request_kwargs["middleware"] = [
-                *(
-                    existing_middleware
-                    if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes))
-                    else [existing_middleware]
+                *_as_middleware_list(
+                    cast("MiddlewareTypes | Sequence[MiddlewareTypes] | None", request_kwargs.get("middleware"))
                 ),
                 *middleware,
             ]
-        categorized_runtime_middleware = categorize_middleware(request_kwargs.pop("middleware", []))
+        # Same contract as the constructor: this seam installs chat and function
+        # middleware only; a bundle carrying an agent member fails loudly instead of
+        # silently losing that member.
+        categorized_runtime_middleware = categorize_middleware(
+            request_kwargs.pop("middleware", []), supported_categories=("chat", "function")
+        )
 
         function_middleware_pipeline = self._get_function_middleware_pipeline(
             categorized_runtime_middleware["function"]

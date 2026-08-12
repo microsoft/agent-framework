@@ -87,6 +87,6 @@ def create_harness_agent(
     loop_max_iterations: int | None = DEFAULT_MAX_ITERATIONS,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
-    middleware: Sequence[MiddlewareTypes] | None = None,
+    middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
     default_options: Mapping[str, Any] | None = None,
 ) -> Agent[OptionsCoT]: ...

@@ -532,6 +532,26 @@ internal static class AgentsSamples
             ],
         },
 
+        new SampleDefinition
+        {
+            Name = "AgentWithMemory_Step08_MemoryUsingCosmosNoSql",
+            ProjectPath = "samples/02-agents/AgentWithMemory/AgentWithMemory_Step08_MemoryUsingCosmosNoSql",
+            RequiredEnvironmentVariables = ["FOUNDRY_PROJECT_ENDPOINT", "COSMOS_ENDPOINT"],
+            OptionalEnvironmentVariables = ["FOUNDRY_MODEL", "FOUNDRY_EMBEDDING_MODEL", "COSMOS_DATABASE_NAME"],
+            MustContain =
+            [
+                "First session:",
+                "Second session (recalling prior chat history from Cosmos DB):",
+            ],
+            ExpectedOutputDescription =
+            [
+                "The output should contain two joke responses.",
+                "The first joke should be about a pirate (as explicitly requested).",
+                "The second joke should also be pirate-themed or similar to what the user likes, since chat history from the first session should be recalled from Cosmos DB.",
+                "The output should not contain error messages or stack traces.",
+            ],
+        },
+
         // ── AgentWithRAG ────────────────────────────────────────────────────
 
         new SampleDefinition

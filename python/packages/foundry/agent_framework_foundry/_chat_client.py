@@ -13,6 +13,7 @@ from agent_framework import (
     Content,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
+    Message,
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
@@ -251,6 +252,23 @@ class RawFoundryChatClient(
             additional_properties=additional_properties,
         )
         self.project_client = project_client
+
+    @override
+    async def _prepare_options(
+        self,
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Prepare Foundry options without implicitly requesting encrypted reasoning."""
+        caller_requested_encrypted_reasoning = "reasoning.encrypted_content" in (options.get("include") or [])
+        run_options = await super()._prepare_options(messages, options)
+        if not caller_requested_encrypted_reasoning and isinstance(run_options.get("include"), list):
+            include = [item for item in run_options["include"] if item != "reasoning.encrypted_content"]
+            if include:
+                run_options["include"] = include
+            else:
+                run_options.pop("include")
+        return run_options
 
     @override
     def _check_model_presence(self, options: dict[str, Any]) -> None:

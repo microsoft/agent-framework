@@ -132,7 +132,7 @@ internal sealed class MessageMerger
                 _ = finishReasons.Add(response.FinishReason.Value);
             }
 
-            usage = MergeUsage(usage, response.Usage);
+            usage = UsageAggregator.Combine(usage, response.Usage);
             additionalProperties = MergeProperties(additionalProperties, response.AdditionalProperties);
         }
 
@@ -219,7 +219,7 @@ internal sealed class MessageMerger
                 Messages = current.Messages.Concat(incoming.Messages).ToList(),
                 ResponseId = current.ResponseId,
                 RawRepresentation = rawRepresentation,
-                Usage = MergeUsage(current.Usage, incoming.Usage),
+                Usage = UsageAggregator.Combine(current.Usage, incoming.Usage),
             };
         }
 
@@ -268,41 +268,6 @@ internal sealed class MessageMerger
             }
 
             return merged;
-        }
-
-        static UsageDetails? MergeUsage(UsageDetails? current, UsageDetails? incoming)
-        {
-            if (current is null)
-            {
-                return incoming;
-            }
-
-            AdditionalPropertiesDictionary<long>? additionalCounts = current.AdditionalCounts;
-            if (incoming is null)
-            {
-                return current;
-            }
-
-            if (additionalCounts is null)
-            {
-                additionalCounts = incoming.AdditionalCounts;
-            }
-            else if (incoming.AdditionalCounts is not null)
-            {
-                foreach (string key in incoming.AdditionalCounts.Keys)
-                {
-                    additionalCounts[key] = incoming.AdditionalCounts[key] +
-                                            (additionalCounts.TryGetValue(key, out long? existingCount) ? existingCount.Value : 0);
-                }
-            }
-
-            return new UsageDetails
-            {
-                InputTokenCount = current.InputTokenCount + incoming.InputTokenCount,
-                OutputTokenCount = current.OutputTokenCount + incoming.OutputTokenCount,
-                TotalTokenCount = current.TotalTokenCount + incoming.TotalTokenCount,
-                AdditionalCounts = additionalCounts,
-            };
         }
     }
 }
