@@ -13,7 +13,9 @@ continue to manage workflow checkpoints and function approvals.
 ## Azure Cosmos DB setup
 
 Before deploying the sample, create an Azure Cosmos DB database and container. The
-container must use `/id` as its partition key. Set these environment variables to
+container must use `/user_id` as its partition key. Each session document includes
+the Foundry platform user ID, so session IDs and data are isolated between users.
+Set these environment variables to
 the existing resources:
 
 - `COSMOS_CONNECTION_STRING`
@@ -42,4 +44,5 @@ Local session data is lost when the process exits.
 Set all variables in `.env.example`, including the Cosmos settings, and follow
 [Deploying the Agent to Foundry](../../README.md#deploying-the-agent-to-foundry)
 in the parent README. The hosted provider initializes Cosmos DB lazily on its first
-request and reuses the store for later requests.
+request and reuses the client and container for later requests. Each request receives
+a session store scoped to the non-empty user ID supplied by Foundry.

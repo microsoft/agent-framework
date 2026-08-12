@@ -13,8 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, cast, overload
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -47,11 +46,7 @@ from agent_framework import (
     executor,
     tool,
 )
-from azure.ai.agentserver.core import (
-    FoundryAgentRequestContext,
-    reset_request_context,
-    set_request_context,
-)
+from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponseContext
 from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
 from mcp import McpError
@@ -92,21 +87,6 @@ def _make_function_approval_request_content(
         call_id, name, arguments=arguments, additional_properties={"server_label": server_label}
     )
     return Content.from_function_approval_request(request_id, function_call)
-
-
-@contextmanager
-def _request_context(
-    *,
-    call_id: str | None = None,
-    user_id: str | None = None,
-    session_id: str | None = None,
-) -> Generator[None]:
-    """Install a Foundry request context for the duration of the block."""
-    token = set_request_context(FoundryAgentRequestContext(call_id=call_id, user_id=user_id, session_id=session_id))
-    try:
-        yield
-    finally:
-        reset_request_context(token)
 
 
 # region Helpers
@@ -424,44 +404,6 @@ class TestResponsesHostServerInit:
         with pytest.raises(RuntimeError, match="history provider"):
             ResponsesHostServer(agent)
 
-    async def test_hosted_request_requires_user_partition_key(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
-        server = _make_server(agent)
-        request = CreateResponse(model="m", input="hi")
-        context = ResponseContext(
-            response_id="caresp_aaaaaaaaaaaaaaaa00" + "1" * 32,
-            mode_flags=MagicMock(),
-        )
-
-        with (
-            patch.object(server.config, "is_hosted", True),
-            _request_context(call_id="call-1"),
-            pytest.raises(RuntimeError, match="platform user ID"),
-        ):
-            await server._handle_response(  # pyright: ignore[reportPrivateUsage]
-                request,
-                context,
-                asyncio.Event(),
-            )
-
-    async def test_hosted_request_requires_protocol_v2(self) -> None:
-        server = _make_server(_make_agent())
-        request = CreateResponse(model="m", input="hi")
-        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-
-        with (
-            patch.object(server.config, "is_hosted", True),
-            _request_context(user_id="user-1"),
-            pytest.raises(RuntimeError, match="protocol 2.0.0"),
-        ):
-            await server._handle_response(  # pyright: ignore[reportPrivateUsage]
-                request,
-                context,
-                asyncio.Event(),
-            )
-
     async def test_previous_response_requires_existing_agent_session(self) -> None:
         agent = _make_agent()
         server = _make_server(agent, session_store=SessionStore())
@@ -522,7 +464,7 @@ class TestAgentSessionPersistence:
 
         provider = server._session_storage_provider  # pyright: ignore[reportPrivateUsage]
         assert provider is not None
-        session_store = provider.get_store(config=server.config)
+        session_store = provider.get_store(config=server.config, platform_context=get_request_context())
         assert session_store is not None
         first_session = await session_store.get(first.json()["id"])
         second_session = await session_store.get(second.json()["id"])
@@ -3383,7 +3325,7 @@ class TestFunctionApprovalRoundTrip:
 
         # Storage must contain a saved entry under the emitted request id.
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config
+            config=server.config, platform_context=get_request_context()
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert loaded.function_call is not None
@@ -3413,7 +3355,7 @@ class TestFunctionApprovalRoundTrip:
         assert approval_request_id is not None
 
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config
+            config=server.config, platform_context=get_request_context()
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
 
@@ -4256,7 +4198,7 @@ class TestWorkflowAgentHosting:
         # ``function_call``) must be persisted under that id so the next
         # turn can reconstruct it.
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config
+            config=server.config, platform_context=get_request_context()
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert loaded.function_call is not None
@@ -4286,7 +4228,7 @@ class TestWorkflowAgentHosting:
         assert approval_request_id is not None
 
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config
+            config=server.config, platform_context=get_request_context()
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert mock_agent.run_count == 1

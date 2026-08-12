@@ -20,6 +20,13 @@ encoding of the store name. For example:
 
 > Read more about the Foundry durable state store in the [developer guide](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/agentserver/azure-ai-agentserver-core/docs/state-store-guide.md).
 
+### User isolation
+
+When hosted on Foundry, the default state stores automatically isolate data by the
+platform user ID supplied with each request. Sessions, workflow checkpoints, and
+function approvals written for one user cannot be read or modified by another user.
+No additional partitioning configuration is required when using the default stores.
+
 ### Agent Sessions
 
 `ResponsesHostServer` persists the Agent Framework `AgentSession` durably. By default it

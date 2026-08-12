@@ -14,7 +14,7 @@ from agent_framework import (
     WorkflowCheckpoint,
     WorkflowCheckpointException,
 )
-from azure.ai.agentserver.core import AgentConfig
+from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.ai.agentserver.core.storage import FoundryStateStore, FoundryStorageConflictError
 
 StoreT = TypeVar("StoreT")
@@ -24,11 +24,12 @@ class StoreProvider(ABC, Generic[StoreT]):
     """Provide store for a hosting environment."""
 
     @abstractmethod
-    def get_store(self, *, config: AgentConfig) -> StoreT:
+    def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> StoreT:
         """Get store for a hosting environment.
 
         Args:
             config: The resolved agent server configuration.
+            platform_context: The request-scoped platform context for the current request.
 
         Returns:
             The store instance for the given hosting environment.
@@ -44,12 +45,19 @@ class ContextScopedStoreProvider(ABC, Generic[StoreT]):
     """
 
     @abstractmethod
-    def get_store(self, *, config: AgentConfig, context_id: str) -> StoreT:
+    def get_store(
+        self,
+        *,
+        config: AgentConfig,
+        context_id: str,
+        platform_context: FoundryAgentRequestContext,
+    ) -> StoreT:
         """Get a context-scoped store for a hosting environment.
 
         Args:
             config: The resolved agent server configuration.
             context_id: A string that uniquely identifies the context for which the store is scoped.
+            platform_context: The request-scoped platform context for the current request.
 
         Returns:
             The store instance for the given hosting environment and context ID.
@@ -64,17 +72,19 @@ class FoundryCheckpointStore:
 
     DEFAULT_ROOT_SCOPE = "checkpoints"
 
-    def __init__(self, context_id: str) -> None:
+    def __init__(self, context_id: str, platform_context: FoundryAgentRequestContext) -> None:
         """Initialize a Foundry-scoped checkpoint store for the given context ID.
 
         Args:
             context_id: A string that uniquely identifies the context for which the checkpoint store is scoped.
                         This can be used to isolate checkpoints for different workflow runs.
+            platform_context: The request-scoped platform context for the current request.
         """
         if not context_id:
             raise ValueError("context_id must be provided to initialize a FoundryCheckpointStore.")
 
         self.context_id = context_id
+        self.platform_context = platform_context
 
     async def _get_store(self) -> FoundryStateStore:
         return await FoundryStateStore.get_or_create(
@@ -98,7 +108,7 @@ class FoundryCheckpointStore:
 
         store = await self._get_store()
         async with store:
-            await store.set_item(checkpoint.checkpoint_id, encoded_checkpoint)
+            await store.set_item(checkpoint.checkpoint_id, encoded_checkpoint, call_id=self.platform_context.call_id)
             return checkpoint.checkpoint_id
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
@@ -117,7 +127,7 @@ class FoundryCheckpointStore:
 
         store = await self._get_store()
         async with store:
-            item = await store.get_item(checkpoint_id)
+            item = await store.get_item(checkpoint_id, call_id=self.platform_context.call_id)
         if item is None:
             raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
         return WorkflowCheckpoint.from_dict(decode_checkpoint_value(item.value))
@@ -131,9 +141,9 @@ class FoundryCheckpointStore:
         after: str | None = None
         async with store:
             while True:
-                page = await store.list_keys(after=after)
+                page = await store.list_keys(after=after, call_id=self.platform_context.call_id)
                 for item_key in page.keys:
-                    item = await store.get_item(item_key.key)
+                    item = await store.get_item(item_key.key, call_id=self.platform_context.call_id)
                     if item is None:
                         continue
                     checkpoint = WorkflowCheckpoint.from_dict(decode_checkpoint_value(item.value))
@@ -147,7 +157,7 @@ class FoundryCheckpointStore:
     async def delete(self, checkpoint_id: CheckpointID) -> bool:
         store = await self._get_store()
         async with store:
-            deleted_item = await store.delete_item(checkpoint_id)
+            deleted_item = await store.delete_item(checkpoint_id, call_id=self.platform_context.call_id)
         return deleted_item.id is not None
 
     async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
@@ -171,22 +181,18 @@ class CheckpointStoreProvider(ContextScopedStoreProvider[CheckpointStorage]):
     This defaults to using the `FoundryCheckpointStore` in all environments.
     """
 
-    def __init__(self) -> None:
-        self._storages: dict[str, CheckpointStorage] = {}
-
     def get_store(
         self,
         *,
         config: AgentConfig,
         context_id: str,
+        platform_context: FoundryAgentRequestContext,
     ) -> CheckpointStorage:
         """Get checkpoint store for the requested hosting environment."""
         if not context_id:
             raise ValueError("context_id must be provided to get a checkpoint store.")
 
-        if context_id not in self._storages:
-            self._storages[context_id] = FoundryCheckpointStore(context_id)
-        return self._storages[context_id]
+        return FoundryCheckpointStore(context_id, platform_context)
 
 
 # endregion Checkpoint persistence
@@ -217,6 +223,9 @@ class FoundryFunctionApprovalStore:
 
     DEFAULT_ROOT_SCOPE = "function_approvals"
 
+    def __init__(self, platform_context: FoundryAgentRequestContext) -> None:
+        self.platform_context = platform_context
+
     async def _get_store(self) -> FoundryStateStore:
         return await FoundryStateStore.get_or_create(self.DEFAULT_ROOT_SCOPE, user_isolation=True)
 
@@ -224,14 +233,14 @@ class FoundryFunctionApprovalStore:
         store = await self._get_store()
         async with store:
             try:
-                await store.create_item(approval_request_id, request.to_dict())
+                await store.create_item(approval_request_id, request.to_dict(), call_id=self.platform_context.call_id)
             except FoundryStorageConflictError as ex:
                 raise ValueError(f"Approval request with ID '{approval_request_id}' already exists.") from ex
 
     async def load_approval_request(self, approval_request_id: str) -> Content:
         store = await self._get_store()
         async with store:
-            item = await store.get_item(approval_request_id)
+            item = await store.get_item(approval_request_id, call_id=self.platform_context.call_id)
         if item is None:
             raise KeyError(f"Approval request with ID '{approval_request_id}' does not exist.")
         return Content.from_dict(item.value)
@@ -243,14 +252,9 @@ class FunctionApprovalStoreProvider(StoreProvider[FunctionApprovalStore]):
     This defaults to using the `FoundryFunctionApprovalStore` in all environments.
     """
 
-    def __init__(self) -> None:
-        self._storage: FunctionApprovalStore | None = None
-
-    def get_store(self, *, config: AgentConfig) -> FunctionApprovalStore:
+    def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> FunctionApprovalStore:
         """Get function approval store for the requested hosting environment."""
-        if self._storage is None:
-            self._storage = FoundryFunctionApprovalStore()
-        return self._storage
+        return FoundryFunctionApprovalStore(platform_context)
 
 
 # endregion Function approval persistence
@@ -263,13 +267,16 @@ class FoundryAgentSessionStore(SessionStore):
 
     DEFAULT_ROOT_SCOPE = "agent_sessions"
 
+    def __init__(self, platform_context: FoundryAgentRequestContext) -> None:
+        self.platform_context = platform_context
+
     async def _get_store(self) -> FoundryStateStore:
         return await FoundryStateStore.get_or_create(f"{self.DEFAULT_ROOT_SCOPE}", user_isolation=True)
 
     async def get(self, session_id: str) -> AgentSession | None:
         store = await self._get_store()
         async with store:
-            item = await store.get_item(session_id)
+            item = await store.get_item(session_id, call_id=self.platform_context.call_id)
         if item is None:
             return None
         return AgentSession.from_dict(item.value)
@@ -277,12 +284,12 @@ class FoundryAgentSessionStore(SessionStore):
     async def set(self, session_id: str, session: AgentSession) -> None:
         store = await self._get_store()
         async with store:
-            await store.set_item(session_id, session.to_dict())
+            await store.set_item(session_id, session.to_dict(), call_id=self.platform_context.call_id)
 
     async def delete(self, session_id: str) -> None:
         store = await self._get_store()
         async with store:
-            await store.delete_item(session_id)
+            await store.delete_item(session_id, call_id=self.platform_context.call_id)
 
 
 class AgentSessionStoreProvider(StoreProvider[SessionStore]):
@@ -291,14 +298,9 @@ class AgentSessionStoreProvider(StoreProvider[SessionStore]):
     This defaults to using the `FoundryAgentSessionStore` in all environments.
     """
 
-    def __init__(self) -> None:
-        self._storage: SessionStore | None = None
-
-    def get_store(self, *, config: AgentConfig) -> SessionStore:
+    def get_store(self, *, config: AgentConfig, platform_context: FoundryAgentRequestContext) -> SessionStore:
         """Get agent session store for the requested hosting environment."""
-        if self._storage is None:
-            self._storage = FoundryAgentSessionStore()
-        return self._storage
+        return FoundryAgentSessionStore(platform_context)
 
 
 # endregion Agent session persistence

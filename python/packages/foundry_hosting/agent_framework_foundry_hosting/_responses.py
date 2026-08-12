@@ -62,9 +62,6 @@ from mcp import McpError
 from typing_extensions import Any
 
 from ._feature_usage import FeatureIndex
-from ._request_context import (
-    validate_foundry_request_context,
-)
 from ._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
@@ -310,9 +307,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response."""
-        request_context = get_request_context()
-        validate_foundry_request_context(request_context, is_hosted=self.config.is_hosted)
-
         if self._is_workflow_agent:
             # Workflow agents are handled differently because they require checkpoint restoration
             return self._handle_inner_workflow(request, context)
@@ -369,8 +363,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             return
 
         try:
-            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
-            session_storage = self._session_storage_provider.get_store(config=self.config)
+            request_context = get_request_context()
+            approval_storage = self._function_approval_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
+            session_storage = self._session_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
 
             context_id = context.conversation_chain_id
             session = await session_storage.get(context_id)
@@ -478,7 +477,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker: _OutputItemTracker | None = None
 
         try:
-            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
+            request_context = get_request_context()
+            approval_storage = self._function_approval_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
@@ -499,7 +501,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             await self._ensure_agent_ready()
 
             context_id = context.conversation_chain_id
-            checkpoint_storage = self._checkpoint_storage_provider.get_store(config=self.config, context_id=context_id)
+            checkpoint_storage = self._checkpoint_storage_provider.get_store(
+                config=self.config,
+                context_id=context_id,
+                platform_context=request_context,
+            )
 
             # Determine the latest checkpoint (if any) so we can resume the
             # workflow's prior state for this turn. The directory is keyed by
