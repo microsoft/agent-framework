@@ -292,6 +292,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "FileCheckpointStorage",
         "InMemoryCheckpointStorage",
         "WorkflowCheckpoint",
+        "register_checkpoint_type",
     ),
     "._workflows._const": (
         "DEFAULT_MAX_ITERATIONS",
@@ -629,6 +630,7 @@ __all__ = [
     "normalize_tools",
     "prepend_agent_framework_to_user_agent",
     "prepend_instructions_to_messages",
+    "register_checkpoint_type",
     "register_state_type",
     "resolve_agent_id",
     "response_handler",

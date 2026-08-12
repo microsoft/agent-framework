@@ -258,6 +258,7 @@ from ._workflows._checkpoint import (
     FileCheckpointStorage,
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
+    register_checkpoint_type,
 )
 from ._workflows._const import DEFAULT_MAX_ITERATIONS, INTERNAL_SOURCE_ID
 from ._workflows._edge import (
@@ -593,6 +594,7 @@ __all__ = [
     "normalize_tools",
     "prepend_agent_framework_to_user_agent",
     "prepend_instructions_to_messages",
+    "register_checkpoint_type",
     "register_state_type",
     "resolve_agent_id",
     "response_handler",
