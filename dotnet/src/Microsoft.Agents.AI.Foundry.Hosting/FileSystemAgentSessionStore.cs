@@ -208,7 +208,7 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         $"(for example {nameof(InMemoryAgentSessionStore)}) via AddFoundryResponses(agent, agentSessionStore).";
 
     /// <inheritdoc/>
-    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, string? userId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession?> GetSessionAsync(AIAgent agent, string conversationId, string? userId, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(agent);
         ArgumentException.ThrowIfNullOrWhiteSpace(conversationId);
@@ -216,13 +216,13 @@ public sealed class FileSystemAgentSessionStore : AgentSessionStore
         string path = this.GetSessionPath(agent, conversationId, userId);
         if (!File.Exists(path))
         {
-            return await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+            return null;
         }
 
         byte[] bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
         if (bytes.Length == 0)
         {
-            return await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+            return null;
         }
 
         // Parse and clone so the document buffer can be released.

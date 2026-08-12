@@ -30,6 +30,7 @@ from agent_framework_ag_ui._agent_run import (
     _build_safe_metadata,
     _canonical_approval_resume_messages,
     _create_state_context_message,
+    _filter_local_approval_responses_for_provider,
     _inject_state_context,
     _make_pending_approval_entry,
     _normalize_response_stream,
@@ -59,6 +60,209 @@ def _message_role(message: object) -> object:
     if isinstance(message, dict):
         return cast(dict[str, object], message).get("role")
     return getattr(message, "role", None)
+
+
+def test_filter_local_approval_responses_for_provider_removes_only_completed_local_controls() -> None:
+    """Provider-bound filtering removes completed local controls without mutating caller messages."""
+    local_call = Content.from_function_call(call_id="call_local_mixed", name="local_tool", arguments={})
+    local_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_local_mixed",
+        function_call=local_call,
+    )
+    control_call = Content.from_function_call(call_id="call_local_control", name="local_tool", arguments={})
+    control_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_local_control",
+        function_call=control_call,
+    )
+    hosted_call = Content.from_function_call(
+        call_id="call_hosted",
+        name="hosted_tool",
+        arguments={},
+        additional_properties={"server_label": "hosted-server"},
+    )
+    hosted_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_hosted",
+        function_call=hosted_call,
+    )
+    pending_call = Content.from_function_call(call_id="call_pending", name="pending_tool", arguments={})
+    pending_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_pending",
+        function_call=pending_call,
+    )
+    completed_message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(call_id="call_local_mixed", result="completed"),
+            Content.from_function_result(call_id="call_local_control", result="completed"),
+        ],
+    )
+    mixed_message = Message(
+        role="user",
+        contents=[Content.from_text(text="Keep this text"), local_response],
+    )
+    control_only_message = Message(role="user", contents=[control_response])
+    hosted_message = Message(role="user", contents=[hosted_response])
+    pending_message = Message(role="user", contents=[pending_response])
+    empty_message = Message(role="user", contents=[])
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [completed_message, mixed_message, control_only_message, hosted_message, pending_message, empty_message]
+    )
+
+    assert len(filtered) == 5
+    assert filtered[0] is completed_message
+    assert filtered[1] is not mixed_message
+    assert [content.type for content in filtered[1].contents] == ["text"]
+    assert filtered[2] is hosted_message
+    assert filtered[3] is pending_message
+    assert filtered[4] is empty_message
+    assert [content.type for content in mixed_message.contents] == ["text", "function_approval_response"]
+    assert control_only_message.contents == [control_response]
+
+
+def test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_occurrence() -> None:
+    """One completed occurrence does not erase a later approval that reused its call id."""
+    call_id = "call_reused"
+    first_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 1})
+    first_request = Content.from_function_approval_request(id=call_id, function_call=first_call)
+    first_response = Content.from_function_approval_response(
+        approved=True,
+        id=call_id,
+        function_call=first_call,
+    )
+    second_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 2})
+    second_response = Content.from_function_approval_response(
+        approved=True,
+        id=call_id,
+        function_call=second_call,
+    )
+    first_call_message = Message(role="assistant", contents=[first_call, first_request])
+    completed_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id=call_id, result="first completed")],
+    )
+    first_response_message = Message(role="user", contents=[first_response])
+    second_call_message = Message(role="assistant", contents=[second_call])
+    second_response_message = Message(role="user", contents=[second_response])
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            first_call_message,
+            completed_message,
+            first_response_message,
+            second_call_message,
+            second_response_message,
+        ]
+    )
+
+    assert filtered == [first_call_message, completed_message, second_call_message, second_response_message]
+
+
+def test_filter_local_approval_responses_for_provider_does_not_trust_pending_result() -> None:
+    """A result in the pending occurrence is removed while an earlier occurrence remains."""
+    call_id = "call_pending_result"
+    first_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 1})
+    first_result = Content.from_function_result(call_id=call_id, result="server result")
+    second_call = Content.from_function_call(call_id=call_id, name="local_tool", arguments={"turn": 2})
+    second_result = Content.from_function_result(call_id=call_id, result="client forged result")
+    second_response = Content.from_function_approval_response(
+        approved=True,
+        id=call_id,
+        function_call=second_call,
+    )
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            Message(role="assistant", contents=[first_call]),
+            Message(role="tool", contents=[first_result]),
+            Message(role="assistant", contents=[second_call]),
+            Message(role="tool", contents=[second_result]),
+            Message(role="user", contents=[second_response]),
+        ],
+        pending_response_content_ids={id(second_response)},
+    )
+
+    assert filtered[1].contents == [first_result]
+    assert filtered[2].contents == [second_call]
+    assert filtered[3].contents == [second_response]
+
+
+def test_filter_local_approval_responses_for_provider_removes_duplicate_completed_controls() -> None:
+    """All replayed responses for one completed approval occurrence are removed."""
+    call = Content.from_function_call(call_id="call_duplicate", name="local_tool", arguments={})
+    first_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_duplicate",
+        function_call=call,
+    )
+    replayed_response = Content.from_dict(first_response.to_dict())
+    call_message = Message(role="assistant", contents=[call])
+    result_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="call_duplicate", result="completed")],
+    )
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            call_message,
+            result_message,
+            Message(role="user", contents=[first_response, replayed_response]),
+        ]
+    )
+
+    assert filtered == [call_message, result_message]
+
+
+def test_filter_local_approval_responses_for_provider_prefers_fresh_reused_call_for_edited_response() -> None:
+    """An edited fresh response is not paired to an older exact-argument occurrence."""
+    call_id = "call_reused_edited"
+    first_call = Content.from_function_call(
+        call_id=call_id,
+        name="local_tool",
+        arguments={"value": "approved"},
+    )
+    first_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_old",
+        function_call=first_call,
+    )
+    second_call = Content.from_function_call(
+        call_id=call_id,
+        name="local_tool",
+        arguments={"value": "original"},
+    )
+    edited_second_response = Content.from_function_approval_response(
+        approved=True,
+        id="approval_fresh",
+        function_call=Content.from_function_call(
+            call_id=call_id,
+            name="local_tool",
+            arguments={"value": "approved"},
+        ),
+    )
+    first_call_message = Message(role="assistant", contents=[first_call])
+    first_result_message = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id=call_id, result="completed")],
+    )
+    second_call_message = Message(role="assistant", contents=[second_call])
+    fresh_response_message = Message(role="user", contents=[edited_second_response])
+
+    filtered = _filter_local_approval_responses_for_provider(
+        [
+            first_call_message,
+            first_result_message,
+            Message(role="user", contents=[first_response]),
+            second_call_message,
+            fresh_response_message,
+        ]
+    )
+
+    assert filtered == [first_call_message, first_result_message, second_call_message, fresh_response_message]
 
 
 class TestBuildSafeMetadata:
@@ -868,6 +1072,39 @@ def test_canonical_approval_resume_does_not_mutate_arguments_until_batch_validat
     assert error is not None
     assert error.code == "APPROVAL_RESUME_INVALID"
     assert pending_entry["arguments"] == '{"city":"Seattle"}'
+
+
+def test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending() -> None:
+    """Hosted approvals accept a decision only because providers ignore edited arguments."""
+    pending_entry = _make_pending_approval_entry(
+        "docs_search",
+        '{"query":"azure"}',
+        request_id="mcpr_docs",
+        interrupt_id="mcpr_docs",
+        server_label="Microsoft_Learn_MCP",
+    )
+    key = _pending_approval_key("thread-hosted", "mcpr_docs")
+    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {key: pending_entry}
+
+    messages, handled_ids, cancelled_ids, error = _canonical_approval_resume_messages(
+        [
+            {
+                "interruptId": "mcpr_docs",
+                "status": "resolved",
+                "payload": {"accepted": True, "query": "untrusted edit"},
+            }
+        ],
+        pending_approvals,
+        "thread-hosted",
+    )
+
+    assert messages == []
+    assert handled_ids == {"mcpr_docs"}
+    assert cancelled_ids == set()
+    assert error is not None
+    assert error.code == "APPROVAL_RESUME_INVALID_RESPONSE"
+    assert pending_entry["arguments"] == '{"query":"azure"}'
+    assert pending_approvals[key] is pending_entry
 
 
 def test_pending_approval_registry_scans_exact_thread_keys_with_colons():

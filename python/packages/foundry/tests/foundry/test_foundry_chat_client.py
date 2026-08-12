@@ -440,6 +440,71 @@ async def test_get_response_with_invalid_input() -> None:
         await client.get_response(messages=[])
 
 
+async def test_get_response_does_not_request_encrypted_reasoning_by_default() -> None:
+    """Foundry chat calls must not opt into encrypted reasoning unless requested."""
+    mock_response = MagicMock(
+        id="response_123",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[],
+        usage=None,
+        finish_reason=None,
+        conversation=None,
+        status="completed",
+    )
+
+    async def create_response(**kwargs: Any) -> Any:
+        if "reasoning.encrypted_content" in kwargs.get("include", []):
+            raise ValueError("Encrypted content is not supported with this model.")
+        return _as_raw(mock_response)
+
+    mock_openai_client = _make_mock_openai_client()
+    mock_openai_client.responses.with_raw_response.create.side_effect = create_response
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response = await client.get_response([Message(role="user", contents=["Hello"])])
+
+    assert response.response_id == "response_123"
+
+
+async def test_get_response_preserves_explicit_encrypted_reasoning_opt_in() -> None:
+    """Capable Foundry deployments can receive an explicit encrypted-reasoning opt-in."""
+    mock_response = MagicMock(
+        id="response_123",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[],
+        usage=None,
+        finish_reason=None,
+        conversation=None,
+        status="completed",
+    )
+
+    async def create_response(**kwargs: Any) -> Any:
+        if "reasoning.encrypted_content" not in kwargs.get("include", []):
+            raise ValueError("Encrypted reasoning opt-in was not forwarded.")
+        return _as_raw(mock_response)
+
+    mock_openai_client = _make_mock_openai_client()
+    mock_openai_client.responses.with_raw_response.create.side_effect = create_response
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response = await client.get_response(
+        [Message(role="user", contents=["Hello"])],
+        options={"include": ["reasoning.encrypted_content"]},
+    )
+
+    assert response.response_id == "response_123"
+
+
 async def test_web_search_tool_with_location() -> None:
     mock_openai_client = _make_mock_openai_client()
     project_client = MagicMock()

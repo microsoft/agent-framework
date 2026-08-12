@@ -162,12 +162,13 @@ async def _async_iter(items: list[Any]):
 def _make_gemini_client(
     model: str | None = "gemini-2.5-flash",
     mock_client: MagicMock | None = None,
+    **kwargs: Any,
 ) -> tuple[GeminiChatClient, MagicMock]:
     """Return a (GeminiChatClient, mock_genai_client) pair."""
     mock = mock_client or MagicMock()
     mock._api_client.vertexai = False
     mock._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
-    client = GeminiChatClient(client=mock, model=model)
+    client = GeminiChatClient(client=mock, model=model, **kwargs)
     return client, mock
 
 
@@ -714,8 +715,8 @@ async def test_non_function_result_content_in_tool_message_is_skipped() -> None:
 # thinking parts
 
 
-async def test_thinking_parts_are_silently_skipped() -> None:
-    """Excludes thought-summary parts from ChatResponse.contents, returning only the final answer."""
+async def test_thinking_parts_are_surfaced_as_reasoning() -> None:
+    """Surfaces thought-summary parts as text_reasoning content alongside the final answer."""
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(
         return_value=_make_response([
@@ -728,8 +729,26 @@ async def test_thinking_parts_are_silently_skipped() -> None:
         messages=[Message(role="user", contents=[Content.from_text("What is the answer?")])]
     )
 
-    assert len(response.messages[0].contents) == 1
+    contents = response.messages[0].contents
+    assert len(contents) == 2
+    assert contents[0].type == "text_reasoning"
+    assert contents[0].text == "I should think first..."
+    assert contents[1].type == "text"
     assert response.messages[0].text == "The answer is 42."
+
+
+async def test_empty_thinking_part_produces_no_reasoning_content() -> None:
+    """A thought part with no text yields no content rather than empty reasoning."""
+    client, _ = _make_gemini_client()
+
+    contents = client._parse_parts([
+        _make_part(text=None, thought=True),
+        _make_part(text="The answer is 42."),
+    ])
+
+    assert len(contents) == 1
+    assert contents[0].type == "text"
+    assert contents[0].text == "The answer is 42."
 
 
 def test_function_call_part_preserves_thought_signature_from_raw_part() -> None:
@@ -858,6 +877,121 @@ def test_reconstructed_function_call_signature_survives_round_trip() -> None:
     parts = client._convert_message_contents([reasoning, rebuilt_call], {})
 
     assert parts[-1].thought_signature == b"sig-123"
+
+
+def test_replayed_call_is_signed_by_call_id_when_the_carrier_is_dropped() -> None:
+    """The approval replay history has no carrier at all; the call is still re-signed by call_id."""
+    client, _ = _make_gemini_client()
+    parsed = client._parse_parts([
+        _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
+    ])
+    call = parsed[1]
+    assert call.call_id is not None
+    # The history an approval round trip produces: the call rebuilt from the function_call nested in
+    # the approval content, with neither a reasoning carrier nor the original raw Part.
+    replay = [Content.from_function_call(call_id=call.call_id, name="get_weather", arguments={"location": "Paris"})]
+    assert [content.type for content in replay] == ["function_call"]
+    assert not any(content.type == "text_reasoning" and content.protected_data for content in replay)
+    assert not isinstance(replay[0].raw_representation, types.Part)
+
+    parts = client._convert_message_contents(replay, {})
+
+    assert len(parts) == 1
+    assert parts[0].thought_signature == b"sig-123"
+
+
+def test_call_id_backfill_uses_the_generated_id_when_gemini_omits_one() -> None:
+    """Signatures are keyed by the resolved call_id, so the generated-id fallback path is covered."""
+    client, _ = _make_gemini_client()
+    part = _make_part(function_call=(None, "get_weather", {"location": "Paris"}), thought_signature=b"sig-123")
+
+    parsed = client._parse_parts([part])
+    call = parsed[1]
+    assert call.call_id is not None
+    assert call.call_id.startswith("tool-call-")
+    replay = [Content.from_function_call(call_id=call.call_id, name="get_weather", arguments={"location": "Paris"})]
+
+    parts = client._convert_message_contents(replay, {})
+
+    assert parts[0].thought_signature == b"sig-123"
+
+
+@pytest.mark.parametrize(
+    "intervening",
+    [
+        pytest.param(
+            Content.from_function_approval_response(
+                True,
+                id="call-1",
+                function_call=Content.from_function_call(call_id="call-1", name="get_weather", arguments={}),
+            ),
+            id="approval_response",
+        ),
+        pytest.param(Content.from_text_reasoning(text="a thought summary"), id="unsigned_reasoning"),
+    ],
+)
+def test_signature_survives_content_between_the_carrier_and_the_call(intervening: Content) -> None:
+    """Content that emits no Part must not break the reasoning-to-call pairing."""
+    client, _ = _make_gemini_client()
+    reasoning = Content.from_text_reasoning(protected_data=base64.b64encode(b"sig-123").decode("utf-8"))
+    call = Content.from_function_call(call_id="call-1", name="get_weather", arguments={"location": "Paris"})
+
+    parts = client._convert_message_contents([reasoning, intervening, call], {})
+
+    assert parts[-1].function_call is not None
+    assert parts[-1].thought_signature == b"sig-123"
+
+
+def test_call_id_backfill_never_overrides_a_signature_already_on_the_part() -> None:
+    """Backfill only fills gaps, so a raw Part's own signature always wins."""
+    client, _ = _make_gemini_client()
+    client._parse_parts([
+        _make_part(function_call=("call-1", "get_weather", {"location": "Paris"}), thought_signature=b"stale-sig")
+    ])
+    raw_part = types.Part(
+        function_call=types.FunctionCall(id="call-1", name="get_weather", args={"location": "Paris"}),
+        thought_signature=b"fresh-sig",
+    )
+    call = Content.from_function_call(
+        call_id="call-1",
+        name="get_weather",
+        arguments={"location": "Paris"},
+        raw_representation=raw_part,
+    )
+
+    parts = client._convert_message_contents([call], {})
+
+    assert parts[0].thought_signature == b"fresh-sig"
+
+
+def test_thought_signature_cache_is_bounded() -> None:
+    """The per-client signature cache must not grow without limit on long conversations."""
+    client, _ = _make_gemini_client()
+    overflow = client.max_tracked_thought_signatures + 5
+
+    for index in range(overflow):
+        client._parse_parts([_make_part(function_call=(f"call-{index}", "get_weather", {}), thought_signature=b"sig")])
+
+    cache = client._thought_signature_cache
+    assert len(cache) == client.max_tracked_thought_signatures
+    assert "call-0" not in cache
+    assert f"call-{overflow - 1}" in cache
+
+
+def test_max_tracked_thought_signatures_is_configurable() -> None:
+    """The retention bound is a constructor option, so hosts can tune it per client."""
+    client, _ = _make_gemini_client(max_tracked_thought_signatures=2)
+
+    for index in range(3):
+        client._parse_parts([_make_part(function_call=(f"call-{index}", "get_weather", {}), thought_signature=b"sig")])
+
+    assert list(client._thought_signature_cache) == ["call-1", "call-2"]
+
+
+def test_max_tracked_thought_signatures_rejects_non_positive_values() -> None:
+    """A bound below 1 would evict every signature immediately, so it is rejected up front."""
+    with pytest.raises(ValueError, match="max_tracked_thought_signatures"):
+        _make_gemini_client(max_tracked_thought_signatures=0)
 
 
 def test_server_side_tool_call_part_is_informational_only() -> None:

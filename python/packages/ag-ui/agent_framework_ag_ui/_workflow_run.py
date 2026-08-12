@@ -9,6 +9,7 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
+from functools import partial
 from typing import Any, cast, get_args, get_origin
 
 from ag_ui.core import (
@@ -33,6 +34,9 @@ from agent_framework import (
     Workflow,
     WorkflowRunState,
 )
+from agent_framework.observability import (
+    _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ._message_adapters import normalize_agui_input_messages
 from ._run_common import (
@@ -41,6 +45,7 @@ from ._run_common import (
     _close_reasoning_block,
     _emit_content,
     _extract_resume_payload,
+    _iterate_with_context,
     _normalize_resume_interrupts,
     _resume_contract_error,
 )
@@ -826,7 +831,8 @@ async def run_workflow_stream(
             treated as request-info responses (or ignored) rather than a new
             start-executor message, so resume stays consistent with the core API.
     """
-    thread_id = input_data.get("thread_id") or input_data.get("threadId") or str(uuid.uuid4())
+    supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
+    thread_id = supplied_thread_id or str(uuid.uuid4())
     run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
     available_interrupts = input_data.get("available_interrupts") or input_data.get("availableInterrupts")
     if available_interrupts:
@@ -962,15 +968,18 @@ async def run_workflow_stream(
         checkpoint_kwargs = {"checkpoint_storage": checkpoint_storage, "checkpoint_id": checkpoint_id}
 
     try:
-        if responses or checkpoint_id is not None:
-            # ``message`` is mutually exclusive with both ``responses`` and
-            # ``checkpoint_id`` in the core API; ``responses`` + ``checkpoint_id``
-            # restores the checkpoint and delivers the responses in a single call.
-            event_stream = workflow.run(stream=True, responses=responses or None, **checkpoint_kwargs, **fwd_kwargs)
-        else:
-            event_stream = workflow.run(message=messages, stream=True, **checkpoint_kwargs, **fwd_kwargs)
+        telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
+        telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
+        with telemetry_context():
+            if responses or checkpoint_id is not None:
+                # ``message`` is mutually exclusive with both ``responses`` and
+                # ``checkpoint_id`` in the core API; ``responses`` + ``checkpoint_id``
+                # restores the checkpoint and delivers the responses in a single call.
+                event_stream = workflow.run(stream=True, responses=responses or None, **checkpoint_kwargs, **fwd_kwargs)
+            else:
+                event_stream = workflow.run(message=messages, stream=True, **checkpoint_kwargs, **fwd_kwargs)
 
-        async for event in event_stream:
+        async for event in _iterate_with_context(event_stream, telemetry_context):
             event_type = getattr(event, "type", None)
 
             if event_type == "started":

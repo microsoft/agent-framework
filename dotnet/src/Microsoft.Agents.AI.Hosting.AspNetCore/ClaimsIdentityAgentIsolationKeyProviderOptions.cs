@@ -5,12 +5,12 @@ using System.Security.Claims;
 namespace Microsoft.Agents.AI.Hosting;
 
 /// <summary>
-/// Options for configuring <see cref="ClaimsIdentitySessionIsolationKeyProvider"/>.
+/// Options for configuring <see cref="ClaimsIdentityAgentIsolationKeyProvider"/>.
 /// </summary>
-public class ClaimsIdentitySessionIsolationKeyProviderOptions
+public class ClaimsIdentityAgentIsolationKeyProviderOptions
 {
     /// <summary>
-    /// Gets or sets the claim type to extract from the user's identity for session isolation.
+    /// Gets or sets the claim type to extract from the user's identity to isolate agent-owned resources.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -28,8 +28,8 @@ public class ClaimsIdentitySessionIsolationKeyProviderOptions
     /// / <see cref="ClaimTypes.Name"/>), usernames, email aliases, and other mutable or non-unique
     /// claims are <strong>unsafe</strong> isolation keys unless the host can prove their uniqueness
     /// across all callers. Two distinct principals that share the same value for a non-unique claim
-    /// would receive the same session-isolation key and could read or overwrite one another's
-    /// persisted sessions. Only override this value with a claim that is guaranteed unique and stable.
+    /// would receive the same agent-isolation key and could read or overwrite one another's
+    /// persisted data. Only override this value with a claim that is guaranteed unique and stable.
     /// </para>
     /// <para>
     /// Common alternatives include:

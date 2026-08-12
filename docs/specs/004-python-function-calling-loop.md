@@ -120,6 +120,10 @@ Code-reading landmarks:
 - `_process_model_function_calls(...)` handles only calls from a completed model response.
 - `_try_execute_function_calls(...)` decides approval/declaration/execution behavior for a batch.
 - `_replace_approval_contents_with_results(...)` is the occurrence-aware approval transcript normalizer.
+- `FunctionInvocationLayer._update_function_invocation_continuation_state(...)` updates continuation state after
+  every service response. Provider layers may override it to carry provider-specific continuation metadata into
+  the next service call, but must delegate to the base implementation so generic conversation continuation remains
+  synchronized with the active `AgentSession`.
 
 ### Approval pause and resume
 
@@ -331,6 +335,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - Service-managed continuation may omit inline reasoning/call items only when the hosted service already owns them.
 - Missing non-reconstructable reasoning fails explicitly before a provider request instead of silently dropping the
   content.
+- Foundry clients do not request `reasoning.encrypted_content` implicitly; callers may opt in explicitly when the
+  selected deployment supports encrypted reasoning.
 - Compaction preserves or excludes the complete reasoning/call/result group atomically.
 
 ### Approval request and resume
@@ -353,6 +359,12 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - `function_approval_request` and `function_approval_response` are control-plane contents, not durable model
   transcript items.
 - A current hosted approval response must be sent once on the immediate resume request.
+- AG-UI removes a local approval response from its request and snapshot replay when a terminal result belongs to an
+  already-consumed occurrence, including result-before-response replay. A client-authored result in the occurrence
+  that is still registered as pending does not prove completion: AG-UI removes that result, keeps the validated
+  response for local execution, and leaves hosted approval responses as provider protocol data.
+- Hosted AG-UI approval interrupts expose an accept/reject decision only; argument edits are rejected because the
+  hosted provider executes the server-owned request rather than client-edited arguments.
 - A server-issued approval request must not be replayed inline during service-side continuation.
 - History providers may retain approval control contents in their backing store for audit, but base history replay
   filters them before later model calls.
@@ -364,7 +376,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - Model-bound history contains one function call/result pair per completed logical occurrence.
 - Append-only history must not replay stale approval request/response wrappers to the model.
 - Framework-managed and service-managed continuation must preserve the same logical call/result transcript.
-- A terminal result consumes the corresponding approval authority in explicit stateless replay.
+- A trusted terminal result consumes the corresponding approval authority in explicit stateless replay; a result in a
+  server-registered pending occurrence cannot consume that authority before local execution.
 
 ## Scenario-to-test matrix
 
@@ -439,6 +452,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Hosted server boundary | Standing approval does not cross `server_label`. | `test_tool_approval_middleware_standing_rules_include_hosted_server_boundary` |
 | Argument-scoped rule | Exact arguments are required; empty arguments are not tool-wide. | `test_tool_approval_middleware_always_approve_tool_with_arguments_rule`, `test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide` |
 | Provider-injected approval tool | A tool added during `before_run` defers to in-run resolution, executes once, and emits one result. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_deferred_provider_tool_executes` |
+| AG-UI provider boundary | Completed local approval controls from AG-UI request and snapshot replay are absent from raw chat-client input while deferred and hosted approvals keep their respective in-run/provider paths. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_does_not_forward_resolved_local_approval_control_to_chat_client`, `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_deferred_provider_tool_executes`, `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_canonical_resume_preserves_hosted_approval_for_provider`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_removes_duplicate_completed_controls`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_occurrence`, `packages/ag-ui/tests/ag_ui/test_run.py::test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending` |
 
 ### Errors, control flow, and limits
 
@@ -470,6 +484,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | OpenAI end-to-end hosted approval | Hosted request parses, response sends, and continuation completes. | `test_end_to_end_mcp_approval_flow` |
 | Stored function call/result | Service-side storage drops server-issued calls but keeps new outputs. | `test_prepare_options_with_conversation_id_strips_server_issued_items`, `test_prepare_messages_for_openai_full_conversation_with_reasoning` |
 | Stateless reasoning replay | Replay reconstructs reasoning, call, and result together; missing required reasoning fails before the request. | `test_tool_loop_store_false_replays_encrypted_reasoning_group`, `test_stateless_request_rejects_non_replayable_reasoning_bound_mcp_output`, `test_prepare_messages_for_openai_full_conversation_with_reasoning` |
+| Foundry encrypted reasoning opt-in | Foundry clients omit `reasoning.encrypted_content` by default and preserve an explicit caller opt-in. | `packages/foundry/tests/foundry/test_foundry_chat_client.py::test_get_response_does_not_request_encrypted_reasoning_by_default`, `test_get_response_preserves_explicit_encrypted_reasoning_opt_in`, `packages/foundry/tests/foundry/test_foundry_agent.py::test_foundry_agent_basic_call_does_not_request_unsupported_encrypted_reasoning`, `test_foundry_agent_preserves_caller_requested_encrypted_reasoning`, `packages/foundry_hosting/tests/test_responses_int.py::TestReasoningHostedMcpReplay::test_second_turn_replays_mcp_call_with_encrypted_reasoning` |
 | Opaque reasoning signature replay | Provider-specific opaque reasoning metadata is captured and restored on reconstructed calls. | `packages/gemini/tests/test_gemini_client.py::test_function_call_part_captures_thought_signature_as_reasoning_content`, `test_reconstructed_function_call_replays_thought_signature_from_reasoning_content` |
 | Chat Completions approval wrappers | Framework approval wrappers are not sent as chat messages. | `packages/openai/tests/openai/test_openai_chat_completion_client.py` approval serialization tests |
 | AG-UI approval result event | Approved result emits once with content and persists in snapshot. | `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_approval_resume_emits_tool_call_result`, `test_approval_resume_result_has_content`, `test_approval_resume_snapshot_replaces_approval_payload_with_tool_result`, `test_approval_resume_zero_updates_emits_tool_result` |

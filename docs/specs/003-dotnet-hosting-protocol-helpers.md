@@ -172,7 +172,7 @@ parsing a structured payload into a typed record), without coupling the holder t
 - Authorize and bind the candidate id to the authenticated principal/tenant before using it as an
   `AgentSessionStore` key or a workflow checkpoint session id.
 - For multi-user hosts, wrap the store with `IsolationKeyScopedAgentSessionStore` (for example via
-  `UseClaimsBasedSessionIsolation(...)`), so the session namespace is scoped per principal.
+  `UseClaimsBasedAgentIsolation(...)`), so the session namespace is scoped per principal.
 - Persist session/checkpoint state only after the run or stream has completed.
 
 ## E2E Code Samples
