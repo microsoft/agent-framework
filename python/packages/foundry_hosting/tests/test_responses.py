@@ -4248,32 +4248,39 @@ class TestWorkflowAgentHosting:
             final_text="done with approval",
         )
         server = _make_server(workflow_agent)
+        checkpoint_provider = server._checkpoint_storage_provider  # pyright: ignore[reportPrivateUsage]
 
-        first = await _post(server, stream=False)
-        assert first.status_code == 200
-        first_body = first.json()
-        first_response_id = first_body["id"]
-        approval_items = [it for it in first_body["output"] if it["type"] == "mcp_approval_request"]
-        assert len(approval_items) == 1
-        approval_request_id = approval_items[0]["id"]
-        assert mock_agent.run_count == 1
+        with patch.object(checkpoint_provider, "get_store", wraps=checkpoint_provider.get_store) as get_store:
+            first = await _post(server, stream=False)
+            assert first.status_code == 200
+            first_body = first.json()
+            first_response_id = first_body["id"]
+            approval_items = [it for it in first_body["output"] if it["type"] == "mcp_approval_request"]
+            assert len(approval_items) == 1
+            approval_request_id = approval_items[0]["id"]
+            assert mock_agent.run_count == 1
 
-        second_payload: dict[str, Any] = {
-            "model": "test-model",
-            "input": [
-                {
-                    "type": "mcp_approval_response",
-                    "approval_request_id": approval_request_id,
-                    "approve": True,
-                }
-            ],
-            "stream": False,
-            "previous_response_id": first_response_id,
-        }
-        second = await _post_json(server, second_payload)
+            second_payload: dict[str, Any] = {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "mcp_approval_response",
+                        "approval_request_id": approval_request_id,
+                        "approve": True,
+                    }
+                ],
+                "stream": False,
+                "previous_response_id": first_response_id,
+            }
+            second = await _post_json(server, second_payload)
         assert second.status_code == 200
         second_body = second.json()
         assert second_body["status"] == "completed"
+        assert [call.kwargs["context_id"] for call in get_store.call_args_list] == [
+            first_response_id,
+            second_body["id"],
+            first_response_id,
+        ]
 
         # The inner agent must have been resumed (restore replay + new turn).
         # Restore call is a no-op for the mock (no input); the new-turn call

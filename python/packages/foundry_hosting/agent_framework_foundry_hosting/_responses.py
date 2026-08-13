@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import asdict, dataclass, is_dataclass
@@ -74,6 +75,20 @@ from ._state_store import (
 logger = logging.getLogger(__name__)
 
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+
+
+def _validate_checkpoint_context_id(context_id: str) -> None:
+    """Validate that a checkpoint context ID is a single safe path component in case file-based storage is used."""
+    if (
+        not context_id
+        or "/" in context_id
+        or "\\" in context_id
+        or "\x00" in context_id
+        or context_id.strip(".") == ""
+        or os.path.isabs(context_id)
+        or os.path.splitdrive(context_id)[0]
+    ):
+        raise RuntimeError(f"Invalid context id: {context_id!r}")
 
 
 def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
@@ -371,10 +386,16 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 config=self.config, platform_context=request_context
             )
 
-            context_id = context.conversation_chain_id
-            session = await session_storage.get(context_id)
+            previous_response_id = request.get("previous_response_id")
+            session_load_id = context.conversation_id or previous_response_id
+            session = await session_storage.get(session_load_id) if session_load_id is not None else None
             if session is None:
+                if previous_response_id is not None and context.conversation_id is None:
+                    raise RuntimeError(
+                        f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
+                    )
                 session = self._agent.create_session()
+            session_save_id = context.conversation_id or context.response_id
         except Exception as ex:
             logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
             for event in self._emit_failure(response_event_stream, None, ex):
@@ -435,7 +456,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if self._uses_hosted_responses_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
             try:
-                await session_storage.set(context_id, session)
+                await session_storage.set(session_save_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
@@ -488,10 +509,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if are_options_set:
                 logger.warning("Workflow agent doesn't support runtime options. They will be ignored.")
 
-            if request.get("previous_response_id") is not None and context.conversation_id is not None:
-                raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
-            context_id = request.get("previous_response_id") or context.conversation_id
-
             if not isinstance(self._agent, WorkflowAgent):
                 raise RuntimeError("Agent is not a workflow agent.")
 
@@ -500,10 +517,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # any future async resources owned by the workflow are entered here.
             await self._ensure_agent_ready()
 
-            context_id = context.conversation_chain_id
+            checkpoint_save_id = context.conversation_id or context.response_id
+            _validate_checkpoint_context_id(checkpoint_save_id)
             checkpoint_storage = self._checkpoint_storage_provider.get_store(
                 config=self.config,
-                context_id=context_id,
+                context_id=checkpoint_save_id,
                 platform_context=request_context,
             )
 
@@ -516,7 +534,25 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # on every turn we restore the latest checkpoint and feed the new
             # input back into the start executor as a continuation rather than
             # a fresh run.
-            latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+            if request.get("previous_response_id") is not None and context.conversation_id is not None:
+                raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
+            previous_response_id = request.get("previous_response_id")
+            checkpoint_load_id = context.conversation_id or previous_response_id
+            latest_checkpoint = None
+            restore_checkpoint_storage = checkpoint_storage
+            if checkpoint_load_id is not None:
+                _validate_checkpoint_context_id(checkpoint_load_id)
+                if checkpoint_load_id != checkpoint_save_id:
+                    restore_checkpoint_storage = self._checkpoint_storage_provider.get_store(
+                        config=self.config,
+                        context_id=checkpoint_load_id,
+                        platform_context=request_context,
+                    )
+                latest_checkpoint = await restore_checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+                if latest_checkpoint is None and previous_response_id is not None:
+                    raise RuntimeError(
+                        f"Cannot find an existing workflow checkpoint for previous_response_id={previous_response_id}."
+                    )
 
             # Multi-turn pattern: when we have a prior checkpoint, restore it
             # first (drive the workflow back to idle with prior state intact),
@@ -538,7 +574,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 async for _ in self._agent.run(
                     stream=True,
                     checkpoint_id=latest_checkpoint.checkpoint_id,
-                    checkpoint_storage=checkpoint_storage,
+                    checkpoint_storage=restore_checkpoint_storage,
                 ):
                     pass
 
