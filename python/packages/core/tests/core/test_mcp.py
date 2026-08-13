@@ -5317,6 +5317,27 @@ async def test_ensure_connected_skips_future_pings_when_ping_is_not_available() 
     assert tool._ping_available is False
 
 
+async def test_ensure_connected_skips_future_pings_on_nonstandard_mcp_error_code() -> None:
+    """Some MCP servers reject an unsupported `ping` with a JSON-RPC error
+    code other than the spec-correct -32601 (e.g. -32600 "Invalid Request").
+    Any McpError response proves the connection is alive -- the server
+    replied -- so this should be treated the same as the -32601 case:
+    disable future pings and keep using the existing connection, without
+    reconnecting."""
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool.session = Mock(
+        send_ping=AsyncMock(side_effect=McpError(types.ErrorData(code=-32600, message="Unsupported MCP method: ping")))
+    )
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_reconnect:
+        await tool._ensure_connected()
+        await tool._ensure_connected()
+
+    tool.session.send_ping.assert_awaited_once()
+    mock_reconnect.assert_not_awaited()
+    assert tool._ping_available is False
+
+
 async def test_ensure_connected_reconnects_on_failed_ping() -> None:
     tool = MCPTool(name="test_tool")  # type: ignore[abstract]
     tool.session = Mock(send_ping=AsyncMock(side_effect=RuntimeError("closed")))

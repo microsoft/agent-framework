@@ -1985,19 +1985,29 @@ class MCPTool:
         try:
             await self.session.send_ping()  # type: ignore[union-attr]
         except McpError as mcp_exc:
-            if mcp_exc.error.code == -32601:
-                self._ping_available = False
-                logger.debug("Skipping future MCP pings because the server does not support ping.")
-                return
-            logger.info("MCP connection invalid or closed. Reconnecting...")
-            try:
-                await self._reconnect_without_loading()
-            except Exception as ex:
-                raise ToolExecutionException(
-                    "Failed to establish MCP connection.",
-                    inner_exception=ex,
-                ) from ex
+            # Any well-formed JSON-RPC error response -- regardless of the
+            # specific error code -- proves the server received our request
+            # and replied over a live connection; it just doesn't support
+            # (or accept) the optional `ping` method. Some MCP server
+            # implementations return a nonstandard code for this (e.g. -32600
+            # "Invalid Request" instead of the JSON-RPC-spec-correct -32601
+            # "Method not found"), so we don't gate this on the exact code.
+            # Treating it as "connection invalid, reconnect" would be both
+            # unnecessary and, since ping is best-effort here, riskier than
+            # just disabling future pings and continuing to use the
+            # existing, clearly-still-open connection.
+            logger.debug(
+                "Skipping future MCP pings because the server responded to ping with a JSON-RPC error (code=%s): %s",
+                mcp_exc.error.code,
+                mcp_exc.error.message,
+            )
+            self._ping_available = False
+            return
         except Exception:
+            # Unlike an McpError (a valid JSON-RPC error response), any other
+            # exception here (timeout, transport/connection error, etc.)
+            # means we don't know whether the server is still reachable, so
+            # attempting a reconnect is warranted.
             logger.info("MCP connection invalid or closed. Reconnecting...")
             try:
                 await self._reconnect_without_loading()
