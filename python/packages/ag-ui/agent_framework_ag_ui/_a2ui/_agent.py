@@ -493,46 +493,62 @@ class A2UIAgent:
         return []
 
     async def _execute_server_tools(
-        self, server_calls: list[Any], tools: list[Any], run_kwargs: dict[str, Any]
-    ) -> list[Any]:
-        """Execute server tools called alongside generate_a2ui through the real pipeline.
+        self,
+        server_calls: list[Any],
+        tools: list[Any],
+        session: Any,
+        config: Any,
+        run_kwargs: dict[str, Any],
+    ) -> tuple[list[Any], list[Any], bool]:
+        """Execute server tools called alongside generate_a2ui via the core primitive.
 
-        Runs them through the shared function-invocation machinery with the inner agent's
-        function middleware and configuration — the same path the AG-UI approval resume
-        uses — so authorization/audit/policy middleware still apply. A direct
-        ``tool.invoke()`` would bypass all of that. Failures surface as error tool results
-        rather than aborting the surface generation.
+        Reuses the shared function-invocation machinery with the run's invocation
+        ``session``, the full function-middleware pipeline (static client middleware plus
+        any runtime ``middleware``), and the run's ``config`` — the same execution owner
+        the AG-UI approval resume uses — so authorization/audit/policy middleware, the
+        invocation session, and approval controls all apply. A direct ``tool.invoke()``
+        would bypass them.
+
+        Returns ``(results, control, should_terminate)``: ``results`` are the
+        ``function_result`` contents; ``control`` are any non-result contents the executor
+        surfaced (e.g. a ``function_approval_request`` for an ``always_require`` tool) that
+        must reach the client rather than be dropped; ``should_terminate`` is the executor's
+        loop-termination signal. Execution failures surface as error results rather than
+        aborting the surface generation.
         """
         from agent_framework._middleware import FunctionMiddlewarePipeline
-        from agent_framework._tools import (
-            _try_execute_function_call_groups,
-            normalize_function_invocation_configuration,
-        )
+        from agent_framework._tools import _try_execute_function_call_groups
 
         client = getattr(self.inner_agent, "client", None)
-        config = normalize_function_invocation_configuration(getattr(client, "function_invocation_configuration", None))
-        pipeline = FunctionMiddlewarePipeline(*(getattr(client, "function_middleware", None) or ()))
-        custom_args = {k: v for k, v in run_kwargs.items() if k != "options"}
+        pipeline = FunctionMiddlewarePipeline(
+            *(getattr(client, "function_middleware", None) or ()),
+            *(run_kwargs.get("middleware") or ()),
+        )
+        custom_args = {k: v for k, v in run_kwargs.items() if k not in ("options", "middleware")}
         try:
-            groups, _ = await _try_execute_function_call_groups(
+            groups, should_terminate = await _try_execute_function_call_groups(
                 custom_args=custom_args,
                 function_calls=server_calls,
                 tools=tools,
                 config=config,
+                invocation_session=session,
                 middleware_pipeline=pipeline,
             )
         except Exception as exc:  # noqa: BLE001 — surface as tool results, never abort the surface
             logger.warning("A2UI: server tool execution failed during a mixed generate turn: %s", exc)
-            return [
+            errors = [
                 Content.from_function_result(
                     call_id=getattr(c, "call_id", "") or "", result=json.dumps({"error": str(exc)})
                 )
                 for c in server_calls
             ]
+            return errors, [], False
         results: list[Any] = []
+        control: list[Any] = []
         for group in groups:
-            results.extend(c for c in group if getattr(c, "type", None) == "function_result")
-        return results
+            for content in group:
+                (results if getattr(content, "type", None) == "function_result" else control).append(content)
+        return results, control, should_terminate
 
     async def _invoke_render_subagent(self, prompt: str, conversation: list[Any]) -> dict[str, Any] | None:
         """Run the render sub-agent (forced render_a2ui) and return its args, or None."""
@@ -549,6 +565,7 @@ class A2UIAgent:
         self, messages: Any = None, context_slice: dict[str, Any] | None = None, **kwargs: Any
     ) -> Any:
         from agent_framework import AgentResponseUpdate
+        from agent_framework._tools import normalize_function_invocation_configuration
 
         history = _sanitize_unanswered_tool_calls(normalize_messages(messages))
         session = kwargs.pop("session", None)
@@ -562,6 +579,17 @@ class A2UIAgent:
             func=None,
             input_model=_generate_tool_schema(),
         )
+
+        # The inner agent's function-invocation controls, so mixed-batch server-tool
+        # execution honors the same invocation toggle and shared per-request call budget
+        # the core loop enforces (tracked cumulatively across A2UI planner rounds).
+        _client = getattr(self.inner_agent, "client", None)
+        fi_config = normalize_function_invocation_configuration(
+            getattr(_client, "function_invocation_configuration", None)
+        )
+        fi_enabled = fi_config.get("enabled", True)
+        max_calls = fi_config.get("max_function_calls")
+        calls_used = 0
 
         pending: list[Any] = history
         pending_session = session
@@ -672,11 +700,24 @@ class A2UIAgent:
                 # and looped; nothing more to do here.
                 return
 
-            server_results = (
-                await self._execute_server_tools(server_calls, executable_tools, kwargs) if server_calls else []
-            )
-
-            assistant_contents = [*text_contents, *server_calls, *client_calls, *generate_calls]
+            # Execute server tools batched with generate_a2ui through the core primitive,
+            # honoring the invocation toggle + the shared per-request call budget. Calls we
+            # must not run (invocation disabled, or over budget) are deferred (left
+            # unexecuted) and force the run to stop below rather than be fabricated.
+            server_results: list[Content] = []
+            server_control: list[Content] = []
+            server_terminated = False
+            deferred_calls: list[Content] = []
+            if server_calls:
+                runnable = server_calls if fi_enabled else []
+                if max_calls is not None:
+                    runnable = runnable[: max(0, max_calls - calls_used)]
+                deferred_calls = server_calls[len(runnable) :]
+                if runnable:
+                    server_results, server_control, server_terminated = await self._execute_server_tools(
+                        runnable, executable_tools, session, fi_config, kwargs
+                    )
+                    calls_used += len(runnable)
 
             generate_results: list[Content] = []
             for call in generate_calls:
@@ -686,8 +727,23 @@ class A2UIAgent:
                 generate_results.append(Content.from_function_result(call_id=call.call_id or "", result=box[0]))
 
             all_results = [*server_results, *generate_results]
-            # Surface tool results on the wire and feed back.
+            # Surface tool results on the wire; also surface any executor control contents
+            # (e.g. a function_approval_request for a protected tool) so they are not dropped.
             yield AgentResponseUpdate(role="tool", contents=all_results)
+            if server_control:
+                yield AgentResponseUpdate(role="assistant", contents=server_control)
+
+            # Stop the run when this turn has calls the planner cannot be safely re-entered
+            # with: client tools awaiting the frontend, server tools we could not run
+            # (deferred), server tools awaiting approval (server_control), an executor
+            # termination request, or an exhausted call budget. Re-entering would replay an
+            # unbalanced assistant tool_call (which the provider rejects before the frontend
+            # or a follow-up run resumes it) or exceed the budget.
+            budget_exhausted = max_calls is not None and calls_used >= max_calls
+            if client_calls or deferred_calls or server_control or server_terminated or budget_exhausted:
+                return
+
+            assistant_contents = [*text_contents, *server_calls, *generate_calls]
             history = [
                 *history,
                 Message(role="assistant", contents=assistant_contents),

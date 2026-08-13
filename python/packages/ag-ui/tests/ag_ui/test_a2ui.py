@@ -1088,7 +1088,8 @@ async def test_bridge_client_tool_with_generate_surfaces_resumable_not_synthesiz
     # enable_a2ui path) no terminal MESSAGES_SNAPSHOT is emitted to reorder the stream.
     from agent_framework.ag_ui import AgentFrameworkAgent
 
-    runner = A2UIAgent(_ClientToolThenGenerateBridgeInner(), _RenderSub())  # manual enable_a2ui path
+    inner = _ClientToolThenGenerateBridgeInner()
+    runner = A2UIAgent(inner, _RenderSub())  # manual enable_a2ui path
     wrapper = AgentFrameworkAgent(agent=runner)
     input_data = {
         "messages": [{"role": "user", "content": "hi"}],
@@ -1115,6 +1116,11 @@ async def test_bridge_client_tool_with_generate_surfaces_resumable_not_synthesiz
     assert "g1" in _ids("TOOL_CALL_RESULT")
     assert started.get("render_a2ui") == "r1"
     assert _ids("TOOL_CALL_ARGS").count("r1") >= 1
+
+    # The planner is NOT re-entered after the client-tool turn: the run stops rather than
+    # replay the unanswered client tool_call as unbalanced history (which the provider
+    # rejects). The frontend resumes via a fresh run.
+    assert inner.calls == 1
 
     # Run finishes (frontend-tool resume happens out of band via a new run), and no
     # terminal MESSAGES_SNAPSHOT is emitted for the A2UI run (streamed order preserved).
@@ -1186,3 +1192,125 @@ def test_facade_no_longer_advertises_removed_context_agent():
     assert pkg.A2UIAgent is A2UIAgent  # A2UI symbols still lazily importable
     with pytest.raises(AttributeError):
         _ = pkg.AGUIContextAgent
+
+
+# --------------------------------------------------------------------------- #
+# Mixed-batch server execution honors the core invocation controls
+# --------------------------------------------------------------------------- #
+
+
+class _FIConfigClient:
+    """Minimal client exposing a function-invocation configuration + middleware."""
+
+    def __init__(self, config, middleware=()):
+        self.function_invocation_configuration = config
+        self.function_middleware = middleware
+
+
+class _RepeatSearchGenerateInner:
+    """Planner that calls search + generate_a2ui every round, to exercise the cumulative
+    function-call budget across A2UI planner rounds."""
+
+    def __init__(self, client):
+        self.client = client
+        self.calls = 0
+
+    def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+        self.calls += 1
+        n = self.calls
+
+        async def gen():
+            yield AgentResponseUpdate(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id=f"s{n}", name="search", arguments="{}"),
+                    Content.from_function_call(
+                        call_id="g1" if n == 1 else f"g{n}",
+                        name="generate_a2ui",
+                        arguments=json.dumps({"intent": "create"}),
+                    ),
+                ],
+            )
+
+        return gen()
+
+
+def test_mixed_batch_honors_max_function_calls_budget_across_rounds():
+    # A side-effecting server tool requested alongside generate_a2ui every round must be
+    # capped by the shared per-request max_function_calls budget — NOT executed once per
+    # each of the A2UI planner rounds.
+    from agent_framework import FunctionTool
+
+    ran: list[int] = []
+
+    def search(query: str = "") -> str:
+        ran.append(1)
+        return json.dumps({"ok": True})
+
+    search_tool = FunctionTool(name="search", description="s", func=search)
+    inner = _RepeatSearchGenerateInner(_FIConfigClient({"max_function_calls": 2}))
+    asyncio.run(_drive(A2UIAgent(inner, _RenderSub()), tools=[search_tool]))
+    assert len(ran) == 2  # capped cumulatively across rounds, not once per round
+
+
+def test_mixed_batch_skips_server_tool_when_invocation_disabled():
+    # With function invocation disabled, the core loop runs no tools; the mixed-batch
+    # path must not fabricate a result either.
+    from agent_framework import FunctionTool
+
+    ran: list[int] = []
+
+    def search(query: str = "") -> str:
+        ran.append(1)
+        return "{}"
+
+    search_tool = FunctionTool(name="search", description="s", func=search)
+    inner = _RepeatSearchGenerateInner(_FIConfigClient({"enabled": False}))
+    kinds = asyncio.run(_drive(A2UIAgent(inner, _RenderSub()), tools=[search_tool]))
+    assert ran == []  # invocation disabled -> server tool not executed
+    assert _generate_envelope(kinds) is not None  # surface still rendered
+
+
+def test_mixed_batch_surfaces_approval_request_and_stops():
+    # An always_require server tool batched with generate_a2ui must be surfaced for
+    # approval (not silently completed) and must stop the run rather than continue with an
+    # orphaned assistant call.
+    from agent_framework import FunctionTool
+
+    ran: list[int] = []
+
+    def wire_money(amount: str = "") -> str:
+        ran.append(1)
+        return "sent"
+
+    approval_tool = FunctionTool(name="wire_money", description="w", func=wire_money, approval_mode="always_require")
+
+    class _ApprovalThenGenerateInner:
+        client = _FIConfigClient({})
+
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+            self.calls += 1
+
+            async def gen():
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(call_id="w1", name="wire_money", arguments="{}"),
+                        Content.from_function_call(
+                            call_id="g1", name="generate_a2ui", arguments=json.dumps({"intent": "create"})
+                        ),
+                    ],
+                )
+
+            return gen()
+
+    inner = _ApprovalThenGenerateInner()
+    kinds = asyncio.run(_drive(A2UIAgent(inner, _RenderSub()), tools=[approval_tool]))
+    assert ran == []  # not executed without approval
+    # No fabricated function_result for the protected tool...
+    assert not any(k[0] == "result" and k[1] == "w1" for k in kinds)
+    # ...and the planner is not re-entered (run stopped after surfacing the approval).
+    assert inner.calls == 1
