@@ -96,7 +96,10 @@ public static class ChatClientExtensions
             {
                 var loggerFactory = services.GetService<ILoggerFactory>();
 
-                return new FunctionInvokingChatClient(innerClient, loggerFactory, services);
+                return new FunctionInvokingChatClient(innerClient, loggerFactory, services)
+                {
+                    AllowConcurrentInvocation = options?.AllowConcurrentInvocation is true,
+                };
             });
         }
 

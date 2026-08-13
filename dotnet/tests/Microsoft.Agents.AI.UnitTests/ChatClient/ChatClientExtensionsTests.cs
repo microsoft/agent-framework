@@ -73,6 +73,22 @@ public sealed class ChatClientExtensionsTests
     }
 
     [Fact]
+    public void CreateAIAgent_WithConcurrentInvocation_EnablesConcurrentFunctionInvocation()
+    {
+        // Arrange
+        var chatClientMock = new Mock<IChatClient>();
+        var options = new ChatClientAgentOptions { AllowConcurrentInvocation = true };
+
+        // Act
+        var agent = chatClientMock.Object.AsAIAgent(options);
+
+        // Assert
+        var functionInvokingClient = agent.ChatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.True(functionInvokingClient.AllowConcurrentInvocation);
+    }
+
+    [Fact]
     public void CreateAIAgent_WithNullClient_Throws()
     {
         // Arrange

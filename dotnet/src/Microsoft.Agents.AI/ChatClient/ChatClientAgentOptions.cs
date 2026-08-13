@@ -62,6 +62,16 @@ public sealed class ChatClientAgentOptions
     public bool UseProvidedChatClientAsIs { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether functions may be invoked concurrently when a model response
+    /// contains multiple function calls.
+    /// </summary>
+    /// <remarks>
+    /// This setting is independent of <see cref="ChatOptions.AllowMultipleToolCalls"/>, which controls whether
+    /// a model may return multiple tool calls in a single response. The default is <see langword="false"/>.
+    /// </remarks>
+    public bool AllowConcurrentInvocation { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether to set the <see cref="ChatClientAgent.ChatHistoryProvider"/> to <see langword="null"/>
     /// if the underlying AI service indicates that it manages chat history (for example, by returning a conversation id in the response), but a <see cref="ChatHistoryProvider"/> is configured for the agent.
     /// </summary>
@@ -288,6 +298,7 @@ public sealed class ChatClientAgentOptions
             ChatHistoryProvider = this.ChatHistoryProvider,
             AIContextProviders = this.AIContextProviders is null ? null : new List<AIContextProvider>(this.AIContextProviders),
             UseProvidedChatClientAsIs = this.UseProvidedChatClientAsIs,
+            AllowConcurrentInvocation = this.AllowConcurrentInvocation,
             ClearOnChatHistoryProviderConflict = this.ClearOnChatHistoryProviderConflict,
             WarnOnChatHistoryProviderConflict = this.WarnOnChatHistoryProviderConflict,
             ThrowOnChatHistoryProviderConflict = this.ThrowOnChatHistoryProviderConflict,
