@@ -435,7 +435,7 @@ class CosmosMemoryContextProvider(ContextProvider):
         user_id = self._resolve_user_id(state, session)
         thread_id = state.get("thread_id") or session.session_id or "default"
 
-        # TODO: The toolkit renamed add_cosmos -> upsert_memory (same kwargs); accept either
+        # TODO(atty57): The toolkit renamed add_cosmos -> upsert_memory (same kwargs); accept either
         # until the declared azure-cosmos-agent-memory floor is past the rename, then inline it.
         write_turn = getattr(self.memory_client, "upsert_memory", None) or self.memory_client.add_cosmos
 
