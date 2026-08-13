@@ -292,8 +292,8 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "FileCheckpointStorage",
         "InMemoryCheckpointStorage",
         "WorkflowCheckpoint",
-        "register_checkpoint_type",
     ),
+    "._workflows._checkpoint_encoding": ("register_checkpoint_type",),
     "._workflows._const": (
         "DEFAULT_MAX_ITERATIONS",
         "INTERNAL_SOURCE_ID",

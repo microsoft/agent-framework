@@ -258,8 +258,8 @@ from ._workflows._checkpoint import (
     FileCheckpointStorage,
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
-    register_checkpoint_type,
 )
+from ._workflows._checkpoint_encoding import register_checkpoint_type
 from ._workflows._const import DEFAULT_MAX_ITERATIONS, INTERNAL_SOURCE_ID
 from ._workflows._edge import (
     Case,

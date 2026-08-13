@@ -25,25 +25,6 @@ if TYPE_CHECKING:
 # Type alias for checkpoint IDs in case we want to change the
 # underlying type in the future (e.g., to UUID or a custom class)
 CheckpointID: TypeAlias = str
-_REGISTERED_CHECKPOINT_TYPE_KEYS: set[str] = set()
-
-
-def register_checkpoint_type(cls: type[Any]) -> None:
-    """Register an application type for checkpoint deserialization.
-
-    Registration applies process-wide to :class:`FileCheckpointStorage` instances,
-    including instances created before this function is called. Call this at module
-    import time after defining a checkpointed application type.
-
-    Args:
-        cls: The application type to permit during checkpoint deserialization.
-
-    Raises:
-        TypeError: If ``cls`` is not a class.
-    """
-    if not isinstance(cls, type):
-        raise TypeError("Checkpoint types must be classes.")
-    _REGISTERED_CHECKPOINT_TYPE_KEYS.add(f"{cls.__module__}:{cls.__qualname__}")
 
 
 @dataclass(slots=True)
@@ -276,7 +257,7 @@ class FileCheckpointStorage:
     By default, checkpoint deserialization is restricted to a built-in set of safe Python types
     (primitives, datetime, uuid, ...), all ``agent_framework`` internal types, and OpenAI SDK types
     (``openai.types``). To allow additional application-specific types, register them with
-    :func:`register_checkpoint_type` or pass them via the ``allowed_checkpoint_types``
+    ``agent_framework.register_checkpoint_type`` or pass them via the ``allowed_checkpoint_types``
     parameter using ``"module:qualname"`` format.
 
     Example::
@@ -308,11 +289,6 @@ class FileCheckpointStorage:
         self.storage_path.mkdir(parents=True, exist_ok=True)
         self._allowed_types: frozenset[str] = frozenset(allowed_checkpoint_types or [])
         logger.info(f"Initialized file checkpoint storage at {self.storage_path}")
-
-    @property
-    def _effective_allowed_types(self) -> frozenset[str]:
-        """Return the union of local and process-wide allowed checkpoint types."""
-        return self._allowed_types | _REGISTERED_CHECKPOINT_TYPE_KEYS
 
     def _validate_file_path(self, checkpoint_id: CheckpointID) -> Path:
         """Validate that a checkpoint ID resolves to a path within the storage directory.
@@ -387,9 +363,7 @@ class FileCheckpointStorage:
         from ._checkpoint_encoding import decode_checkpoint_value
 
         try:
-            decoded_checkpoint_dict = decode_checkpoint_value(
-                encoded_checkpoint, allowed_types=self._effective_allowed_types
-            )
+            decoded_checkpoint_dict = decode_checkpoint_value(encoded_checkpoint, allowed_types=self._allowed_types)
         except WorkflowCheckpointException:
             raise
         checkpoint = WorkflowCheckpoint.from_dict(decoded_checkpoint_dict)
@@ -415,7 +389,7 @@ class FileCheckpointStorage:
                         from ._checkpoint_encoding import decode_checkpoint_value
 
                         decoded_checkpoint_dict = decode_checkpoint_value(
-                            encoded_checkpoint, allowed_types=self._effective_allowed_types
+                            encoded_checkpoint, allowed_types=self._allowed_types
                         )
                         checkpoint = WorkflowCheckpoint.from_dict(decoded_checkpoint_dict)
                     if checkpoint.workflow_name == workflow_name:
