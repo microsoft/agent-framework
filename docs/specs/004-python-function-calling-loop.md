@@ -376,6 +376,11 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - Model-bound history contains one function call/result pair per completed logical occurrence.
 - Append-only history must not replay stale approval request/response wrappers to the model.
 - Framework-managed and service-managed continuation must preserve the same logical call/result transcript.
+- A streaming response rebuilt from updates by an intermediate middleware must carry over the inner response's
+  conversation id and its internal-conversation-id marker, so framework-managed continuation appends only the latest
+  message instead of replaying a transcript the provider already holds. The rebuilt response mirrors the inner
+  conversation id exactly, including clearing it, and never retains an id emitted by an earlier service call in the
+  same turn.
 - A trusted terminal result consumes the corresponding approval authority in explicit stateless replay; a result in a
   server-registered pending occurrence cannot consume that authority before local execution.
 
@@ -479,6 +484,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Pending hosted history replay | Stateless hosted approval requests remain replayable until a response is recorded, then both controls become inert. | `packages/openai/tests/openai/test_openai_chat_client.py::test_stateless_history_preserves_pending_hosted_approval_request_until_response` |
 | Non-history provider plus session | Local history is still auto-injected for approval resume. | `packages/core/tests/core/test_agents.py::test_non_history_context_provider_still_injects_inmemory` |
 | Hosted per-service-call persistence | A host-managed transcript remains available throughout a local function-call loop without being persisted into the framework session and replayed on the next hosted request. | `packages/foundry_hosting/tests/test_responses.py::TestAgentSessionPersistence::test_per_service_call_persistence_preserves_function_loop_history` |
+| Streaming message injection with per-service-call persistence | A streaming response rebuilt from updates mirrors the inner conversation id exactly, including clearing it, and keeps its internal marker, so the next iteration appends only the latest message rather than replaying the whole turn on top of provider-held history, and never persists a conversation id from an earlier injected service call. | `packages/core/tests/core/test_middleware_with_chat.py::TestChatMiddleware::test_message_injection_middleware_streaming_preserves_inner_continuation_state`, `test_message_injection_middleware_streaming_keeps_service_conversation_id_external`, `test_message_injection_middleware_streaming_clears_conversation_id_when_final_call_has_none`, `test_message_injection_middleware_conversation_id_matches_across_streaming_modes`, `packages/core/tests/core/test_harness_agent.py::test_streaming_harness_tool_call_does_not_duplicate_transcript` |
 | Service-side approval decision | Stored hosted request is skipped; the current approved or rejected hosted response is sent, while local approval controls are omitted from provider input. | `packages/openai/tests/openai/test_openai_chat_client.py::test_prepare_messages_strips_approval_request_but_keeps_response_under_storage`, `test_prepare_messages_drops_local_approval_controls` |
 | OpenAI approval serialization | Hosted approval id and decision serialize to `mcp_approval_response`; local approvals remain in-process. | `test_prepare_message_for_openai_with_function_approval_response`, `test_prepare_content_for_opentool_approval_response`, `test_function_approval_response_with_mcp_tool_call` |
 | OpenAI end-to-end hosted approval | Hosted request parses, response sends, and continuation completes. | `test_end_to_end_mcp_approval_flow` |
