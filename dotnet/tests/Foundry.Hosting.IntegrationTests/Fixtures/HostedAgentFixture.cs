@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Linq;
@@ -196,33 +197,26 @@ public abstract class HostedAgentFixture : IAsyncLifetime
 
     /// <summary>
     /// Tries to read a response back off the service by id, returning <see langword="null"/> when
-    /// nothing is stored under it. Both the project-wide client and this scenario's per-agent client
-    /// are tried, because a response created inside the container is not necessarily reachable through
-    /// the same endpoint as one created for the caller.
+    /// nothing is stored under it.
     /// </summary>
+    /// <remarks>
+    /// Reads go through this scenario's per-agent client, which is the one that can see a hosted
+    /// agent's responses; the project-level client answers 403 <c>session_not_accessible</c> for them.
+    /// Only a 404 is taken as "nothing is stored": that is what the service answers for a well-formed
+    /// id it has no response for. Anything else surfaces, because a caller reading a 403 or a server
+    /// fault as "nothing is stored" would turn a broken run into a passing test.
+    /// </remarks>
     public async Task<object?> TryReadResponseAsync(string responseId)
     {
-        foreach (var responses in new[]
+        try
         {
-            this.ProjectClient.GetProjectOpenAIClient().GetProjectResponsesClient(),
-            this.AgentOpenAIClient.GetProjectResponsesClient(),
-        })
-        {
-            try
-            {
-                var response = await responses.GetResponseAsync(responseId).ConfigureAwait(false);
-                if (response?.Value is not null)
-                {
-                    return response.Value;
-                }
-            }
-            catch
-            {
-                // Not readable through this endpoint; try the next one.
-            }
+            var response = await this.AgentOpenAIClient.GetProjectResponsesClient().GetResponseAsync(responseId).ConfigureAwait(false);
+            return response?.Value;
         }
-
-        return null;
+        catch (ClientResultException ex) when (ex.Status is 404)
+        {
+            return null;
+        }
     }
 
     public async ValueTask InitializeAsync()

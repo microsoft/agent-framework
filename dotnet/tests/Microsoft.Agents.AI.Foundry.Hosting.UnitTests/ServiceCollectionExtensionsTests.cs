@@ -74,8 +74,10 @@ public class ServiceCollectionExtensionsTests
     public void AddFoundryResponses_WithNullAgent_ThrowsArgumentNullException()
     {
         var services = new ServiceCollection();
+        // Cast to bind the agent overload: the parameterless overload also accepts a single null
+        // (as its optional configure callback), so the cast keeps this test targeting the agent path.
         Assert.Throws<ArgumentNullException>(
-            () => services.AddFoundryResponses(null!));
+            () => services.AddFoundryResponses((AIAgent)null!));
     }
 
     [Fact]

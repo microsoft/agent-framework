@@ -31,6 +31,9 @@ from copilot.session import PermissionHandler, PreToolUseHookInput
 from copilot.session_events import (
     AssistantUsageData,
     Data,
+    PermissionRequestShell,
+    PermissionRequestShellCommand,
+    PermissionRequestWrite,
     SessionEvent,
     SessionEventType,
     ToolExecutionCompleteError,
@@ -56,6 +59,34 @@ def pre_tool_use_input(tool_name: str) -> PreToolUseHookInput:
         "toolName": tool_name,
         "toolArgs": {},
     }
+
+
+def shell_request(
+    command_identifiers: Sequence[str], can_offer_session_approval: bool = True
+) -> PermissionRequestShell:
+    """Build a shell permission request covering the given command identifiers."""
+    return PermissionRequestShell(
+        can_offer_session_approval=can_offer_session_approval,
+        commands=[
+            PermissionRequestShellCommand(identifier=identifier, read_only=True) for identifier in command_identifiers
+        ],
+        full_command_text=" && ".join(command_identifiers),
+        has_write_file_redirection=False,
+        intention="run commands",
+        possible_paths=[],
+        possible_urls=[],
+    )
+
+
+def write_request(can_offer_session_approval: bool = True) -> PermissionRequestWrite:
+    """Build a write permission request."""
+    return PermissionRequestWrite(
+        can_offer_session_approval=can_offer_session_approval,
+        diff="+ hello",
+        file_name="a.txt",
+        intention="write a file",
+        new_file_contents="hello",
+    )
 
 
 def create_session_event(
@@ -2538,6 +2569,329 @@ class TestGitHubCopilotAgentPermissions:
         config = call_args.kwargs
         assert "on_permission_request" in config
         assert config["on_permission_request"] is not None
+
+
+class TestNormalizeApproveForSession:
+    """Regression tests for issue #7553.
+
+    A bare ``PermissionDecisionApproveForSession()`` serializes to
+    ``{"kind": "approve-for-session"}``. The Copilot CLI cannot interpret that and crashes
+    with ``Cannot read properties of undefined (reading 'commandIdentifiers')``, so the
+    agent scopes such decisions to the request that triggered them.
+    """
+
+    @staticmethod
+    async def normalize(request: Any, decision: Any) -> Any:
+        """Run ``decision`` through the agent's permission-handler wrapper."""
+        from agent_framework_github_copilot._agent import _with_normalized_permission_decisions
+
+        handler = _with_normalized_permission_decisions(lambda _request, _invocation: decision)
+        return await handler(request, {"session_id": "test-session"})
+
+    async def test_shell_request_derives_command_identifiers(self) -> None:
+        """A shell prompt yields a commands approval covering every command in the request."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalCommands,
+        )
+
+        result = await self.normalize(shell_request(["ls", "cat"]), PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCommands)
+        assert result.approval.command_identifiers == ["ls", "cat"]
+
+    async def test_normalized_shell_decision_serializes_with_command_identifiers(self) -> None:
+        """The serialized payload carries the key whose absence crashed the CLI."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession
+
+        result = await self.normalize(shell_request(["ls"]), PermissionDecisionApproveForSession())
+
+        payload = result.to_dict()
+        assert payload["kind"] == "approve-for-session"
+        assert payload["approval"]["commandIdentifiers"] == ["ls"]
+
+    async def test_unnormalized_decision_is_missing_approval(self) -> None:
+        """Guard the premise of this fix: the bare decision really does omit ``approval``."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession
+
+        assert PermissionDecisionApproveForSession().to_dict() == {"kind": "approve-for-session"}
+
+    async def test_read_request_derives_read_approval(self) -> None:
+        """A read prompt yields a read approval."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalRead,
+        )
+        from copilot.session_events import PermissionRequestRead
+
+        request = PermissionRequestRead(intention="read it", path="/tmp/a.txt")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalRead)
+
+    async def test_write_request_derives_write_approval(self) -> None:
+        """A write prompt yields a write approval."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalWrite,
+        )
+
+        result = await self.normalize(write_request(), PermissionDecisionApproveForSession())
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalWrite)
+
+    async def test_mcp_request_derives_server_and_tool(self) -> None:
+        """An MCP prompt yields an approval naming the server and tool."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalMCP,
+        )
+        from copilot.session_events import PermissionRequestMcp
+
+        request = PermissionRequestMcp(
+            read_only=True, server_name="my-server", tool_name="my-tool", tool_title="My Tool", args={}
+        )
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalMCP)
+        assert result.approval.server_name == "my-server"
+        assert result.approval.tool_name == "my-tool"
+
+    async def test_custom_tool_request_derives_tool_name(self) -> None:
+        """A custom-tool prompt yields an approval naming the tool."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalCustomTool,
+        )
+        from copilot.session_events import PermissionRequestCustomTool
+
+        request = PermissionRequestCustomTool(tool_description="does a thing", tool_name="my_tool", args={})
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCustomTool)
+        assert result.approval.tool_name == "my_tool"
+
+    async def test_memory_request_derives_memory_approval(self) -> None:
+        """A memory prompt yields a memory approval."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalMemory,
+        )
+        from copilot.session_events import PermissionRequestMemory
+
+        request = PermissionRequestMemory(fact="the sky is blue")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalMemory)
+
+    async def test_extension_management_request_preserves_operation(self) -> None:
+        """An extension-management prompt yields an approval carrying the request's operation."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalExtensionManagement,
+        )
+        from copilot.session_events import PermissionRequestExtensionManagement
+
+        request = PermissionRequestExtensionManagement(operation="enable", extension_name="my-ext")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalExtensionManagement)
+        assert result.approval.operation == "enable"
+        assert result.to_dict()["approval"] == {"kind": "extension-management", "operation": "enable"}
+
+    async def test_extension_permission_access_request_preserves_extension_name(self) -> None:
+        """An extension-permission-access prompt yields an approval carrying the extension name."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess,
+        )
+        from copilot.session_events import PermissionRequestExtensionPermissionAccess
+
+        request = PermissionRequestExtensionPermissionAccess(capabilities=["read"], extension_name="my-ext")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess)
+        assert result.approval.extension_name == "my-ext"
+        assert result.to_dict()["approval"] == {"kind": "extension-permission-access", "extensionName": "my-ext"}
+
+    async def test_url_request_derives_domain_instead_of_approval(self) -> None:
+        """A URL prompt is scoped by ``domain``; URL prompts have no ``approval``."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession
+        from copilot.session_events import PermissionRequestUrl
+
+        request = PermissionRequestUrl(intention="fetch", url="https://example.com/some/path?q=1")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert result.domain == "example.com"
+        assert result.approval is None
+
+    async def test_url_request_without_derivable_domain_falls_back_to_approve_once(self) -> None:
+        """A URL with no host cannot be scoped, so the decision narrows to a single approval."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
+        from copilot.session_events import PermissionRequestUrl
+
+        request = PermissionRequestUrl(intention="fetch", url="not-a-url")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com\\@evil.com/a",  # backslash moves the authority boundary under WHATWG
+            "https://example.com\t@evil.com/a",  # tab is stripped by WHATWG before parsing
+            "https://example.com\n@evil.com/a",  # newline is stripped by WHATWG before parsing
+            "https://example.com\r@evil.com/a",  # carriage return is stripped by WHATWG before parsing
+        ],
+    )
+    async def test_parser_ambiguous_url_falls_back_to_approve_once(self, url: str) -> None:
+        """A URL whose host Python and the CLI parse differently must not persist a domain.
+
+        The CLI (WHATWG) contacts ``example.com`` for these URLs while ``urlparse`` derives
+        ``evil.com``. Persisting ``evil.com`` would widen approval to an unrelated,
+        attacker-chosen domain, so the decision must narrow to a single-use approval.
+        """
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
+        from copilot.session_events import PermissionRequestUrl
+
+        request = PermissionRequestUrl(intention="fetch", url=url)
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_unambiguous_url_with_userinfo_derives_real_host(self) -> None:
+        """Userinfo without ambiguous characters is safe; the real host is persisted."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession
+        from copilot.session_events import PermissionRequestUrl
+
+        request = PermissionRequestUrl(intention="fetch", url="https://user:pass@example.com/a")
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert result.domain == "example.com"
+
+    async def test_shell_request_that_cannot_offer_session_approval_narrows_to_approve_once(self) -> None:
+        """Never fabricate a session approval the prompt said it could not offer."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
+
+        request = shell_request(["rm"], can_offer_session_approval=False)
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_write_request_that_cannot_offer_session_approval_narrows_to_approve_once(self) -> None:
+        """The same narrowing applies to write prompts."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
+
+        request = write_request(can_offer_session_approval=False)
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_hook_request_without_session_approval_narrows_to_approve_once(self) -> None:
+        """A hook prompt has no session-scoped approval representation."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession, PermissionDecisionApproveOnce
+        from copilot.session_events import PermissionRequestHook
+
+        request = PermissionRequestHook(tool_name="t", hook_message="nope", tool_args={})
+        result = await self.normalize(request, PermissionDecisionApproveForSession())
+
+        assert isinstance(result, PermissionDecisionApproveOnce)
+
+    async def test_fully_specified_approval_is_passed_through_untouched(self) -> None:
+        """A decision that already names its scope must not be rewritten."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalRead,
+        )
+
+        decision = PermissionDecisionApproveForSession(approval=PermissionDecisionApproveForSessionApprovalRead())
+        result = await self.normalize(shell_request(["ls"]), decision)
+
+        assert result is decision
+
+    async def test_explicit_domain_is_passed_through_untouched(self) -> None:
+        """A decision scoped by ``domain`` must not be rewritten either."""
+        from copilot.generated.rpc import PermissionDecisionApproveForSession
+        from copilot.session_events import PermissionRequestUrl
+
+        decision = PermissionDecisionApproveForSession(domain="contoso.com")
+        request = PermissionRequestUrl(intention="fetch", url="https://example.com/a")
+        result = await self.normalize(request, decision)
+
+        assert result is decision
+        assert result.domain == "contoso.com"
+
+    @pytest.mark.parametrize("decision_name", ["PermissionDecisionApproveOnce", "PermissionDecisionUserNotAvailable"])
+    async def test_other_decision_kinds_are_passed_through_untouched(self, decision_name: str) -> None:
+        """Only ``approve-for-session`` decisions are eligible for normalization."""
+        import copilot.generated.rpc as rpc
+
+        decision = getattr(rpc, decision_name)()
+        result = await self.normalize(shell_request(["ls"]), decision)
+
+        assert result is decision
+
+    async def test_async_handlers_are_supported(self) -> None:
+        """The wrapper awaits async handlers before normalizing."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalCommands,
+        )
+
+        from agent_framework_github_copilot._agent import _with_normalized_permission_decisions
+
+        async def async_handler(_request: Any, _invocation: Any) -> Any:
+            return PermissionDecisionApproveForSession()
+
+        handler = _with_normalized_permission_decisions(async_handler)
+        result = await handler(shell_request(["ls"]), {"session_id": "test-session"})
+
+        assert isinstance(result, PermissionDecisionApproveForSession)
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCommands)
+
+    async def test_handler_exceptions_propagate(self) -> None:
+        """Handler failures must keep reaching the SDK, which denies the request."""
+        from agent_framework_github_copilot._agent import _with_normalized_permission_decisions
+
+        def failing_handler(_request: Any, _invocation: Any) -> Any:
+            raise RuntimeError("handler exploded")
+
+        handler = _with_normalized_permission_decisions(failing_handler)
+
+        with pytest.raises(RuntimeError, match="handler exploded"):
+            await handler(shell_request(["ls"]), {"session_id": "test-session"})
+
+    async def test_agent_wires_the_normalizer_into_the_session(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """End to end: the handler reaching create_session normalizes decisions."""
+        from copilot.generated.rpc import (
+            PermissionDecisionApproveForSession,
+            PermissionDecisionApproveForSessionApprovalCommands,
+        )
+
+        def approve_for_session(_request: Any, _invocation: Any) -> Any:
+            return PermissionDecisionApproveForSession()
+
+        agent = GitHubCopilotAgent(
+            client=mock_client,
+            default_options=copilot_options({"on_permission_request": approve_for_session}),
+        )
+        await agent.start()
+        await agent._get_or_create_session(AgentSession())  # type: ignore[reportPrivateUsage]
+
+        handler = mock_client.create_session.call_args.kwargs["on_permission_request"]
+        result = await handler(shell_request(["ls"]), {"session_id": "test-session"})
+
+        assert isinstance(result.approval, PermissionDecisionApproveForSessionApprovalCommands)
+        assert result.approval.command_identifiers == ["ls"]
 
 
 class SpyContextProvider(ContextProvider):

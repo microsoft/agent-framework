@@ -4,11 +4,13 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Observability;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -504,5 +506,142 @@ public sealed class ObservabilityTests : IDisposable
         var tags = messageSendActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
         tags.Should().NotContainKey(Tags.MessageContent, "Message content should NOT be logged when EnableSensitiveData is false.");
         tags.Should().ContainKey(Tags.MessageSourceId, "Source ID should still be logged.");
+    }
+
+    [Fact]
+    public async Task EnableSensitiveData_UnserializableMessage_DoesNotFailWorkflowAsync()
+    {
+        // Arrange
+        const string SenderId = "UnserializableMessageSender";
+        const string ReceiverId = "UnserializableMessageReceiver";
+        const string ExpectedOutput = "done";
+        string expectedFallback = $"[Unserializable: {typeof(ChatMessage).FullName}]";
+
+        using var testActivity = new Activity("ObservabilityTest").Start();
+
+        var sender = new UnserializableMessageSender(SenderId, ReceiverId);
+        List<ChatMessage> received = [];
+        Func<ChatMessage, string> consume = message =>
+        {
+            received.Add(message);
+            return ExpectedOutput;
+        };
+        var receiver = consume.BindAsExecutor(ReceiverId);
+
+        WorkflowBuilder builder = new(sender);
+        builder.AddEdge(sender, receiver).WithOutputFrom(receiver);
+        Workflow workflow = builder.WithOpenTelemetry(configure: opts => opts.EnableSensitiveData = true).Build();
+
+        // Act
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "start");
+        await run.DisposeAsync();
+
+        // Assert
+        run.OutgoingEvents.OfType<WorkflowErrorEvent>().Should().BeEmpty(
+            "telemetry serialization failures should not fail workflow execution.");
+        WorkflowOutputEvent output = run.OutgoingEvents.OfType<WorkflowOutputEvent>().Should().ContainSingle().Subject;
+        output.Data.Should().Be(ExpectedOutput);
+
+        ChatMessage delivered = received.Should().ContainSingle(
+            "the message must still be delivered even though telemetry could not serialize it.").Subject;
+        delivered.Contents.Should().ContainSingle().Which.Should().BeOfType<UnregisteredAIContent>(
+            "telemetry must not mutate or drop content from the actual message stream.");
+
+        List<Activity> capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        Activity messageSendActivity = capturedActivities.Should().ContainSingle(
+            a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal) &&
+                 Equals(a.GetTagItem(Tags.MessageSourceId), SenderId) &&
+                 Equals(a.GetTagItem(Tags.MessageTargetId), ReceiverId)).Subject;
+        messageSendActivity.GetTagItem(Tags.MessageContent).Should().Be(expectedFallback);
+
+        Activity receiverActivity = capturedActivities.Should().ContainSingle(
+            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal) &&
+                 Equals(a.GetTagItem(Tags.ExecutorId), ReceiverId)).Subject;
+        receiverActivity.GetTagItem(Tags.ExecutorInput).Should().Be(expectedFallback);
+    }
+
+    [Fact]
+    public void EnableSensitiveData_UnserializableExecutorInputAndOutput_UsesFallback()
+    {
+        // Arrange
+        string expectedFallback = $"[Unserializable: {typeof(ChatMessage).FullName}]";
+        ChatMessage message = CreateUnserializableMessage();
+        WorkflowTelemetryContext context = new(new WorkflowTelemetryOptions { EnableSensitiveData = true });
+
+        // Act
+        using Activity? activity = context.StartExecutorProcessActivity(
+            "TestExecutor",
+            typeof(ObservabilityTests).FullName,
+            typeof(ChatMessage).FullName!,
+            message);
+        context.SetExecutorOutput(activity, message);
+
+        // Assert
+        activity.Should().NotBeNull();
+        activity!.GetTagItem(Tags.ExecutorInput).Should().Be(expectedFallback);
+        activity.GetTagItem(Tags.ExecutorOutput).Should().Be(expectedFallback);
+    }
+
+    [Fact]
+    public void EnableSensitiveData_SerializationThrowsInvalidOperation_UsesFallback()
+    {
+        // Arrange
+        // Reflection-disabled (Native AOT) apps surface serialization failures as InvalidOperationException,
+        // which System.Text.Json does not wrap. A throwing property getter reproduces that escape path.
+        string expectedFallback = $"[Unserializable: {typeof(ThrowingMessage).FullName}]";
+        WorkflowTelemetryContext context = new(new WorkflowTelemetryOptions { EnableSensitiveData = true });
+
+        // Act
+        using Activity? activity = context.StartMessageSendActivity("source", "target", new ThrowingMessage());
+
+        // Assert
+        activity.Should().NotBeNull();
+        activity!.GetTagItem(Tags.MessageContent).Should().Be(expectedFallback);
+    }
+
+    [Theory]
+    [InlineData(typeof(ArgumentException))]
+    [InlineData(typeof(IOException))]
+    [InlineData(typeof(OperationCanceledException))]
+    [InlineData(typeof(TimeoutException))]
+    public void EnableSensitiveData_SerializationThrowsAnyException_UsesFallback(Type exceptionType)
+    {
+        // Arrange
+        // System.Text.Json does not wrap property-getter exceptions, so serialization can surface any
+        // exception type. Telemetry must fall back rather than fail the workflow for all of them.
+        string expectedFallback = $"[Unserializable: {typeof(ThrowingMessage).FullName}]";
+        WorkflowTelemetryContext context = new(new WorkflowTelemetryOptions { EnableSensitiveData = true });
+
+        // Act
+        using Activity? activity = context.StartMessageSendActivity("source", "target", new ThrowingMessage(exceptionType));
+
+        // Assert
+        activity.Should().NotBeNull();
+        activity!.GetTagItem(Tags.MessageContent).Should().Be(expectedFallback);
+    }
+
+    private static ChatMessage CreateUnserializableMessage() =>
+        new(ChatRole.Assistant, [new UnregisteredAIContent()]);
+
+    private sealed class UnserializableMessageSender(string id, string targetId) : Executor(id)
+    {
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+        {
+            protocolBuilder.RouteBuilder.AddHandler<string>(
+                (_, context) => context.SendMessageAsync(CreateUnserializableMessage(), targetId));
+
+            return protocolBuilder.SendsMessage<ChatMessage>();
+        }
+    }
+
+    private sealed class UnregisteredAIContent : AIContent;
+
+    private sealed class ThrowingMessage(Type exceptionType)
+    {
+        public ThrowingMessage() : this(typeof(InvalidOperationException))
+        {
+        }
+
+        public string Value => throw (Exception)Activator.CreateInstance(exceptionType, "serialization failed")!;
     }
 }

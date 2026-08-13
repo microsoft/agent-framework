@@ -927,10 +927,12 @@ public class ExecutorRouteGeneratorTests
                       .And.RegisterSentMessageType("global::TestNamespace.MessageC");
     }
 
-    [Fact]
-    public void ProtocolOnly_NonPartialClass_ProducesDiagnostic()
+    [Theory]
+    [InlineData("SendsMessage")]
+    [InlineData("YieldsOutput")]
+    public void ProtocolOnly_NonPartialClass_ProducesProtocolDiagnostic(string attributeName)
     {
-        var source = """
+        var source = $$"""
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -940,7 +942,7 @@ public class ExecutorRouteGeneratorTests
 
             public class BroadcastMessage { }
 
-            [SendsMessage(typeof(BroadcastMessage))]
+            [{{attributeName}}(typeof(BroadcastMessage))]
             public class TestExecutor : Executor
             {
                 public TestExecutor() : base("test") { }
@@ -949,15 +951,57 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        // Should produce MAFGENWF003 diagnostic (class must be partial)
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF003");
+        result.RunResult.Diagnostics.Should().ContainSingle();
+        var diagnostic = result.RunResult.Diagnostics.Single();
+        diagnostic.Id.Should().Be("MAFGENWF008");
+        diagnostic.GetMessage().Should().Be(
+            "Class 'TestExecutor' uses [SendsMessage] or [YieldsOutput] but is not declared as partial");
         result.RunResult.GeneratedTrees.Should().BeEmpty();
     }
 
     [Fact]
-    public void ProtocolOnly_NonExecutorClass_ProducesDiagnostic()
+    public void ProtocolOnly_NonPartialExecutorOfT_ProducesProtocolDiagnostic()
     {
         var source = """
+            using System.Collections.Generic;
+            using System.Threading;
+            using System.Threading.Tasks;
+            using Microsoft.Agents.AI.Workflows;
+
+            namespace TestNamespace;
+
+            [YieldsOutput(typeof(List<string>))]
+            internal sealed class CompletionExecutor(string id) : Executor<List<ReduceComplete>>(id)
+            {
+                public override async ValueTask HandleAsync(
+                    List<ReduceComplete> message,
+                    IWorkflowContext context,
+                    CancellationToken cancellationToken = default)
+                {
+                    List<string> filePaths = message.ConvertAll(result => result.FilePath);
+                    await context.YieldOutputAsync(filePaths, cancellationToken);
+                }
+            }
+
+            internal sealed record ReduceComplete(string FilePath);
+            """;
+
+        var result = GeneratorTestHelper.RunGenerator(source);
+
+        result.RunResult.Diagnostics.Should().ContainSingle();
+        var diagnostic = result.RunResult.Diagnostics.Single();
+        diagnostic.Id.Should().Be("MAFGENWF008");
+        diagnostic.GetMessage().Should().Be(
+            "Class 'CompletionExecutor' uses [SendsMessage] or [YieldsOutput] but is not declared as partial");
+        result.RunResult.GeneratedTrees.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("SendsMessage")]
+    [InlineData("YieldsOutput")]
+    public void ProtocolOnly_NonExecutorClass_ProducesProtocolDiagnostic(string attributeName)
+    {
+        var source = $$"""
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -967,7 +1011,7 @@ public class ExecutorRouteGeneratorTests
 
             public class BroadcastMessage { }
 
-            [SendsMessage(typeof(BroadcastMessage))]
+            [{{attributeName}}(typeof(BroadcastMessage))]
             public partial class NotAnExecutor
             {
             }
@@ -975,8 +1019,11 @@ public class ExecutorRouteGeneratorTests
 
         var result = GeneratorTestHelper.RunGenerator(source);
 
-        // Should produce MAFGENWF004 diagnostic (must derive from Executor)
-        result.RunResult.Diagnostics.Should().Contain(d => d.Id == "MAFGENWF004");
+        result.RunResult.Diagnostics.Should().ContainSingle();
+        var diagnostic = result.RunResult.Diagnostics.Single();
+        diagnostic.Id.Should().Be("MAFGENWF009");
+        diagnostic.GetMessage().Should().Be(
+            "Class 'NotAnExecutor' uses [SendsMessage] or [YieldsOutput] but does not derive from Executor");
         result.RunResult.GeneratedTrees.Should().BeEmpty();
     }
 
