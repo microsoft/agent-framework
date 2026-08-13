@@ -1160,6 +1160,38 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             client_kwargs=context["client_kwargs"],
         )
 
+    def _update_session_from_chat_response(
+        self,
+        session: AgentSession | None,
+        response: ChatResponse[Any],
+    ) -> None:
+        """Update session continuation state from a chat response."""
+        if (
+            session
+            and response.conversation_id
+            and not is_local_history_conversation_id(response.conversation_id)
+            and session.service_session_id != response.conversation_id
+        ):
+            session.service_session_id = response.conversation_id
+
+    def _update_session_from_chat_response_update(
+        self,
+        session: AgentSession | None,
+        update: AgentResponseUpdate,
+    ) -> None:
+        """Update session continuation state from a streaming agent update."""
+        if session is None:
+            return
+        raw = update.raw_representation
+        conversation_id = getattr(raw, "conversation_id", None) if raw else None
+        if (
+            isinstance(conversation_id, str)
+            and conversation_id
+            and not is_local_history_conversation_id(conversation_id)
+            and session.service_session_id != conversation_id
+        ):
+            session.service_session_id = conversation_id
+
     async def _parse_non_streaming_response(
         self,
         context: _RunContext,
@@ -1174,13 +1206,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 message.author_name = context["agent_name"]
 
         session = context["session"]
-        if (
-            session
-            and response.conversation_id
-            and not is_local_history_conversation_id(response.conversation_id)
-            and session.service_session_id != response.conversation_id
-        ):
-            session.service_session_id = response.conversation_id
+        self._update_session_from_chat_response(session, response)
 
         agent_response = _build_agent_response_from_chat_response(
             response,
@@ -1232,18 +1258,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         def _propagate_conversation_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
             """Eagerly propagate conversation_id to session as updates arrive."""
-            session = context["session"]
-            if session is None:
-                return update
-            raw = update.raw_representation
-            conversation_id = getattr(raw, "conversation_id", None) if raw else None
-            if (
-                isinstance(conversation_id, str)
-                and conversation_id
-                and not is_local_history_conversation_id(conversation_id)
-                and session.service_session_id != conversation_id
-            ):
-                session.service_session_id = conversation_id
+            self._update_session_from_chat_response_update(context["session"], update)
             return update
 
         def _suppress_response_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
