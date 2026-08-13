@@ -62,7 +62,9 @@ class RedisHistoryProvider(HistoryProvider):
             key_prefix: Prefix for Redis keys. Defaults to 'chat_messages'.
             max_messages: Maximum number of messages to retain per session.
                 When exceeded, oldest messages are automatically trimmed.
-                None means unlimited storage.
+                None means unlimited storage; 0 retains nothing, and no message
+                payload is written to Redis at all. Stored history is left as it
+                is - use ``clear`` to remove it.
             load_messages: Whether to load messages before invocation.
             store_outputs: Whether to store response messages.
             store_inputs: Whether to store input messages.
@@ -73,6 +75,7 @@ class RedisHistoryProvider(HistoryProvider):
             ValueError: If neither redis_url nor credential_provider is provided.
             ValueError: If both redis_url and credential_provider are provided.
             ValueError: If credential_provider is used without host parameter.
+            ValueError: If max_messages is negative.
         """
         super().__init__(
             source_id,
@@ -89,6 +92,8 @@ class RedisHistoryProvider(HistoryProvider):
             raise ValueError("redis_url and credential_provider are mutually exclusive")
         if credential_provider is not None and host is None:
             raise ValueError("host is required when using credential_provider")
+        if max_messages is not None and max_messages < 0:
+            raise ValueError("max_messages must be None (unlimited) or a non-negative integer")
 
         self.key_prefix = key_prefix
         self.max_messages = max_messages
@@ -154,6 +159,14 @@ class RedisHistoryProvider(HistoryProvider):
         """
         mark_feature_used(FeatureIndex.REDIS)
         if not messages:
+            return
+
+        if self.max_messages == 0:
+            # Retention is disabled. Trimming cannot express this - LTRIM key 0 -1 keeps
+            # the whole list - so return before serializing: no payload reaches Redis, an
+            # AOF or a replica. Stored history is deliberately left alone. _redis_key omits
+            # source_id, so the list can belong to a co-located provider, and removing
+            # stored history is what clear() is for.
             return
 
         key = self._redis_key(session_id)
