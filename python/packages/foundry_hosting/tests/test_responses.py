@@ -3833,6 +3833,116 @@ class TestOAuthConsentSurfacing:
         agent.run.assert_called_once()
 
 
+class TestMidRunOAuthConsentSurfacing:
+    """A tool can require consent after the agent has been entered (e.g. an on-behalf-of
+    MCP server needing a per-user token), in which case the consent link arrives as
+    ``oauth_consent_request`` content in the agent's stream rather than as a connect-time error.
+    """
+
+    async def test_streaming_mid_run_consent_content_emits_oauth_output_item(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("one moment")], role="assistant"),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_oauth_consent_request(
+                            consent_link="https://consent.example.com/obo",
+                            additional_properties={"server_label": "obo-mcp"},
+                        )
+                    ],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=True)
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+
+        assert types[-1] == "response.incomplete"
+
+        added = [e for e in events if e["event"] == "response.output_item.added"]
+        oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]
+        assert len(oauth_added) == 1
+        assert oauth_added[0]["data"]["item"]["consent_link"] == "https://consent.example.com/obo"
+        assert oauth_added[0]["data"]["item"]["server_label"] == "obo-mcp"
+
+        done = [e for e in events if e["event"] == "response.output_item.done"]
+        assert any(e["data"]["item"]["type"] == "oauth_consent_request" for e in done)
+
+    async def test_non_streaming_mid_run_consent_content_emits_oauth_output_item(self) -> None:
+        agent = _make_agent(
+            response=AgentResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[Content.from_oauth_consent_request(consent_link="https://consent.example.com/obo")],
+                    )
+                ]
+            )
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "incomplete"
+
+        oauth_items = [it for it in body["output"] if it["type"] == "oauth_consent_request"]
+        assert len(oauth_items) == 1
+        assert oauth_items[0]["consent_link"] == "https://consent.example.com/obo"
+        assert oauth_items[0]["server_label"] == "agent_framework"
+
+    async def test_multiple_consent_contents_each_emit_an_item(self) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_oauth_consent_request(consent_link="https://consent.example.com/one"),
+                        Content.from_oauth_consent_request(consent_link="https://consent.example.com/two"),
+                    ],
+                    role="assistant",
+                )
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=True)
+        events = _parse_sse_events(resp.text)
+        added = [e for e in events if e["event"] == "response.output_item.added"]
+        oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]
+        assert len(oauth_added) == 2
+        assert {e["data"]["item"]["id"] for e in oauth_added} != {""}
+        assert len({e["data"]["item"]["id"] for e in oauth_added}) == 2
+
+        incomplete = [e for e in events if e["event"] == "response.incomplete"]
+        assert len(incomplete) == 1
+
+    @pytest.mark.parametrize("consent_link", ["", "http://consent.example.com/obo", "not-a-url"])
+    async def test_invalid_consent_link_is_skipped(self, consent_link: str) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content(type="oauth_consent_request", consent_link=consent_link or None)],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant"),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=True)
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+
+        added = [e for e in events if e["event"] == "response.output_item.added"]
+        assert not any(e["data"]["item"]["type"] == "oauth_consent_request" for e in added)
+        # A link we cannot render is not a consent prompt, so the turn still completes.
+        assert types[-1] == "response.completed"
+
+
 # endregion
 
 # region Error handling (response.failed surfacing)

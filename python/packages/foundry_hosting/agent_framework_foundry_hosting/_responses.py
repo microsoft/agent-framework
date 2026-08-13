@@ -10,6 +10,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Se
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Literal, cast
+from urllib.parse import urlparse
 
 from agent_framework import (
     ChatOptions,
@@ -162,6 +163,55 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
         except json.JSONDecodeError:
             logger.warning("Failed to parse consent details JSON: %s", inner_exception.error.message)
     return None
+
+
+def _consent_link_from_content(content: Content) -> str | None:
+    """Return a validated consent link for an ``oauth_consent_request`` content.
+
+    Returns ``None`` when *content* is not an OAuth consent request, when it carries
+    no consent link, or when the link is not an absolute HTTPS URL.
+    """
+    if content.type != "oauth_consent_request":
+        return None
+    consent_link = content.consent_link
+    if not consent_link:
+        logger.warning("Received oauth_consent_request content without a consent_link; skipping.")
+        return None
+    parsed = urlparse(consent_link)
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
+        logger.warning("Skipping oauth_consent_request with non-HTTPS consent_link.")
+        return None
+    return consent_link
+
+
+def _emit_oauth_consent_item(
+    stream: ResponseEventStream,
+    response_id: str,
+    consent_link: str,
+    server_label: str,
+) -> Generator[ResponseStreamEvent]:
+    """Yield the added/done events for an ``oauth_consent_request`` output item."""
+    oauth_item = OAuthConsentRequestOutputItem(
+        id=IdGenerator.new_id("oacr"),
+        response_id=response_id,
+        type="oauth_consent_request",
+        consent_link=consent_link,
+        server_label=server_label,
+    )
+    builder = stream.add_output_item(oauth_item["id"])
+    yield builder.emit_added(oauth_item)
+    yield builder.emit_done(oauth_item)
+
+
+def _consent_incomplete_reason(count: int) -> str:
+    """Return the ``response.incomplete`` reason for *count* pending consent requests."""
+    return f"OAuth consent required for {count} tool(s)."
+
+
+def _consent_server_label(content: Content) -> str:
+    """Return the server label to report for an ``oauth_consent_request`` content."""
+    label = content.additional_properties.get("server_label") if content.additional_properties else None
+    return label if isinstance(label, str) and label else "agent_framework"
 
 
 # endregion Foundry Toolbox Auth integration
@@ -353,20 +403,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             for consent_error in consent_errors_to_emit:
                 logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
-                oauth_item = OAuthConsentRequestOutputItem(
-                    id=IdGenerator.new_id("oacr"),
-                    response_id=context.response_id,
-                    type="oauth_consent_request",
-                    consent_link=consent_error.consent_url,
-                    server_label=consent_error.name,
-                )
-                builder = response_event_stream.add_output_item(oauth_item["id"])
-                yield builder.emit_added(oauth_item)
-                yield builder.emit_done(oauth_item)
+                for event in _emit_oauth_consent_item(
+                    response_event_stream,
+                    context.response_id,
+                    consent_error.consent_url,
+                    consent_error.name,
+                ):
+                    yield event
 
-            yield response_event_stream.emit_incomplete(
-                reason=f"OAuth consent required for {len(consent_errors_to_emit)} tool(s)."
-            )
+            yield response_event_stream.emit_incomplete(reason=_consent_incomplete_reason(len(consent_errors_to_emit)))
             return
 
         try:
@@ -406,6 +451,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request_failure: Exception | None = None
         save_failure: Exception | None = None
         request_interrupted = False
+        pending_consent_count = 0
 
         try:
             if self._uses_hosted_responses_history:
@@ -431,6 +477,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
                 for content in update.contents:
+                    if _consent_link_from_content(content) is not None:
+                        pending_consent_count += 1
                     for event in tracker.handle(content):
                         yield event
                     if tracker.needs_async:
@@ -480,6 +528,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         elif save_failure is not None:
             for event in self._emit_failure(response_event_stream, tracker, save_failure):
                 yield event
+        elif pending_consent_count > 0:
+            # The turn cannot finish until the user completes OAuth consent, so the response
+            # ends as `incomplete` rather than `completed`, matching the connect-time path.
+            yield response_event_stream.emit_incomplete(reason=_consent_incomplete_reason(pending_consent_count))
         else:
             yield response_event_stream.emit_completed()
 
@@ -580,6 +632,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     pass
 
             tracker = _OutputItemTracker(response_event_stream)
+            pending_consent_count = 0
 
             # Run the workflow agent in streaming mode with the new user input.
             async for update in self._agent.run(
@@ -588,6 +641,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 checkpoint_storage=write_storage,
             ):
                 for content in update.contents:
+                    if _consent_link_from_content(content) is not None:
+                        pending_consent_count += 1
                     for event in tracker.handle(content):
                         yield event
                     if tracker.needs_async:
@@ -602,7 +657,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield event
 
             await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
-            yield response_event_stream.emit_completed()
+            if pending_consent_count > 0:
+                yield response_event_stream.emit_incomplete(reason=_consent_incomplete_reason(pending_consent_count))
+            else:
+                yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.exception("Failed to produce response for workflow agent")
             for event in self._emit_failure(response_event_stream, tracker, ex):
@@ -1735,6 +1793,19 @@ async def _to_outputs(
                 "Approval request was not saved to approval storage because the approval request ID "
                 "could not be extracted from the stream event."
             )
+    elif content.type == "oauth_consent_request":
+        # An OBO/on-behalf-of tool can require consent mid-run, after the agent has already
+        # been entered. Surface the link as an `oauth_consent_request` output item so the
+        # client can render a consent prompt instead of an empty assistant turn.
+        consent_link = _consent_link_from_content(content)
+        if consent_link is not None:
+            for event in _emit_oauth_consent_item(
+                stream,
+                str(stream.response["id"]),
+                consent_link,
+                _consent_server_label(content),
+            ):
+                yield event
     else:
         # Log a warning for unsupported content types instead of raising an error to avoid breaking the response stream.
         logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
