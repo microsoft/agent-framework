@@ -362,6 +362,7 @@ ROLE_EVENT_MAP = {
     "assistant": OtelAttr.ASSISTANT_MESSAGE,
     "tool": OtelAttr.TOOL_MESSAGE,
 }
+
 FINISH_REASON_MAP = {
     "stop": "stop",
     "content_filter": "content_filter",
@@ -715,12 +716,20 @@ def create_metric_views() -> list[View]:
     ]
 
 
+# Token recognized in the OTEL_SEMCONV_STABILITY_OPT_IN env var that opts into the GenAI
+# conventions above the v1.36.0 stable release (collectively "experimental"; see
+# https://github.com/open-telemetry/semantic-conventions/blob/v1.37.0/docs/gen-ai).
+GEN_AI_LATEST_EXPERIMENTAL_OPT_IN: Final[str] = "gen_ai_latest_experimental"
+
+
 class _ObservabilitySettingsData(TypedDict, total=False):
     """TypedDict schema for observability settings fields."""
 
     enable_instrumentation: bool | None
     enable_sensitive_data: bool | None
     enable_console_exporters: bool | None
+    enable_message_events: bool | None
+    otel_semconv_stability_opt_in: str | None
     vs_code_extension_port: int | None
 
 
@@ -754,6 +763,17 @@ class ObservabilitySettings:
             Can be set via environment variable ENABLE_SENSITIVE_DATA.
         enable_console_exporters: Enable console exporters for traces, logs, and metrics.
             Default is False. Can be set via environment variable ENABLE_CONSOLE_EXPORTERS.
+        enable_message_events: Emit the stable v1.36.0 GenAI message events (``gen_ai.system.message``,
+            ``gen_ai.user.message``, ``gen_ai.assistant.message``, ``gen_ai.tool.message``, ``gen_ai.choice``).
+            Default is True. Can be set via environment variable ENABLE_MESSAGE_EVENTS. Only takes effect
+            when sensitive data capture is enabled.
+        otel_semconv_stability_opt_in: Selects which GenAI semantic-conventions release Agent Framework emits,
+            following the standard OpenTelemetry comma-separated opt-in list format. v1.36.0 is the OTel-recommended
+            stable release; every version above it is collectively "experimental". Unset (the default, unlike
+            upstream OpenTelemetry which defaults to stable-only) or a list containing
+            ``"gen_ai_latest_experimental"`` selects the conventions above v1.36.0; a list that omits that token
+            (e.g. ``""``) selects the v1.36.0 conventions instead. Can be set via environment variable
+            OTEL_SEMCONV_STABILITY_OPT_IN.
         vs_code_extension_port: The port the AI Toolkit or Microsoft Foundry VS Code extensions are listening on.
             Default is None.
             Can be set via environment variable VS_CODE_EXTENSION_PORT.
@@ -800,6 +820,9 @@ class ObservabilitySettings:
             )
 
         self.enable_console_exporters: bool = data.get("enable_console_exporters") or False
+        message_events_value = data.get("enable_message_events")
+        self.enable_message_events: bool = True if message_events_value is None else message_events_value
+        self.otel_semconv_stability_opt_in: str | None = data.get("otel_semconv_stability_opt_in")
         self.vs_code_extension_port: int | None = data.get("vs_code_extension_port")
         self.env_file_path = env_file_path
         self.env_file_encoding = env_file_encoding
@@ -851,6 +874,23 @@ class ObservabilitySettings:
         self._enable_sensitive_data = value
 
     @property
+    def use_latest_experimental_gen_ai_semconv(self) -> bool:
+        """Whether to emit the GenAI semantic conventions above the v1.36.0 stable release.
+
+        v1.36.0 is the OTel-recommended stable release; every version above it is collectively
+        "experimental".
+
+        Computed from ``otel_semconv_stability_opt_in`` (env var ``OTEL_SEMCONV_STABILITY_OPT_IN``), a
+        comma-separated opt-in list per the standard OpenTelemetry format. Agent Framework defaults this
+        to True (opted into the conventions above v1.36.0) when the setting is unset, which differs from
+        upstream OpenTelemetry's default of stable-only.
+        """
+        if self.otel_semconv_stability_opt_in is None:
+            return True
+        tokens = {token.strip() for token in self.otel_semconv_stability_opt_in.split(",")}
+        return GEN_AI_LATEST_EXPERIMENTAL_OPT_IN in tokens
+
+    @property
     def ENABLED(self) -> bool:
         """Check if model diagnostics are enabled.
 
@@ -865,6 +905,15 @@ class ObservabilitySettings:
         Sensitive events are enabled if the diagnostic with sensitive events is enabled.
         """
         return self.enable_instrumentation and self.enable_sensitive_data
+
+    @property
+    def emit_tool_call_attributes(self) -> bool:
+        """Whether to emit gen_ai.tool.call.arguments/result on execute_tool spans.
+
+        These attributes were introduced above v1.36.0, so they require both sensitive-data
+        capture and the semconv version that supports them.
+        """
+        return self.SENSITIVE_DATA_ENABLED and self.use_latest_experimental_gen_ai_semconv
 
     @property
     def is_setup(self) -> bool:
@@ -1234,6 +1283,8 @@ def configure_otel_providers(
     *,
     enable_sensitive_data: bool | None = None,
     enable_console_exporters: bool | None = None,
+    enable_message_events: bool | None = None,
+    otel_semconv_stability_opt_in: str | None = None,
     exporters: list[LogRecordExporter | SpanExporter | MetricExporter] | None = None,
     views: list[View] | None = None,
     vs_code_extension_port: int | None = None,
@@ -1274,6 +1325,13 @@ def configure_otel_providers(
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
         enable_console_exporters: Enable console exporters for traces, logs, and metrics.
             Overrides the environment variable ENABLE_CONSOLE_EXPORTERS if set. Default is None.
+        enable_message_events: Emit the stable v1.36.0 GenAI message events (``gen_ai.system.message``, etc.).
+            Overrides the environment variable ENABLE_MESSAGE_EVENTS if set. Default is None, which resolves
+            to True (events enabled).
+        otel_semconv_stability_opt_in: Selects which GenAI semantic-conventions release to emit (see
+            ``ObservabilitySettings.otel_semconv_stability_opt_in`` for the full explanation). Overrides the
+            environment variable OTEL_SEMCONV_STABILITY_OPT_IN if set. Default is None, which resolves to the
+            conventions above the v1.36.0 stable release.
         exporters: A list of custom exporters for logs, metrics or spans, or any combination.
             These will be added in addition to exporters configured via environment variables.
             Default is None.
@@ -1370,6 +1428,10 @@ def configure_otel_providers(
             settings_kwargs["enable_sensitive_data"] = enable_sensitive_data
         if enable_console_exporters is not None:
             settings_kwargs["enable_console_exporters"] = enable_console_exporters
+        if enable_message_events is not None:
+            settings_kwargs["enable_message_events"] = enable_message_events
+        if otel_semconv_stability_opt_in is not None:
+            settings_kwargs["otel_semconv_stability_opt_in"] = otel_semconv_stability_opt_in
         if vs_code_extension_port is not None:
             settings_kwargs["vs_code_extension_port"] = vs_code_extension_port
 
@@ -1377,6 +1439,8 @@ def configure_otel_providers(
         OBSERVABILITY_SETTINGS.enable_instrumentation = updated_settings.enable_instrumentation
         OBSERVABILITY_SETTINGS.enable_sensitive_data = updated_settings.enable_sensitive_data
         OBSERVABILITY_SETTINGS.enable_console_exporters = updated_settings.enable_console_exporters
+        OBSERVABILITY_SETTINGS.enable_message_events = updated_settings.enable_message_events
+        OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = updated_settings.otel_semconv_stability_opt_in
         OBSERVABILITY_SETTINGS.vs_code_extension_port = updated_settings.vs_code_extension_port
         OBSERVABILITY_SETTINGS.env_file_path = updated_settings.env_file_path
         OBSERVABILITY_SETTINGS.env_file_encoding = updated_settings.env_file_encoding
@@ -1392,6 +1456,16 @@ def configure_otel_providers(
             enable_console_exporters
             if enable_console_exporters is not None
             else _read_bool_env("ENABLE_CONSOLE_EXPORTERS")
+        )
+        OBSERVABILITY_SETTINGS.enable_message_events = (
+            enable_message_events
+            if enable_message_events is not None
+            else _read_bool_env("ENABLE_MESSAGE_EVENTS", default=True)
+        )
+        OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = (
+            otel_semconv_stability_opt_in
+            if otel_semconv_stability_opt_in is not None
+            else os.getenv("OTEL_SEMCONV_STABILITY_OPT_IN")
         )
         OBSERVABILITY_SETTINGS.vs_code_extension_port = (
             vs_code_extension_port if vs_code_extension_port is not None else _read_int_env("VS_CODE_EXTENSION_PORT")
@@ -1880,6 +1954,8 @@ class AgentTelemetryLayer:
             inner_response_telemetry_captured_fields: set[str] = set()
             inner_response_telemetry_captured_fields_token: contextvars.Token[set[str] | None] | None = None
             inner_accumulated_usage_token: contextvars.Token[UsageDetails | None] | None = None
+            # Agent Framework's agents run in-process (the actual network call happens on a nested
+            # chat span), so invoke_agent spans use the default INTERNAL kind.
             span = _start_streaming_span(attributes, OtelAttr.AGENT_NAME)
 
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
@@ -2020,6 +2096,8 @@ class AgentTelemetryLayer:
             )
             inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
             try:
+                # Agent Framework's agents run in-process (the actual network call happens on a nested
+                # chat span), so invoke_agent spans use the default INTERNAL kind.
                 with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
                     try:
                         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
@@ -2296,6 +2374,7 @@ def _activate_span(span: trace.Span) -> Generator[None]:
 def _get_span(
     attributes: dict[str, Any],
     span_name_attribute: str,
+    kind: trace.SpanKind = trace.SpanKind.INTERNAL,
 ) -> Generator[trace.Span, Any, Any]:
     """Start a span for a agent run.
 
@@ -2303,7 +2382,7 @@ def _get_span(
     """
     operation = attributes.get(OtelAttr.OPERATION, "operation")
     span_name = attributes.get(span_name_attribute, "unknown")
-    span = get_tracer().start_span(f"{operation} {span_name}")
+    span = get_tracer().start_span(f"{operation} {span_name}", kind=kind)
     span.set_attributes(attributes)
     with trace.use_span(
         span=span,
@@ -2314,7 +2393,11 @@ def _get_span(
         yield current_span
 
 
-def _start_streaming_span(attributes: dict[str, Any], span_name_attribute: str) -> trace.Span:
+def _start_streaming_span(
+    attributes: dict[str, Any],
+    span_name_attribute: str,
+    kind: trace.SpanKind = trace.SpanKind.INTERNAL,
+) -> trace.Span:
     """Start a non-current span for a streaming operation.
 
     Unlike :func:`_get_span`, the returned span is not attached to the current
@@ -2332,7 +2415,7 @@ def _start_streaming_span(attributes: dict[str, Any], span_name_attribute: str) 
     """
     operation = attributes.get(OtelAttr.OPERATION, "operation")
     span_name = attributes.get(span_name_attribute, "unknown")
-    span = get_tracer().start_span(f"{operation} {span_name}")
+    span = get_tracer().start_span(f"{operation} {span_name}", kind=kind)
     span.set_attributes(attributes)
     return span
 
@@ -2564,7 +2647,6 @@ def _otel_tool_definition(type_value: str, name_value: str, source: Mapping[str,
 OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | None, bool, Any]] = {
     "choice_count": (OtelAttr.CHOICE_COUNT, None, False, 1),
     "operation_name": (OtelAttr.OPERATION, None, False, None),
-    "system_name": (OtelAttr.SYSTEM, None, False, None),
     "provider_name": (OtelAttr.PROVIDER_NAME, None, False, None),
     "service_url": (OtelAttr.ADDRESS, None, False, None),
     "conversation_id": (OtelAttr.CONVERSATION_ID, None, True, None),
@@ -2600,6 +2682,14 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
 }
 
 
+def _provider_name_attr() -> OtelAttr:
+    """Return the provider-identifying attribute for the active GenAI semconv version.
+
+    ``gen_ai.system`` was renamed to ``gen_ai.provider.name`` in the conventions above v1.36.0.
+    """
+    return OtelAttr.PROVIDER_NAME if OBSERVABILITY_SETTINGS.use_latest_experimental_gen_ai_semconv else OtelAttr.SYSTEM
+
+
 def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     """Get the span attributes from a kwargs dictionary."""
     attributes: dict[str, Any] = {}
@@ -2633,6 +2723,11 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
             # Allow transform_func to return None to skip attribute
             if result is not None:
                 attributes[otel_key] = result
+
+    if OtelAttr.PROVIDER_NAME in attributes:
+        # Rename to the active semconv version's key; extend with a similar pop/rename if future
+        # OTel releases rename other attributes we emit.
+        attributes[_provider_name_attr()] = attributes.pop(OtelAttr.PROVIDER_NAME)
 
     return attributes
 
@@ -2732,30 +2827,44 @@ def _capture_messages(
     output: bool = False,
     finish_reason: FinishReason | None = None,
 ) -> None:
-    """Log messages with extra information."""
+    """Log messages with extra information.
+
+    Message events (``gen_ai.system.message``, etc.) are the stable v1.36.0 GenAI
+    semantic-conventions representation, emitted when ``enable_message_events`` is True
+    (the default). The ``gen_ai.input.messages``/``gen_ai.output.messages`` span
+    attributes are the representation used by conventions above v1.36.0, emitted only
+    when ``use_latest_experimental_gen_ai_semconv`` is True (also the default).
+    """
     from ._types import normalize_messages
 
-    normalized_messages = normalize_messages(messages)
-    otel_messages: list[dict[str, Any]] = []
-    for index, message in enumerate(normalized_messages):
-        # Reuse the otel message representation for logging instead of calling to_dict()
-        # to avoid expensive Pydantic serialization overhead
-        otel_message = _to_otel_message(message)
-        logger.info(
-            otel_message,
-            extra={
-                OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role),
-                OtelAttr.PROVIDER_NAME: provider_name,
-                MessageListTimestampFilter.INDEX_KEY: index,
-            },
-        )
-        otel_messages.append(otel_message)
-    if finish_reason:
-        otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
-    span.set_attribute(
-        OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES,
-        json.dumps(otel_messages, ensure_ascii=False),
-    )
+    emit_events = OBSERVABILITY_SETTINGS.enable_message_events
+    emit_span_attribute = OBSERVABILITY_SETTINGS.use_latest_experimental_gen_ai_semconv
+
+    if emit_events or emit_span_attribute:
+        normalized_messages = normalize_messages(messages)
+        otel_messages: list[dict[str, Any]] = []
+        for index, message in enumerate(normalized_messages):
+            # Reuse the otel message representation for logging instead of calling to_dict()
+            # to avoid expensive Pydantic serialization overhead
+            otel_message = _to_otel_message(message)
+            if emit_events:
+                logger.info(
+                    otel_message,
+                    extra={
+                        OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role),
+                        _provider_name_attr(): provider_name,
+                        MessageListTimestampFilter.INDEX_KEY: index,
+                    },
+                )
+            if emit_span_attribute:
+                otel_messages.append(otel_message)
+        if emit_span_attribute:
+            if finish_reason and otel_messages:
+                otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
+            span.set_attribute(
+                OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES,
+                json.dumps(otel_messages, ensure_ascii=False),
+            )
     _capture_system_instructions(span, system_instructions)
 
 
@@ -2874,6 +2983,7 @@ def _get_response_attributes(
 GEN_AI_METRIC_ATTRIBUTES = (
     OtelAttr.OPERATION,
     OtelAttr.PROVIDER_NAME,
+    OtelAttr.SYSTEM,
     OtelAttr.REQUEST_MODEL,
     OtelAttr.RESPONSE_MODEL,
     OtelAttr.ADDRESS,

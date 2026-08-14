@@ -1831,6 +1831,117 @@ def test_enable_instrumentation_reads_env_sensitive_data(monkeypatch):
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
 
 
+# region Test GenAI semconv stability opt-in
+
+
+def test_semconv_defaults_to_latest_experimental_when_unset(monkeypatch):
+    """OTEL_SEMCONV_STABILITY_OPT_IN unset → MAF defaults to the latest experimental conventions."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.delenv("OTEL_SEMCONV_STABILITY_OPT_IN", raising=False)
+    settings = ObservabilitySettings()
+
+    assert settings.otel_semconv_stability_opt_in is None
+    assert settings.use_latest_experimental_gen_ai_semconv is True
+
+
+def test_semconv_explicit_empty_opts_into_stable(monkeypatch):
+    """Explicitly setting OTEL_SEMCONV_STABILITY_OPT_IN='' opts into the stable v1.36.0 conventions."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "")
+    settings = ObservabilitySettings()
+
+    assert settings.use_latest_experimental_gen_ai_semconv is False
+
+
+def test_semconv_explicit_token_opts_into_latest_experimental(monkeypatch):
+    """Explicitly including 'gen_ai_latest_experimental' opts into the latest experimental conventions."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+    settings = ObservabilitySettings()
+
+    assert settings.use_latest_experimental_gen_ai_semconv is True
+
+
+def test_semconv_multi_value_list_checks_for_gen_ai_token(monkeypatch):
+    """OTEL_SEMCONV_STABILITY_OPT_IN supports the standard comma-separated multi-value list format."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "database, gen_ai_latest_experimental")
+    settings = ObservabilitySettings()
+    assert settings.use_latest_experimental_gen_ai_semconv is True
+
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "database,messaging")
+    settings = ObservabilitySettings()
+    assert settings.use_latest_experimental_gen_ai_semconv is False
+
+
+def test_enable_message_events_defaults_true(monkeypatch):
+    """ENABLE_MESSAGE_EVENTS unset → defaults to True (backward-compatible with pre-versioning behavior)."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.delenv("ENABLE_MESSAGE_EVENTS", raising=False)
+    settings = ObservabilitySettings()
+
+    assert settings.enable_message_events is True
+
+
+def test_enable_message_events_can_be_disabled(monkeypatch):
+    """ENABLE_MESSAGE_EVENTS=false disables the stable v1.36.0 message events."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", "false")
+    settings = ObservabilitySettings()
+
+    assert settings.enable_message_events is False
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+def test_get_span_attributes_uses_provider_name_under_latest_semconv(span_exporter: InMemorySpanExporter):
+    """Under the default (latest) semconv, the provider attribute is gen_ai.provider.name."""
+    from agent_framework.observability import _get_span_attributes  # pyright: ignore[reportPrivateUsage]
+
+    attributes = _get_span_attributes(provider_name="test_provider")
+
+    assert attributes[OtelAttr.PROVIDER_NAME] == "test_provider"
+    assert OtelAttr.SYSTEM not in attributes
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+def test_get_span_attributes_uses_system_under_stable_semconv(span_exporter: InMemorySpanExporter):
+    """Under the stable v1.36.0 semconv, the provider attribute reverts to gen_ai.system."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    attributes = observability._get_span_attributes(provider_name="test_provider")  # pyright: ignore[reportPrivateUsage]
+
+    assert attributes[OtelAttr.SYSTEM] == "test_provider"
+    assert OtelAttr.PROVIDER_NAME not in attributes
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_observability_provider_name_under_stable_semconv(
+    mock_chat_client, span_exporter: InMemorySpanExporter
+):
+    """Chat spans report gen_ai.system (not gen_ai.provider.name) under the stable v1.36.0 semconv."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    client = mock_chat_client()
+
+    messages = [Message(role="user", contents=["Test message"])]
+    span_exporter.clear()
+    await client.get_response(messages=messages, options={"model": "Test"})
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert OtelAttr.SYSTEM in span.attributes  # type: ignore[operator]
+    assert OtelAttr.PROVIDER_NAME not in span.attributes  # type: ignore[operator]
+
+
 # region Test disable_instrumentation sticky behavior
 
 
@@ -2941,6 +3052,98 @@ async def test_capture_messages_with_finish_reason(mock_chat_client, span_export
     # Check output messages include finish_reason
     output_messages = json.loads(span.attributes[OtelAttr.OUTPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert output_messages[-1].get("finish_reason") == "stop"
+
+
+# region Test _capture_messages GenAI semconv versioning
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_stable_semconv_emits_events_only(span_exporter: InMemorySpanExporter):
+    """Stable v1.36.0 conventions (opt-in list without the experimental token): events only, no span attribute."""
+    from opentelemetry import trace
+
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        tracer.start_as_current_span("test_span") as span,
+    ):
+        observability._capture_messages(  # type: ignore[reportPrivateUsage]
+            span=span,
+            provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert OtelAttr.INPUT_MESSAGES not in spans[0].attributes  # type: ignore[operator]
+    assert mock_logger_info.call_count == 1
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_latest_experimental_emits_span_attribute_only_when_events_disabled(
+    span_exporter: InMemorySpanExporter,
+):
+    """Latest experimental conventions with ENABLE_MESSAGE_EVENTS=false: span attribute only, no events."""
+    import json
+
+    from opentelemetry import trace
+
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = "gen_ai_latest_experimental"
+    observability.OBSERVABILITY_SETTINGS.enable_message_events = False
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        tracer.start_as_current_span("test_span") as span,
+    ):
+        observability._capture_messages(  # type: ignore[reportPrivateUsage]
+            span=span,
+            provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]
+    assert [msg.get("role") for msg in input_messages] == ["user"]
+    assert mock_logger_info.call_count == 0
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_defaults_emit_both_events_and_span_attribute(span_exporter: InMemorySpanExporter):
+    """Default settings (nothing configured) preserve pre-versioning behavior: both events and span attribute."""
+    import json
+
+    from opentelemetry import trace
+
+    import agent_framework.observability as observability
+
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        tracer.start_as_current_span("test_span") as span,
+    ):
+        observability._capture_messages(  # type: ignore[reportPrivateUsage]
+            span=span,
+            provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]
+    assert [msg.get("role") for msg in input_messages] == ["user"]
+    assert mock_logger_info.call_count == 1
 
 
 # region Test agent streaming exception

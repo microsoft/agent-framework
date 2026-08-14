@@ -29,6 +29,8 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
         "ENABLE_INSTRUMENTATION",
         "ENABLE_SENSITIVE_DATA",
         "ENABLE_CONSOLE_EXPORTERS",
+        "ENABLE_MESSAGE_EVENTS",
+        "OTEL_SEMCONV_STABILITY_OPT_IN",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
         "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",

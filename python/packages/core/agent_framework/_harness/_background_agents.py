@@ -364,16 +364,10 @@ class BackgroundAgentsProvider(ContextProvider):
         if runtime is None or runtime.closed:
             return
 
-        pending = [
-            task
-            for task in list(runtime.in_flight_tasks.values())
-            if not task.done()
-        ]
+        pending = [task for task in list(runtime.in_flight_tasks.values()) if not task.done()]
 
         if pending and not cancel_running:
-            raise RuntimeError(
-                f"Cannot release session {session_id}: {len(pending)} tasks still running."
-            )
+            raise RuntimeError(f"Cannot release session {session_id}: {len(pending)} tasks still running.")
 
         runtime.closed = True
 
