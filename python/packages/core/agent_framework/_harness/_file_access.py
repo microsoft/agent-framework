@@ -325,7 +325,7 @@ class FileSearchMatch(SerializationMixin):
 
         Args:
             line_number: The 1-based line number where the match was found.
-            line: The content of the matching line (trailing ``\r`` removed).
+            line: The matching line verbatim, including its own terminator.
         """
         if line_number < 1:
             raise ValueError("line_number must be a positive integer.")
@@ -507,27 +507,30 @@ class FileStoreEntry(SerializationMixin):
 def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -> FileSearchResult | None:
     r"""Search one file's content and return a :class:`FileSearchResult` if any lines match.
 
-    Lines are split on ``\n`` (so ``\r`` at the end of each line is stripped on
-    the matching line itself). A snippet of up to ``±_SEARCH_SNIPPET_RADIUS``
-    characters around the first match is included. Returns ``None`` when no
-    lines match.
+    Lines are split by :func:`_split_lines_keepends` and reported verbatim, terminator
+    included, so a match can be fed straight back to ``replace_lines`` as a ``new_line``
+    without losing a ``\r\n``. The pattern is matched against the line without its
+    trailing ``\n``, so ``^`` and ``$`` anchor to the line as before. A snippet of up to
+    ``±_SEARCH_SNIPPET_RADIUS`` characters around the first match is included. Returns
+    ``None`` when no lines match.
     """
-    lines = content.split("\n")
+    lines = _split_lines_keepends(content)
     matching_lines: list[FileSearchMatch] = []
     first_snippet: str | None = None
     line_start_offset = 0
 
     for line_number, line in enumerate(lines, start=1):
-        match = regex.search(line)
+        scanned = line.removesuffix("\n")
+        match = regex.search(scanned)
         if match is not None:
-            matching_lines.append(FileSearchMatch(line_number=line_number, line=line.rstrip("\r")))
+            matching_lines.append(FileSearchMatch(line_number=line_number, line=line))
             if first_snippet is None:
                 char_index = line_start_offset + match.start()
                 snippet_start = max(0, char_index - _SEARCH_SNIPPET_RADIUS)
                 snippet_end = min(len(content), char_index + (match.end() - match.start()) + _SEARCH_SNIPPET_RADIUS)
                 first_snippet = content[snippet_start:snippet_end]
         # Advance past this line and the implied '\n' separator.
-        line_start_offset += len(line) + 1
+        line_start_offset += len(scanned) + 1
 
     if not matching_lines:
         return None
@@ -1632,6 +1635,8 @@ class FileAccessProvider(ContextProvider):
             Leave empty or omit to search all files.
             Returns matching results whose file_name values are paths relative to the store root
             (directly usable with file_access_read), along with snippets and matching lines with line numbers.
+            Each matching line is verbatim, including its own line terminator, so it can be reused as a
+            file_access_replace_lines new_line.
             The regex_pattern must be 256 characters or fewer.
             """
             glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None

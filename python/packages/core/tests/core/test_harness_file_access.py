@@ -175,7 +175,7 @@ async def test_in_memory_store_search_returns_matches_with_snippets() -> None:
     results = await store.search("", "error", "*.md")
     assert [result.file_name for result in results] == ["a.md"]
     matching_lines = results[0].matching_lines
-    assert matching_lines == [FileSearchMatch(line_number=2, line="This line has ERROR inside")]
+    assert matching_lines == [FileSearchMatch(line_number=2, line="This line has ERROR inside\n")]
     assert "ERROR" in results[0].snippet
 
     # No glob -> searches every file.
@@ -348,7 +348,7 @@ async def test_filesystem_store_search_matches_lines_and_filters_globs(tmp_path:
 
     results = await store.search("", "error", "*.md")
     assert [result.file_name for result in results] == ["a.md"]
-    assert results[0].matching_lines == [FileSearchMatch(line_number=2, line="ERROR happens")]
+    assert results[0].matching_lines == [FileSearchMatch(line_number=2, line="ERROR happens\n")]
     assert "ERROR" in results[0].snippet
 
     results_all = await store.search("", "error")
@@ -1298,6 +1298,29 @@ async def test_file_access_read_lines_round_trips_into_replace_lines(
     # Rewriting the line with the text it reported keeps the CRLF terminator intact.
     await replace_lines.invoke(
         arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": shown.removeprefix("2\t").upper()}]}
+    )
+    assert _text((await read.invoke(arguments={"file_name": "a.txt"}))[0]) == "alpha\r\nBETA\r\n"
+
+
+async def test_file_access_grep_reports_lines_verbatim(chat_client_base: SupportsChatGetResponse) -> None:
+    """A grep hit keeps its terminator, so it round-trips into replace_lines like a read_lines row."""
+    tools = await _prepare_access_tools(chat_client_base)
+    save = _tool_by_name(tools, "file_access_write")
+    read = _tool_by_name(tools, "file_access_read")
+    grep = _tool_by_name(tools, "file_access_grep")
+    replace_lines = _tool_by_name(tools, "file_access_replace_lines")
+
+    await save.invoke(arguments={"file_name": "a.txt", "content": "alpha\r\nbeta\r\n", "overwrite": True})
+    found = await grep.invoke(arguments={"regex_pattern": "beta", "glob_pattern": "a.txt"})
+    hit = json.loads(_text(found[0]))[0]["matching_lines"][0]
+    assert hit["line_number"] == 2
+    assert hit["line"] == "beta\r\n"
+
+    await replace_lines.invoke(
+        arguments={
+            "file_name": "a.txt",
+            "edits": [{"line_number": hit["line_number"], "new_line": hit["line"].upper()}],
+        }
     )
     assert _text((await read.invoke(arguments={"file_name": "a.txt"}))[0]) == "alpha\r\nBETA\r\n"
 
