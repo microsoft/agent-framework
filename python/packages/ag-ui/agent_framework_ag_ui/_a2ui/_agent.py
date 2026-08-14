@@ -509,30 +509,27 @@ class A2UIAgent:
         invocation session, and approval controls all apply. A direct ``tool.invoke()``
         would bypass them.
 
-        Returns ``(results, control, should_terminate)``: ``results`` are the
-        ``function_result`` contents; ``control`` are any non-result contents the executor
-        surfaced (e.g. a ``function_approval_request`` for an ``always_require`` tool) that
-        must reach the client rather than be dropped; ``should_terminate`` is the executor's
-        loop-termination signal. Execution failures surface as error results rather than
-        aborting the surface generation.
+        Delegates to the core ``execute_function_call_batch`` so the middleware pipeline
+        (static client + runtime, with bare objects and bundles normalized), the
+        invocation ``session``, ``config``, and the result/control/termination split are
+        owned by one core executor rather than reproduced here — the class stays focused on
+        render-specific streaming. Returns ``(results, control, should_terminate)`` where
+        ``control`` are non-result contents (e.g. a ``function_approval_request``) that must
+        reach the client. Execution failures surface as error results rather than aborting
+        the surface generation.
         """
-        from agent_framework._middleware import FunctionMiddlewarePipeline
-        from agent_framework._tools import _try_execute_function_call_groups
+        from agent_framework._tools import execute_function_call_batch
 
         client = getattr(self.inner_agent, "client", None)
-        pipeline = FunctionMiddlewarePipeline(
-            *(getattr(client, "function_middleware", None) or ()),
-            *(run_kwargs.get("middleware") or ()),
-        )
-        custom_args = {k: v for k, v in run_kwargs.items() if k not in ("options", "middleware")}
         try:
-            groups, should_terminate = await _try_execute_function_call_groups(
-                custom_args=custom_args,
-                function_calls=server_calls,
-                tools=tools,
+            outcome = await execute_function_call_batch(
+                server_calls,
+                tools,
+                session=session,
                 config=config,
-                invocation_session=session,
-                middleware_pipeline=pipeline,
+                static_function_middleware=getattr(client, "function_middleware", None) or (),
+                runtime_middleware=run_kwargs.get("middleware"),
+                custom_args={k: v for k, v in run_kwargs.items() if k not in ("options", "middleware")},
             )
         except Exception as exc:  # noqa: BLE001 — surface as tool results, never abort the surface
             logger.warning("A2UI: server tool execution failed during a mixed generate turn: %s", exc)
@@ -543,12 +540,7 @@ class A2UIAgent:
                 for c in server_calls
             ]
             return errors, [], False
-        results: list[Any] = []
-        control: list[Any] = []
-        for group in groups:
-            for content in group:
-                (results if getattr(content, "type", None) == "function_result" else control).append(content)
-        return results, control, should_terminate
+        return outcome.results, outcome.control, outcome.should_terminate
 
     async def _invoke_render_subagent(self, prompt: str, conversation: list[Any]) -> dict[str, Any] | None:
         """Run the render sub-agent (forced render_a2ui) and return its args, or None."""
@@ -580,20 +572,25 @@ class A2UIAgent:
             input_model=_generate_tool_schema(),
         )
 
-        # The inner agent's function-invocation controls, so mixed-batch server-tool
-        # execution honors the same invocation toggle and shared per-request call budget
-        # the core loop enforces (tracked cumulatively across A2UI planner rounds).
+        # The inner agent's function-invocation controls, so the A2UI planner loop honors
+        # the same invocation toggle, iteration cap, and per-request call budget the core
+        # loop enforces. generate_a2ui and server tools BOTH charge the call budget, and
+        # the planner rounds are capped by max_iterations, so a generate-only planner
+        # cannot run more render/tool calls than the configured limits (tracked
+        # cumulatively across rounds).
         _client = getattr(self.inner_agent, "client", None)
         fi_config = normalize_function_invocation_configuration(
             getattr(_client, "function_invocation_configuration", None)
         )
         fi_enabled = fi_config.get("enabled", True)
         max_calls = fi_config.get("max_function_calls")
+        max_iters = fi_config.get("max_iterations")
+        max_rounds = MAX_PLANNER_ROUNDS if max_iters is None else min(MAX_PLANNER_ROUNDS, max_iters)
         calls_used = 0
 
         pending: list[Any] = history
         pending_session = session
-        for _round in range(1, MAX_PLANNER_ROUNDS + 1):
+        for _round in range(1, max_rounds + 1):
             text_contents: list[Content] = []
             # Coalesce every streamed function_call fragment by call id — generate_a2ui
             # AND any ordinary tool the planner calls in the same turn. A single call is
@@ -719,6 +716,16 @@ class A2UIAgent:
                     )
                     calls_used += len(runnable)
 
+            # generate_a2ui also charges the call budget — each is a render-subagent
+            # invocation — so a generate-only planner cannot exceed max_function_calls
+            # across rounds. Surfaces over budget are deferred (not rendered) and stop the run.
+            deferred_generate: list[Content] = []
+            if max_calls is not None:
+                allowed = max(0, max_calls - calls_used)
+                deferred_generate = generate_calls[allowed:]
+                generate_calls = generate_calls[:allowed]
+            calls_used += len(generate_calls)
+
             generate_results: list[Content] = []
             for call in generate_calls:
                 box: list[Any] = [None]
@@ -740,7 +747,14 @@ class A2UIAgent:
             # unbalanced assistant tool_call (which the provider rejects before the frontend
             # or a follow-up run resumes it) or exceed the budget.
             budget_exhausted = max_calls is not None and calls_used >= max_calls
-            if client_calls or deferred_calls or server_control or server_terminated or budget_exhausted:
+            if (
+                client_calls
+                or deferred_calls
+                or deferred_generate
+                or server_control
+                or server_terminated
+                or budget_exhausted
+            ):
                 return
 
             assistant_contents = [*text_contents, *server_calls, *generate_calls]

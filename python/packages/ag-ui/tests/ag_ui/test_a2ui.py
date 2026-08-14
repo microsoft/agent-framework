@@ -1248,9 +1248,74 @@ def test_mixed_batch_honors_max_function_calls_budget_across_rounds():
         return json.dumps({"ok": True})
 
     search_tool = FunctionTool(name="search", description="s", func=search)
-    inner = _RepeatSearchGenerateInner(_FIConfigClient({"max_function_calls": 2}))
+    # Budget 4: each round spends 1 on search + 1 on generate, so search runs on rounds 1
+    # and 2 (cumulative 4) then the budget stops the loop — not once per planner round.
+    inner = _RepeatSearchGenerateInner(_FIConfigClient({"max_function_calls": 4}))
     asyncio.run(_drive(A2UIAgent(inner, _RenderSub()), tools=[search_tool]))
-    assert len(ran) == 2  # capped cumulatively across rounds, not once per round
+    assert len(ran) == 2  # capped cumulatively across rounds (search + generate both charge)
+
+
+def test_generate_only_planner_honors_call_budget():
+    # A generate-only planner (no server tool) must not run more render-subagent calls than
+    # max_function_calls: generate_a2ui charges the budget too.
+    class _RepeatGenerateInner:
+        client = _FIConfigClient({"max_function_calls": 1})
+
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+            self.calls += 1
+
+            async def gen():
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="g1", name="generate_a2ui", arguments=json.dumps({"intent": "create"})
+                        )
+                    ],
+                )
+
+            return gen()
+
+    inner = _RepeatGenerateInner()
+    kinds = asyncio.run(_drive(A2UIAgent(inner, _RenderSub())))
+    gen_results = [k for k in kinds if k[0] == "result" and k[1] == "g1"]
+    assert len(gen_results) == 1  # one render, not one per planner round
+    assert inner.calls == 1  # budget stopped the loop after the first surface
+
+
+def test_generate_only_planner_honors_max_iterations():
+    # The planner rounds are capped by max_iterations, so a generate-every-round planner
+    # renders at most max_iterations surfaces.
+    class _RepeatGenerateInner:
+        client = _FIConfigClient({"max_iterations": 1})
+
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+            self.calls += 1
+
+            async def gen():
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="g1", name="generate_a2ui", arguments=json.dumps({"intent": "create"})
+                        )
+                    ],
+                )
+
+            return gen()
+
+    inner = _RepeatGenerateInner()
+    kinds = asyncio.run(_drive(A2UIAgent(inner, _RenderSub())))
+    # One planner round (max_iterations=1) -> exactly one surface rendered, not one per
+    # round up to MAX_PLANNER_ROUNDS.
+    gen_results = [k for k in kinds if k[0] == "result" and k[1] == "g1"]
+    assert len(gen_results) == 1
 
 
 def test_mixed_batch_skips_server_tool_when_invocation_disabled():
