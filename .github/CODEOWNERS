@@ -3,11 +3,13 @@
 #
 # Policy: a PR needs one approval, and it must come from a code owner of the changed
 # files ("Require review from Code Owners" + "Required approvals: 1" on `main`).
-# A PR touching several modules therefore needs an approval from each module's owners.
+# A PR touching several CODEOWNERS patterns will request review from the applicable
+# code owners, but an approval from any applicable code owner is sufficient to satisfy
+# GitHub's required-code-owner review.
 #
 # Order matters: the LAST matching pattern wins, so a module rule fully replaces the
-# catch-all rather than adding to it. @chetantoshniwal leads every line as a backup
-# approver.
+# catch-all rather than adding to it. @chetantoshniwal is included on every line as a
+# repository-wide fallback owner. All owners on a line have equal approval authority.
 #
 # CONVENTION: owners are written in the order
 #   @chetantoshniwal <owner A> <owner B> [...]
@@ -17,8 +19,7 @@
 # RULE: every path must list at least two owners besides @chetantoshniwal. An author
 # cannot approve their own PR, so a path with a single module owner leaves only Chetan
 # to review whenever that owner is the author, which defeats the point of naming a
-# module owner. GitHub does not enforce this -- it is a convention to check when editing
-# this file.
+# module owner.
 #
 # Samples: owned by all core developers of that language, not by the module a sample
 # demonstrates. Any core Python developer can approve any Python sample, and any core
@@ -29,7 +30,7 @@
 # are covered by that package's rule instead, since they sit under its path.
 
 # Default owners for everything not matched by a module rule below.
-*                                                               @chetantoshniwal
+*                                                               @chetantoshniwal @westey-m
 
 # Repository-level paths: every core Agent Framework developer is a code owner, so any
 # one of them can approve. Be explicit now and we can use the AgentFramework team in the future.
@@ -86,7 +87,7 @@
 /python/packages/redis/                                         @chetantoshniwal @eavanvalkenburg @giles17
 /python/packages/tools/                                         @chetantoshniwal @eavanvalkenburg @giles17
 
-# Core .Net developers: @peibekwe @rogerbarreto @SergeyMenshykh @westey-m
+# Core .NET developers: @peibekwe @rogerbarreto @SergeyMenshykh @westey-m
 /dotnet                                                         @chetantoshniwal @peibekwe @rogerbarreto @SergeyMenshykh @westey-m
 
 # .NET projects
