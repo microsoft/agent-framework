@@ -55,9 +55,9 @@ async def validate_result(summary: str) -> bool:
 storage = InMemoryCheckpointStorage()
 
 
-# checkpoint_storage tells @workflow where to persist step results.
+# Build with checkpoint_storage to persist step results.
 # Each @step saves a checkpoint after it completes.
-@workflow(checkpoint_storage=storage)
+@workflow
 async def data_pipeline(url: str) -> str:
     """Mix of @step functions and plain functions."""
     raw = await fetch_data(url)
@@ -68,9 +68,11 @@ async def data_pipeline(url: str) -> str:
 
 
 async def main():
+    workflow_instance = data_pipeline.build(checkpoint_storage=storage)
+
     # --- Run 1: Everything executes normally ---
     print("=== Run 1: Fresh execution ===")
-    result = await data_pipeline.run("https://example.com/api/data")
+    result = await workflow_instance.run("https://example.com/api/data")
     print(f"Output: {result.get_outputs()[0]}")
     print(f"fetch_calls={fetch_calls}, transform_calls={transform_calls}")
 
@@ -85,9 +87,10 @@ async def main():
     # Only validate_result() (no @step) actually runs again.
     print("\n=== Run 2: Restored from checkpoint ===")
     latest = await storage.get_latest(workflow_name="data_pipeline")
-    assert latest is not None
+    if latest is None:
+        raise RuntimeError("Expected a checkpoint from the first run.")
 
-    result2 = await data_pipeline.run(checkpoint_id=latest.checkpoint_id)
+    result2 = await workflow_instance.run(checkpoint_id=latest.checkpoint_id)
     print(f"Output: {result2.get_outputs()[0]}")
     print(f"fetch_calls={fetch_calls}, transform_calls={transform_calls}")
     print("(call counts unchanged — @step results were restored from checkpoint)")

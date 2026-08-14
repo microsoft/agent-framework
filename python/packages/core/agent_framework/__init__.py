@@ -321,6 +321,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
     "._workflows._function_executor": ("FunctionExecutor", "executor"),
     "._workflows._functional": (
         "FunctionalWorkflow",
+        "FunctionalWorkflowDefinition",
         "FunctionalWorkflowAgent",
         "RunContext",
         "StepWrapper",
@@ -478,6 +479,7 @@ __all__ = [
     "FunctionTool",
     "FunctionalWorkflow",
     "FunctionalWorkflowAgent",
+    "FunctionalWorkflowDefinition",
     "GeneratedEmbeddings",
     "GraphConnectivityError",
     "HistoryProvider",

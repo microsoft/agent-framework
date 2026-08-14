@@ -22,7 +22,7 @@ from ag_ui.core import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from agent_framework import Workflow
+from agent_framework import CheckpointStorage, Workflow
 from agent_framework._telemetry import mark_feature_used
 
 from ._feature_usage import FeatureIndex
@@ -45,6 +45,17 @@ from ._workflow_run import run_workflow_stream
 logger = logging.getLogger(__name__)
 
 WorkflowFactory = Callable[[str], Workflow]
+
+
+def _checkpoint_id_from_input(input_data: dict[str, Any]) -> str | None:
+    """Read an optional checkpoint id to resume from out of the AG-UI forwarded props."""
+    forwarded_props = input_data.get("forwarded_props") or input_data.get("forwardedProps")
+    if not isinstance(forwarded_props, dict):
+        return None
+    checkpoint_id = forwarded_props.get("checkpoint_id") or forwarded_props.get("checkpointId")
+    if checkpoint_id is None:
+        return None
+    return str(checkpoint_id)
 
 
 class _WorkflowSnapshotBuilder:
@@ -192,6 +203,7 @@ class AgentFrameworkWorkflow:
         name: str | None = None,
         description: str | None = None,
         snapshot_store: AGUIThreadSnapshotStore | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
     ) -> None:
         """Initialize the AG-UI workflow wrapper.
 
@@ -202,6 +214,11 @@ class AgentFrameworkWorkflow:
             description: Optional workflow description.
             snapshot_store: Optional AG-UI Thread Snapshot store. Snapshot persistence remains inactive unless
                 endpoint setup also provides an explicit Snapshot Scope resolver.
+            checkpoint_storage: Optional workflow checkpoint storage. When provided, each run
+                creates a checkpoint at the end of every superstep (matching
+                ``agent_framework.Workflow.run(checkpoint_storage=...)``), and a run may resume
+                from a persisted checkpoint by supplying its id in the AG-UI forwarded props
+                (``forwarded_props: {"checkpoint_id": ...}``). Required for checkpoint resume.
         """
         if workflow is not None and workflow_factory is not None:
             raise ValueError("Pass either workflow= or workflow_factory=, not both.")
@@ -216,6 +233,7 @@ class AgentFrameworkWorkflow:
         self.name = name if name is not None else getattr(workflow, "name", "workflow")
         self.description = description if description is not None else getattr(workflow, "description", "")
         self.snapshot_store = snapshot_store
+        self.checkpoint_storage = checkpoint_storage
 
     @staticmethod
     def _thread_id_from_input(input_data: dict[str, Any]) -> str:
@@ -258,6 +276,19 @@ class AgentFrameworkWorkflow:
         """Run the wrapped workflow and yield AG-UI events.
 
         Subclasses may override this to provide custom AG-UI streams.
+
+        When ``checkpoint_storage`` is configured on this wrapper, the underlying core
+        workflow creates a checkpoint at the end of each superstep, and a run may resume
+        from a persisted checkpoint by supplying its id in the AG-UI forwarded props
+        (``forwarded_props: {"checkpoint_id": ...}``), which restores the persisted
+        workflow state instead of starting a fresh turn.
+
+        Note:
+            Checkpointing (the ``agent_framework`` workflow checkpoint mechanism) is
+            independent from AG-UI Thread Snapshot persistence (``snapshot_store``).
+            The two can be used together, but they persist different things: snapshots
+            capture replayable protocol output for a thread, while checkpoints capture
+            executor/runtime state for resumable execution.
         """
         mark_feature_used(FeatureIndex.AG_UI)
         thread_id = self._thread_id_from_input(input_data)
@@ -271,7 +302,17 @@ class AgentFrameworkWorkflow:
             thread_id=thread_id,
         )
 
-        if snapshot_session.enabled and not raw_messages and resume_payload is None:
+        checkpoint_storage = self.checkpoint_storage
+        checkpoint_id = _checkpoint_id_from_input(input_data)
+        if checkpoint_id is not None and checkpoint_storage is None:
+            raise ValueError(
+                "Resuming from a checkpoint requires checkpoint_storage to be configured on "
+                "AgentFrameworkWorkflow (or the AG-UI endpoint)."
+            )
+
+        # A checkpoint resume legitimately carries no new messages; it must reach the
+        # core workflow's restore path rather than replaying a stored thread snapshot.
+        if checkpoint_id is None and snapshot_session.enabled and not raw_messages and resume_payload is None:
             async for event in snapshot_session.hydrate_events(run_id=run_id):
                 yield event
             return
@@ -296,8 +337,9 @@ class AgentFrameworkWorkflow:
 
         workflow = self._resolve_workflow(thread_id, snapshot_scope)
         builder_seed_messages = raw_messages
-        if resume_payload is not None:
-            # Resume requests carry only the synthesized interrupt response, so seed
+        if resume_payload is not None or (checkpoint_id is not None and not raw_messages):
+            # Resume requests carry only the synthesized interrupt response, and a
+            # checkpoint-only resume carries no new messages at all; in both cases seed
             # the builder with stored history to avoid persisting a truncated thread.
             builder_seed_messages = snapshot_session.resume_seeded_messages(builder_seed_messages)
         snapshot_builder = _WorkflowSnapshotBuilder(builder_seed_messages) if snapshot_session.enabled else None
@@ -308,7 +350,9 @@ class AgentFrameworkWorkflow:
             if isinstance(state_snapshot, dict):
                 snapshot_builder.state = cast(dict[str, Any], state_snapshot)
         run_error_emitted = False
-        async for event in run_workflow_stream(input_data, workflow):
+        async for event in run_workflow_stream(
+            input_data, workflow, checkpoint_storage=checkpoint_storage, checkpoint_id=checkpoint_id
+        ):
             if snapshot_builder is not None:
                 snapshot_builder.observe(event)
             if isinstance(event, RunErrorEvent):
