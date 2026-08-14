@@ -255,9 +255,9 @@ class FileCheckpointStorage:
     for human-readable checkpoint files while preserving the ability to store complex Python objects.
 
     By default, checkpoint deserialization is restricted to a built-in set of safe Python types
-    (primitives, datetime, uuid, ...), all ``agent_framework`` internal types, and OpenAI SDK types
-    (``openai.types``). To allow additional application-specific types, pass them via the
-    ``allowed_checkpoint_types`` parameter using ``"module:qualname"`` format.
+    (primitives, datetime, uuid, ...), all ``agent_framework`` and ``agent_framework_orchestrations``
+    internal types, and OpenAI SDK types (``openai.types``). To allow additional application-specific
+    types, pass them via the ``allowed_checkpoint_types`` parameter using ``"module:qualname"`` format.
 
     Example::
 

@@ -10,9 +10,10 @@ This hybrid approach provides:
 When ``allowed_types`` is supplied to :func:`decode_checkpoint_value`, a
 ``RestrictedUnpickler`` is used that limits which classes may be instantiated
 during deserialization.  The default built-in safe set covers common Python
-value types (primitives, datetime, uuid, ...), all ``agent_framework`` internal
-types, and all ``openai.types`` types.  Callers can extend the set by passing
-additional ``"module:qualname"`` strings.
+value types (primitives, datetime, uuid, ...), all ``agent_framework`` and
+``agent_framework_orchestrations`` internal types, and all ``openai.types``
+types.  Callers can extend the set by passing additional ``"module:qualname"``
+strings.
 
 Security Model
 --------------
