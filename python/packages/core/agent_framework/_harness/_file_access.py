@@ -1369,12 +1369,12 @@ class FileAccessProvider(ContextProvider):
             instructions: Optional instruction override. When ``None`` the
                 default file-access instructions are used.
             disable_write_tools: When ``True``, only the read-only tools
-                (``file_access_read``, ``file_access_ls``, ``file_access_grep``)
+                (``file_access_read``, ``file_access_read_lines``, ``file_access_ls``, ``file_access_grep``)
                 are advertised; the write tools (``file_access_write``,
                 ``file_access_delete``, ``file_access_replace``,
                 ``file_access_replace_lines``) are hidden from the model.
             disable_readonly_tool_approval: When ``True``, the read-only tools
-                (``file_access_read``, ``file_access_ls``, ``file_access_grep``)
+                (``file_access_read``, ``file_access_read_lines``, ``file_access_ls``, ``file_access_grep``)
                 are registered with ``approval_mode="never_require"`` so they run
                 without host approval. Defaults to ``False`` (approval required).
             disable_write_tool_approval: When ``True``, the write tools
@@ -1417,10 +1417,10 @@ class FileAccessProvider(ContextProvider):
         The tools exposed by :class:`FileAccessProvider` always require approval.
         Pass this rule to :class:`~agent_framework.ToolApprovalMiddleware` (via
         ``auto_approval_rules``) to automatically approve the tools that read
-        from the store (``file_access_read``, ``file_access_ls``, and
-        ``file_access_grep``), while still prompting for the tools that modify it
-        (``file_access_write``, ``file_access_delete``, ``file_access_replace``,
-        and ``file_access_replace_lines``).
+        from the store (``file_access_read``, ``file_access_read_lines``,
+        ``file_access_ls``, and ``file_access_grep``), while still prompting for
+        the tools that modify it (``file_access_write``, ``file_access_delete``,
+        ``file_access_replace``, and ``file_access_replace_lines``).
 
         Hosted-tool calls (those carrying a ``server_label``) are never
         auto-approved, even when their name matches a file-access tool, so the
@@ -1429,11 +1429,12 @@ class FileAccessProvider(ContextProvider):
         .. warning::
             **Security — avoid tool-name collisions.** This rule approves local
             tool calls by tool name only (``file_access_read``,
-            ``file_access_ls``, and ``file_access_grep``). Any other local tool
-            registered under one of these names — for example a tool with a
-            caller-configurable name such as the shell tool — may also be
-            auto-approved, bypassing the human approval boundary. Ensure no other
-            tool collides with these reserved names.
+            ``file_access_read_lines``, ``file_access_ls``, and
+            ``file_access_grep``). Any other local tool registered under one of
+            these names — for example a tool with a caller-configurable name such
+            as the shell tool — may also be auto-approved, bypassing the human
+            approval boundary. Ensure no other tool collides with these reserved
+            names.
 
         Args:
             function_call: The pending ``function_call`` content.
