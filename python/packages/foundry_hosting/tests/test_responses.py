@@ -16,6 +16,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Literal, cast, overload
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -3919,8 +3920,38 @@ class TestMidRunOAuthConsentSurfacing:
 
         incomplete = [e for e in events if e["event"] == "response.incomplete"]
         assert len(incomplete) == 1
+        assert "2 tool(s)" in json.dumps(incomplete[0]["data"])
 
-    @pytest.mark.parametrize("consent_link", ["", "http://consent.example.com/obo", "not-a-url"])
+    async def test_repeated_consent_content_emits_one_item(self) -> None:
+        """The same consent request arriving twice must not produce duplicate prompts."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_oauth_consent_request(consent_link="https://consent.example.com/obo")],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_oauth_consent_request(consent_link="https://consent.example.com/obo")],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=True)
+        events = _parse_sse_events(resp.text)
+        added = [e for e in events if e["event"] == "response.output_item.added"]
+        oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]
+        assert len(oauth_added) == 1
+
+        incomplete = [e for e in events if e["event"] == "response.incomplete"]
+        assert len(incomplete) == 1
+        assert "1 tool(s)" in json.dumps(incomplete[0]["data"])
+
+    @pytest.mark.parametrize(
+        "consent_link",
+        ["", "http://consent.example.com/obo", "not-a-url", "https:///path", "https://[broken", "https://@"],
+    )
     async def test_invalid_consent_link_is_skipped(self, consent_link: str) -> None:
         agent = _make_agent(
             stream_updates=[
@@ -3939,8 +3970,53 @@ class TestMidRunOAuthConsentSurfacing:
 
         added = [e for e in events if e["event"] == "response.output_item.added"]
         assert not any(e["data"]["item"]["type"] == "oauth_consent_request" for e in added)
-        # A link we cannot render is not a consent prompt, so the turn still completes.
+        # A link we cannot render is not a consent prompt, so the turn still completes
+        # rather than failing the whole response.
         assert types[-1] == "response.completed"
+        assert "response.failed" not in types
+
+    async def test_server_label_falls_back_to_raw_representation(self) -> None:
+        """The Foundry parser carries ``server_label`` in additional properties, but a
+        content that only has the provider's raw item must still report its label.
+        """
+        raw_item = SimpleNamespace(server_label="raw-obo-mcp")
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_oauth_consent_request(
+                            consent_link="https://consent.example.com/obo",
+                            raw_representation=raw_item,
+                        )
+                    ],
+                    role="assistant",
+                )
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        body = resp.json()
+        oauth_items = [it for it in body["output"] if it["type"] == "oauth_consent_request"]
+        assert len(oauth_items) == 1
+        assert oauth_items[0]["server_label"] == "raw-obo-mcp"
+
+    async def test_connect_time_invalid_consent_link_fails_the_response(self) -> None:
+        """An entry-time consent error whose link cannot be rendered leaves nothing for the
+        user to act on, so the response fails instead of reporting ``incomplete``.
+        """
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        agent.__aenter__.side_effect = _make_consent_error("http://insecure.example.com/consent")
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=False)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert not any(it["type"] == "oauth_consent_request" for it in body.get("output", []))
+        agent.run.assert_not_called()
 
 
 # endregion
@@ -4238,13 +4314,18 @@ class _ToolApprovalWorkflowAgentMock(SupportsAgentRun):
 
 def _build_text_workflow_agent(text: str) -> WorkflowAgent:
     """Build a minimal ``WorkflowAgent`` whose inner agent emits a fixed text."""
+    return _build_contents_workflow_agent([Content.from_text(text=text)])
+
+
+def _build_contents_workflow_agent(contents: list[Content]) -> WorkflowAgent:
+    """Build a minimal ``WorkflowAgent`` whose inner agent emits fixed contents."""
 
     class _TextAgent(SupportsAgentRun):
-        def __init__(self, name: str, text: str) -> None:
+        def __init__(self, name: str, contents: list[Content]) -> None:
             self.id = str(uuid.uuid4())
             self.name = name
             self.description: str | None = None
-            self._text = text
+            self._contents = contents
 
         def create_session(self, **kwargs: Any) -> AgentSession:
             del kwargs
@@ -4286,19 +4367,19 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
         ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
             del messages, session, kwargs
             assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
-            text = self._text
+            agent_contents = self._contents
             name = self.name
 
             async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
                 yield AgentResponseUpdate(
-                    contents=[Content.from_text(text=text)],
+                    contents=agent_contents,
                     role="assistant",
                     author_name=name,
                 )
 
             return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
 
-    inner = _TextAgent("text-agent", text)
+    inner = _TextAgent("text-agent", contents)
 
     @executor
     async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
@@ -4372,6 +4453,54 @@ class TestWorkflowAgentHosting:
         assert "response.output_text.delta" in types
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert any(e["data"]["text"] == "hello stream" for e in text_done)
+
+    async def test_mid_run_consent_emits_oauth_item_and_incomplete(self) -> None:
+        """A workflow that surfaces a consent request must emit the output item and end
+        ``incomplete``, after its checkpoint finalization, just like the regular agent path.
+        """
+        workflow_agent = _build_contents_workflow_agent([
+            Content.from_oauth_consent_request(
+                consent_link="https://consent.example.com/obo",
+                additional_properties={"server_label": "obo-mcp"},
+            )
+        ])
+        server = _make_server(workflow_agent)
+
+        resp = await _post(server, input_text="hi", stream=True)
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+
+        assert types[-1] == "response.incomplete"
+
+        added = [e for e in events if e["event"] == "response.output_item.added"]
+        oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]
+        assert len(oauth_added) == 1
+        assert oauth_added[0]["data"]["item"]["consent_link"] == "https://consent.example.com/obo"
+        assert oauth_added[0]["data"]["item"]["server_label"] == "obo-mcp"
+
+        done = [e for e in events if e["event"] == "response.output_item.done"]
+        assert any(e["data"]["item"]["type"] == "oauth_consent_request" for e in done)
+
+        # A WorkflowAgent replays the inner agent's content as workflow output, so the same
+        # consent request reaches the host twice and must not produce two consent prompts.
+        incomplete = [e for e in events if e["event"] == "response.incomplete"]
+        assert len(incomplete) == 1
+        assert "1 tool(s)" in json.dumps(incomplete[0]["data"])
+
+    async def test_mid_run_invalid_consent_link_still_completes(self) -> None:
+        workflow_agent = _build_contents_workflow_agent([
+            Content(type="oauth_consent_request", consent_link="https://[broken")
+        ])
+        server = _make_server(workflow_agent)
+
+        resp = await _post(server, input_text="hi", stream=True)
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+
+        added = [e for e in events if e["event"] == "response.output_item.added"]
+        assert not any(e["data"]["item"]["type"] == "oauth_consent_request" for e in added)
+        assert types[-1] == "response.completed"
 
     async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")

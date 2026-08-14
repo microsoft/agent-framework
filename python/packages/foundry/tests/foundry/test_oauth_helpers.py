@@ -44,6 +44,23 @@ def test_validate_consent_link_rejects_non_url(caplog: pytest.LogCaptureFixture)
     assert result == ""
 
 
+def test_validate_consent_link_rejects_malformed_authority(caplog: pytest.LogCaptureFixture) -> None:
+    """A malformed authority makes urlparse raise ValueError; it must be rejected, not propagated."""
+    with caplog.at_level(logging.WARNING):
+        result = _validate_consent_link("https://[broken", "item-5")
+    assert result == ""
+    assert "malformed" in caplog.text
+    assert "item-5" in caplog.text
+
+
+def test_validate_consent_link_rejects_netloc_without_host(caplog: pytest.LogCaptureFixture) -> None:
+    """``https://@`` has a netloc but no host, so it is rejected."""
+    with caplog.at_level(logging.WARNING):
+        result = _validate_consent_link("https://@", "item-6")
+    assert result == ""
+    assert "non-HTTPS" in caplog.text
+
+
 # endregion
 
 # region try_parse_oauth_consent_event tests
@@ -54,6 +71,7 @@ def _make_output_item_event(
     item_type: str = "oauth_consent_request",
     consent_link: Any = "https://consent.example.com/auth",
     item_id: str = "oauth-item-1",
+    server_label: Any = "obo-mcp",
 ) -> MagicMock:
     """Create a mock ``response.output_item.added`` event."""
     event = MagicMock()
@@ -62,6 +80,7 @@ def _make_output_item_event(
     item.type = item_type
     item.consent_link = consent_link
     item.id = item_id
+    item.server_label = server_label
     event.item = item
     return event
 
@@ -70,12 +89,14 @@ def _make_top_level_event(
     *,
     consent_link: Any = "https://consent.example.com/authorize",
     event_id: str = "consent-event-1",
+    server_label: Any = "obo-mcp",
 ) -> MagicMock:
     """Create a mock ``response.oauth_consent_requested`` event."""
     event = MagicMock()
     event.type = "response.oauth_consent_requested"
     event.consent_link = consent_link
     event.id = event_id
+    event.server_label = server_label
     return event
 
 
@@ -159,6 +180,47 @@ def test_empty_contents_for_https_empty_netloc(caplog: pytest.LogCaptureFixture)
     assert update is not None
     assert len(update.contents) == 0
     assert "non-HTTPS" in caplog.text
+
+
+def test_empty_contents_for_malformed_authority(caplog: pytest.LogCaptureFixture) -> None:
+    """A malformed authority is rejected instead of raising out of the parser."""
+    event = _make_output_item_event(consent_link="https://[broken", item_id="item-malformed")
+    with caplog.at_level(logging.WARNING):
+        update = try_parse_oauth_consent_event(event, "test-model")
+
+    assert update is not None
+    assert len(update.contents) == 0
+    assert "malformed" in caplog.text
+
+
+def test_server_label_is_preserved_in_additional_properties() -> None:
+    """The upstream item's server_label is carried forward so hosting can re-emit it."""
+    event = _make_output_item_event(server_label="work-iq-connection")
+    update = try_parse_oauth_consent_event(event, "test-model")
+
+    assert update is not None
+    consent = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert consent[0].additional_properties["server_label"] == "work-iq-connection"
+
+
+def test_top_level_event_server_label_is_preserved() -> None:
+    """The top-level consent event's server_label is carried forward too."""
+    event = _make_top_level_event(server_label="work-iq-connection")
+    update = try_parse_oauth_consent_event(event, "test-model")
+
+    assert update is not None
+    consent = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert consent[0].additional_properties["server_label"] == "work-iq-connection"
+
+
+def test_missing_server_label_leaves_additional_properties_empty() -> None:
+    """A non-string server_label is ignored rather than stored."""
+    event = _make_output_item_event(server_label=None)
+    update = try_parse_oauth_consent_event(event, "test-model")
+
+    assert update is not None
+    consent = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert "server_label" not in consent[0].additional_properties
 
 
 # endregion

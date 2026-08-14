@@ -12,12 +12,22 @@ logger = logging.getLogger(__name__)
 
 
 def _validate_consent_link(consent_link: str, item_id: str) -> str:
-    """Validate a consent link is HTTPS with a valid netloc.
+    """Validate a consent link is HTTPS with a valid host.
 
-    Returns the link unchanged if valid, or an empty string if not.
+    Returns the link unchanged if valid, or an empty string if not. ``urlparse`` raises
+    ``ValueError`` for malformed authorities (for example ``https://[broken``), and a
+    non-empty ``netloc`` is not sufficient on its own (``https://@`` has one but no host).
     """
-    parsed = urlparse(consent_link)
-    if parsed.scheme.lower() != "https" or not parsed.netloc:
+    try:
+        parsed = urlparse(consent_link)
+        hostname = parsed.hostname
+    except ValueError:
+        logger.warning(
+            "Skipping oauth_consent_request with malformed consent_link (item id=%s)",
+            item_id,
+        )
+        return ""
+    if parsed.scheme.lower() != "https" or not hostname:
         logger.warning(
             "Skipping oauth_consent_request with non-HTTPS consent_link (item id=%s)",
             item_id,
@@ -55,9 +65,18 @@ def try_parse_oauth_consent_event(event: Any, model: str) -> ChatResponseUpdate 
 
     contents: list[Content] = []
     if consent_link:
+        # ``server_label`` identifies the MCP server that needs consent and is required by
+        # downstream Responses output items. It is copied into ``additional_properties``
+        # because ``raw_representation`` is provider specific and does not survive a
+        # session round trip.
+        server_label = getattr(raw_item, "server_label", None)
+        additional_properties = (
+            {"server_label": server_label} if isinstance(server_label, str) and server_label else None
+        )
         contents.append(
             Content.from_oauth_consent_request(
                 consent_link=consent_link,
+                additional_properties=additional_properties,
                 raw_representation=raw_item,
             )
         )

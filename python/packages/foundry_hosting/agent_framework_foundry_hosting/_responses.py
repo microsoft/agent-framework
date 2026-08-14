@@ -165,23 +165,41 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     return None
 
 
+def _validated_consent_link(consent_link: str | None) -> str | None:
+    """Return *consent_link* when it is an absolute HTTPS URL with a host, else ``None``.
+
+    A consent link is rendered as a clickable prompt by the client, so anything that is
+    not an absolute ``https`` URL is dropped rather than surfaced. ``urlparse`` raises
+    ``ValueError`` for malformed authorities (for example ``https://[broken``), and a
+    non-empty ``netloc`` is not sufficient on its own (``https://@`` has one but no host),
+    so both conditions are handled here.
+    """
+    if not consent_link:
+        return None
+    try:
+        parsed = urlparse(consent_link)
+        hostname = parsed.hostname
+    except ValueError:
+        logger.warning("Skipping oauth_consent_request with a malformed consent_link.")
+        return None
+    if parsed.scheme.lower() != "https" or not hostname:
+        logger.warning("Skipping oauth_consent_request with a non-HTTPS consent_link.")
+        return None
+    return consent_link
+
+
 def _consent_link_from_content(content: Content) -> str | None:
     """Return a validated consent link for an ``oauth_consent_request`` content.
 
     Returns ``None`` when *content* is not an OAuth consent request, when it carries
-    no consent link, or when the link is not an absolute HTTPS URL.
+    no consent link, or when the link fails :func:`_validated_consent_link`.
     """
     if content.type != "oauth_consent_request":
         return None
-    consent_link = content.consent_link
-    if not consent_link:
+    if not content.consent_link:
         logger.warning("Received oauth_consent_request content without a consent_link; skipping.")
         return None
-    parsed = urlparse(consent_link)
-    if parsed.scheme.lower() != "https" or not parsed.netloc:
-        logger.warning("Skipping oauth_consent_request with non-HTTPS consent_link.")
-        return None
-    return consent_link
+    return _validated_consent_link(content.consent_link)
 
 
 def _emit_oauth_consent_item(
@@ -209,8 +227,16 @@ def _consent_incomplete_reason(count: int) -> str:
 
 
 def _consent_server_label(content: Content) -> str:
-    """Return the server label to report for an ``oauth_consent_request`` content."""
+    """Return the server label to report for an ``oauth_consent_request`` content.
+
+    Prefers the label carried in ``additional_properties``; falls back to the provider's
+    raw output item, which carries ``server_label`` as a required field. The raw
+    representation is provider specific and does not survive a session round trip, so it
+    is only a fallback.
+    """
     label = content.additional_properties.get("server_label") if content.additional_properties else None
+    if not isinstance(label, str) or not label:
+        label = getattr(content.raw_representation, "server_label", None)
     return label if isinstance(label, str) and label else "agent_framework"
 
 
@@ -394,19 +420,27 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         try:
             await self._ensure_agent_ready()
         except AgentFrameworkException as ex:
-            consent_errors_to_emit = consent_url_from_error(ex)
-            if consent_errors_to_emit is None or len(consent_errors_to_emit) == 0:
+            consent_errors = consent_url_from_error(ex)
+            # A consent link the client cannot render is not an actionable consent prompt, so
+            # invalid links are dropped here and an entry-time failure with no usable link left
+            # is reported as ``response.failed`` rather than an ``incomplete`` the user cannot act on.
+            consent_errors_to_emit = [
+                (consent_error, link)
+                for consent_error in consent_errors or []
+                if (link := _validated_consent_link(consent_error.consent_url)) is not None
+            ]
+            if not consent_errors_to_emit:
                 logger.error("Failed to prepare agent: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
                 for event in self._emit_failure(response_event_stream, None, ex):
                     yield event
                 return
 
-            for consent_error in consent_errors_to_emit:
-                logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
+            for consent_error, consent_link in consent_errors_to_emit:
+                logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_link)
                 for event in _emit_oauth_consent_item(
                     response_event_stream,
                     context.response_id,
-                    consent_error.consent_url,
+                    consent_link,
                     consent_error.name,
                 ):
                     yield event
@@ -451,7 +485,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request_failure: Exception | None = None
         save_failure: Exception | None = None
         request_interrupted = False
-        pending_consent_count = 0
+        emitted_consent_requests: set[tuple[str, str]] = set()
 
         try:
             if self._uses_hosted_responses_history:
@@ -477,8 +511,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
                 for content in update.contents:
-                    if _consent_link_from_content(content) is not None:
-                        pending_consent_count += 1
                     for event in tracker.handle(content):
                         yield event
                     if tracker.needs_async:
@@ -486,6 +518,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             response_event_stream,
                             content,
                             approval_storage=approval_storage,
+                            emitted_consent_requests=emitted_consent_requests,
                         ):
                             yield item
                         tracker.needs_async = False
@@ -528,10 +561,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         elif save_failure is not None:
             for event in self._emit_failure(response_event_stream, tracker, save_failure):
                 yield event
-        elif pending_consent_count > 0:
+        elif emitted_consent_requests:
             # The turn cannot finish until the user completes OAuth consent, so the response
             # ends as `incomplete` rather than `completed`, matching the connect-time path.
-            yield response_event_stream.emit_incomplete(reason=_consent_incomplete_reason(pending_consent_count))
+            yield response_event_stream.emit_incomplete(
+                reason=_consent_incomplete_reason(len(emitted_consent_requests))
+            )
         else:
             yield response_event_stream.emit_completed()
 
@@ -632,7 +667,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     pass
 
             tracker = _OutputItemTracker(response_event_stream)
-            pending_consent_count = 0
+            emitted_consent_requests: set[tuple[str, str]] = set()
 
             # Run the workflow agent in streaming mode with the new user input.
             async for update in self._agent.run(
@@ -641,13 +676,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 checkpoint_storage=write_storage,
             ):
                 for content in update.contents:
-                    if _consent_link_from_content(content) is not None:
-                        pending_consent_count += 1
                     for event in tracker.handle(content):
                         yield event
                     if tracker.needs_async:
                         async for item in _to_outputs(
-                            response_event_stream, content, approval_storage=approval_storage
+                            response_event_stream,
+                            content,
+                            approval_storage=approval_storage,
+                            emitted_consent_requests=emitted_consent_requests,
                         ):
                             yield item
                         tracker.needs_async = False
@@ -657,8 +693,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 yield event
 
             await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
-            if pending_consent_count > 0:
-                yield response_event_stream.emit_incomplete(reason=_consent_incomplete_reason(pending_consent_count))
+            if emitted_consent_requests:
+                yield response_event_stream.emit_incomplete(
+                    reason=_consent_incomplete_reason(len(emitted_consent_requests))
+                )
             else:
                 yield response_event_stream.emit_completed()
         except Exception as ex:
@@ -1678,6 +1716,7 @@ async def _to_outputs(
     content: Content,
     *,
     approval_storage: FunctionApprovalStore | None = None,
+    emitted_consent_requests: set[tuple[str, str]] | None = None,
 ) -> AsyncIterator[ResponseStreamEvent]:
     """Converts a Content object to an async sequence of ResponseStreamEvent objects.
 
@@ -1685,6 +1724,8 @@ async def _to_outputs(
         stream: The ResponseEventStream to use for building events.
         content: The Content to convert.
         approval_storage: An optional ApprovalStorage instance to use for saving and loading function approval requests.
+        emitted_consent_requests: An optional set of ``(consent_link, server_label)`` pairs already emitted for
+            this response. It is updated in place and used to suppress duplicate OAuth consent prompts.
 
     Yields:
         ResponseStreamEvent: The converted event objects.
@@ -1799,13 +1840,21 @@ async def _to_outputs(
         # client can render a consent prompt instead of an empty assistant turn.
         consent_link = _consent_link_from_content(content)
         if consent_link is not None:
-            for event in _emit_oauth_consent_item(
-                stream,
-                str(stream.response["id"]),
-                consent_link,
-                _consent_server_label(content),
-            ):
-                yield event
+            server_label = _consent_server_label(content)
+            # A `WorkflowAgent` replays the inner agent's content as workflow output, so the
+            # same consent request can arrive more than once in one response. Emitting it
+            # twice would show the user duplicate consent prompts.
+            consent_key = (consent_link, server_label)
+            if emitted_consent_requests is None or consent_key not in emitted_consent_requests:
+                if emitted_consent_requests is not None:
+                    emitted_consent_requests.add(consent_key)
+                for event in _emit_oauth_consent_item(
+                    stream,
+                    str(stream.response["id"]),
+                    consent_link,
+                    server_label,
+                ):
+                    yield event
     else:
         # Log a warning for unsupported content types instead of raising an error to avoid breaking the response stream.
         logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
