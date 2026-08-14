@@ -19,8 +19,13 @@ public sealed class FileSearchMatch
     public int LineNumber { get; set; }
 
     /// <summary>
-    /// Gets or sets the content of the matching line.
+    /// Gets or sets the matching line, verbatim.
     /// </summary>
+    /// <remarks>
+    /// The line keeps its own terminator (<c>\r\n</c>, <c>\n</c>, or a lone <c>\r</c>), except on a final
+    /// line that the content does not terminate. Together with <see cref="LineNumber"/> addressing the
+    /// same lines the line-edit tools use, this makes the value reusable as a literal replacement line.
+    /// </remarks>
     [JsonPropertyName("line")]
     public string Line { get; set; } = string.Empty;
 }

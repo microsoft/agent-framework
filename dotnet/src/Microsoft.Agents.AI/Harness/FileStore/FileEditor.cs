@@ -7,7 +7,8 @@ namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Internal helpers shared by <see cref="FileAccessProvider"/> and <see cref="FileMemoryProvider"/>
-/// for the <c>replace</c> and <c>replace_lines</c> tools.
+/// for the <c>replace</c>, <c>replace_lines</c>, and <c>read_lines</c> tools, and by the file stores
+/// for <c>grep</c>.
 /// </summary>
 internal static class FileEditor
 {
@@ -92,6 +93,52 @@ internal static class FileEditor
         return string.Concat(lines);
     }
 
+    /// <summary>
+    /// Returns the 1-based inclusive <c>[startLine, endLine]</c> slice of <paramref name="content"/>,
+    /// with each line's terminator kept attached. An <paramref name="endLine"/> past the last line is
+    /// clamped, and omitting it reads to the end of the content.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// Thrown when either bound is not positive, when <paramref name="endLine"/> precedes
+    /// <paramref name="startLine"/>, or when <paramref name="startLine"/> is past the last line.
+    /// </exception>
+    internal static List<string> SliceLines(string content, int startLine, int? endLine)
+    {
+        List<string> lines = SplitLinesKeepEnds(content);
+        int total = lines.Count;
+
+        if (startLine < 1)
+        {
+            throw new ArgumentException($"start_line must be a positive integer, got {startLine}.");
+        }
+
+        if (endLine is < 1)
+        {
+            throw new ArgumentException($"end_line must be a positive integer, got {endLine}.");
+        }
+
+        if (endLine < startLine)
+        {
+            throw new ArgumentException($"end_line ({endLine}) must not be less than start_line ({startLine}).");
+        }
+
+        if (startLine > total)
+        {
+            throw new ArgumentException($"start_line {startLine} is out of range (file has {total} lines).");
+        }
+
+        // Clamping end_line rather than failing keeps "read from here to the end" a single call.
+        int lastLine = endLine is null ? total : Math.Min(endLine.Value, total);
+        return lines.GetRange(startLine - 1, lastLine - startLine + 1);
+    }
+
+    /// <summary>
+    /// Returns <paramref name="line"/> without the trailing <c>\n</c> that terminates it, so search
+    /// patterns are matched against a line's text rather than its line break.
+    /// </summary>
+    internal static string TrimTrailingNewline(string line)
+        => line.EndsWith("\n", StringComparison.Ordinal) ? line.Substring(0, line.Length - 1) : line;
+
     private static int CountOccurrences(string content, string value)
     {
         int count = 0;
@@ -109,7 +156,11 @@ internal static class FileEditor
     /// Splits content into lines, keeping each line's trailing newline (<c>\r\n</c>, <c>\n</c>, or a lone
     /// <c>\r</c>) attached. The final line has no terminator when the content does not end with a newline.
     /// </summary>
-    private static List<string> SplitLinesKeepEnds(string content)
+    /// <remarks>
+    /// This is the single definition of a "line" shared by the search and line-edit tools, so the line
+    /// numbers reported by <c>grep</c> address the same lines that <c>replace_lines</c> edits.
+    /// </remarks>
+    internal static List<string> SplitLinesKeepEnds(string content)
     {
         var lines = new List<string>();
         int start = 0;

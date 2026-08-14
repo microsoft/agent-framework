@@ -204,17 +204,19 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
 #endif
 
             // Search each line for regex matches, tracking line numbers and building a snippet.
-            string[] lines = fileContent.Split('\n');
+            // Lines keep their terminators, so these line numbers address the same lines that
+            // replace_lines edits and each reported line can be reused as a literal new_line.
+            List<string> lines = FileEditor.SplitLinesKeepEnds(fileContent);
             var matchingLines = new List<FileSearchMatch>();
             string? firstSnippet = null;
             int lineStartOffset = 0;
 
-            for (int i = 0; i < lines.Length; i++)
+            for (int i = 0; i < lines.Count; i++)
             {
-                Match match = regex.Match(lines[i]);
+                Match match = regex.Match(FileEditor.TrimTrailingNewline(lines[i]));
                 if (match.Success)
                 {
-                    matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i].TrimEnd('\r') });
+                    matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i] });
 
                     // Build a context snippet around the first match (±50 chars).
                     if (firstSnippet is null)
@@ -226,8 +228,8 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
                     }
                 }
 
-                // Advance the offset past this line (including the '\n' separator).
-                lineStartOffset += lines[i].Length + 1;
+                // Advance the offset past this line; its terminator is already part of its length.
+                lineStartOffset += lines[i].Length;
             }
 
             if (matchingLines.Count > 0)

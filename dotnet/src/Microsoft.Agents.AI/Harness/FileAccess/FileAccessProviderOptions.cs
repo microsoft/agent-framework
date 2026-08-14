@@ -25,7 +25,8 @@ public sealed class FileAccessProviderOptions
     /// </summary>
     /// <value>
     /// When <see langword="false"/> (the default), all tools are exposed. When <see langword="true"/>,
-    /// only the read-only tools (<c>file_access_read</c>, <c>file_access_ls</c>, and <c>file_access_grep</c>)
+    /// only the read-only tools (<c>file_access_read</c>, <c>file_access_read_lines</c>, <c>file_access_ls</c>,
+    /// and <c>file_access_grep</c>)
     /// are exposed; the tools that modify the store (<c>file_access_write</c>, <c>file_access_delete</c>,
     /// <c>file_access_replace</c>, and <c>file_access_replace_lines</c>) are hidden.
     /// </value>
@@ -33,8 +34,8 @@ public sealed class FileAccessProviderOptions
 
     /// <summary>
     /// Gets or sets a value indicating whether approval is disabled for the read-only file access tools
-    /// (<see cref="FileAccessProvider.ReadFileToolName"/>, <see cref="FileAccessProvider.LsToolName"/>,
-    /// and <see cref="FileAccessProvider.GrepToolName"/>).
+    /// (<see cref="FileAccessProvider.ReadFileToolName"/>, <see cref="FileAccessProvider.ReadLinesToolName"/>,
+    /// <see cref="FileAccessProvider.LsToolName"/>, and <see cref="FileAccessProvider.GrepToolName"/>).
     /// </summary>
     /// <remarks>
     /// When <see langword="false"/> (the default), these tools require approval before invocation.
