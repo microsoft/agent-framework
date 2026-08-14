@@ -24,6 +24,7 @@ from agent_framework import (
     InMemoryCheckpointStorage,
     RunContext,
     StepWrapper,
+    WorkflowCheckpoint,
     WorkflowEvent,
     WorkflowRunResult,
     WorkflowRunState,
@@ -66,6 +67,21 @@ def built_workflow(
         return workflow(name=name, description=description)(fn).build(checkpoint_storage=checkpoint_storage)
 
     return decorate(func) if func is not None else decorate
+
+
+class _YieldingCheckpointStorage(InMemoryCheckpointStorage):
+    """In-memory checkpoint storage whose ``save()`` yields to the event loop.
+
+    Real backends (files, databases) suspend while persisting, which lets two
+    concurrent per-step checkpoint saves interleave.  The plain in-memory
+    implementation never suspends, so it cannot exercise the race this file's
+    parallel-checkpoint regression test guards against.  Yielding here
+    reproduces that interleaving deterministically.
+    """
+
+    async def save(self, checkpoint: WorkflowCheckpoint) -> str:
+        await asyncio.sleep(0)
+        return await super().save(checkpoint)
 
 
 @step
@@ -796,6 +812,58 @@ class TestCheckpointing:
         await wf.run(checkpoint_id=ckpt_id)
         checkpoints = await storage.list_checkpoints(workflow_name="wf")
         assert len(checkpoints) == 3  # 2 from first run + 1 final from restore
+
+    async def test_parallel_steps_keep_single_checkpoint_lineage(self):
+        """Concurrent step completions must not fork the checkpoint chain.
+
+        When steps run via ``asyncio.gather``, their completion callbacks can
+        overlap: both read the same ``previous_checkpoint_id`` before either
+        writes the updated chain head back, creating sibling root checkpoints
+        that leave part of the history unreachable from the latest checkpoint.
+
+        A storage whose ``save()`` yields to the event loop reproduces the
+        interleaving a real (file/database) backend would see, deterministically.
+        """
+        storage = _YieldingCheckpointStorage()
+
+        @step
+        async def left(value: int) -> int:
+            return value + 1
+
+        @step
+        async def right(value: int) -> int:
+            return value + 2
+
+        @built_workflow(checkpoint_storage=storage)
+        async def parallel(value: int) -> list[int]:
+            return await asyncio.gather(left(value), right(value))
+
+        result = await parallel.run(1)
+        assert result.get_outputs() == [[2, 3]]
+
+        checkpoints = await storage.list_checkpoints(workflow_name="parallel")
+        by_id = {cp.checkpoint_id: cp for cp in checkpoints}
+
+        # Both steps plus the final save.
+        assert len(checkpoints) == 3
+
+        # Exactly one root: the chain head is read and updated under a lock.
+        roots = [cp for cp in checkpoints if cp.previous_checkpoint_id is None]
+        assert len(roots) == 1
+
+        # Every checkpoint is reachable from the latest one - no forked lineage.
+        latest = await storage.get_latest(workflow_name="parallel")
+        reachable: set[str] = set()
+        cursor = latest
+        while cursor is not None:
+            reachable.add(cursor.checkpoint_id)
+            cursor = by_id.get(cursor.previous_checkpoint_id) if cursor.previous_checkpoint_id else None
+        assert reachable == set(by_id)
+
+
+# ---------------------------------------------------------------------------
+# Branching / control flow
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

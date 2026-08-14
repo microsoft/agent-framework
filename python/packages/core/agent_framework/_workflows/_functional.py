@@ -39,6 +39,7 @@ from __future__ import annotations
 # pyright: reportPrivateUsage=false
 # Classes in this module (RunContext, StepWrapper, FunctionalWorkflow) form a
 # cohesive unit and intentionally access each other's underscore-prefixed members.
+import asyncio
 import functools
 import hashlib
 import inspect
@@ -1023,9 +1024,15 @@ class FunctionalWorkflow:
         # Use a mutable list so the closure can update prev_checkpoint_id
         ckpt_chain: list[str | None] = [prev_checkpoint_id]
         if storage is not None:
+            # Concurrent steps (e.g. via asyncio.gather) may complete around
+            # the same time.  Serialize the read-save-update of the chain head
+            # so each checkpoint links to the previous one instead of creating
+            # sibling root checkpoints that fork the lineage.
+            ckpt_chain_lock = asyncio.Lock()
 
             async def _on_step_completed() -> None:
-                ckpt_chain[0] = await self._save_checkpoint(ctx, storage, ckpt_chain[0])
+                async with ckpt_chain_lock:
+                    ckpt_chain[0] = await self._save_checkpoint(ctx, storage, ckpt_chain[0])
 
             ctx._on_step_completed = _on_step_completed
 
