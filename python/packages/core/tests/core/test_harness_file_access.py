@@ -31,6 +31,7 @@ from agent_framework import (
 from agent_framework._filesystem import is_link_or_reparse_point
 from agent_framework._harness import _file_access as _file_access_module
 from agent_framework._harness._file_access import (
+    _SEARCH_SNIPPET_RADIUS,
     DEFAULT_FILE_ACCESS_INSTRUCTIONS,
     DEFAULT_FILE_ACCESS_SOURCE_ID,
     _matches_glob,
@@ -1323,6 +1324,41 @@ async def test_file_access_grep_reports_lines_verbatim(chat_client_base: Support
         }
     )
     assert _text((await read.invoke(arguments={"file_name": "a.txt"}))[0]) == "alpha\r\nBETA\r\n"
+
+
+async def test_file_access_grep_end_anchored_pattern_matches_crlf_line(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    r"""``$`` anchors to the end of the line's text, not to the ``\r`` of a CRLF terminator."""
+    tools = await _prepare_access_tools(chat_client_base)
+    save = _tool_by_name(tools, "file_access_write")
+    grep = _tool_by_name(tools, "file_access_grep")
+
+    await save.invoke(arguments={"file_name": "a.txt", "content": "alpha\r\nbeta match\r\n", "overwrite": True})
+    found = await grep.invoke(arguments={"regex_pattern": "match$", "glob_pattern": "a.txt"})
+
+    hits = json.loads(_text(found[0]))[0]["matching_lines"]
+    assert [hit["line_number"] for hit in hits] == [2]
+    assert hits[0]["line"] == "beta match\r\n"
+
+
+async def test_file_access_grep_snippet_is_anchored_at_the_match(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """The per-line offset must count the terminator, or every snippet drifts."""
+    tools = await _prepare_access_tools(chat_client_base)
+    save = _tool_by_name(tools, "file_access_write")
+    grep = _tool_by_name(tools, "file_access_grep")
+
+    # The first line is long enough that the snippet window is not clamped to the start of the file.
+    first_line = f"{'x' * 60}\r\n"
+    content = f"{first_line}needle\r\n"
+    await save.invoke(arguments={"file_name": "a.txt", "content": content, "overwrite": True})
+    found = await grep.invoke(arguments={"regex_pattern": "needle", "glob_pattern": "a.txt"})
+
+    # The match starts right after the first line, so the window opens _SEARCH_SNIPPET_RADIUS before it.
+    snippet = json.loads(_text(found[0]))[0]["snippet"]
+    assert snippet == content[len(first_line) - _SEARCH_SNIPPET_RADIUS :]
 
 
 async def test_file_access_grep_line_numbers_are_editable(chat_client_base: SupportsChatGetResponse) -> None:

@@ -235,10 +235,10 @@ def _apply_replace(content: str, old_string: str, new_string: str, replace_all: 
 def _split_lines_keepends(content: str) -> list[str]:
     r"""Split ``content`` into lines on ``\n`` only, keeping the terminator attached.
 
-    Splits solely on ``\n`` (a trailing ``\r`` stays as line content), reproducing
-    :func:`_search_file_content`'s ``content.split("\n")`` enumeration exactly, so a
-    ``line_number`` obtained from ``grep`` always targets the same line here and stays
-    in range. This means the result has ``len(content.split("\n"))`` elements: a
+    This is the single definition of a line shared by ``grep``, ``read_lines`` and
+    ``replace_lines``, so a ``line_number`` obtained from one always targets the same
+    line in the others and stays in range. Splitting solely on ``\n`` (a trailing
+    ``\r`` stays attached to the line) means the result has
     trailing ``\n`` yields a final empty (editable) line, and empty content yields a
     single empty line. ``"".join(...)`` reproduces ``content`` verbatim.
     """
@@ -510,7 +510,8 @@ def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -
     Lines are split by :func:`_split_lines_keepends` and reported verbatim, terminator
     included, so a match can be fed straight back to ``replace_lines`` as a ``new_line``
     without losing a ``\r\n``. The pattern is matched against the line without its
-    trailing ``\n``, so ``^`` and ``$`` anchor to the line as before. A snippet of up to
+    trailing terminator, so ``$`` anchors to the end of the line's text even on a CRLF
+    file. A snippet of up to
     ``±_SEARCH_SNIPPET_RADIUS`` characters around the first match is included. Returns
     ``None`` when no lines match.
     """
@@ -520,7 +521,7 @@ def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -
     line_start_offset = 0
 
     for line_number, line in enumerate(lines, start=1):
-        scanned = line.removesuffix("\n")
+        scanned = line.removesuffix("\n").removesuffix("\r")
         match = regex.search(scanned)
         if match is not None:
             matching_lines.append(FileSearchMatch(line_number=line_number, line=line))
@@ -529,8 +530,8 @@ def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -
                 snippet_start = max(0, char_index - _SEARCH_SNIPPET_RADIUS)
                 snippet_end = min(len(content), char_index + (match.end() - match.start()) + _SEARCH_SNIPPET_RADIUS)
                 first_snippet = content[snippet_start:snippet_end]
-        # Advance past this line and the implied '\n' separator.
-        line_start_offset += len(scanned) + 1
+        # Advance past this line; its terminator is already part of its length.
+        line_start_offset += len(line)
 
     if not matching_lines:
         return None
