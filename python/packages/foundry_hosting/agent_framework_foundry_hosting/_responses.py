@@ -6,7 +6,8 @@ import asyncio
 import base64
 import json
 import logging
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+import os
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Literal, cast
@@ -64,10 +65,6 @@ from mcp import McpError
 from typing_extensions import Any
 
 from ._feature_usage import FeatureIndex
-from ._request_context import (
-    validate_foundry_request_context,
-    validate_path_segment,
-)
 from ._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
@@ -80,6 +77,20 @@ from ._state_store import (
 logger = logging.getLogger(__name__)
 
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+
+
+def _validate_checkpoint_context_id(context_id: str) -> None:
+    """Validate that a checkpoint context ID is a single safe path component in case file-based storage is used."""
+    if (
+        not context_id
+        or "/" in context_id
+        or "\\" in context_id
+        or "\x00" in context_id
+        or context_id.strip(".") == ""
+        or os.path.isabs(context_id)
+        or os.path.splitdrive(context_id)[0]
+    ):
+        raise RuntimeError(f"Invalid context id: {context_id!r}")
 
 
 def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
@@ -322,7 +333,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "Resilient background mode is enabled for a non-workflow agent. "
                 "Crash recovery is not supported for non-workflow agents."
             )
-        # TODO(@taochen): local resiliency requires persistent storage. Can't be in memory.
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -371,9 +381,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent]:
         """Handle the creation of a response."""
-        request_context = get_request_context()
-        validate_foundry_request_context(request_context, is_hosted=self.config.is_hosted)
-
         # Common per-request setup shared by the workflow and non-workflow paths:
         # create the response stream and the streaming output-item tracker, emit
         # the opening lifecycle events, and convert any exception raised while
@@ -424,8 +431,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             else:
                 inner = self._handle_inner_agent(request, context, response_event_stream, tracker, cancellation_signal)
 
-            async for event in inner:
-                yield event
+            try:
+                async for event in inner:
+                    yield event
+            except BaseException:
+                await inner.aclose()
+                raise
 
             for event in tracker.close():
                 yield event
@@ -433,6 +444,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.error("Failed to produce response for agent", exc_info=(type(ex), ex, ex.__traceback__))
+            for event in tracker.close():
+                yield event
+
             for event in self._emit_failure(response_event_stream, tracker, ex):
                 yield event
 
@@ -443,7 +457,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker,
         cancellation_signal: asyncio.Event,
-    ) -> AsyncIterable[ResponseStreamEvent]:
+    ) -> AsyncGenerator[ResponseStreamEvent]:
         """Handle a regular (non-workflow) agent.
 
         The response stream, tracker, and opening lifecycle events are produced
@@ -458,20 +472,30 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
 
         try:
-            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
-            session_storage = self._session_storage_provider.get_store(config=self.config)
+            request_context = get_request_context()
+            approval_storage = self._function_approval_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
+            session_storage = self._session_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
 
-            context_id = context.conversation_chain_id
-            session = await session_storage.get(context_id)
+            previous_response_id = request.get("previous_response_id")
+            session_load_id = context.conversation_id or previous_response_id
+            session = await session_storage.get(session_load_id) if session_load_id is not None else None
             if session is None:
-                session = self._agent.create_session(session_id=context_id)
+                if previous_response_id is not None and context.conversation_id is None:
+                    raise RuntimeError(
+                        f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
+                    )
+                session = self._agent.create_session()
+            session_save_id = context.conversation_id or context.response_id
         except Exception as ex:
             logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
-            for event in self._emit_failure(response_event_stream, None, ex):
-                yield event
-            return
+            raise
 
         request_failure: Exception | None = None
+        save_failure: Exception | None = None
         request_interrupted = False
 
         try:
@@ -508,27 +532,39 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         ):
                             yield item
                         tracker.needs_async = False
-            for event in tracker.close():
-                yield event
         except (asyncio.CancelledError, GeneratorExit):
             request_interrupted = True
             raise
         except Exception as ex:
             request_failure = ex
+            logger.error(
+                "Failed to produce response for agent",
+                exc_info=(type(ex), ex, ex.__traceback__),
+            )
         finally:
             if self._uses_hosted_responses_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
             try:
-                await session_storage.set(context_id, session)
+                await session_storage.set(session_save_id, session)
             except Exception as save_error:
+                save_failure = save_error
                 if request_interrupted:
-                    raise RuntimeError(
-                        f"Agent request failed: {str(request_failure) or type(request_failure).__name__}"
-                    ) from save_error
+                    message = "Failed to persist the Agent Framework session while unwinding an interrupted request"
                 elif request_failure is not None:
-                    raise request_failure from save_error
+                    message = "Failed to persist the Agent Framework session after an agent failure"
                 else:
-                    raise save_error
+                    message = "Failed to persist the Agent Framework session after a successful request"
+                logger.error(message, exc_info=(type(save_error), save_error, save_error.__traceback__))
+
+        if request_failure is not None and save_failure is not None:
+            raise RuntimeError(
+                f"Agent request failed: {str(request_failure) or type(request_failure).__name__}; "
+                f"session persistence also failed: {str(save_failure) or type(save_failure).__name__}"
+            )
+        elif request_failure is not None:
+            raise request_failure
+        elif save_failure is not None:
+            raise save_failure
 
     async def _handle_inner_workflow(
         self,
@@ -537,23 +573,35 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker,
         cancellation_signal: asyncio.Event,
-    ) -> AsyncIterable[ResponseStreamEvent]:
+    ) -> AsyncGenerator[ResponseStreamEvent]:
         """Handle the creation of a response for a workflow agent."""
+        if not isinstance(self._agent, WorkflowAgent):
+            raise RuntimeError("Agent is not a workflow agent.")
+
         try:
-            if not isinstance(self._agent, WorkflowAgent):
-                raise RuntimeError("Agent is not a workflow agent.")
+            request_context = get_request_context()
+            approval_storage = self._function_approval_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
+            input_items = await context.get_input_items()
+            input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
-            context_id = context.conversation_chain_id
-            validate_path_segment(context_id, kind="context id")
-            checkpoint_storage = self._checkpoint_storage_provider.get_store(config=self.config, context_id=context_id)
-            if self._resilient_background:
-                # Wrap the write storage so that every checkpoint save also emits
-                # the latest checkpoint ID to the response stream. This ensures
-                # that if the server crashes mid-response, the client can reconnect
-                # and resume from the last known checkpoint.
-                checkpoint_storage = _ResilientBackgroundCheckpointStorage(checkpoint_storage, response_event_stream)
+            _, are_options_set = _to_chat_options(request)
+            if are_options_set:
+                logger.warning("Workflow agent doesn't support runtime options. They will be ignored.")
 
-            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
+            # Determine the checkpoint storage for this request. The checkpoint
+            # storage is keyed by the conversation ID (if present) or the response
+            # ID (if no conversation ID is present). On a subsequent turn, the same
+            # conversation ID or a `previous_response_id` can be used to resume the
+            # workflow from the last checkpoint.
+            checkpoint_save_id = context.conversation_id or context.response_id
+            _validate_checkpoint_context_id(checkpoint_save_id)
+            checkpoint_storage = self._checkpoint_storage_provider.get_store(
+                config=self.config,
+                context_id=checkpoint_save_id,
+                platform_context=request_context,
+            )
 
             if context.is_recovery:
                 if not self._resilient_background:
@@ -566,13 +614,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     checkpoint_storage=_ResilientBackgroundCheckpointStorage(checkpoint_storage, response_event_stream),
                 )
             else:
-                input_items = await context.get_input_items()
-                input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
-
-                _, are_options_set = _to_chat_options(request)
-                if are_options_set:
-                    logger.warning("Workflow agent doesn't support runtime options. They will be ignored.")
-
                 # Determine the latest checkpoint (if any) so we can resume the
                 # workflow's prior state for this turn. The directory is keyed by
                 # the platform derived context id. Multi-turn declarative workflows need the
@@ -582,8 +623,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # on every turn we restore the latest checkpoint and feed the new
                 # input back into the start executor as a continuation rather than
                 # a fresh run.
+                previous_response_id = request.get("previous_response_id")
+                if previous_response_id is not None and context.conversation_id is not None:
+                    raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
+                checkpoint_load_id = context.conversation_id or previous_response_id
+                restore_checkpoint_storage = checkpoint_storage
+                if checkpoint_load_id is not None:
+                    _validate_checkpoint_context_id(checkpoint_load_id)
+                    if checkpoint_load_id != checkpoint_save_id:
+                        restore_checkpoint_storage = self._checkpoint_storage_provider.get_store(
+                            config=self.config,
+                            context_id=checkpoint_load_id,
+                            platform_context=request_context,
+                        )
+
                 latest_checkpoint_id: str | None = None
-                latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+                latest_checkpoint = await restore_checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
                 if latest_checkpoint is not None:
                     latest_checkpoint_id = latest_checkpoint.checkpoint_id
 
@@ -607,7 +662,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     async for _ in self._agent.run(
                         stream=True,
                         checkpoint_id=latest_checkpoint_id,
-                        checkpoint_storage=checkpoint_storage,
+                        checkpoint_storage=restore_checkpoint_storage,
                     ):
                         if context.shutdown.is_set():
                             await context.exit_for_recovery()
@@ -615,7 +670,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 run_stream = self._agent.run(
                     input_messages,
                     stream=True,
-                    checkpoint_storage=checkpoint_storage,
+                    checkpoint_storage=_ResilientBackgroundCheckpointStorage(checkpoint_storage, response_event_stream)
+                    if self._resilient_background
+                    else checkpoint_storage,
                 )
 
             async for update in run_stream:
@@ -631,10 +688,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         ):
                             yield item
                         tracker.needs_async = False
-
-            # Close any remaining active builder
-            for event in tracker.close():
-                yield event
         except Exception:
             logger.exception("Failed to produce response for workflow agent")
             raise

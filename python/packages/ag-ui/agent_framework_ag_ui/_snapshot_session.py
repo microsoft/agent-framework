@@ -181,6 +181,16 @@ class ThreadSnapshotSession:
         Clears all interrupts when ``interrupt_ids`` is omitted. Failures are
         logged and swallowed for the same reason as :meth:`save`.
         """
+        if self._stored is not None and self._stored.interrupt is not None:
+            if interrupt_ids is None:
+                self._stored.interrupt = None
+            else:
+                remaining_interrupts = [
+                    interrupt
+                    for interrupt in self._stored.interrupt
+                    if str(interrupt.get("id") or interrupt.get("interruptId")) not in interrupt_ids
+                ]
+                self._stored.interrupt = remaining_interrupts or None
         if self._store is None or self._scope is None:
             return
         await _clear_thread_snapshot_interrupt(

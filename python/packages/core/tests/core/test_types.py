@@ -2256,6 +2256,24 @@ def test_function_approval_response_content_serialization():
     assert response_dict["function_call"]["call_id"] == "call123"
 
 
+@pytest.mark.parametrize("approved", ["false", "no", 1, "0", 0, None])
+def test_function_approval_response_deserialization_rejects_non_boolean_decisions(approved: Any) -> None:
+    """Serialized non-boolean approval decisions must fail closed."""
+    response = Content.from_dict({
+        "type": "function_approval_response",
+        "id": "response123",
+        "approved": approved,
+        "function_call": {
+            "type": "function_call",
+            "call_id": "call123",
+            "name": "test_func",
+            "arguments": {},
+        },
+    })
+
+    assert response.approved is False
+
+
 def test_chat_response_complex_serialization():
     """Test ChatResponse from_dict and to_dict with complex nested objects."""
 

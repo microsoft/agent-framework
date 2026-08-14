@@ -24,21 +24,24 @@ from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ign
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import (
-    PendingApprovalEntry,
-    PendingApprovalKey,
     _build_messages_snapshot,
     _build_safe_metadata,
     _canonical_approval_resume_messages,
     _create_state_context_message,
     _filter_local_approval_responses_for_provider,
     _inject_state_context,
-    _make_pending_approval_entry,
     _normalize_response_stream,
-    _pending_approval_key,
     _resume_to_tool_messages,
     _should_suppress_intermediate_snapshot,
     run_agent_stream,
 )
+from agent_framework_ag_ui._approval_lifecycle import (
+    ApprovalExecutionOwner,
+    ApprovalLifecycle,
+    ApprovalStatus,
+    ResumeDecision,
+)
+from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore
 from agent_framework_ag_ui._run_common import (
     FlowState,
     _build_run_finished_event,
@@ -926,14 +929,45 @@ def test_emit_approval_request_populates_interrupt_metadata():
     assert flow.interrupts[0]["reason"] == "tool_call"
     assert flow.interrupts[0]["toolCallId"] == "call_123"
     assert flow.interrupts[0]["message"] == "Approve running write_doc?"
-    assert flow.interrupts[0]["responseSchema"]["required"] == ["accepted"]
-    assert flow.interrupts[0]["responseSchema"]["properties"]["accepted"]["type"] == "boolean"
-    assert flow.interrupts[0]["responseSchema"]["properties"]["content"]["type"] == "string"
+    response_schema = flow.interrupts[0]["responseSchema"]
+    assert response_schema["anyOf"] == [{"required": ["approved"]}, {"required": ["accepted"]}]
+    assert response_schema["properties"]["approved"]["type"] == "boolean"
+    assert response_schema["properties"]["accepted"]["type"] == "boolean"
+    assert response_schema["properties"]["content"]["type"] == "string"
+    assert response_schema["properties"]["editedArgs"]["required"] == ["content"]
     assert flow.interrupts[0]["metadata"]["agent_framework"]["type"] == "function_approval_request"
     assert flow.interrupts[0]["metadata"]["agent_framework"]["function_call"] == {
         "call_id": "call_123",
         "name": "write_doc",
         "arguments": {"content": "x"},
+    }
+
+
+def test_emit_approval_request_keeps_protocol_fields_when_tool_arguments_use_reserved_names() -> None:
+    """Reserved protocol fields remain controls while editedArgs carries colliding tool arguments."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(
+        call_id="call_reserved",
+        name="write_doc",
+        arguments={"approved": "draft", "accepted": 1, "editedArgs": {"value": True}},
+    )
+    approval_content = Content.from_function_approval_request(id="approval_reserved", function_call=function_call)
+
+    _emit_approval_request(approval_content, flow)
+
+    properties = flow.interrupts[0]["responseSchema"]["properties"]
+    assert properties["approved"]["type"] == "boolean"
+    assert properties["accepted"]["type"] == "boolean"
+    assert properties["editedArgs"] == {
+        "type": "object",
+        "description": "Full replacement of the tool arguments. Not merged.",
+        "properties": {
+            "approved": {"type": "string"},
+            "accepted": {"type": "integer"},
+            "editedArgs": {"type": "object", "additionalProperties": True},
+        },
+        "required": ["approved", "accepted", "editedArgs"],
+        "additionalProperties": False,
     }
 
 
@@ -1041,29 +1075,31 @@ def test_resume_to_tool_messages_skips_cancelled_entries():
 
 def test_canonical_approval_resume_does_not_mutate_arguments_until_batch_validates():
     """Edited approval arguments are committed only after every resume entry validates."""
-    pending_entry = _make_pending_approval_entry(
-        "get_weather",
-        '{"city":"Seattle"}',
-        request_id="call_a",
+    lifecycle = ApprovalLifecycle()
+    pending_entry = lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
         interrupt_id="call_a",
+        call_id="call_a",
+        name="get_weather",
+        arguments='{"city":"Seattle"}',
     )
-    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
-        _pending_approval_key("thread-weather", "call_a"): pending_entry,
-        _pending_approval_key("thread-weather", "call_b"): _make_pending_approval_entry(
-            "get_weather",
-            '{"city":"Portland"}',
-            request_id="call_b",
-            interrupt_id="call_b",
-        ),
-    }
+    lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
+        interrupt_id="call_b",
+        call_id="call_b",
+        name="get_weather",
+        arguments='{"city":"Portland"}',
+    )
 
     messages, handled_ids, cancelled_ids, error = _canonical_approval_resume_messages(
         [
             {"interruptId": "call_a", "status": "resolved", "payload": {"accepted": True, "city": "Portland"}},
             {"interruptId": "call_b", "status": "resolved", "payload": "not an object"},
         ],
-        pending_approvals,
         "thread-weather",
+        lifecycle=lifecycle,
     )
 
     assert messages == []
@@ -1071,20 +1107,182 @@ def test_canonical_approval_resume_does_not_mutate_arguments_until_batch_validat
     assert cancelled_ids == set()
     assert error is not None
     assert error.code == "APPROVAL_RESUME_INVALID"
-    assert pending_entry["arguments"] == '{"city":"Seattle"}'
+    assert pending_entry.arguments == '{"city":"Seattle"}'
+
+
+def test_canonical_approval_resume_does_not_cancel_until_resolved_siblings_validate() -> None:
+    """A malformed resolved sibling leaves every approval in the batch pending."""
+    lifecycle = ApprovalLifecycle()
+    cancelled = lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
+        interrupt_id="call_a",
+        call_id="call_a",
+        name="get_weather",
+        arguments='{"city":"Seattle"}',
+    )
+    resolved = lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
+        interrupt_id="call_b",
+        call_id="call_b",
+        name="get_weather",
+        arguments='{"city":"Portland"}',
+    )
+
+    _, _, _, error = _canonical_approval_resume_messages(
+        [
+            {"interruptId": "call_a", "status": "cancelled"},
+            {"interruptId": "call_b", "status": "resolved", "payload": "not an object"},
+        ],
+        "thread-weather",
+        lifecycle=lifecycle,
+    )
+
+    assert error is not None
+    assert error.code == "APPROVAL_RESUME_INVALID"
+    assert lifecycle.get(cancelled.identity).status is ApprovalStatus.PENDING
+    assert lifecycle.get(resolved.identity).status is ApprovalStatus.PENDING
+
+
+def test_terminal_approval_retry_validates_standard_edited_arguments() -> None:
+    """A terminal retry cannot bypass the pending path's editedArgs contract."""
+    lifecycle = ApprovalLifecycle()
+    lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
+        interrupt_id="call_a",
+        call_id="call_a",
+        name="get_weather",
+        arguments='{"city":"Seattle"}',
+    )
+    lifecycle.claim_batch(
+        thread_id="thread-weather",
+        decisions=[
+            ResumeDecision(
+                interrupt_id="call_a",
+                accepted=False,
+                arguments='{"city":"Seattle"}',
+                name="get_weather",
+                original_arguments='{"city":"Seattle"}',
+            )
+        ],
+    )
+    retained_results: list[Content] = []
+
+    _, handled_ids, _, error = _canonical_approval_resume_messages(
+        [
+            {
+                "interruptId": "call_a",
+                "status": "resolved",
+                "payload": {"approved": False, "editedArgs": "not an object"},
+            }
+        ],
+        "thread-weather",
+        lifecycle=lifecycle,
+        retained_results=retained_results,
+    )
+
+    assert handled_ids == set()
+    assert error is not None
+    assert error.code == "APPROVAL_RESUME_INVALID_RESPONSE"
+    assert retained_results == []
+
+
+def test_terminal_rejection_retry_does_not_project_a_live_tool_result() -> None:
+    """An identical rejected retry has the same no-result projection as the original rejection."""
+    lifecycle = ApprovalLifecycle()
+    lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="thread-weather",
+        interrupt_id="call_a",
+        call_id="call_a",
+        name="get_weather",
+        arguments='{"city":"Seattle"}',
+    )
+    decision = ResumeDecision(
+        interrupt_id="call_a",
+        accepted=False,
+        arguments='{"city":"Seattle"}',
+        name="get_weather",
+        original_arguments='{"city":"Seattle"}',
+    )
+    lifecycle.claim_batch(thread_id="thread-weather", decisions=[decision])
+    retained_results: list[Content] = []
+
+    _, handled_ids, _, error = _canonical_approval_resume_messages(
+        [
+            {
+                "interruptId": "call_a",
+                "status": "resolved",
+                "payload": {"approved": False},
+            }
+        ],
+        "thread-weather",
+        lifecycle=lifecycle,
+        retained_results=retained_results,
+    )
+
+    assert error is None
+    assert handled_ids == {"call_a"}
+    assert retained_results == []
+
+
+async def test_run_settles_server_collected_rejection_in_lifecycle() -> None:
+    """A rejection restored from approval middleware state no longer remains pending."""
+    function_call = Content.from_function_call(
+        call_id="call_rejected",
+        name="write_record",
+        arguments={"value": "draft"},
+    )
+    response = Content.from_function_approval_response(
+        approved=False,
+        id="approval_rejected",
+        function_call=function_call,
+    )
+    store = InMemoryAGUIApprovalStateStore()
+    store.set_tool_approval_state(
+        "thread-server-rejection",
+        {"collected_approval_responses": [response.to_dict()]},
+    )
+    agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")])
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "runId": "run-server-rejection",
+                "threadId": "thread-server-rejection",
+                "messages": [{"role": "user", "content": "Continue"}],
+            },
+            agent,
+            AgentConfig(),
+            approval_state_store=store,
+        )
+    ]
+
+    assert not [event for event in events if event.type == "RUN_ERROR"]
+    occurrence = store.lifecycle.occurrence_for_alias(
+        thread_id="thread-server-rejection",
+        interrupt_id="approval_rejected",
+    )
+    assert occurrence is not None
+    assert occurrence.status is ApprovalStatus.REJECTED
+    assert store.lifecycle.pending_interrupt_ids(thread_id="thread-server-rejection") == set()
 
 
 def test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending() -> None:
     """Hosted approvals accept a decision only because providers ignore edited arguments."""
-    pending_entry = _make_pending_approval_entry(
-        "docs_search",
-        '{"query":"azure"}',
-        request_id="mcpr_docs",
+    lifecycle = ApprovalLifecycle()
+    pending_entry = lifecycle.register(
+        owner=ApprovalExecutionOwner.HOSTED,
+        thread_id="thread-hosted",
         interrupt_id="mcpr_docs",
+        call_id="mcpr_docs",
+        name="docs_search",
+        arguments='{"query":"azure"}',
         server_label="Microsoft_Learn_MCP",
     )
-    key = _pending_approval_key("thread-hosted", "mcpr_docs")
-    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {key: pending_entry}
 
     messages, handled_ids, cancelled_ids, error = _canonical_approval_resume_messages(
         [
@@ -1094,8 +1292,8 @@ def test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutat
                 "payload": {"accepted": True, "query": "untrusted edit"},
             }
         ],
-        pending_approvals,
         "thread-hosted",
+        lifecycle=lifecycle,
     )
 
     assert messages == []
@@ -1103,23 +1301,24 @@ def test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutat
     assert cancelled_ids == set()
     assert error is not None
     assert error.code == "APPROVAL_RESUME_INVALID_RESPONSE"
-    assert pending_entry["arguments"] == '{"query":"azure"}'
-    assert pending_approvals[key] is pending_entry
+    assert pending_entry.arguments == '{"query":"azure"}'
+    assert lifecycle.pending_occurrence(thread_id="thread-hosted", interrupt_id="mcpr_docs") is pending_entry
 
 
-def test_pending_approval_registry_scans_exact_thread_keys_with_colons():
+def test_approval_lifecycle_scans_exact_thread_keys_with_colons():
     """A thread id that prefixes another thread id must not inherit its pending approval contract."""
-    pending_approvals: dict[PendingApprovalKey, PendingApprovalEntry] = {
-        _pending_approval_key("tenant:thread", "call_1"): _make_pending_approval_entry(
-            "get_weather",
-            '{"city":"Seattle"}',
-            request_id="call_1",
-            interrupt_id="call_1",
-        )
-    }
+    lifecycle = ApprovalLifecycle()
+    lifecycle.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_id="tenant:thread",
+        interrupt_id="call_1",
+        call_id="call_1",
+        name="get_weather",
+        arguments='{"city":"Seattle"}',
+    )
 
-    _, _, _, unrelated_error = _canonical_approval_resume_messages(None, pending_approvals, "tenant")
-    _, _, _, owning_error = _canonical_approval_resume_messages(None, pending_approvals, "tenant:thread")
+    _, _, _, unrelated_error = _canonical_approval_resume_messages(None, "tenant", lifecycle=lifecycle)
+    _, _, _, owning_error = _canonical_approval_resume_messages(None, "tenant:thread", lifecycle=lifecycle)
 
     assert unrelated_error is None
     assert owning_error is not None

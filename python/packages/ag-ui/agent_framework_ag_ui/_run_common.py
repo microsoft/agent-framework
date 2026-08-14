@@ -374,22 +374,37 @@ def _json_schema_for_value(value: Any) -> dict[str, Any]:
 
 def _approval_response_schema(arguments: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Build the response schema generic AG-UI clients use to render approval input."""
+    reserved_properties = {"approved", "accepted", "editedArgs"}
     properties: dict[str, Any] = {
-        "accepted": {
+        "approved": {
             "type": "boolean",
             "description": "Whether the requested tool call is approved.",
-        }
+        },
+        "accepted": {
+            "type": "boolean",
+            "description": "Legacy alias for approved.",
+        },
     }
-    if arguments:
+    if arguments is not None:
+        edited_argument_properties: dict[str, Any] = {}
         for name, value in arguments.items():
             argument_schema = _json_schema_for_value(value)
             argument_schema["description"] = f"Optional edited value for the '{name}' tool argument."
-            properties[str(name)] = argument_schema
+            if str(name) not in reserved_properties:
+                properties[str(name)] = argument_schema
+            edited_argument_properties[str(name)] = _json_schema_for_value(value)
+        properties["editedArgs"] = {
+            "type": "object",
+            "description": "Full replacement of the tool arguments. Not merged.",
+            "properties": edited_argument_properties,
+            "required": list(edited_argument_properties),
+            "additionalProperties": False,
+        }
 
     return {
         "type": "object",
         "properties": properties,
-        "required": ["accepted"],
+        "anyOf": [{"required": ["approved"]}, {"required": ["accepted"]}],
         "additionalProperties": False,
     }
 

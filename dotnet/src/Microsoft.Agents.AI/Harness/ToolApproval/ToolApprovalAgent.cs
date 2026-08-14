@@ -140,6 +140,11 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         //    invocation, so a per-request cap (FunctionInvokingChatClient.MaximumIterationsPerRequest)
         //    restarts every time and cannot bound it; without a cap here a model that keeps
         //    requesting an auto-approved tool bills indefinitely.
+        //
+        //    Usage is accumulated across every re-invocation so the caller sees the token cost
+        //    of the whole run, not just its final inner call.
+        UsageDetails? aggregatedUsage = null;
+
         for (int iteration = 0; ; iteration++)
         {
             // Inject any collected approval responses as a user message ahead of the caller's messages.
@@ -151,18 +156,27 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
                 // request it surfaces goes to the caller to decide rather than continuing the chain.
                 // Returning here without this call would hand back a response whose approval requests
                 // were already stripped — the empty response the loop exists to avoid.
-                return await this.InnerAgent.RunAsync(processedMessages, session, options, cancellationToken).ConfigureAwait(false);
+                var cappedResponse = await this.InnerAgent.RunAsync(processedMessages, session, options, cancellationToken).ConfigureAwait(false);
+
+                // This turn is still part of the same run, so its usage joins the aggregate rather
+                // than replacing it; otherwise hitting the cap would discard every prior turn's cost.
+                UsageAggregator.Accumulate(ref aggregatedUsage, cappedResponse.Usage);
+
+                return cappedResponse.ApplyAggregatedUsage(aggregatedUsage);
             }
 
             var response = await this.InnerAgent.RunAsync(processedMessages, session, options, cancellationToken).ConfigureAwait(false);
+
+            UsageAggregator.Accumulate(ref aggregatedUsage, response.Usage);
 
             // Classify approval requests: auto-approve matching, queue excess, keep first unapproved.
             bool allAutoApproved = await this.ProcessAndQueueOutboundApprovalRequestsAsync(response.Messages, state, session, options, requestMessages).ConfigureAwait(false);
 
             if (!allAutoApproved)
             {
-                // Response has real content or an unapproved approval request — return to caller.
-                return response;
+                // Response has real content or an unapproved approval request — return to caller,
+                // reporting the usage accumulated across every turn of the run.
+                return response.ApplyAggregatedUsage(aggregatedUsage);
             }
 
             // All approval requests were auto-approved. Loop to re-invoke with them injected.
