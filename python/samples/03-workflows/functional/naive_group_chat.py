@@ -74,7 +74,8 @@ async def group_chat(question: str) -> str:
 
 
 async def main():
-    result = await group_chat.run("What's the difference between a list and a tuple in Python?")
+    workflow_instance = group_chat.build()
+    result = await workflow_instance.run("What's the difference between a list and a tuple in Python?")
     print(result.get_outputs()[0])
 
 

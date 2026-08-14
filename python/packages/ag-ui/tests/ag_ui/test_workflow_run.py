@@ -1033,6 +1033,65 @@ async def test_workflow_run_empty_turn_with_pending_request_emits_run_error():
     assert getattr(run_error, "code") == "WORKFLOW_RESUME_REQUIRED"
 
 
+async def test_workflow_run_does_not_cancel_until_resolved_siblings_validate() -> None:
+    """A malformed resolved workflow sibling leaves a cancelled request pending."""
+    cancelled_call = Content.from_function_call(
+        call_id="call-cancelled",
+        name="write_record",
+        arguments={"value": "cancelled"},
+    )
+    resolved_call = Content.from_function_call(
+        call_id="call-resolved",
+        name="write_record",
+        arguments={"value": "resolved"},
+    )
+    pending = {
+        "approval-cancelled": SimpleNamespace(
+            request_id="approval-cancelled",
+            data=Content.from_function_approval_request(id="approval-cancelled", function_call=cancelled_call),
+            response_type=Content,
+        ),
+        "approval-resolved": SimpleNamespace(
+            request_id="approval-resolved",
+            data=Content.from_function_approval_request(id="approval-resolved", function_call=resolved_call),
+            response_type=Content,
+        ),
+    }
+
+    async def get_pending_request_info_events() -> dict[str, Any]:
+        return dict(pending)
+
+    runner_context = SimpleNamespace(
+        get_pending_request_info_events=get_pending_request_info_events,
+        _pending_request_info_events=pending,
+    )
+    workflow = SimpleNamespace(_runner_context=runner_context)
+
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "runId": "run-mixed-invalid",
+                "threadId": "thread-mixed-invalid",
+                "messages": [],
+                "resume": [
+                    {"interruptId": "approval-cancelled", "status": "cancelled"},
+                    {
+                        "interruptId": "approval-resolved",
+                        "status": "resolved",
+                        "payload": {"approved": True, "editedArgs": "not an object"},
+                    },
+                ],
+            },
+            cast(Any, workflow),
+        )
+    ]
+
+    assert [event.type for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+    assert getattr(events[-1], "code") == "WORKFLOW_RESUME_INVALID_RESPONSE"
+    assert set(runner_context._pending_request_info_events) == {"approval-cancelled", "approval-resolved"}
+
+
 async def test_workflow_run_agent_response_output_uses_latest_assistant_message_only() -> None:
     """Conversation payload outputs should not flatten full history into one assistant message."""
 
