@@ -152,7 +152,7 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
 
             for (int i = 0; i < lines.Count; i++)
             {
-                Match match = regex.Match(FileEditor.TrimTrailingNewline(lines[i]));
+                Match match = regex.Match(FileEditor.TrimLineTerminator(lines[i]));
                 if (match.Success)
                 {
                     matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i] });

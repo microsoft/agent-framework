@@ -211,6 +211,22 @@ public class FileEditorTests
         Assert.Equal(Content, string.Concat(lines));
     }
 
+    [Theory]
+    [InlineData("match\r\n", "match")]
+    [InlineData("match\n", "match")]
+    [InlineData("match\r", "match")]
+    [InlineData("match", "match")]
+    [InlineData("", "")]
+    [InlineData("a\rb\n", "a\rb")]
+    public void TrimLineTerminator_RemovesOnlyTheTrailingTerminator(string line, string expected)
+    {
+        // Act
+        string trimmed = FileEditor.TrimLineTerminator(line);
+
+        // Assert
+        Assert.Equal(expected, trimmed);
+    }
+
     #endregion
 
     #region SliceLines

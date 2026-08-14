@@ -265,6 +265,25 @@ public class InMemoryAgentFileStoreTests
         Assert.Equal("beta match\r", results[0].MatchingLines[0].Line);
     }
 
+    [Theory]
+    [InlineData("alpha\r\nbeta match\r\ngamma\r\n")]
+    [InlineData("alpha\rbeta match\rgamma")]
+    [InlineData("alpha\nbeta match\ngamma\n")]
+    public async Task SearchFiles_EndAnchoredPatternMatchesRegardlessOfTerminatorAsync(string content)
+    {
+        // Arrange — the pattern anchors to the end of the line's text, which is "beta match".
+        var store = new InMemoryAgentFileStore();
+        await store.WriteAsync("folder/notes.md", content);
+
+        // Act
+        var results = await store.SearchAsync("folder", "match$");
+
+        // Assert — the terminator is not part of the text the pattern is matched against.
+        Assert.Single(results);
+        Assert.Single(results[0].MatchingLines);
+        Assert.Equal(2, results[0].MatchingLines[0].LineNumber);
+    }
+
     [Fact]
     public async Task SearchFiles_SnippetIsAnchoredAtTheMatchAsync()
     {

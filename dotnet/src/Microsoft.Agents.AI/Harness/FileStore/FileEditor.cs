@@ -107,24 +107,26 @@ internal static class FileEditor
         List<string> lines = SplitLinesKeepEnds(content);
         int total = lines.Count;
 
+        // These messages reach the model as the tool's failure text, so they name the arguments as the
+        // generated schema exposes them (startLine/endLine), not in snake_case.
         if (startLine < 1)
         {
-            throw new ArgumentException($"start_line must be a positive integer, got {startLine}.");
+            throw new ArgumentException($"startLine must be a positive integer, got {startLine}.");
         }
 
         if (endLine is < 1)
         {
-            throw new ArgumentException($"end_line must be a positive integer, got {endLine}.");
+            throw new ArgumentException($"endLine must be a positive integer, got {endLine}.");
         }
 
         if (endLine < startLine)
         {
-            throw new ArgumentException($"end_line ({endLine}) must not be less than start_line ({startLine}).");
+            throw new ArgumentException($"endLine ({endLine}) must not be less than startLine ({startLine}).");
         }
 
         if (startLine > total)
         {
-            throw new ArgumentException($"start_line {startLine} is out of range (file has {total} lines).");
+            throw new ArgumentException($"startLine {startLine} is out of range (file has {total} lines).");
         }
 
         // Clamping end_line rather than failing keeps "read from here to the end" a single call.
@@ -133,11 +135,24 @@ internal static class FileEditor
     }
 
     /// <summary>
-    /// Returns <paramref name="line"/> without the trailing <c>\n</c> that terminates it, so search
-    /// patterns are matched against a line's text rather than its line break.
+    /// Returns <paramref name="line"/> without the <c>\r\n</c>, <c>\n</c>, or lone <c>\r</c> that
+    /// terminates it, so search patterns are matched against a line's text rather than its line break.
     /// </summary>
-    internal static string TrimTrailingNewline(string line)
-        => line.EndsWith("\n", StringComparison.Ordinal) ? line.Substring(0, line.Length - 1) : line;
+    /// <remarks>
+    /// Leaving any part of the terminator in place would make an end-anchored pattern such as
+    /// <c>match$</c> fail on a CRLF or lone-CR line whose text is exactly <c>match</c>.
+    /// </remarks>
+    internal static string TrimLineTerminator(string line)
+    {
+        if (line.EndsWith("\r\n", StringComparison.Ordinal))
+        {
+            return line.Substring(0, line.Length - 2);
+        }
+
+        return line.EndsWith("\n", StringComparison.Ordinal) || line.EndsWith("\r", StringComparison.Ordinal)
+            ? line.Substring(0, line.Length - 1)
+            : line;
+    }
 
     private static int CountOccurrences(string content, string value)
     {
