@@ -33,9 +33,12 @@ from agent_framework._harness import _file_access as _file_access_module
 from agent_framework._harness._file_access import (
     DEFAULT_FILE_ACCESS_INSTRUCTIONS,
     DEFAULT_FILE_ACCESS_SOURCE_ID,
+    _line_ending_style,
     _matches_glob,
     _normalize_relative_path,
     _run_search_with_timeout,
+    _slice_lines,
+    _strip_line_terminator,
 )
 
 from .conftest import create_junction_or_skip
@@ -525,6 +528,7 @@ async def test_file_access_provider_registers_tools_and_instructions(
     expected_names = {
         "file_access_write",
         "file_access_read",
+        "file_access_read_lines",
         "file_access_delete",
         "file_access_ls",
         "file_access_grep",
@@ -558,6 +562,7 @@ async def test_file_access_provider_all_tools_require_approval(
     for name in (
         FileAccessProvider.WRITE_TOOL_NAME,
         FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.READ_LINES_TOOL_NAME,
         FileAccessProvider.DELETE_TOOL_NAME,
         FileAccessProvider.LS_TOOL_NAME,
         FileAccessProvider.GREP_TOOL_NAME,
@@ -573,6 +578,7 @@ async def test_file_access_provider_approval_opt_outs(
     """The approval opt-out flags flip only the affected tool group to ``never_require``."""
     readonly_names = (
         FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.READ_LINES_TOOL_NAME,
         FileAccessProvider.LS_TOOL_NAME,
         FileAccessProvider.GREP_TOOL_NAME,
     )
@@ -609,6 +615,7 @@ def test_read_only_tools_auto_approval_rule() -> None:
     """The read-only rule approves only the non-mutating tools."""
     approved = {
         FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.READ_LINES_TOOL_NAME,
         FileAccessProvider.LS_TOOL_NAME,
         FileAccessProvider.GREP_TOOL_NAME,
     }
@@ -642,6 +649,7 @@ def test_all_tools_auto_approval_rule() -> None:
     for name in (
         FileAccessProvider.WRITE_TOOL_NAME,
         FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.READ_LINES_TOOL_NAME,
         FileAccessProvider.DELETE_TOOL_NAME,
         FileAccessProvider.LS_TOOL_NAME,
         FileAccessProvider.GREP_TOOL_NAME,
@@ -1173,6 +1181,121 @@ async def test_file_access_replace_lines(chat_client_base: SupportsChatGetRespon
     assert "Duplicate" in _text(dup[0])
 
 
+def test_slice_lines_returns_inclusive_range_and_total() -> None:
+    """``_slice_lines`` should slice 1-based inclusive ranges and report the keepends line count."""
+    assert _slice_lines("a\nb\nc\n", 1, 2) == (["a\n", "b\n"], 4)
+    assert _slice_lines("a\nb\nc\n", 2, 2) == (["b\n"], 4)
+
+    # A trailing newline yields a final empty line that is in range, matching grep/replace_lines.
+    assert _slice_lines("a\nb\n", 1, None) == (["a\n", "b\n", ""], 3)
+    assert _slice_lines("a\nb\n", 3, 3) == ([""], 3)
+
+    # Empty content is a single empty line, not zero lines.
+    assert _slice_lines("", 1, None) == ([""], 1)
+
+    # An end_line past the last line clamps instead of failing.
+    assert _slice_lines("a\nb\n", 1, 99) == _slice_lines("a\nb\n", 1, None)
+
+    # Splitting on "\n" only leaves CRLF terminators attached.
+    assert _slice_lines("a\r\nb", 1, 1) == (["a\r\n"], 2)
+
+
+def test_slice_lines_rejects_invalid_ranges() -> None:
+    """``_slice_lines`` should reject non-positive, inverted, and past-the-end ranges."""
+    with pytest.raises(ValueError, match="start_line must be a positive integer, got 0."):
+        _slice_lines("a\nb\n", 0, None)
+    with pytest.raises(ValueError, match="end_line must be a positive integer, got 0."):
+        _slice_lines("a\nb\n", 1, 0)
+    with pytest.raises(ValueError, match=r"end_line \(2\) must not be less than start_line \(3\)."):
+        _slice_lines("a\nb\n", 3, 2)
+    with pytest.raises(ValueError, match="start_line 99 is out of range"):
+        _slice_lines("a\nb\n", 99, None)
+
+
+def test_line_rendering_helpers() -> None:
+    """Displayed line text should match grep's, and the ending style should describe the file."""
+    assert _strip_line_terminator("a\r\n") == "a"
+    assert _strip_line_terminator("a\n") == "a"
+    assert _strip_line_terminator("a") == "a"
+    assert _strip_line_terminator("") == ""
+
+    assert _line_ending_style("a\nb\n") == "LF"
+    assert _line_ending_style("a\r\nb\r\n") == "CRLF"
+    assert _line_ending_style("a\r\nb\n") == "mixed LF/CRLF"
+    assert _line_ending_style("abc") == "LF"
+
+
+async def test_file_access_read_lines(chat_client_base: SupportsChatGetResponse) -> None:
+    """``file_access_read_lines`` should return a numbered range and report bad input as a message."""
+    tools = await _prepare_access_tools(chat_client_base)
+    save = _tool_by_name(tools, "file_access_write")
+    read_lines = _tool_by_name(tools, "file_access_read_lines")
+
+    async def write(content: str) -> None:
+        await save.invoke(arguments={"file_name": "a.txt", "content": content, "overwrite": True})
+
+    async def read(**kwargs: object) -> str:
+        return _text((await read_lines.invoke(arguments={"file_name": "a.txt", **kwargs}))[0])
+
+    await write("one\ntwo\nthree\n")
+    header = "Lines {}-{} of 'a.txt' (4 lines total, LF line endings):"
+    assert await read(start_line=2, end_line=3) == f"{header.format(2, 3)}\n2\ttwo\n3\tthree"
+
+    # Omitting end_line reads to the end, including the trailing empty line.
+    assert await read(start_line=1) == f"{header.format(1, 4)}\n1\tone\n2\ttwo\n3\tthree\n4\t"
+
+    # An end_line past the last line clamps rather than reporting an error.
+    clamped = await read(start_line=1, end_line=999)
+    assert clamped == await read(start_line=1)
+    assert "out of range" not in clamped
+
+    # CRLF terminators are stripped from the displayed text and named in the header.
+    await write("alpha\r\nbeta\r\n")
+    crlf_header = "Lines 1-1 of 'a.txt' (3 lines total, CRLF line endings):"
+    assert await read(start_line=1, end_line=1) == f"{crlf_header}\n1\talpha"
+
+    await write("one\ntwo\n")
+    for kwargs, expected in (
+        ({"start_line": 0}, "start_line must be a positive integer"),
+        ({"start_line": 9}, "start_line 9 is out of range"),
+        ({"start_line": 2, "end_line": 1}, "must not be less than start_line"),
+    ):
+        assert expected in await read(**kwargs)
+
+    missing = await read_lines.invoke(arguments={"file_name": "missing.txt", "start_line": 1})
+    assert _text(missing[0]) == "File 'missing.txt' not found."
+
+
+async def test_file_access_read_lines_shows_grep_line_numbers(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A ``line_number`` from grep must address the same line in read_lines and replace_lines."""
+    tools = await _prepare_access_tools(chat_client_base)
+    save = _tool_by_name(tools, "file_access_write")
+    read = _tool_by_name(tools, "file_access_read")
+    grep = _tool_by_name(tools, "file_access_grep")
+    read_lines = _tool_by_name(tools, "file_access_read_lines")
+    replace_lines = _tool_by_name(tools, "file_access_replace_lines")
+
+    await save.invoke(arguments={"file_name": "a.txt", "content": "a\n\nc\n", "overwrite": True})
+    result = await grep.invoke(arguments={"regex_pattern": "^$", "glob_pattern": "a.txt"})
+    payload = json.loads(_text(result[0]))
+    blanks = [match["line_number"] for entry in payload for match in entry["matching_lines"]]
+    assert blanks == [2, 4]
+
+    # Both blank lines grep reports are readable, including the trailing one.
+    for number in blanks:
+        shown = _text((await read_lines.invoke(arguments={"file_name": "a.txt", "start_line": number}))[0])
+        assert shown.splitlines()[1] == f"{number}\t"
+
+    # The same number is then editable, closing the grep -> read -> edit loop.
+    edited = await replace_lines.invoke(
+        arguments={"file_name": "a.txt", "edits": [{"line_number": blanks[-1], "new_line": "d\n"}]}
+    )
+    assert "out of range" not in _text(edited[0])
+    assert _text((await read.invoke(arguments={"file_name": "a.txt"}))[0]) == "a\n\nc\nd\n"
+
+
 async def test_file_access_grep_line_numbers_are_editable(chat_client_base: SupportsChatGetResponse) -> None:
     """A ``line_number`` returned by ``file_access_grep`` must be in range for ``replace_lines``.
 
@@ -1226,6 +1349,7 @@ async def test_file_access_disable_write_tools_hides_write_tools(
     tools = await _prepare_access_tools(chat_client_base, disable_write_tools=True)
     names = {getattr(tool, "name", None) for tool in tools}
     assert "file_access_read" in names
+    assert "file_access_read_lines" in names
     assert "file_access_ls" in names
     assert "file_access_grep" in names
     assert "file_access_write" not in names

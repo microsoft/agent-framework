@@ -6,9 +6,9 @@ Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
 session-scoped memory that may be isolated per session, :class:`FileAccessProvider`
 operates on a shared, persistent storage area whose contents are visible across
 sessions and agents. The provider exposes tools — ``file_access_write``,
-``file_access_read``, ``file_access_delete``, ``file_access_ls``,
-``file_access_grep``, ``file_access_replace``, and ``file_access_replace_lines`` —
-by registering them on the per-invocation
+``file_access_read``, ``file_access_read_lines``, ``file_access_delete``,
+``file_access_ls``, ``file_access_grep``, ``file_access_replace``, and
+``file_access_replace_lines`` — by registering them on the per-invocation
 :class:`~agent_framework.SessionContext` in :meth:`FileAccessProvider.before_run`.
 
 The store abstraction is generic so callers can plug in in-memory, local-disk, or
@@ -58,7 +58,10 @@ DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
     "- Files may be organized into subdirectories. Use `file_access_ls` "
     "to explore the tree level by level, "
     "or `file_access_grep` to search file contents recursively across "
-    "the whole store."
+    "the whole store.\n"
+    "- To change part of a file, find the line numbers with `file_access_grep`, "
+    "read the range around them with `file_access_read_lines`, then edit with "
+    "`file_access_replace_lines`. Reading the whole file first is rarely necessary."
 )
 
 # Maximum number of characters of context to include on either side of the first
@@ -282,6 +285,46 @@ def _line_edits(edits: list[Any]) -> list[tuple[int, str]]:
         else:
             normalized.append((int(edit.line_number), str(edit.new_line)))
     return normalized
+
+
+def _slice_lines(content: str, start_line: int, end_line: int | None) -> tuple[list[str], int]:
+    """Return the 1-based inclusive ``[start_line, end_line]`` slice of ``content`` and its total line count.
+
+    Uses :func:`_split_lines_keepends`, so a ``line_number`` from ``grep`` addresses the
+    same line here and in ``replace_lines``, including the trailing empty line of a
+    newline-terminated file. ``end_line`` of ``None`` reads to the end of the file, and an
+    ``end_line`` past the last line is clamped rather than rejected. Validating
+    ``start_line`` before clamping keeps every successful slice non-empty.
+
+    Raises:
+        ValueError: When ``start_line`` or ``end_line`` is not positive, when ``end_line``
+            precedes ``start_line``, or when ``start_line`` is past the last line.
+    """
+    lines = _split_lines_keepends(content)
+    total = len(lines)
+    if start_line < 1:
+        raise ValueError(f"start_line must be a positive integer, got {start_line}.")
+    if end_line is not None and end_line < 1:
+        raise ValueError(f"end_line must be a positive integer, got {end_line}.")
+    if end_line is not None and end_line < start_line:
+        raise ValueError(f"end_line ({end_line}) must not be less than start_line ({start_line}).")
+    if start_line > total:
+        raise ValueError(f"start_line {start_line} is out of range (file has {total} lines).")
+    return lines[start_line - 1 : total if end_line is None else min(end_line, total)], total
+
+
+def _strip_line_terminator(line: str) -> str:
+    r"""Drop a keepends line's terminator, reproducing ``grep``'s ``rstrip("\r")`` rendering."""
+    return line.removesuffix("\n").rstrip("\r")
+
+
+def _line_ending_style(content: str) -> str:
+    """Name ``content``'s line terminators, which reads strip but ``replace_lines`` takes literally."""
+    crlf = content.count("\r\n")
+    lf = content.count("\n") - crlf
+    if crlf and lf:
+        return "mixed LF/CRLF"
+    return "CRLF" if crlf else "LF"
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
@@ -1117,6 +1160,23 @@ class _ReadFileInput(BaseModel):
     file_name: Annotated[str, Field(description="Name (relative path) of the file to read.")]
 
 
+class _ReadLinesInput(BaseModel):
+    """Input schema for ``file_access_read_lines``."""
+
+    file_name: Annotated[str, Field(description="Name (relative path) of the file to read.")]
+    start_line: Annotated[int, Field(description="1-based line number to read from, inclusive.")]
+    end_line: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "1-based line number to read to, inclusive. Omit to read to the end of the file; "
+                "a value past the last line is clamped to it."
+            ),
+        ),
+    ] = None
+
+
 class _DeleteFileInput(BaseModel):
     """Input schema for ``file_access_delete``."""
 
@@ -1209,6 +1269,8 @@ class FileAccessProvider(ContextProvider):
 
     - ``file_access_write`` — Write a file (refuses to overwrite by default).
     - ``file_access_read`` — Read the content of a file by name.
+    - ``file_access_read_lines`` — Read a range of lines from a file by 1-based
+      inclusive line number.
     - ``file_access_delete`` — Delete a file by name.
     - ``file_access_ls`` — List the direct child files and subdirectories of a
       directory, optionally filtered by a glob pattern.
@@ -1218,7 +1280,7 @@ class FileAccessProvider(ContextProvider):
     - ``file_access_replace_lines`` — Replace whole lines within a file.
 
     When ``disable_write_tools`` is set, only the read-only tools (``file_access_read``,
-    ``file_access_ls``, ``file_access_grep``) are advertised.
+    ``file_access_read_lines``, ``file_access_ls``, ``file_access_grep``) are advertised.
 
     Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
     session-scoped memory that may be isolated per session,
@@ -1239,7 +1301,7 @@ class FileAccessProvider(ContextProvider):
     to drive that handshake; otherwise these tools never run.
 
     To run unattended you can disable approval at the source with
-    ``disable_readonly_tool_approval`` (read, ls, grep) and/or
+    ``disable_readonly_tool_approval`` (read, read_lines, ls, grep) and/or
     ``disable_write_tool_approval`` (write, delete, replace, replace_lines),
     which register the affected tools with ``approval_mode="never_require"``.
     Alternatively, keep approval on and supply one of the static auto-approval
@@ -1247,7 +1309,7 @@ class FileAccessProvider(ContextProvider):
     ``auto_approval_rules``:
 
     - :meth:`read_only_tools_auto_approval_rule` — auto-approves only the
-      read-only tools (read, ls, grep), while still prompting for the tools that
+      read-only tools (read, read_lines, ls, grep), while still prompting for the tools that
       modify the store (write, delete, replace, replace_lines).
     - :meth:`all_tools_auto_approval_rule` — auto-approves every file-access
       tool, including the write tools.
@@ -1264,6 +1326,8 @@ class FileAccessProvider(ContextProvider):
     WRITE_TOOL_NAME = "file_access_write"
     #: Name of the tool that reads a file.
     READ_TOOL_NAME = "file_access_read"
+    #: Name of the tool that reads a range of lines from a file.
+    READ_LINES_TOOL_NAME = "file_access_read_lines"
     #: Name of the tool that deletes a file.
     DELETE_TOOL_NAME = "file_access_delete"
     #: Name of the tool that lists the files and subdirectories of a directory.
@@ -1278,6 +1342,7 @@ class FileAccessProvider(ContextProvider):
     #: Names of the tools that only read from (never modify) the file store.
     _READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset({
         READ_TOOL_NAME,
+        READ_LINES_TOOL_NAME,
         LS_TOOL_NAME,
         GREP_TOOL_NAME,
     })
@@ -1471,6 +1536,30 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not read file '{file_name}': {exc.strerror or exc}"
             return content if content is not None else f"File '{file_name}' not found."
 
+        @tool(
+            name=FileAccessProvider.READ_LINES_TOOL_NAME,
+            schema=_ReadLinesInput,
+            approval_mode=readonly_approval,
+        )
+        async def file_access_read_lines(file_name: str, start_line: int, end_line: int | None = None) -> str:
+            """Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Line numbers match file_access_grep and file_access_replace_lines. Each line is prefixed with its number and a tab; that gutter is for reference only, never include it in a replacement line."""  # ruff:ignore[line-too-long]
+            try:
+                normalized = _normalize_relative_path(file_name)
+                content = await self.store.read(normalized)
+                if content is None:
+                    return f"File '{file_name}' not found."
+                sliced, total = _slice_lines(content, start_line, end_line)
+            except ValueError as exc:
+                return f"Could not read lines from file '{file_name}': {exc}"
+            except OSError as exc:
+                return f"Could not read lines from file '{file_name}': {exc.strerror or exc}"
+            header = (
+                f"Lines {start_line}-{start_line + len(sliced) - 1} of '{file_name}' "
+                f"({total} lines total, {_line_ending_style(content)} line endings):"
+            )
+            numbered = (f"{number}\t{_strip_line_terminator(line)}" for number, line in enumerate(sliced, start_line))
+            return "\n".join([header, *numbered])
+
         @tool(name=FileAccessProvider.DELETE_TOOL_NAME, schema=_DeleteFileInput, approval_mode=write_approval)
         async def file_access_delete(file_name: str) -> str:
             """Delete a file by name."""
@@ -1583,7 +1672,7 @@ class FileAccessProvider(ContextProvider):
             return output
 
         context.extend_instructions(self.source_id, [self.instructions])
-        tools = [file_access_read, file_access_ls, file_access_grep]
+        tools = [file_access_read, file_access_read_lines, file_access_ls, file_access_grep]
         if not self.disable_write_tools:
             tools.extend([file_access_write, file_access_delete, file_access_replace, file_access_replace_lines])
         context.extend_tools(self.source_id, tools)
