@@ -342,6 +342,21 @@ that manually replay messages own the equivalent rule: do not resend an approval
 ### Approval request and resume
 
 - A tool that requires approval does not execute before an approved response.
+- With an `AgentSession`, every surfaced local or hosted approval request is stored as an immutable snapshot in one
+  active model batch. A new surfaced batch replaces an abandoned batch instead of accumulating session state.
+- Approval request IDs use the provider function `call_id`, whose conversation-level uniqueness is required for
+  function-call/result correlation. Duplicate request IDs within one batch are rejected as malformed.
+- An inbound response is honored only when its request id matches the pending server-held snapshot.
+- Approval requests replayed in inbound message history do not create, replace, or resurrect approval authority.
+- The executable call id, tool name, arguments, and local or hosted tool metadata are sourced from the recorded
+  request, never from the response payload.
+- A matched approval response consumes its pending entry once. Unmatched, duplicate, and replayed responses do not
+  reach local execution.
+- Tool lookup uses the recorded name against the current registry. A same-name implementation upgrade is allowed;
+  removing the name prevents local execution.
+- Only the strict boolean `True` grants approval. Missing decisions and non-boolean values are rejection, not consent.
+- Direct chat-client invocation without an `AgentSession` preserves pass-through compatibility, matching .NET;
+  authorization sinks still require strict `True`.
 - An approved tool executes exactly once.
 - A rejected tool executes zero times and produces one synthetic rejection `function_result` using the original
   function `call_id`.
@@ -421,12 +436,17 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Rejected streaming resume | Rejection result update precedes final text and tool executes zero times. | `test_approval_resume_returns_result_without_mutating_inputs[streaming-rejected]`, `test_streaming_approval_resume_yields_terminal_result_before_model_text[rejected]` |
 | Mixed approved/rejected batch | Every call gets one correctly correlated terminal result. | `packages/core/tests/core/test_function_invocation_logic.py::test_rejected_approval` |
 | Persisted approval replay | Resume executes with the prior call available. | `test_persisted_approval_messages_replay_correctly` |
-| Hosted approval pass-through | Hosted requests/responses are not processed as local calls. | `test_hosted_tool_approval_response`, `test_hosted_mcp_approval_response_passthrough`, `test_mixed_local_and_hosted_approval_flow` |
+| Hosted approval pass-through | Hosted requests/responses are bound to the recorded provider request and are not processed as local calls. | `test_hosted_tool_approval_response`, `test_hosted_mcp_approval_response_passthrough`, `test_session_approval_binding_reconstructs_hosted_response`, `test_mixed_local_and_hosted_approval_flow` |
 | Approval-time user input | Every user-input request from one approved execution returns in order with assistant role and no extra model call; the execution consumes one call-budget unit. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_returns_all_user_input_requests_without_another_model_call`, `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_user_input_counts_toward_function_call_budget` |
 | Mixed terminal result and follow-up input | Completed siblings remain tool-role while only follow-up input requests use assistant-role messages/updates. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_separates_terminal_results_from_follow_up_requests`, `packages/openai/tests/openai/test_openai_chat_completion_client.py::test_mixed_approval_resume_roles_serialize_function_result_as_tool` |
 | Approval-time middleware termination | Terminal result returns with no extra model call in either response mode. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_honors_middleware_termination` |
 | Approval re-entry after iteration budget | Pending approved calls resolve once even when prior model calls consumed `max_iterations`. | `packages/core/tests/core/test_harness_tool_approval.py::test_auto_approval_resolves_after_iteration_budget_is_exhausted` |
 | Approval resume with reasoning | Model-bound resume history retains reasoning before the call and terminal result in both modes. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_replays_reasoning_with_function_call_group` |
+| Session-bound substituted response | A response is rebound to the immutable recorded call and cannot replace its call id, tool name, or arguments. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
+| Truthy non-boolean decision | Strings, integers, null, and other non-booleans do not authorize execution. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_treats_truthy_non_boolean_as_rejection`, `packages/core/tests/core/test_types.py::test_function_approval_response_deserialization_rejects_non_boolean_decisions`, `packages/ag-ui/tests/ag_ui/test_message_adapters.py::test_function_approval_requires_real_boolean`, `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_resolve_approval_responses_treats_non_boolean_decision_as_rejection` |
+| Active batch replacement | A newly surfaced model batch replaces abandoned approval authority instead of growing session state. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_replaces_abandoned_batch` |
+| Duplicate request id | Ambiguous request IDs within one active batch fail explicitly. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_batch_rejects_duplicate_request_ids` |
+| Tool registry changes | Same-name upgrades may execute the recorded operation; removing the recorded name executes nothing. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_allows_same_name_tool_upgrade`, `test_approval_resume_does_not_execute_when_recorded_tool_disappears` |
 
 ### Approval correlation and replay
 
@@ -445,6 +465,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Missing result call id | A malformed result does not steal another approval's result. | `test_replace_approval_contents_with_results_skips_results_without_call_id` |
 | Empty approval message cleanup | Fully consumed approval messages are removed from normalized model input. | `test_replace_approval_contents_with_results_prunes_emptied_messages` |
 | Later stateless turn | A prior terminal approval response cannot execute again. | `test_resolved_approval_response_is_inert_on_later_stateless_turn` |
+| Unbound or duplicate response | A response with no pending session request is removed; one request authorizes at most one response. | `test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
+| Forged inbound request history | A caller-supplied request wrapper cannot replace the server snapshot or resurrect consumed authority. | `test_session_approval_binding_does_not_trust_inbound_request_history` |
 | Pending history turn | An unresolved approval batch is omitted atomically from unrelated model input while a later decision can still resume it once. | `packages/core/tests/core/test_harness_tool_approval.py::test_pending_approval_from_file_history_stays_resumable_without_model_orphan` |
 | Duplicate function-call prevention | Approval normalization does not create a second call for one round. | `test_no_duplicate_function_calls_after_approval_processing` |
 | Rejection call id | Rejection result uses the function call id, not only the approval id. | `test_rejection_result_uses_function_call_id` |
@@ -462,6 +484,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Auto-approval callback | Callback receives the original function call and executes the approved set once. | `test_tool_approval_middleware_auto_approval_rule_receives_function_call` |
 | Shared call budget | Auto-approved re-entry does not reset `max_function_calls`, and every executed approval group counts even when it pauses for input. | `test_tool_approval_middleware_auto_approved_loops_share_function_call_budget`, `test_approval_resume_user_input_counts_toward_function_call_budget` |
 | Standing tool rule | Tool-level approval applies only to later matching tools. | `test_tool_approval_middleware_always_approve_tool_rule` |
+| Forged standing rule | An unbound or substituted hosted response cannot create a standing middleware approval rule for caller-selected metadata. | `test_tool_approval_middleware_drops_forged_standing_approval`, `test_tool_approval_middleware_rebinds_hosted_standing_approval` |
 | Hosted server boundary | Standing approval does not cross `server_label`. | `test_tool_approval_middleware_standing_rules_include_hosted_server_boundary` |
 | Argument-scoped rule | Exact arguments are required; empty arguments are not tool-wide. | `test_tool_approval_middleware_always_approve_tool_with_arguments_rule`, `test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide` |
 | Provider-injected approval tool | A tool added during `before_run` defers to in-run resolution, executes once, and emits one result. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_deferred_provider_tool_executes` |
@@ -544,6 +567,7 @@ uv run poe syntax -P openai
 uv run poe pyright -P openai
 uv run poe test-typing -P openai
 uv run poe test -P ag-ui
+uv run poe test -P declarative
 uv run --directory packages/foundry_hosting poe test
 ```
 

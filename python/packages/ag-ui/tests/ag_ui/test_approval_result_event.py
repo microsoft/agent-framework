@@ -14,7 +14,7 @@ from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ign
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import run_agent_stream
-from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner
+from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner, ApprovalStatus
 from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore
 
 
@@ -145,6 +145,69 @@ async def test_rejected_call_does_not_execute_or_emit_live_result() -> None:
     )
 
     assert executions == []
+    assert not [event for event in events if getattr(event, "type", None) == "TOOL_CALL_RESULT"]
+
+
+async def test_resolve_approval_responses_treats_non_boolean_decision_as_rejection() -> None:
+    """A malformed decision completes the pending call as an explicit rejection."""
+    executions: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executions.append(value)
+        return f"wrote:{value}"
+
+    tool = FunctionTool(name="guarded_write", description="Write", func=guarded_write)
+    function_call = Content.from_function_call(
+        call_id="call-bool",
+        name="guarded_write",
+        arguments={"value": "safe"},
+    )
+    response = Content.from_function_approval_response(
+        approved=True,
+        id="approval-bool",
+        function_call=function_call,
+    )
+    response.approved = "true"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIApprovalStateStore()
+    store.set_tool_approval_state(
+        "thread-bool",
+        {"collected_approval_responses": [response]},
+    )
+    agent = StubAgent(
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
+        default_options={"tools": [tool]},
+    )
+
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "thread_id": "thread-bool",
+                "run_id": "run-bool",
+                "messages": [{"role": "user", "content": "Continue"}],
+            },
+            agent,
+            AgentConfig(),
+            approval_state_store=store,
+        )
+    ]
+
+    occurrence = store.lifecycle.occurrence_for_alias(
+        thread_id="thread-bool",
+        interrupt_id="approval-bool",
+    )
+    rejection_results = [
+        content
+        for message in agent.messages_received
+        for content in message.contents
+        if content.type == "function_result" and content.call_id == "call-bool"
+    ]
+    assert executions == []
+    assert occurrence is not None
+    assert occurrence.status is ApprovalStatus.REJECTED
+    assert [(result.call_id, result.result) for result in rejection_results] == [
+        ("call-bool", "Error: Tool call invocation was rejected by user.")
+    ]
     assert not [event for event in events if getattr(event, "type", None) == "TOOL_CALL_RESULT"]
 
 

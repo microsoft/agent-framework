@@ -636,7 +636,7 @@ def _handle_step_based_approval(messages: list[Any]) -> list[BaseEvent]:
         try:
             parsed_result = json.loads(approval_text)
             result: dict[str, Any] = cast(dict[str, Any], parsed_result) if isinstance(parsed_result, dict) else {}
-            accepted = bool(result.get("accepted", False))
+            accepted = result.get("accepted") is True
             steps_raw = result.get("steps", [])
             steps: list[dict[str, Any]] = []
             if isinstance(steps_raw, list):
@@ -880,7 +880,7 @@ def _register_server_generated_approval_response(
         aliases=[str(response.function_call.call_id)] if response.function_call.call_id else None,
         server_label=_function_call_server_label(response.function_call),
     )
-    if not response.approved:
+    if response.approved is not True:
         lifecycle.claim_batch(
             thread_id=thread_id,
             decisions=[
@@ -1565,6 +1565,12 @@ async def _resolve_approval_responses(
         # stale replay controls and must not authorize a malformed fresh one.
         primary_response = responses[-1]
         response_content_ids_to_strip.update(id(response) for response in responses[:-1])
+        if not isinstance(primary_response.approved, bool):
+            logger.warning(
+                "Treating approval response id=%s as rejected: approved must be a boolean",
+                primary_response.id,
+            )
+            primary_response.approved = False
         resp_id = primary_response.id
         id_entry = (
             lifecycle.occurrence_for_alias(thread_id=thread_id, interrupt_id=str(resp_id))
@@ -1612,7 +1618,7 @@ async def _resolve_approval_responses(
             else:
                 primary_response.function_call.additional_properties.pop("server_label", None)
         if (
-            primary_response.approved
+            primary_response.approved is True
             and lifecycle is not None
             and authorized_executions is not None
             and primary_response.function_call is not None
@@ -1626,14 +1632,14 @@ async def _resolve_approval_responses(
             intents_by_response_content_id[id(primary_response)] = intent
         valid_response_content_ids.add(id(primary_response))
         if (
-            primary_response.approved
+            primary_response.approved is True
             and intent is not None
             and intent.owner in {ApprovalExecutionOwner.HOSTED, ApprovalExecutionOwner.DEFERRED}
         ):
             validated_forwarded_approvals.append(primary_response)
         if not server_label:
             pending_local_response_content_ids.add(id(primary_response))
-        if validated_approved_responses is not None and primary_response.approved and not server_label:
+        if validated_approved_responses is not None and primary_response.approved is True and not server_label:
             validated_approved_responses.append(primary_response)
 
     if response_content_ids_to_strip:
@@ -1698,7 +1704,7 @@ async def _resolve_approval_responses(
     if not fcc_todo:
         return []
 
-    approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
+    approved_responses = [resp for resp in fcc_todo.values() if resp.approved is True]
 
     approved_function_result_groups: list[list[Content]] = []
 
@@ -1909,7 +1915,7 @@ def _clean_resolved_approvals_from_snapshot(
             )
             if target_call_id is None:
                 continue
-            if parsed.get("accepted"):
+            if parsed.get("accepted") is True:
                 replacement = result_by_call_id.get(target_call_id)
                 if replacement is None:
                     continue
