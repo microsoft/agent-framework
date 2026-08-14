@@ -158,8 +158,9 @@ public sealed partial class AgentSkillsProvider : AIContextProvider, IDisposable
         When a task aligns with a skill's domain, follow these steps in exact order:
         - Use `load_skill` to retrieve the skill's instructions.
         - Follow the provided guidance.
-        - Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
-           (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).
+        - Use `read_skill_resource` only for a resource explicitly referenced by the loaded skill.
+        - Pass its resource path exactly as written in that skill.
+        - Never infer or guess resource paths.
         - Use `run_skill_script` to run referenced scripts, using the name exactly as listed.
         Only load what is needed, when it is needed.
         """;

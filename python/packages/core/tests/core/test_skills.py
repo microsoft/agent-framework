@@ -676,6 +676,20 @@ class TestBuildSkillsInstructionPrompt:
         assert "<description>Does stuff.</description>" in prompt
         assert "load_skill" in prompt
 
+    def test_default_prompt_uses_rule_only_resource_guidance(self) -> None:
+        skills = [
+            InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="Does stuff."), instructions="Body"),
+        ]
+
+        prompt = SkillsProvider._create_instructions(None, skills)
+
+        assert prompt is not None
+        assert "only for a resource explicitly referenced by the loaded skill" in prompt
+        assert "Pass its resource path exactly as written in that skill" in prompt
+        assert "Never infer or guess resource paths" in prompt
+        assert "style-guide" not in prompt
+        assert "references/FAQ.md" not in prompt
+
     def test_skills_sorted_alphabetically(self) -> None:
         skills = [
             InlineSkill(frontmatter=SkillFrontmatter(name="zebra", description="Z skill."), instructions="Body"),
@@ -805,6 +819,18 @@ class TestSkillsProvider:
         await _init_provider(provider)
         result = await provider._load_skill(_raw_skills(provider), "my-skill")
         assert "See [doc](references/FAQ.md)." in result
+
+    async def test_load_skill_lists_explicit_resource_path_exactly(self) -> None:
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="my-skill", description="Skill."),
+            instructions="Consult the explicitly referenced guide.",
+            resources=[InlineSkillResource(name="references/actual-guide.md", content="Guide content")],
+        )
+        provider = SkillsProvider([skill])
+
+        result = await provider._load_skill([skill], "my-skill")
+
+        assert '<resource name="references/actual-guide.md"/>' in result
 
     async def test_load_skill_unknown_returns_error(self, tmp_path: Path) -> None:
         provider = SkillsProvider.from_paths(str(tmp_path))

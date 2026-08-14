@@ -80,6 +80,26 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task InvokingCoreAsync_DefaultPromptUsesRuleOnlyResourceGuidanceAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("resource-guidance", "Resource guidance test", "Body.");
+        var provider = new AgentSkillsProvider(skill);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("only for a resource explicitly referenced by the loaded skill", result.Instructions);
+        Assert.Contains("Pass its resource path exactly as written in that skill", result.Instructions);
+        Assert.Contains("Never infer or guess resource paths", result.Instructions);
+        Assert.DoesNotContain("style-guide", result.Instructions);
+        Assert.DoesNotContain("references/FAQ.md", result.Instructions);
+    }
+
+    [Fact]
     public async Task InvokingCoreAsync_NullInputInstructions_SetsInstructionsAsync()
     {
         // Arrange
@@ -437,6 +457,25 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.Contains("---", text);
         Assert.Contains("name: content-skill", text);
         Assert.Contains("Skill body.", text);
+    }
+
+    [Fact]
+    public async Task LoadSkill_ListsExplicitResourcePathExactlyAsync()
+    {
+        // Arrange
+        var skill = new AgentInlineSkill("resource-skill", "Resource path test", "Consult the explicitly referenced guide.");
+        skill.AddResource("references/actual-guide.md", "Guide content");
+        var provider = new AgentSkillsProvider(skill);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var loadSkillTool = result.Tools!.First(t => t.Name == "load_skill") as AIFunction;
+
+        // Act
+        var content = await loadSkillTool!.InvokeAsync(
+            new AIFunctionArguments(new Dictionary<string, object?> { ["skillName"] = "resource-skill" }));
+
+        // Assert
+        Assert.Contains("<resource name=\"references/actual-guide.md\"/>", content!.ToString());
     }
 
     [Fact]

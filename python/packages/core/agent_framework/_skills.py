@@ -1809,8 +1809,9 @@ When a task aligns with a skill's domain, follow these steps in exact order:
 Only load what is needed, when it is needed."""
 
 RESOURCE_INSTRUCTIONS: Final[str] = (
-    "- Use `read_skill_resource` to read any referenced resources, using the name exactly as listed\n"
-    '   (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).\n'
+    "- Use `read_skill_resource` only for a resource explicitly referenced by the loaded skill.\n"
+    "- Pass its resource path exactly as written in that skill.\n"
+    "- Never infer or guess resource paths.\n"
 )
 
 SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
