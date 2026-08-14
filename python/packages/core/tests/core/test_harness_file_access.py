@@ -33,12 +33,10 @@ from agent_framework._harness import _file_access as _file_access_module
 from agent_framework._harness._file_access import (
     DEFAULT_FILE_ACCESS_INSTRUCTIONS,
     DEFAULT_FILE_ACCESS_SOURCE_ID,
-    _line_ending_style,
     _matches_glob,
     _normalize_relative_path,
     _run_search_with_timeout,
     _slice_lines,
-    _strip_line_terminator,
 )
 
 from .conftest import create_junction_or_skip
@@ -1181,23 +1179,23 @@ async def test_file_access_replace_lines(chat_client_base: SupportsChatGetRespon
     assert "Duplicate" in _text(dup[0])
 
 
-def test_slice_lines_returns_inclusive_range_and_total() -> None:
-    """``_slice_lines`` should slice 1-based inclusive ranges and report the keepends line count."""
-    assert _slice_lines("a\nb\nc\n", 1, 2) == (["a\n", "b\n"], 4)
-    assert _slice_lines("a\nb\nc\n", 2, 2) == (["b\n"], 4)
+def test_slice_lines_returns_inclusive_range() -> None:
+    """``_slice_lines`` should slice 1-based inclusive ranges with terminators kept."""
+    assert _slice_lines("a\nb\nc\n", 1, 2) == ["a\n", "b\n"]
+    assert _slice_lines("a\nb\nc\n", 2, 2) == ["b\n"]
 
     # A trailing newline yields a final empty line that is in range, matching grep/replace_lines.
-    assert _slice_lines("a\nb\n", 1, None) == (["a\n", "b\n", ""], 3)
-    assert _slice_lines("a\nb\n", 3, 3) == ([""], 3)
+    assert _slice_lines("a\nb\n", 1, None) == ["a\n", "b\n", ""]
+    assert _slice_lines("a\nb\n", 3, 3) == [""]
 
     # Empty content is a single empty line, not zero lines.
-    assert _slice_lines("", 1, None) == ([""], 1)
+    assert _slice_lines("", 1, None) == [""]
 
     # An end_line past the last line clamps instead of failing.
     assert _slice_lines("a\nb\n", 1, 99) == _slice_lines("a\nb\n", 1, None)
 
     # Splitting on "\n" only leaves CRLF terminators attached.
-    assert _slice_lines("a\r\nb", 1, 1) == (["a\r\n"], 2)
+    assert _slice_lines("a\r\nb", 1, 1) == ["a\r\n"]
 
 
 def test_slice_lines_rejects_invalid_ranges() -> None:
@@ -1210,19 +1208,6 @@ def test_slice_lines_rejects_invalid_ranges() -> None:
         _slice_lines("a\nb\n", 3, 2)
     with pytest.raises(ValueError, match="start_line 99 is out of range"):
         _slice_lines("a\nb\n", 99, None)
-
-
-def test_line_rendering_helpers() -> None:
-    """Displayed line text should match grep's, and the ending style should describe the file."""
-    assert _strip_line_terminator("a\r\n") == "a"
-    assert _strip_line_terminator("a\n") == "a"
-    assert _strip_line_terminator("a") == "a"
-    assert _strip_line_terminator("") == ""
-
-    assert _line_ending_style("a\nb\n") == "LF"
-    assert _line_ending_style("a\r\nb\r\n") == "CRLF"
-    assert _line_ending_style("a\r\nb\n") == "mixed LF/CRLF"
-    assert _line_ending_style("abc") == "LF"
 
 
 async def test_file_access_read_lines(chat_client_base: SupportsChatGetResponse) -> None:
@@ -1238,21 +1223,19 @@ async def test_file_access_read_lines(chat_client_base: SupportsChatGetResponse)
         return _text((await read_lines.invoke(arguments={"file_name": "a.txt", **kwargs}))[0])
 
     await write("one\ntwo\nthree\n")
-    header = "Lines {}-{} of 'a.txt' (4 lines total, LF line endings):"
-    assert await read(start_line=2, end_line=3) == f"{header.format(2, 3)}\n2\ttwo\n3\tthree"
+    assert await read(start_line=2, end_line=3) == "2\ttwo\n3\tthree\n"
 
     # Omitting end_line reads to the end, including the trailing empty line.
-    assert await read(start_line=1) == f"{header.format(1, 4)}\n1\tone\n2\ttwo\n3\tthree\n4\t"
+    assert await read(start_line=1) == "1\tone\n2\ttwo\n3\tthree\n4\t"
 
     # An end_line past the last line clamps rather than reporting an error.
     clamped = await read(start_line=1, end_line=999)
     assert clamped == await read(start_line=1)
     assert "out of range" not in clamped
 
-    # CRLF terminators are stripped from the displayed text and named in the header.
+    # Each line keeps its own terminator, so a CRLF line can be reused verbatim.
     await write("alpha\r\nbeta\r\n")
-    crlf_header = "Lines 1-1 of 'a.txt' (3 lines total, CRLF line endings):"
-    assert await read(start_line=1, end_line=1) == f"{crlf_header}\n1\talpha"
+    assert await read(start_line=1, end_line=1) == "1\talpha\r\n"
 
     await write("one\ntwo\n")
     for kwargs, expected in (
@@ -1285,8 +1268,10 @@ async def test_file_access_read_lines_shows_grep_line_numbers(
 
     # Both blank lines grep reports are readable, including the trailing one.
     for number in blanks:
-        shown = _text((await read_lines.invoke(arguments={"file_name": "a.txt", "start_line": number}))[0])
-        assert shown.splitlines()[1] == f"{number}\t"
+        shown = _text(
+            (await read_lines.invoke(arguments={"file_name": "a.txt", "start_line": number, "end_line": number}))[0]
+        )
+        assert shown.removeprefix(f"{number}\t") == ("\n" if number == 2 else "")
 
     # The same number is then editable, closing the grep -> read -> edit loop.
     edited = await replace_lines.invoke(
@@ -1294,6 +1279,27 @@ async def test_file_access_read_lines_shows_grep_line_numbers(
     )
     assert "out of range" not in _text(edited[0])
     assert _text((await read.invoke(arguments={"file_name": "a.txt"}))[0]) == "a\n\nc\nd\n"
+
+
+async def test_file_access_read_lines_round_trips_into_replace_lines(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """The text after the gutter is literal, so a CRLF line survives a read-then-edit round trip."""
+    tools = await _prepare_access_tools(chat_client_base)
+    save = _tool_by_name(tools, "file_access_write")
+    read = _tool_by_name(tools, "file_access_read")
+    read_lines = _tool_by_name(tools, "file_access_read_lines")
+    replace_lines = _tool_by_name(tools, "file_access_replace_lines")
+
+    await save.invoke(arguments={"file_name": "a.txt", "content": "alpha\r\nbeta\r\n", "overwrite": True})
+    shown = _text((await read_lines.invoke(arguments={"file_name": "a.txt", "start_line": 2, "end_line": 2}))[0])
+    assert shown == "2\tbeta\r\n"
+
+    # Rewriting the line with the text it reported keeps the CRLF terminator intact.
+    await replace_lines.invoke(
+        arguments={"file_name": "a.txt", "edits": [{"line_number": 2, "new_line": shown.removeprefix("2\t").upper()}]}
+    )
+    assert _text((await read.invoke(arguments={"file_name": "a.txt"}))[0]) == "alpha\r\nBETA\r\n"
 
 
 async def test_file_access_grep_line_numbers_are_editable(chat_client_base: SupportsChatGetResponse) -> None:

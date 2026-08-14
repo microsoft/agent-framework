@@ -287,8 +287,8 @@ def _line_edits(edits: list[Any]) -> list[tuple[int, str]]:
     return normalized
 
 
-def _slice_lines(content: str, start_line: int, end_line: int | None) -> tuple[list[str], int]:
-    """Return the 1-based inclusive ``[start_line, end_line]`` slice of ``content`` and its total line count.
+def _slice_lines(content: str, start_line: int, end_line: int | None) -> list[str]:
+    """Return the 1-based inclusive ``[start_line, end_line]`` slice of ``content``, terminators kept.
 
     Uses :func:`_split_lines_keepends`, so a ``line_number`` from ``grep`` addresses the
     same line here and in ``replace_lines``, including the trailing empty line of a
@@ -310,21 +310,7 @@ def _slice_lines(content: str, start_line: int, end_line: int | None) -> tuple[l
         raise ValueError(f"end_line ({end_line}) must not be less than start_line ({start_line}).")
     if start_line > total:
         raise ValueError(f"start_line {start_line} is out of range (file has {total} lines).")
-    return lines[start_line - 1 : total if end_line is None else min(end_line, total)], total
-
-
-def _strip_line_terminator(line: str) -> str:
-    r"""Drop a keepends line's terminator, reproducing ``grep``'s ``rstrip("\r")`` rendering."""
-    return line.removesuffix("\n").rstrip("\r")
-
-
-def _line_ending_style(content: str) -> str:
-    """Name ``content``'s line terminators, which reads strip but ``replace_lines`` takes literally."""
-    crlf = content.count("\r\n")
-    lf = content.count("\n") - crlf
-    if crlf and lf:
-        return "mixed LF/CRLF"
-    return "CRLF" if crlf else "LF"
+    return lines[start_line - 1 : total if end_line is None else min(end_line, total)]
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
@@ -1542,23 +1528,19 @@ class FileAccessProvider(ContextProvider):
             approval_mode=readonly_approval,
         )
         async def file_access_read_lines(file_name: str, start_line: int, end_line: int | None = None) -> str:
-            """Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Line numbers match file_access_grep and file_access_replace_lines. Each line is prefixed with its number and a tab; that gutter is for reference only, never include it in a replacement line."""  # ruff:ignore[line-too-long]
+            """Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Line numbers match file_access_grep and file_access_replace_lines. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 content = await self.store.read(normalized)
                 if content is None:
                     return f"File '{file_name}' not found."
-                sliced, total = _slice_lines(content, start_line, end_line)
+                sliced = _slice_lines(content, start_line, end_line)
             except ValueError as exc:
                 return f"Could not read lines from file '{file_name}': {exc}"
             except OSError as exc:
                 return f"Could not read lines from file '{file_name}': {exc.strerror or exc}"
-            header = (
-                f"Lines {start_line}-{start_line + len(sliced) - 1} of '{file_name}' "
-                f"({total} lines total, {_line_ending_style(content)} line endings):"
-            )
-            numbered = (f"{number}\t{_strip_line_terminator(line)}" for number, line in enumerate(sliced, start_line))
-            return "\n".join([header, *numbered])
+            # Each line keeps its terminator, so it doubles as the row separator.
+            return "".join(f"{number}\t{line}" for number, line in enumerate(sliced, start_line))
 
         @tool(name=FileAccessProvider.DELETE_TOOL_NAME, schema=_DeleteFileInput, approval_mode=write_approval)
         async def file_access_delete(file_name: str) -> str:
