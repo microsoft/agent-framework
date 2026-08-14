@@ -106,6 +106,12 @@ def weather_tool(location: str) -> str:
     return f"weather in {location}"
 
 
+@tool(approval_mode="never_require")
+def search_tool(query: str) -> str:
+    """Run a search."""
+    return f"results for {query}"
+
+
 weather_tool_calls: list[str] = []
 
 
@@ -307,6 +313,24 @@ async def test_agent_startup_projects_constructor_registered_tools(chat_client_b
     startup = guard.contexts_for("agent_startup")
     assert len(startup) == 1
     assert startup[0]["agent_init"]["tools_registered"] == ["weather_tool"]
+
+
+@requires_sdk
+async def test_agent_startup_merges_run_tools_with_constructor_tools(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("hello", tools=[search_tool])
+
+    startup = guard.contexts_for("agent_startup")
+    assert len(startup) == 1
+    assert startup[0]["agent_init"]["tools_registered"] == ["weather_tool", "search_tool"]
 
 
 @requires_sdk

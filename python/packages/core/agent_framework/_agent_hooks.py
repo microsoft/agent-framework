@@ -857,27 +857,44 @@ def _agent_updates_from_response(response: AgentResponse[Any]) -> list[AgentResp
 
 
 def _tool_names(context: AgentContext) -> list[str]:
-    """Project the registered tool names for ``agent_startup`` (spec ``tools_registered``)."""
+    """Project the registered tool names for ``agent_startup`` (spec ``tools_registered``).
+
+    The projection mirrors run preparation: constructor tools, agent/run options tools,
+    and the run-level tool overrides are all combined, so a run that supplies extra
+    tools still reports the agent's configured tools alongside them.
+    """
     from ._tools import _get_tool_name, normalize_tools  # pyright: ignore[reportPrivateUsage]
 
-    if context.tools is not None:
-        tools: Any = context.tools
-    else:
-        tools = getattr(context.agent, "tools", None)
-        default_options = getattr(context.agent, "default_options", None)
-        if tools is None and isinstance(default_options, Mapping):
-            tools = cast(Any, cast(Mapping[str, Any], default_options).get("tools"))
-    if tools is None:
-        return []
-    try:
-        normalized = normalize_tools(tools)
-    except Exception:
-        logger.warning("agent-hooks could not normalize the run's tools for the agent_startup projection.")
-        return []
+    merged: list[Any] = []
+
+    def _extend(source: Any) -> None:
+        if source is None:
+            return
+        try:
+            merged.extend(normalize_tools(source))
+        except Exception:
+            logger.warning(
+                "agent-hooks could not normalize the run's tools for the agent_startup projection."
+            )
+
+    agent = context.agent
+    _extend(getattr(agent, "tools", None))
+    default_options = getattr(agent, "default_options", None)
+    if isinstance(default_options, Mapping):
+        _extend(cast(Mapping[str, Any], default_options).get("tools"))
+    options = context.options
+    if isinstance(options, Mapping):
+        _extend(cast(Mapping[str, Any], options).get("tools"))
+    _extend(context.tools)
+
     names: list[str] = []
-    for item in normalized:
+    seen: set[str] = set()
+    for item in merged:
         name = _get_tool_name(item)
-        names.append(name if name else type(item).__name__)
+        label = name if name else type(item).__name__
+        if label not in seen:
+            seen.add(label)
+            names.append(label)
     return names
 
 
