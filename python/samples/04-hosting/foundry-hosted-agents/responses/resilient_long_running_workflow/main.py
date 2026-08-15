@@ -8,9 +8,8 @@ integer and sends it back to itself. At zero, it sends a completion message to
 the terminal executor, which yields the workflow output.
 
 Environment variables:
-        FOUNDRY_PROJECT_ENDPOINT: Microsoft Foundry project endpoint.
-        FOUNDRY_MODEL: Model deployment name.
-    COUNTDOWN_CRASH_COUNT: Number of intentional process crashes (default: 2).
+    FOUNDRY_PROJECT_ENDPOINT: Microsoft Foundry project endpoint.
+    AZURE_AI_MODEL_DEPLOYMENT_NAME: Model deployment name.
 """
 
 import asyncio
@@ -67,7 +66,7 @@ class CountdownExecutor(Executor):
             return
 
         await asyncio.sleep(1)  # Simulate a long-running operation
-        await ctx.yield_output(f"Countdown: {target}")
+        await ctx.yield_output(str(target))
         await ctx.send_message(target - 1, target_id=self.id)
 
 
@@ -106,10 +105,12 @@ def build_workflow():
 
 def main() -> None:
     """Run the workflow as a durable Responses API host."""
+    print(f"PID: {os.getpid()}")  # lets crash-recovery testing find and kill this process
     workflow_agent = build_workflow().as_agent(name="countdown-workflow")
     server = ResponsesHostServer(
         workflow_agent,
         options=ResponsesServerOptions(resilient_background=True),
+        log_level="DEBUG",
     )
     server.run()
 

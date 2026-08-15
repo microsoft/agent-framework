@@ -15,6 +15,7 @@ import json
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, cast, overload
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -47,8 +48,14 @@ from agent_framework import (
     tool,
 )
 from azure.ai.agentserver.core import get_request_context
-from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponseContext
+from azure.ai.agentserver.responses import (
+    FileResponseStore,
+    InMemoryResponseProvider,
+    ResponseContext,
+    ResponsesServerOptions,
+)
 from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
+from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
 from typing_extensions import Any
@@ -404,6 +411,17 @@ class TestResponsesHostServerInit:
         with pytest.raises(RuntimeError, match="history provider"):
             ResponsesHostServer(agent)
 
+    def test_init_rejects_resilient_background_for_non_workflow_agent(self, tmp_path: Path) -> None:
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
+        )
+        with pytest.raises(RuntimeError, match="resilient_background"):
+            ResponsesHostServer(
+                agent,
+                store=FileResponseStore(storage_dir=tmp_path),
+                options=ResponsesServerOptions(resilient_background=True),
+            )
+
     async def test_previous_response_requires_existing_agent_session(self) -> None:
         agent = _make_agent()
         server = _make_server(agent, session_store=SessionStore())
@@ -413,7 +431,9 @@ class TestResponsesHostServerInit:
         handler = server._handle_response(request, context, asyncio.Event())  # pyright: ignore[reportPrivateUsage]
         events = [event async for event in handler]
 
-        failed_events = [event for event in events if event.get("type") == "response.failed"]
+        failed_events = [
+            event for event in events if isinstance(event, Mapping) and event.get("type") == "response.failed"
+        ]
         assert len(failed_events) == 1
         failed_event = cast(Mapping[str, Any], failed_events[0])
         response = cast(Mapping[str, Any], failed_event["response"])
@@ -3526,7 +3546,9 @@ class TestCheckpointContextValidation:
                 )
             ]
 
-        failed_events = [event for event in events if event.get("type") == "response.failed"]
+        failed_events = [
+            event for event in events if isinstance(event, Mapping) and event.get("type") == "response.failed"
+        ]
         assert len(failed_events) == 1
         failed_event = cast(Mapping[str, Any], failed_events[0])
         response = cast(Mapping[str, Any], failed_event["response"])
@@ -4385,6 +4407,39 @@ class TestWorkflowAgentHosting:
         ]
         assert len(approval_responses) == 1
         assert approval_responses[0].approved is False
+
+
+# endregion
+
+
+# region Resilient background checkpointing
+
+
+class TestResilientBackgroundCheckpointing:
+    """``ResponseEventStream.checkpoint()`` only persists when its returned event is ``yield``-ed, so
+    ``_handle_inner_workflow`` fetches the latest saved workflow checkpoint and yields it after every update
+    when resilient_background is enabled.
+    """
+
+    async def test_workflow_yields_checkpoint_event_when_resilient_background(self, tmp_path: Path) -> None:
+        workflow_agent = _build_text_workflow_agent("hello from workflow")
+        server = _make_server(
+            workflow_agent,
+            response_store=FileResponseStore(storage_dir=tmp_path),
+            options=ResponsesServerOptions(resilient_background=True),
+        )
+        request = CreateResponse(model="m", input="hi", background=True, stream=True, store=True)
+        context = ResponseContext(response_id="response-current", mode_flags=MagicMock())
+
+        events = [
+            event
+            async for event in server._handle_response(  # pyright: ignore[reportPrivateUsage]
+                request, context, asyncio.Event()
+            )
+        ]
+
+        checkpoint_events = [e for e in events if isinstance(e, ResponseCheckpointEvent)]
+        assert checkpoint_events, "expected at least one checkpoint event yielded for a resilient background run"
 
 
 # endregion

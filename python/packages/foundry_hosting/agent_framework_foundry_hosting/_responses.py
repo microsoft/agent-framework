@@ -13,8 +13,8 @@ from dataclasses import asdict, dataclass, is_dataclass
 from typing import Literal, cast
 
 from agent_framework import (
+    AgentResponseUpdate,
     ChatOptions,
-    CheckpointID,
     CheckpointStorage,
     Content,
     ContextProvider,
@@ -25,7 +25,6 @@ from agent_framework import (
     SessionStore,
     SupportsAgentRun,
     WorkflowAgent,
-    WorkflowCheckpoint,
 )
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
@@ -61,6 +60,7 @@ from azure.ai.agentserver.responses.streaming._builders import (
     ReasoningSummaryPartBuilder,
     TextContentBuilder,
 )
+from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from typing_extensions import Any
 
@@ -105,7 +105,7 @@ def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
     )
 
 
-def _create_response_event_stream(request: CreateResponse, context: ResponseContext) -> ResponseEventStream:
+def _create_response_event_stream(context: ResponseContext) -> ResponseEventStream:
     """Create a response stream seeded from recovery state when available."""
     if context.is_recovery:
         persisted_response = context.persisted_response
@@ -114,39 +114,12 @@ def _create_response_event_stream(request: CreateResponse, context: ResponseCont
     return ResponseEventStream(response_id=context.response_id)
 
 
-class _ResilientBackgroundCheckpointStorage:
-    """A checkpoint storage wrapper that emits the latest checkpoint ID to the response stream on every save.
-
-    This is used when resilient background mode is enabled.
-    """
-
-    # Reserved response metadata key used to locate the workflow recovery point.
-    LATEST_CHECKPOINT_ID_KEY = "last_checkpoint_id"
-
-    def __init__(self, inner: CheckpointStorage, response_event_stream: ResponseEventStream) -> None:
-        self._inner = inner
-        self._response_event_stream = response_event_stream
-
-    async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
-        checkpoint_id = await self._inner.save(checkpoint)
-        self._response_event_stream.internal_metadata[self.LATEST_CHECKPOINT_ID_KEY] = checkpoint_id
-        self._response_event_stream.checkpoint()
-        return checkpoint_id
-
-    async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
-        return await self._inner.load(checkpoint_id)
-
-    async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
-        return await self._inner.list_checkpoints(workflow_name=workflow_name)
-
-    async def delete(self, checkpoint_id: CheckpointID) -> bool:
-        return await self._inner.delete(checkpoint_id)
-
-    async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
-        return await self._inner.get_latest(workflow_name=workflow_name)
-
-    async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
-        return await self._inner.list_checkpoint_ids(workflow_name=workflow_name)
+# Reserved response metadata key pinning the workflow checkpoint that was current at the moment of
+# the last successfully persisted response-stream checkpoint. Recovery MUST resume from this specific
+# checkpoint, not simply the latest one in checkpoint_storage: the workflow may have saved further
+# checkpoints after it but before a crash, without their output ever being durably recorded in
+# response.output (see ``_handle_inner_workflow``).
+_LATEST_CHECKPOINT_ID_KEY = "_last_checkpoint_id"
 
 
 # Foundry Toolbox Auth integration
@@ -261,11 +234,15 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             2. The agent must not have any context providers that maintain context
                in memory, because the hosting environment may get deactivated between
                requests, and any in-memory context would be lost.
-            3. Resiliency (resilient_background=True) is ONLY supported for workflows.
+            3. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
+               server with a non-workflow agent and `resilient_background=True` raises `RuntimeError`.
                When resiliency is enabled, and the server crashes mid-response:
                - Background responses are automatically re-invoked on server restart (client won't see the crash).
                - Stream events are preserved for client reconnection.
                - State is maintained across crashes.
+
+        Raises:
+            RuntimeError: If `resilient_background=True` is requested for a non-workflow agent.
         """
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
@@ -277,12 +254,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "There shouldn't be a history provider with `load_messages=True` already present. "
                     "History is managed by the hosting infrastructure."
                 )
-            provider = cast(ContextProvider, provider)
-            logger.warning(
-                "Context provider %s is present. If it maintains context in memory, "
-                "the context may be lost between requests. Use with caution.",
-                provider.source_id,
-            )
 
         self._is_workflow_agent = False
         if isinstance(agent, WorkflowAgent):
@@ -326,12 +297,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             else function_approval_store_provider
         )
 
-        # Resiliency check
+        # Resiliency check: fail loud rather than silently downgrading to a non-recoverable row.
         self._resilient_background = bool(options and options.resilient_background)
         if self._resilient_background and not self._is_workflow_agent:
-            logger.warning(
-                "Resilient background mode is enabled for a non-workflow agent. "
-                "Crash recovery is not supported for non-workflow agents."
+            raise RuntimeError(
+                "resilient_background=True is only supported for workflow agents. "
+                "Crash recovery cannot be provided for non-workflow agents."
             )
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
@@ -379,15 +350,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request: CreateResponse,
         context: ResponseContext,
         cancellation_signal: asyncio.Event,
-    ) -> AsyncIterable[ResponseStreamEvent]:
+    ) -> AsyncIterable[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response."""
         # Common per-request setup shared by the workflow and non-workflow paths:
         # create the response stream and the streaming output-item tracker, emit
         # the opening lifecycle events, and convert any exception raised while
         # producing the response into a terminal ``response.failed`` event (which
         # also drains the tracker so the SSE stream stays well-formed).
-        response_event_stream = _create_response_event_stream(request, context)
-        tracker = _OutputItemTracker(response_event_stream)
+        response_event_stream = _create_response_event_stream(context)
 
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
@@ -423,6 +393,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
             return
 
+        tracker = _OutputItemTracker(response_event_stream)
         try:
             if self._is_workflow_agent:
                 inner = self._handle_inner_workflow(
@@ -522,7 +493,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
                 for content in update.contents:
-                    for event in tracker.handle(content):
+                    for event in tracker.handle(content, message_id=update.message_id):
                         yield event
                     if tracker.needs_async:
                         async for item in _to_outputs(
@@ -573,7 +544,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker,
         cancellation_signal: asyncio.Event,
-    ) -> AsyncGenerator[ResponseStreamEvent]:
+    ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response for a workflow agent."""
         if not isinstance(self._agent, WorkflowAgent):
             raise RuntimeError("Agent is not a workflow agent.")
@@ -606,23 +577,31 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if context.is_recovery:
                 if not self._resilient_background:
                     raise RuntimeError("Recovery mode is only supported when resilient_background=True.")
-                run_stream = self._agent.run(
-                    stream=True,
-                    checkpoint_id=response_event_stream.internal_metadata.get(
-                        _ResilientBackgroundCheckpointStorage.LATEST_CHECKPOINT_ID_KEY
-                    ),
-                    checkpoint_storage=_ResilientBackgroundCheckpointStorage(checkpoint_storage, response_event_stream),
-                )
+                # Resume from the workflow checkpoint durably paired with the last persisted response
+                # snapshot (recorded in that snapshot's own metadata) -- NOT simply the latest workflow
+                # checkpoint in storage, which may be ahead of what response.output actually reflects if
+                # the crash happened between two response-stream checkpoint() calls.
+                checkpoint_id = response_event_stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY)
+                if checkpoint_id is not None:
+                    logger.debug("Serving recovery request from workflow checkpoint %s", checkpoint_id)
+                    run_stream = self._resume_workflow_from_checkpoint(
+                        checkpoint_id, checkpoint_storage, context.response_id
+                    )
+                else:
+                    # No checkpoint was ever paired with a persisted response snapshot (e.g. the crash
+                    # happened before the very first response checkpoint() call); replay the original
+                    # input as a fresh entry, per the recovered-input parity guarantee
+                    # (context.get_input_items() is unchanged from fresh entry).
+                    logger.debug("Serving recovery request with no prior workflow checkpoint; replaying original input")
+                    run_stream = self._agent.run(
+                        input_messages,
+                        stream=True,
+                        checkpoint_storage=checkpoint_storage,
+                    )
             else:
                 # Determine the latest checkpoint (if any) so we can resume the
                 # workflow's prior state for this turn. The directory is keyed by
-                # the platform derived context id. Multi-turn declarative workflows need the
-                # workflow's internal state (e.g. Conversation.messages,
-                # intermediate Local.* variables) to survive across user turns;
-                # the only place that state lives is the workflow checkpoint, so
-                # on every turn we restore the latest checkpoint and feed the new
-                # input back into the start executor as a continuation rather than
-                # a fresh run.
+                # the conversation id or the previous response id.
                 previous_response_id = request.get("previous_response_id")
                 if previous_response_id is not None and context.conversation_id is not None:
                     raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
@@ -636,32 +615,25 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             context_id=checkpoint_load_id,
                             platform_context=request_context,
                         )
-
-                latest_checkpoint_id: str | None = None
                 latest_checkpoint = await restore_checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
                 if latest_checkpoint is not None:
-                    latest_checkpoint_id = latest_checkpoint.checkpoint_id
-
-                # Multi-turn pattern: when we have a prior checkpoint, restore it
-                # first (drive the workflow back to idle with prior state intact),
-                # then make a separate call that delivers the new user input. This
-                # depends on Workflow.run preserving shared state across calls. The
-                # restore-only call may yield events from any pending in-flight
-                # work in the checkpoint; we consume those internally here so they
-                # don't surface to the response stream as duplicates.
-                #
-                # If the restored checkpoint had pending request_info events, the
-                # restore-only call replays them through
-                # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
-                # and populates ``self._agent.pending_requests``. That is the correct
-                # state: those requests are genuinely outstanding, and the next
-                # ``run(input_messages, ...)`` call may contain ``function_call_output``
-                # items (carried as FunctionResult/FunctionApprovalResponse content)
-                # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-                if latest_checkpoint_id is not None:
+                    # If we have a prior checkpoint, restore it first (drive the workflow
+                    # back to idle with prior state intact), then make a separate call that
+                    # delivers the new user input. The restore-only call may yield events
+                    # from any pending in-flight work in the checkpoint; we consume those
+                    # internally here so they don't surface to the response stream as duplicates.
+                    #
+                    # If the restored checkpoint had pending request_info events, the
+                    # restore-only call replays them through
+                    # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
+                    # and populates ``self._agent.pending_requests``. That is the correct
+                    # state: those requests are genuinely outstanding, and the next
+                    # ``run(input_messages, ...)`` call may contain ``function_call_output``
+                    # items (carried as FunctionResult/FunctionApprovalResponse content)
+                    # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
                     async for _ in self._agent.run(
                         stream=True,
-                        checkpoint_id=latest_checkpoint_id,
+                        checkpoint_id=latest_checkpoint.checkpoint_id,
                         checkpoint_storage=restore_checkpoint_storage,
                     ):
                         if context.shutdown.is_set():
@@ -670,9 +642,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 run_stream = self._agent.run(
                     input_messages,
                     stream=True,
-                    checkpoint_storage=_ResilientBackgroundCheckpointStorage(checkpoint_storage, response_event_stream)
-                    if self._resilient_background
-                    else checkpoint_storage,
+                    checkpoint_storage=checkpoint_storage,
                 )
 
             async for update in run_stream:
@@ -680,7 +650,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     await context.exit_for_recovery()
 
                 for content in update.contents:
-                    for event in tracker.handle(content):
+                    for event in tracker.handle(content, message_id=update.message_id):
                         yield event
                     if tracker.needs_async:
                         async for item in _to_outputs(
@@ -688,9 +658,51 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         ):
                             yield item
                         tracker.needs_async = False
+
+                # Pin the workflow checkpoint that is current right now -- before persisting the response
+                # snapshot -- so a future crash recovery resumes exactly here, not from a later workflow
+                # checkpoint whose output was never recorded in this response snapshot. The generator is
+                # paused while we hold control, so no further workflow checkpoints can appear underneath us.
+                if self._resilient_background:
+                    latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+                    if latest_checkpoint is not None:
+                        response_event_stream.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = (
+                            latest_checkpoint.checkpoint_id
+                        )
+                    yield response_event_stream.checkpoint()
         except Exception:
             logger.exception("Failed to produce response for workflow agent")
             raise
+
+    async def _resume_workflow_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage,
+        response_id: str,
+    ) -> AsyncGenerator[AgentResponseUpdate]:
+        """Resume a crashed background workflow run, forwarding every event it produces.
+
+        ``WorkflowAgent.run(checkpoint_id=..., messages=None)`` treats a message-less resume as
+        "restore only": it drives the workflow with the checkpoint's own already-queued internal
+        messages, but silently discards every event produced while doing so, on the assumption
+        that the workflow merely settles back to idle awaiting the next turn's input. That
+        assumption doesn't hold for crash recovery: the countdown (and any other self-driving
+        workflow) genuinely continues -- and may run to completion -- from its own queued
+        messages, and that output must not be lost. Drive the underlying ``Workflow`` directly so
+        none of it is discarded, converting each event the same way ``WorkflowAgent.run`` does.
+        """
+        if not isinstance(self._agent, WorkflowAgent):
+            raise RuntimeError("Agent is not a workflow agent.")
+        agent = self._agent
+        async for event in agent.workflow.run(
+            stream=True,
+            checkpoint_id=checkpoint_id,
+            checkpoint_storage=checkpoint_storage,
+        ):
+            for update in agent._convert_workflow_event_to_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
+                response_id, event
+            ):
+                yield update
 
     @staticmethod
     def _emit_failure(
@@ -734,6 +746,10 @@ class _OutputItemTracker:
         self._stream = stream
         self._active_type: str | None = None
         self._active_id: str | None = None
+        # message_id of the update that opened the active text item, used to detect a new
+        # logical message (e.g. a fresh workflow yield_output call) even when the content
+        # type doesn't change, so it isn't silently merged into the still-open item.
+        self._active_message_id: str | None = None
         # Accumulated delta text for the current active builder
         self._accumulated: list[str] = []
         # Builder state — only one is active at a time
@@ -746,16 +762,26 @@ class _OutputItemTracker:
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self.needs_async = False
 
-    def handle(self, content: Content) -> Generator[ResponseStreamEvent]:
+    def handle(self, content: Content, message_id: str | None = None) -> Generator[ResponseStreamEvent]:
         """Process a content item, yielding sync events.
+
+        Args:
+            content: The content item to process.
+            message_id: The ``message_id`` of the update ``content`` came from, if any. A
+                change in ``message_id`` across otherwise same-typed text content marks a new
+                logical message and forces the previous output item closed, rather than being
+                merged into it.
 
         Sets ``needs_async = True`` if the caller must also drain an
         async ``_to_outputs`` call for this content.
         """
         if content.type == "text" and content.text is not None:
-            if self._active_type != "text":
+            if self._active_type != "text" or (
+                message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
+            ):
                 yield from self._close()
                 yield from self._open_message()
+            self._active_message_id = message_id
             self._accumulated.append(content.text)
             if self._text_content is not None:
                 yield self._text_content.emit_delta(content.text)
@@ -907,6 +933,7 @@ class _OutputItemTracker:
 
         self._active_type = None
         self._active_id = None
+        self._active_message_id = None
         self._accumulated.clear()
 
 
