@@ -206,6 +206,8 @@ class AgentExecutor(Executor):
         run the agent and emit an AgentExecutorResponse downstream.
         """
         self._cache.extend(request.messages)
+        if self._replays_full_history(request.messages):
+            self._session.service_session_id = None
 
         if request.should_respond:
             await self._run_agent_and_emit(ctx)
@@ -259,7 +261,10 @@ class AgentExecutor(Executor):
                 "which causes the full conversation context to be lost.",
                 self.id,
             )
-        self._cache.extend(normalize_messages_input(text))
+        messages = normalize_messages_input(text)
+        self._cache.extend(messages)
+        if self._replays_full_history(messages):
+            self._session.service_session_id = None
         await self._run_agent_and_emit(ctx)
 
     @handler
@@ -272,7 +277,10 @@ class AgentExecutor(Executor):
 
         The new message will be added to the cache which is used as the conversation context for the agent run.
         """
-        self._cache.extend(normalize_messages_input(message))
+        messages = normalize_messages_input(message)
+        self._cache.extend(messages)
+        if self._replays_full_history(messages):
+            self._session.service_session_id = None
         await self._run_agent_and_emit(ctx)
 
     @handler
@@ -285,7 +293,10 @@ class AgentExecutor(Executor):
 
         The new messages will be added to the cache which is used as the conversation context for the agent run.
         """
-        self._cache.extend(normalize_messages_input(messages))
+        normalized_messages = normalize_messages_input(messages)
+        self._cache.extend(normalized_messages)
+        if self._replays_full_history(normalized_messages):
+            self._session.service_session_id = None
         await self._run_agent_and_emit(ctx)
 
     @response_handler
@@ -315,6 +326,20 @@ class AgentExecutor(Executor):
             self._cache = normalize_messages_input(Message(role=role, contents=self._pending_responses_to_agent))
             self._pending_responses_to_agent.clear()
             await self._run_agent_and_emit(ctx)
+
+    @staticmethod
+    def _replays_full_history(messages: list[Message]) -> bool:
+        """Return True when the input explicitly replays prior conversation turns.
+
+        A full-history replay contains assistant and/or tool messages that carry
+        server-issued response items (function calls, reasoning, results). Running
+        such a replay while the session still holds a service_session_id makes
+        the provider receive both the previous_response_id pointer and the same
+        items inline, which the Responses API rejects with a "Duplicate item found"
+        error. Incremental turns (user messages only) keep the pointer so providers
+        can continue the conversation via previous_response_id.
+        """
+        return any(message.role in ("assistant", "tool") for message in messages)
 
     @override
     async def on_checkpoint_save(self) -> dict[str, Any]:

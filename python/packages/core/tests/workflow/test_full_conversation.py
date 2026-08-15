@@ -411,12 +411,14 @@ class _SessionIdCapturingAgent(BaseAgent):
 
 
 class _FullHistoryReplayCoordinator(Executor):
-    """Coordinator that pre-sets service_session_id on a target executor then replays the full
-    conversation (including function calls) back to it via AgentExecutorRequest."""
+    """Coordinator that pre-sets service_session_id on a target executor then sends it
+    an AgentExecutorRequest carrying either the full conversation (including function
+    calls) or just a new user turn."""
 
-    def __init__(self, *, target_exec: AgentExecutor, **kwargs: Any) -> None:
+    def __init__(self, *, target_exec: AgentExecutor, include_history: bool = True, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._target_exec = target_exec
+        self._include_history = include_history
 
     @handler
     async def handle(
@@ -424,7 +426,10 @@ class _FullHistoryReplayCoordinator(Executor):
         response: AgentExecutorResponse,
         ctx: WorkflowContext[AgentExecutorRequest, Any],
     ) -> None:
-        full_conv = list(response.full_conversation or response.agent_response.messages)
+        if self._include_history:
+            full_conv = list(response.full_conversation or response.agent_response.messages)
+        else:
+            full_conv = []
         full_conv.append(Message(role="user", contents=["follow-up"]))
         # Simulate a prior run: the target executor has a stored previous_response_id.
         self._target_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
@@ -434,15 +439,6 @@ class _FullHistoryReplayCoordinator(Executor):
         )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Tracks the executor-layer half of #3295: AgentExecutor should clear service_session_id "
-        "when handed a full prior conversation. The wire-level 'Duplicate item' API error is "
-        "already closed by the chat-client strip in #3295; this xfail covers the defense-in-depth "
-        "follow-up that makes the executor wiring reflect intent."
-    ),
-    strict=True,
-)
 async def test_run_request_with_full_history_clears_service_session_id() -> None:
     """Replaying a full conversation (including function calls) via AgentExecutorRequest must
     clear service_session_id so the API does not receive both previous_response_id and the
@@ -470,6 +466,31 @@ async def test_run_request_with_full_history_clears_service_session_id() -> None
     # "Duplicate item found" because the same function-call IDs appear in both
     # previous_response_id (server-stored) and the explicit input messages.
     assert spy_agent._captured_service_session_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_run_request_with_new_turn_preserves_service_session_id() -> None:
+    """A new user turn (no replayed history) must keep service_session_id so the provider
+    can continue the conversation via previous_response_id."""
+    tool_agent = _ToolHistoryAgent(id="tool_agent_new_turn", name="ToolAgent", summary_text="Done.")
+    tool_exec = AgentExecutor(tool_agent, id="tool_agent_new_turn")
+
+    spy_agent = _SessionIdCapturingAgent(id="spy_agent_new_turn", name="SpyAgent")
+    spy_exec = AgentExecutor(spy_agent, id="spy_agent_new_turn")
+
+    coordinator = _FullHistoryReplayCoordinator(id="coord_new_turn", target_exec=spy_exec, include_history=False)
+
+    wf = (
+        WorkflowBuilder(start_executor=tool_exec, output_from=[coordinator])
+        .add_edge(tool_exec, coordinator)
+        .add_edge(coordinator, spy_exec)
+        .build()
+    )
+
+    result = await wf.run("initial prompt")
+    assert result.get_outputs() is not None
+
+    # The spy agent must still see the stored pointer: only a full-history replay clears it.
+    assert spy_agent._captured_service_session_id == "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_from_response_preserves_service_session_id() -> None:
