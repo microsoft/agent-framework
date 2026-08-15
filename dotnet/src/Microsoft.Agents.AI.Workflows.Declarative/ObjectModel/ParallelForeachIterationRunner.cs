@@ -94,7 +94,7 @@ internal static class ParallelForeachIterationRunner
             if (timeoutSource.IsCancellationRequested)
             {
                 throw new TimeoutException(
-                    $"Parallel Foreach '{model.Id.Value}' iteration {index} exceeded its timeout of {timeout.GetValueOrDefault().TotalMilliseconds} ms.");
+                    $"The iteration exceeded its timeout of {timeout.GetValueOrDefault().TotalMilliseconds} ms.");
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -110,27 +110,24 @@ internal static class ParallelForeachIterationRunner
                         workflowError =>
                             workflowError.Data as Exception ??
                             new DeclarativeActionException(
-                                $"Parallel Foreach '{model.Id.Value}' iteration {index} failed without exception data.")),
+                                "The iteration failed without exception data.")),
             ];
             if (failures.Length > 0)
             {
-                Exception innerException = failures.Length == 1 ? failures[0] : new AggregateException(failures);
-                throw new DeclarativeActionException(
-                    $"Parallel Foreach '{model.Id.Value}' iteration {index} failed.",
-                    innerException);
+                throw failures.Length == 1 ? failures[0] : new AggregateException(failures);
             }
 
             if (status == RunStatus.PendingRequests || events.Any(workflowEvent => workflowEvent is RequestInfoEvent))
             {
                 throw new DeclarativeActionException(
-                    $"Parallel Foreach '{model.Id.Value}' iteration {index} requested external input. " +
+                    "The iteration requested external input. " +
                     "Checkpointing an in-flight parallel iteration is not supported.");
             }
 
             if (status != RunStatus.Idle)
             {
                 throw new DeclarativeActionException(
-                    $"Parallel Foreach '{model.Id.Value}' iteration {index} ended with unsupported status '{status}'.");
+                    $"The iteration ended with unsupported status '{status}'.");
             }
 
             WorkflowStateChange[] stateChanges =
@@ -146,7 +143,7 @@ internal static class ParallelForeachIterationRunner
         catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
         {
             throw new TimeoutException(
-                $"Parallel Foreach '{model.Id.Value}' iteration {index} exceeded its timeout of {timeout!.Value.TotalMilliseconds} ms.");
+                $"The iteration exceeded its timeout of {timeout!.Value.TotalMilliseconds} ms.");
         }
         finally
         {

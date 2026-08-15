@@ -111,5 +111,5 @@ internal sealed record ForeachExecutionOptions(
         model.ExtensionData?.Properties.TryGetValue(propertyName, out DataValue? value) is true ? value : null;
 
     private static DeclarativeModelException InvalidConfiguration(Foreach model, string message, Exception? innerException = null) =>
-        new($"Invalid parallel Foreach configuration for '{model.Id.Value}': {message}", innerException);
+        new($"Invalid Foreach configuration for '{model.Id.Value}': {message}", innerException);
 }

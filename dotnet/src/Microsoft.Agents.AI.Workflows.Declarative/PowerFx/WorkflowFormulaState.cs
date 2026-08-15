@@ -101,7 +101,6 @@ internal sealed class WorkflowFormulaState
             branch.Set(entry.VariableName, entry.Value.ToFormula(), entry.ScopeName);
         }
 
-        branch.Bind();
         return branch;
     }
 

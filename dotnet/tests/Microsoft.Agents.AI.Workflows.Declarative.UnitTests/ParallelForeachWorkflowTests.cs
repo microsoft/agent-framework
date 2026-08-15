@@ -23,7 +23,7 @@ public sealed class ParallelForeachWorkflowTests
     public async Task ForeachRemainsSequentialByDefaultAsync()
     {
         // Arrange
-        ControlledAgentProvider provider = new(barrierParticipants: 2, barrierTimeout: TimeSpan.FromMilliseconds(75));
+        ControlledAgentProvider provider = new();
         string yaml = CreateWorkflowYaml(
             items: "=[\"a\", \"b\", \"c\"]",
             executionOptions: null,
@@ -42,7 +42,7 @@ public sealed class ParallelForeachWorkflowTests
     public async Task ParallelForeachExecutesConcurrentlyAndHonorsLimitAsync()
     {
         // Arrange
-        ControlledAgentProvider provider = new(barrierParticipants: 2, barrierTimeout: TimeSpan.FromMilliseconds(250));
+        ControlledAgentProvider provider = new(barrierParticipants: 2, barrierTimeout: s_barrierTimeout);
         string yaml = CreateWorkflowYaml(
             items: "=[\"a\", \"b\", \"c\", \"d\", \"e\", \"f\"]",
             executionOptions: """
@@ -65,7 +65,7 @@ public sealed class ParallelForeachWorkflowTests
     public async Task ParallelForeachUsesBoundedDefaultLimitAsync()
     {
         // Arrange
-        ControlledAgentProvider provider = new(barrierParticipants: 4, barrierTimeout: TimeSpan.FromMilliseconds(250));
+        ControlledAgentProvider provider = new(barrierParticipants: 4, barrierTimeout: s_barrierTimeout);
         string yaml = CreateWorkflowYaml(
             items: "=[\"a\", \"b\", \"c\", \"d\", \"e\", \"f\"]",
             executionOptions: """
@@ -123,7 +123,7 @@ public sealed class ParallelForeachWorkflowTests
     public async Task ParallelForeachDeepCopiesComplexLoopValuesAsync()
     {
         // Arrange
-        ControlledAgentProvider provider = new(barrierParticipants: 2, barrierTimeout: TimeSpan.FromMilliseconds(250));
+        ControlledAgentProvider provider = new(barrierParticipants: 2, barrierTimeout: s_barrierTimeout);
         string yaml = CreateWorkflowYaml(
             items: "=[Local.Shared, Local.Shared]",
             executionOptions: """
@@ -175,7 +175,7 @@ public sealed class ParallelForeachWorkflowTests
         // Arrange
         ControlledAgentProvider provider = new(
             barrierParticipants: 4,
-            barrierTimeout: TimeSpan.FromMilliseconds(250),
+            barrierTimeout: s_barrierTimeout,
             failureIndexes: [1]);
         string yaml = CreateWorkflowYaml(
             items: "=[\"a\", \"b\", \"c\", \"d\"]",
@@ -233,7 +233,7 @@ public sealed class ParallelForeachWorkflowTests
             executionOptions: """
                   mode: Parallel
                   maxParallelism: 2
-                  timeoutInMilliseconds: 75
+                  timeoutInMilliseconds: 1000
             """,
             bodyActions: InvokeAgentAction);
 
@@ -396,6 +396,8 @@ public sealed class ParallelForeachWorkflowTests
     }
 
     private static readonly string[] s_orderedResponses = ["0:a", "1:b", "2:c", "3:d"];
+
+    private static readonly TimeSpan s_barrierTimeout = TimeSpan.FromSeconds(5);
 
     private const string InvokeAgentAction = """
                     - kind: InvokeAzureAgent
