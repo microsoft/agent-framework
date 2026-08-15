@@ -3284,7 +3284,13 @@ def test_prepare_message_for_openai_with_function_approval_response() -> None:
     result = client._prepare_message_for_openai(message, request_uses_service_side_storage=False)
 
     # FunctionApprovalResponseContent is added directly, not nested in args with role
-    assert len(result) == 0
+    assert result ==[
+        {
+            "type": "mcp_approval_response",
+            "approval_request_id": "approval_003",
+            "approve": True,
+        }
+    ]
 
 
 def test_prepare_messages_for_openai_keeps_active_function_call_for_tool_loop() -> None:
@@ -3792,8 +3798,7 @@ def test_function_approval_response_with_mcp_tool_call() -> None:
     # to recognize it as hosted.
     mcp_call = Content.from_function_call(
         call_id="mcp_call_999",
-        tool_name="sensitive_action",
-        server_name="SecureServer",
+        name="sensitive_action",
         arguments={"action": "delete"},
         additional_properties={"server_label": "SecureServer"},
     )
