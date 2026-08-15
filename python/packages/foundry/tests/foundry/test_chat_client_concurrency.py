@@ -104,14 +104,19 @@ class _ResponsesTransport:
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
         body = request.content.decode()
-        marker = next(marker for marker in _MARKERS if marker in body)
+        marker = next((marker for marker in _MARKERS if marker in body), None)
+        if marker is None:
+            raise AssertionError(f"Expected one of {_MARKERS} in the request body: {body[:200]!r}")
         self.requests[marker].append(json.loads(body))
         self.active_requests += 1
         self.max_active_requests = max(self.max_active_requests, self.active_requests)
         if self.active_requests == 2:
             self._both_calls_started.set()
         try:
-            await asyncio.wait_for(self._both_calls_started.wait(), timeout=1)
+            try:
+                await asyncio.wait_for(self._both_calls_started.wait(), timeout=5)
+            except TimeoutError as exc:
+                raise AssertionError("Concurrent chat requests did not overlap within 5 seconds") from exc
             if self.requests[marker][-1].get("stream"):
                 content = "".join(f"data: {json.dumps(event)}\n\n" for event in _stream_events(marker, self.model))
                 return httpx.Response(

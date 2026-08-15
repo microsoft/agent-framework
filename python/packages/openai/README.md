@@ -114,6 +114,7 @@ client = OpenAIChatCompletionClient(model="gpt-4o-mini")
 
 ## Concurrent reuse
 
+This contract applies to the Responses API `OpenAIChatClient`, not the `OpenAIChatCompletionClient` shown above.
 An `OpenAIChatClient` instance can be shared by concurrent asynchronous calls on the same event loop. Streaming,
 non-streaming, and mixed calls are supported. Keep mutable run state isolated by creating a separate `Agent` and
 `AgentSession` for each concurrent run and by passing separate messages and options.
