@@ -1490,6 +1490,26 @@ class TestInMemoryHistoryProvider:
         assert state["messages"][1].text == "yes"
 
 
+    async def test_save_messages_handles_replayed_transcript_with_duplicates(self) -> None:
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        msg_b = Message (role = "user", contents=["B"])
+        await provider.save_messages("s1", [msg_b], state = state)
+        assert len(state["messages"]) == 1
+
+        msg_a = Message(role="user", contents=["A"])
+        msg_c = Message(role="user", contents=["C"])
+        msg_b2 = Message(role="user", contents=["B"])
+        msg_d = Message(role="user", contents=["D"])
+
+        await provider.save_messages("s1", [msg_a, msg_b, msg_c, msg_b2, msg_d], state = state)
+
+        assert len(state["messages"]) == 4
+        texts = [m.text for m in state["messages"]]
+        assert texts == ["B", "C", "B", "D"]
+
+
 class TestFileHistoryProvider:
     def test_is_marked_experimental(self) -> None:
         assert FileHistoryProvider.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]

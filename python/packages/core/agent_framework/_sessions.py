@@ -208,7 +208,7 @@ def get_message_identity(message: Message) -> MessageIdentity:
         return ("content", str(message.role), str(message.contents))
 
 
-def _get_message_hash(message: Message) -> tuple:
+def _get_message_hash(message: Message) -> MessageIdentity:
     """Stable hash for sequence matching."""
     return get_message_identity(message)
 
@@ -228,22 +228,10 @@ def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]
     if len(incoming) >= len(existing) and incoming_hashes[: len(existing_hashes)] == existing_hashes:
         return list(incoming[len(existing) :])
 
-    last_existing_hash = existing_hashes[-1]
     try:
-        split_idx = -1
-        for i in range(len(incoming_hashes) - 1, -1, -1):
-            if incoming_hashes[i] == last_existing_hash:
-                match = True
-                for j in range(1, min(i + 1, len(existing_hashes))):
-                    if incoming_hashes[i - j] != existing_hashes[-(j + 1)]:
-                        match = False
-                        break
-                if match:
-                    split_idx = i
-                    break
-
-        if split_idx != -1:
-            return list(incoming[split_idx + 1 :])
+        for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
+            if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
+                return list(incoming[i + len(existing_hashes) :])
     except Exception:
         logger.debug("sequence alignment check failed, falling back to set-based deduplication")
 
@@ -254,18 +242,6 @@ def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]
             new_msgs.append(m)
             existing_set.add(h)
     return new_msgs
-
-
-def _is_middleware_sequence(
-    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
-) -> TypeGuard[Sequence[MiddlewareTypes]]:
-    return isinstance(middleware, Sequence) and not isinstance(middleware, (str, bytes))
-
-
-def _is_single_middleware(
-    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
-) -> TypeGuard[MiddlewareTypes]:
-    return not _is_middleware_sequence(middleware)
 
 
 @dataclass(frozen=True, slots=True)
