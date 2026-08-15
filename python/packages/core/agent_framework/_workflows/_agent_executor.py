@@ -329,15 +329,15 @@ class AgentExecutor(Executor):
 
     @staticmethod
     def _replays_full_history(messages: list[Message]) -> bool:
-        """Return True when the input explicitly replays prior conversation turns.
+        """Return True when the input replays prior conversation turns.
 
-        A full-history replay contains assistant and/or tool messages that carry
-        server-issued response items (function calls, reasoning, results). Running
-        such a replay while the session still holds a service_session_id makes
-        the provider receive both the previous_response_id pointer and the same
-        items inline, which the Responses API rejects with a "Duplicate item found"
-        error. Incremental turns (user messages only) keep the pointer so providers
-        can continue the conversation via previous_response_id.
+        A full-history replay includes assistant and/or tool messages — the turns a
+        previous run produced. Replaying them while the session still holds a
+        service_session_id makes the provider receive both the previous_response_id
+        pointer and the same turns inline, which the Responses API rejects with a
+        "Duplicate item found" error. Incremental turns (user messages only) keep
+        the pointer so providers can continue the conversation via
+        previous_response_id.
         """
         return any(message.role in ("assistant", "tool") for message in messages)
 
