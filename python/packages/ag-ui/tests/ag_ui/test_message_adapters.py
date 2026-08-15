@@ -100,6 +100,56 @@ def test_agui_tool_result_to_agent_framework():
     assert message.additional_properties.get("tool_call_id") == "call_123"
 
 
+@pytest.mark.parametrize("approved", [None, "true", "false", 1, 0, []])
+def test_function_approval_requires_real_boolean(approved: Any) -> None:
+    """Missing and malformed decisions are converted to explicit rejection."""
+    approval: dict[str, Any] = {
+        "id": "approval_1",
+        "call_id": "call_1",
+        "name": "sensitive_action",
+        "arguments": {},
+    }
+    if approved is not None:
+        approval["approved"] = approved
+
+    messages = agui_messages_to_agent_framework([{"role": "user", "content": "", "function_approvals": [approval]}])
+
+    response = messages[0].contents[0]
+    assert response.type == "function_approval_response"
+    assert response.approved is False
+
+
+@pytest.mark.parametrize(
+    ("accepted", "expected"),
+    [(True, True), (False, False), ("true", False), (1, False), (None, False)],
+)
+def test_tool_approval_accepted_requires_real_boolean(accepted: Any, expected: bool) -> None:
+    """Only the literal boolean true authorizes a raw tool approval payload."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "sensitive_action", "arguments": {}},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "toolCallId": "call_1",
+                "content": json.dumps({"accepted": accepted}),
+            },
+        ]
+    )
+
+    response = messages[1].contents[0]
+    assert response.type == "function_approval_response"
+    assert response.approved is expected
+
+
 def test_agui_tool_approval_updates_tool_call_arguments():
     """Tool approval updates matching tool call arguments for snapshots and agent context.
 
