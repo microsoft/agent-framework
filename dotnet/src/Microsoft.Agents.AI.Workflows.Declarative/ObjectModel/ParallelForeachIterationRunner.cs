@@ -1,0 +1,206 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
+using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
+using Microsoft.Agents.ObjectModel;
+using Microsoft.PowerFx.Types;
+
+namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
+
+internal sealed record ParallelForeachIterationResult(
+    int Index,
+    WorkflowStateChange[] StateChanges,
+    WorkflowEvent[] Events);
+
+/// <summary>
+/// Runs one Foreach body through the existing workflow runtime with isolated formula state.
+/// </summary>
+internal static class ParallelForeachIterationRunner
+{
+    public static void ValidateBody(Foreach model)
+    {
+        foreach (DialogAction action in model.Descendants().OfType<DialogAction>())
+        {
+            if (action is Question or RequestExternalInput)
+            {
+                throw new DeclarativeModelException(
+                    $"Parallel Foreach '{model.Id.Value}' cannot safely checkpoint while action " +
+                    $"'{action.Id.Value}' ({action.GetType().Name}) is awaiting external input.");
+            }
+
+            if (action is BreakLoop or ContinueLoop && TargetsLoop(action, model))
+            {
+                throw new DeclarativeModelException(
+                    $"Parallel Foreach '{model.Id.Value}' does not support {action.GetType().Name} targeting the parallel loop.");
+            }
+        }
+    }
+
+    public static async Task<ParallelForeachIterationResult> RunAsync(
+        Foreach model,
+        FormulaValue value,
+        int index,
+        WorkflowStateSnapshot stateSnapshot,
+        DeclarativeWorkflowOptions workflowOptions,
+        TimeSpan? timeout,
+        CancellationToken cancellationToken)
+    {
+        using CancellationTokenSource timeoutSource = new();
+        using CancellationTokenSource iterationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutSource.Token);
+        if (timeout.HasValue)
+        {
+            timeoutSource.CancelAfter(timeout.Value);
+        }
+
+        WorkflowFormulaState branchState = WorkflowFormulaState.CreateBranch(workflowOptions.CreateRecalcEngine(), stateSnapshot);
+        SetLoopVariable(branchState, model.Value!.Path, new PortableValue(value.AsPortable()).ToFormula());
+        if (model.Index is not null)
+        {
+            SetLoopVariable(branchState, model.Index.Path, FormulaValue.New(index));
+        }
+        branchState.Bind();
+        branchState.BeginTrackingChanges();
+
+        Workflow workflow = BuildIterationWorkflow(model, branchState, workflowOptions);
+
+        StreamingRun? run = null;
+        bool runCanceled = false;
+        try
+        {
+            run = await InProcessExecution.RunStreamingAsync(
+                workflow,
+                new ActionExecutorResult(model.Id.Value),
+                cancellationToken: iterationSource.Token).ConfigureAwait(false);
+
+            List<WorkflowEvent> eventList = [];
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync(blockOnPendingRequest: false, iterationSource.Token).ConfigureAwait(false))
+            {
+                eventList.Add(workflowEvent);
+            }
+
+            if (iterationSource.IsCancellationRequested)
+            {
+                await run.CancelRunAsync().ConfigureAwait(false);
+                runCanceled = true;
+            }
+
+            if (timeoutSource.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"Parallel Foreach '{model.Id.Value}' iteration {index} exceeded its timeout of {timeout.GetValueOrDefault().TotalMilliseconds} ms.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            RunStatus status = await run.GetStatusAsync(iterationSource.Token).ConfigureAwait(false);
+            WorkflowEvent[] events = [.. eventList];
+
+            Exception[] failures =
+            [
+                .. events
+                    .OfType<WorkflowErrorEvent>()
+                    .Select(
+                        workflowError =>
+                            workflowError.Data as Exception ??
+                            new DeclarativeActionException(
+                                $"Parallel Foreach '{model.Id.Value}' iteration {index} failed without exception data.")),
+            ];
+            if (failures.Length > 0)
+            {
+                Exception innerException = failures.Length == 1 ? failures[0] : new AggregateException(failures);
+                throw new DeclarativeActionException(
+                    $"Parallel Foreach '{model.Id.Value}' iteration {index} failed.",
+                    innerException);
+            }
+
+            if (status == RunStatus.PendingRequests || events.Any(workflowEvent => workflowEvent is RequestInfoEvent))
+            {
+                throw new DeclarativeActionException(
+                    $"Parallel Foreach '{model.Id.Value}' iteration {index} requested external input. " +
+                    "Checkpointing an in-flight parallel iteration is not supported.");
+            }
+
+            if (status != RunStatus.Idle)
+            {
+                throw new DeclarativeActionException(
+                    $"Parallel Foreach '{model.Id.Value}' iteration {index} ended with unsupported status '{status}'.");
+            }
+
+            WorkflowStateChange[] stateChanges =
+            [
+                .. branchState
+                    .CaptureChanges()
+                    .Where(change => !Matches(change, model.Value.Path) && (model.Index is null || !Matches(change, model.Index.Path))),
+            ];
+            WorkflowEvent[] bufferedEvents = [.. events.Where(workflowEvent => ShouldReplay(workflowEvent, model.Id.Value))];
+
+            return new(index, stateChanges, bufferedEvents);
+        }
+        catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Parallel Foreach '{model.Id.Value}' iteration {index} exceeded its timeout of {timeout!.Value.TotalMilliseconds} ms.");
+        }
+        finally
+        {
+            if (run is not null)
+            {
+                if (iterationSource.IsCancellationRequested && !runCanceled)
+                {
+                    await run.CancelRunAsync().ConfigureAwait(false);
+                }
+
+                await run.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static Workflow BuildIterationWorkflow(
+        Foreach model,
+        WorkflowFormulaState state,
+        DeclarativeWorkflowOptions workflowOptions)
+    {
+        DelegateActionExecutor root = new(model.Id.Value, state);
+        WorkflowActionVisitor visitor = new(root, state, workflowOptions);
+        WorkflowElementWalker walker = new(visitor);
+        foreach (DialogAction action in model.Actions)
+        {
+            walker.Visit(action);
+        }
+
+        return visitor.Complete();
+    }
+
+    private static void SetLoopVariable(WorkflowFormulaState state, PropertyPath path, FormulaValue value) =>
+        state.Set(path.VariableName!, value, path.NamespaceAlias);
+
+    private static bool Matches(WorkflowStateChange change, PropertyPath path) =>
+        string.Equals(change.VariableName, path.VariableName, StringComparison.Ordinal) &&
+        string.Equals(change.ScopeName, WorkflowFormulaState.GetScopeName(path.NamespaceAlias), StringComparison.Ordinal);
+
+    private static bool ShouldReplay(WorkflowEvent workflowEvent, string rootExecutorId) =>
+        (workflowEvent is not WorkflowStartedEvent
+            and not SuperStepEvent
+            and not WorkflowErrorEvent
+            and not RequestInfoEvent
+            and not ExecutorFailedEvent) &&
+        (workflowEvent is not ExecutorEvent executorEvent || executorEvent.ExecutorId != rootExecutorId);
+
+    private static bool TargetsLoop(DialogAction action, Foreach loop)
+    {
+        BotElement? ancestor = action.Parent;
+        while (ancestor is not null && ancestor is not Foreach)
+        {
+            ancestor = ancestor.Parent;
+        }
+
+        return ancestor is Foreach ancestorLoop && ancestorLoop.Id.Equals(loop.Id);
+    }
+}

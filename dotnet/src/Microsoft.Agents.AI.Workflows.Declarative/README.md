@@ -57,4 +57,37 @@ we've provided a console application that is able to execute any declarative wor
 |**Foreach**|Iterates through a collection of items, executing a set of actions for each. Ideal for processing lists or batch operations.
 |**GotoAction**|Jumps directly to a specified action within the workflow. Enables non-linear navigation in the logic flow.
 
+## Parallel Foreach
+
+`Foreach` remains sequential when execution options are omitted. Set `mode` to `Parallel` to opt in, and use
+`maxParallelism` to bound the number of active iterations. The default maximum in parallel mode is 4.
+`timeoutInMilliseconds`, when present, applies to each iteration.
+
+```yaml
+- kind: Foreach
+  id: translate_languages
+  items: =Local.TargetLanguages
+  value: Local.TargetLanguage
+  index: Local.TargetLanguageIndex
+  mode: Parallel
+  maxParallelism: 4
+  timeoutInMilliseconds: 30000
+  actions:
+    - kind: InvokeAzureAgent
+      id: translate
+      agent:
+        name: TranslatorAgent
+      input:
+        arguments:
+          language: =Local.TargetLanguage
+```
+
+Each iteration receives an isolated copy of workflow state. After all iterations succeed, state writes and emitted
+events are applied in collection order; writes to the same variable therefore use deterministic last-index-wins
+semantics. A failure or timeout cancels outstanding iterations and does not commit buffered state or events.
+
+Parallel iterations cannot currently suspend for external input because an in-flight parallel set cannot be safely
+represented by a parent workflow checkpoint. `Question` and `RequestExternalInput` actions are rejected when the
+workflow is built. An action that conditionally requests external input fails the parallel Foreach at runtime instead
+of creating an unsafe checkpoint. `BreakLoop` and `ContinueLoop` cannot target a parallel Foreach.
 
