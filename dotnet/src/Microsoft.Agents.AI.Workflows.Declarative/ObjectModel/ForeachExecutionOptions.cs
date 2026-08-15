@@ -67,13 +67,22 @@ internal sealed record ForeachExecutionOptions(
             return ForeachExecutionMode.Sequential;
         }
 
-        if (value is not StringDataValue stringValue ||
-            !Enum.TryParse(stringValue.Value, ignoreCase: true, out ForeachExecutionMode mode))
+        if (value is not StringDataValue stringValue)
         {
             throw InvalidConfiguration(model, $"'{ModePropertyName}' must be 'Sequential' or 'Parallel'.");
         }
 
-        return mode;
+        if (string.Equals(stringValue.Value, nameof(ForeachExecutionMode.Sequential), StringComparison.OrdinalIgnoreCase))
+        {
+            return ForeachExecutionMode.Sequential;
+        }
+
+        if (string.Equals(stringValue.Value, nameof(ForeachExecutionMode.Parallel), StringComparison.OrdinalIgnoreCase))
+        {
+            return ForeachExecutionMode.Parallel;
+        }
+
+        throw InvalidConfiguration(model, $"'{ModePropertyName}' must be 'Sequential' or 'Parallel'.");
     }
 
     private static int? ParseInteger(Foreach model, string propertyName, DataValue? value)
