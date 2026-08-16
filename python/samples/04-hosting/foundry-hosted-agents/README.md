@@ -24,7 +24,8 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 11 | [Foundry Toolbox MCP Skills](responses/foundry_toolbox_mcp_skills/) | An agent that discovers MCP-based skills attached to a Foundry Toolbox and serves them via `SkillsProvider(MCPSkillsSource(...))`, fetching `SKILL.md` bodies and supplementary resources on demand. |
 | 13 | [Custom Storage](responses/custom_storage/) | An agent demonstrating how to implement a custom storage provider for agent sessions (in-memory and Cosmos DB). |
 | 14 | [Resilient Long-Running Workflow](responses/resilient_long_running_workflow/) | A long-running, crash-resilient workflow demonstrating how `resilient_background=True` lets a background response survive a hard crash of the server process and resume from its last checkpoint instead of restarting from scratch. |
-| 15 | [Using deployed agent](responses/using_deployed_agent.py) | Invoke an agent already deployed to Foundry using either a service-created or user-created hosted session, then delete the session after use. |
+| 15 | [Steerable Long-Running Agent](responses/steerable_long_running_agent/) | A long-running, non-workflow agent demonstrating how `steerable_conversations=True` lets a new turn on the same conversation cancel and replace a still-running turn instead of waiting for it to finish. Steering is only supported for non-workflow agents. |
+| 16 | [Using deployed agent](responses/using_deployed_agent.py) | Invoke an agent already deployed to Foundry using either a service-created or user-created hosted session, then delete the session after use. |
 
 ## Session Identifiers
 

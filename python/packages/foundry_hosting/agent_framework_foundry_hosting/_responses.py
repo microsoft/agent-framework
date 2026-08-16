@@ -240,9 +240,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                - Background responses are automatically re-invoked on server restart (client won't see the crash).
                - Stream events are preserved for client reconnection.
                - State is maintained across crashes.
+            4. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
+               this server with a workflow agent and `steerable_conversations=True` raises `RuntimeError`.
+               Steering a workflow is conceptually undefined -- a workflow's graph may have loops or parallel
+               branches with no single well-defined "current point" to cancel and resume from, unlike an
+               agent's strictly linear execution. It's also not currently practical to implement: a workflow
+               instance cannot start a new run until its previous (steered-past) run has been garbage
+               collected, and that isn't guaranteed to have happened in time.
 
         Raises:
-            RuntimeError: If `resilient_background=True` is requested for a non-workflow agent.
+            RuntimeError: If `resilient_background=True` is requested for a non-workflow agent, or if
+                `steerable_conversations=True` is requested for a workflow agent.
         """
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
@@ -305,6 +313,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "Crash recovery cannot be provided for non-workflow agents."
             )
 
+        # Steering check: steering a workflow is conceptually undefined and also impractical today.
+        if options and options.steerable_conversations and self._is_workflow_agent:
+            raise RuntimeError(
+                "steerable_conversations=True is only supported for non-workflow agents. "
+                "Steering cannot be provided reliably for workflow agents."
+            )
+
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
         # failures during MCP connect can be surfaced to the client as an
@@ -358,6 +373,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # producing the response into a terminal ``response.failed`` event (which
         # also drains the tracker so the SSE stream stays well-formed).
         response_event_stream = _create_response_event_stream(context)
+
+        if context.is_steered_turn:
+            logger.debug("Serving steered turn (pending_input_count=%d)", context.pending_input_count)
 
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
@@ -492,6 +510,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 run_kwargs["options"] = chat_options
 
             async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
+                if context.shutdown.is_set() or cancellation_signal.is_set():
+                    # Non-workflow agents can't be resilient, so there is no exit_for_recovery path here:
+                    # both shutdown and steering/cancel just wind the turn down and let it complete normally.
+                    break
                 for content in update.contents:
                     for event in tracker.handle(content, message_id=update.message_id):
                         yield event
@@ -638,6 +660,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     ):
                         if context.shutdown.is_set():
                             await context.exit_for_recovery()
+                        if cancellation_signal.is_set():
+                            return
+
+                # A cancel signal that fired after the restore-only replay finished (or was never
+                # entered) must still preempt starting a brand new workflow run below.
+                if cancellation_signal.is_set():
+                    return
 
                 run_stream = self._agent.run(
                     input_messages,
@@ -648,6 +677,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             async for update in run_stream:
                 if context.shutdown.is_set():
                     await context.exit_for_recovery()
+                if cancellation_signal.is_set():
+                    break
 
                 for content in update.contents:
                     for event in tracker.handle(content, message_id=update.message_id):

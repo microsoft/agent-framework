@@ -422,6 +422,15 @@ class TestResponsesHostServerInit:
                 options=ResponsesServerOptions(resilient_background=True),
             )
 
+    def test_init_rejects_steerable_conversations_for_workflow_agent(self) -> None:
+        workflow_agent = _build_text_workflow_agent("hello from workflow")
+        with pytest.raises(RuntimeError, match="steerable_conversations"):
+            ResponsesHostServer(
+                workflow_agent,
+                store=InMemoryResponseProvider(),
+                options=ResponsesServerOptions(steerable_conversations=True),
+            )
+
     async def test_previous_response_requires_existing_agent_session(self) -> None:
         agent = _make_agent()
         server = _make_server(agent, session_store=SessionStore())
@@ -737,6 +746,45 @@ class TestAgentSessionPersistence:
         stored = await store.get("response-1")
         assert stored is not None
         assert stored.state["started"] is True
+
+    async def test_cancellation_signal_stops_streaming_and_completes(self) -> None:
+        """Steering/explicit-cancel: the loop must break promptly, and the response still completes."""
+        store = SessionStore()
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("one")], role="assistant"),
+                AgentResponseUpdate(contents=[Content.from_text("two")], role="assistant"),
+                AgentResponseUpdate(contents=[Content.from_text("three")], role="assistant"),
+            ]
+        )
+        server = _make_server(agent, session_store=store)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+        cancellation_signal = asyncio.Event()
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            events: list[Any] = []
+            async for event in handler:
+                events.append(event)
+                if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
+                    break
+            # Cancellation arrives after the first delta; the loop must not process "two"/"three".
+            cancellation_signal.set()
+            events.extend([event async for event in handler])
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert types.count("response.output_text.delta") == 1
+        assert types[-1] == "response.completed"
+
+        stored = await store.get("response-1")
+        assert stored is not None
 
 
 # endregion
@@ -4137,6 +4185,81 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
     return WorkflowAgent(workflow=workflow, name="Text Workflow Agent")
 
 
+class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
+    """Inner agent that streams one update per text in a single ``run`` call, and tracks ``run_count``."""
+
+    def __init__(self, name: str, texts: Sequence[str]) -> None:
+        self.id = str(uuid.uuid4())
+        self.name = name
+        self.description: str | None = None
+        self._texts = list(texts)
+        self.run_count = 0
+
+    def create_session(self, **kwargs: Any) -> AgentSession:
+        del kwargs
+        return AgentSession()
+
+    def get_session(self, service_session_id: str | ServiceSessionId, *, session_id: str | None = None) -> AgentSession:
+        del service_session_id, session_id
+        return AgentSession()
+
+    @overload
+    def run(
+        self,
+        messages: Any = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: Any = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: Any = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        del messages, session, kwargs
+        assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
+        self.run_count += 1
+        texts = self._texts
+        name = self.name
+
+        async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
+            for text in texts:
+                yield AgentResponseUpdate(
+                    contents=[Content.from_text(text=text)],
+                    role="assistant",
+                    author_name=name,
+                )
+
+        return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
+
+
+def _build_multi_update_workflow_agent(texts: Sequence[str]) -> tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]:
+    """Build a ``WorkflowAgent`` whose inner agent streams one update per text in ``texts``."""
+    inner = _MultiUpdateWorkflowAgentMock("multi-update-agent", texts)
+
+    @executor
+    async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
+        await ctx.send_message(AgentExecutorRequest(messages=messages, should_respond=True))
+
+    workflow = WorkflowBuilder(start_executor=start).add_edge(start, inner).build()
+    return WorkflowAgent(workflow=workflow, name="Multi Update Workflow Agent"), inner
+
+
 def _build_approval_workflow_agent(
     *,
     approval_request_id: str,
@@ -4201,6 +4324,70 @@ class TestWorkflowAgentHosting:
         assert "response.output_text.delta" in types
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert any(e["data"]["text"] == "hello stream" for e in text_done)
+
+    async def test_cancellation_signal_stops_main_loop_and_completes(self) -> None:
+        """Explicit-cancel: the workflow's main loop must break promptly and still complete."""
+        workflow_agent, inner = _build_multi_update_workflow_agent(["one", "two", "three"])
+        server = _make_server(workflow_agent)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+        cancellation_signal = asyncio.Event()
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            events: list[Any] = []
+            async for event in handler:
+                events.append(event)
+                if isinstance(event, Mapping) and event.get("type") == "response.output_text.delta":
+                    break
+            # Cancellation arrives after the first delta; the loop must not process "two"/"three".
+            cancellation_signal.set()
+            events.extend([event async for event in handler])
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert types.count("response.output_text.delta") == 1
+        assert types[-1] == "response.completed"
+        assert inner.run_count == 1
+
+    async def test_cancellation_signal_set_before_turn_skips_new_input(self) -> None:
+        """Explicit-cancel: cancellation set before a continuation turn starts must skip that turn's new
+        input entirely, whether caught by the restore-loop's own check or the standalone check
+        guarding the start of a brand new workflow run."""
+        workflow_agent, inner = _build_multi_update_workflow_agent(["hello"])
+        server = _make_server(workflow_agent)
+
+        first = await _post(server, conversation_id="conv-1", stream=False)
+        assert first.status_code == 200
+        run_count_after_first_turn = inner.run_count
+        assert run_count_after_first_turn == 1
+
+        request = CreateResponse(model="m", input="hi again", stream=True)
+        context = ResponseContext(response_id="response-2", mode_flags=MagicMock(), conversation_id="conv-1")
+        cancellation_signal = asyncio.Event()
+        cancellation_signal.set()  # Steering pressure already present before the turn even starts.
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            events = [event async for event in handler]
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert "response.output_text.delta" not in types
+        assert types[-1] == "response.completed"
+        # At most the restore-only replay call happened; the new-turn call (which would deliver
+        # "hi again") must never fire.
+        assert inner.run_count <= run_count_after_first_turn + 1
 
     async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")
