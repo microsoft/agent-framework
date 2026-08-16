@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
+kind: hosted
+name: agent-framework-agent-custom-storage-responses
+protocols:
+  - protocol: responses
+    version: 2.0.0
+resources:
+  cpu: "0.25"
+  memory: "0.5Gi"
+environment_variables:
+  - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+    value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+  - name: COSMOS_CONNECTION_STRING
+    value: ${COSMOS_CONNECTION_STRING}
+  - name: COSMOS_DATABASE_NAME
+    value: ${COSMOS_DATABASE_NAME}
+  - name: COSMOS_CONTAINER_NAME
+    value: ${COSMOS_CONTAINER_NAME}

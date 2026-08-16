@@ -397,6 +397,10 @@ class TestRedisHistoryProviderInit:
         with pytest.raises(ValueError, match="host is required"):
             RedisHistoryProvider("mem", credential_provider=mock_cred)
 
+    def test_negative_max_messages_raises(self):
+        with pytest.raises(ValueError, match="max_messages"):
+            RedisHistoryProvider("mem", redis_url="redis://localhost:6379", max_messages=-5)
+
     def test_credential_provider_with_host(self):
         mock_cred = MagicMock()
         with patch("agent_framework_redis._history_provider.redis.Redis") as mock_redis_cls:
@@ -494,6 +498,41 @@ class TestRedisHistoryProviderSaveMessages:
         await provider.save_messages("s1", [Message(role="user", contents=["msg"])])
 
         mock_redis_client.ltrim.assert_not_called()
+
+    async def test_max_messages_zero_retains_nothing(self, mock_redis_client: MagicMock):
+        """Only None means unlimited, so a retention count of 0 must retain nothing.
+
+        ``LTRIM key 0 -1`` is Redis's "keep the whole list", so trimming to
+        ``-max_messages`` cannot express a limit of zero.
+        """
+        mock_redis_client.llen = AsyncMock(return_value=15)
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", max_messages=0)
+
+        await provider.save_messages("s1", [Message(role="user", contents=["msg"])])
+
+        # No payload reaches Redis at all, so nothing is exposed to readers, AOF or replicas.
+        mock_redis_client.pipeline.assert_not_called()
+        mock_redis_client.ltrim.assert_not_called()
+
+    async def test_max_messages_zero_leaves_stored_history_alone(self, mock_redis_client: MagicMock):
+        """Disabling retention must not delete history this provider does not own.
+
+        ``_redis_key`` omits ``source_id``, so two providers with the default prefix
+        share ``{key_prefix}:{session_id}``. Persisting runs in reverse provider order,
+        so a zero-retention provider that deleted the key would drop a co-located
+        provider's just-written history on every turn. Removing stored history is
+        ``clear()``'s job, not a retention setting's.
+        """
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", max_messages=0)
+
+        await provider.save_messages("s1", [Message(role="user", contents=["msg"])])
+
+        mock_redis_client.delete.assert_not_called()
 
 
 class TestRedisHistoryProviderClear:

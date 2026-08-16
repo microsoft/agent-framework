@@ -152,9 +152,9 @@ def _sanitize_tool_history(
                     if content.function_call and content.function_call.call_id:
                         approval_call_ids.add(str(content.function_call.call_id))
                     if approval_accepted is None:
-                        approval_accepted = bool(content.approved)
+                        approval_accepted = content.approved is True
                     else:
-                        approval_accepted = approval_accepted and bool(content.approved)
+                        approval_accepted = approval_accepted and content.approved is True
 
             if approval_call_ids and pending_tool_call_ids:
                 pending_tool_call_ids = [
@@ -203,7 +203,7 @@ def _sanitize_tool_history(
                             contents=[
                                 Content.from_function_result(
                                     call_id=pending_confirm_changes_id,
-                                    result="Confirmed" if parsed.get("accepted") else "Rejected",
+                                    result="Confirmed" if parsed.get("accepted") is True else "Rejected",
                                 )
                             ],
                         )
@@ -724,7 +724,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                 # Look for the matching function call in previous messages to create
                 # proper function_approval_response content. This enables the agent framework
                 # to execute the approved tool (fix for GitHub issue #3034).
-                accepted = parsed.get("accepted", False) if parsed is not None else False
+                accepted = parsed.get("accepted") is True if parsed is not None else False
                 approval_payload_text = result_content if isinstance(result_content, str) else json.dumps(parsed)
 
                 # Log the full approval payload to debug modified arguments
@@ -932,7 +932,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
 
                 # Create the approval response
                 approval_response = Content.from_function_approval_response(
-                    approved=approval.get("approved", True),
+                    approved=approval.get("approved") is True,
                     id=approval.get("id", ""),
                     function_call=func_call,
                 )

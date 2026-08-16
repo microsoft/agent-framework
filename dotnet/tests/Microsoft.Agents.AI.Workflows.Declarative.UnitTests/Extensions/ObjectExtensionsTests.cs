@@ -104,6 +104,30 @@ public sealed class ObjectExtensionsTests
         VerifyConversion(Json, VariableType.Record(("id", typeof(string)), ("count", typeof(int))), expected);
     }
 
+    [Fact]
+    public void ConvertFencedJson()
+    {
+        // Arrange
+        const string Json =
+            """
+            ```json
+            {
+                "id": "item1",
+                "count": 5
+            }
+            ```
+            """;
+        Dictionary<string, object?> expected =
+            new()
+            {
+                { "id", "item1"},
+                { "count", 5},
+            };
+
+        // Act & Assert
+        VerifyConversion(Json, VariableType.Record(("id", typeof(string)), ("count", typeof(int))), expected);
+    }
+
     private static void VerifyConversion(object? sourceValue, VariableType targetType, object? expectedValue)
     {
         object? actualValue = sourceValue.ConvertType(targetType);

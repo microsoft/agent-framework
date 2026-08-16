@@ -1434,3 +1434,123 @@ def test_create_harness_agent_shell_dedup_does_not_suppress_harness_warning() ->
             disable_file_memory=True,
             background_agents=[bg_agent],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         )
+
+
+def _tool_call_ordering_problems(messages: Sequence[Message]) -> list[str]:
+    """Report assistant function calls that are not immediately followed by their results."""
+    problems: list[str] = []
+    index = 0
+    while index < len(messages):
+        call_ids = [
+            str(content.call_id)
+            for content in messages[index].contents
+            if content.type == "function_call" and not content.informational_only
+        ]
+        if call_ids:
+            result_ids: list[str] = []
+            next_index = index + 1
+            while next_index < len(messages) and any(
+                content.type == "function_result" for content in messages[next_index].contents
+            ):
+                result_ids.extend(
+                    str(content.call_id)
+                    for content in messages[next_index].contents
+                    if content.type == "function_result"
+                )
+                next_index += 1
+            if sorted(call_ids) != sorted(result_ids):
+                problems.append(f"messages[{index}] requests {call_ids} but is followed by results {result_ids}")
+            index = next_index
+        else:
+            index += 1
+    return problems
+
+
+async def _run_harness_tool_call_turn(
+    chat_client_base: Any,
+    *,
+    stream: bool,
+) -> tuple[list[list[Message]], AgentSession]:
+    """Run one harness turn where the model calls a tool, capturing the messages sent per model call."""
+    from agent_framework import tool
+
+    @tool
+    def lookup(query: str) -> str:
+        """Look up a fact."""
+        return f"result for {query}"
+
+    captured: list[list[Message]] = []
+
+    def build_updates(call_index: int) -> list[ChatResponseUpdate]:
+        if call_index == 0:
+            return [
+                ChatResponseUpdate(contents=[Content.from_text("Looking it up.")], role="assistant"),
+                ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(call_id="call_1", name="lookup", arguments={"query": "widgets"})
+                    ],
+                    role="assistant",
+                ),
+            ]
+        return [ChatResponseUpdate(contents=[Content.from_text("Done.")], role="assistant", finish_reason="stop")]
+
+    def fake_streaming_response(
+        *, messages: Sequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        call_index = len(captured)
+        captured.append(list(messages))
+
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            for update in build_updates(call_index):
+                yield update
+
+        return ResponseStream(_stream(), finalizer=ChatResponse.from_updates)
+
+    async def fake_get_response(*, messages: Sequence[Message], options: dict[str, Any], **kwargs: Any) -> ChatResponse:
+        call_index = len(captured)
+        captured.append(list(messages))
+        return ChatResponse.from_updates(build_updates(call_index))
+
+    agent = create_harness_agent(
+        client=chat_client_base,
+        tools=[lookup],
+        disable_web_search=True,
+        disable_todo=True,
+        disable_mode=True,
+        disable_file_memory=True,
+    )
+    session = agent.create_session()
+
+    with (
+        patch.object(chat_client_base, "_get_streaming_response", side_effect=fake_streaming_response),
+        patch.object(chat_client_base, "_get_non_streaming_response", side_effect=fake_get_response),
+    ):
+        if stream:
+            async for _update in agent.run("look up widgets", session=session, stream=True):
+                pass
+        else:
+            await agent.run("look up widgets", session=session)
+
+    return captured, session
+
+
+async def test_streaming_harness_tool_call_does_not_duplicate_transcript(chat_client_base: Any) -> None:
+    """Regression for #7591: a streaming tool-call turn must not resend the turn twice.
+
+    The streaming path rebuilt the response from updates in ``MessageInjectionMiddleware``, losing the
+    local-history conversation-id sentinel set by ``PerServiceCallHistoryPersistingMiddleware``. The
+    function loop then resent the whole turn on top of the injected history, leaving an assistant
+    function call with no results after it — which strict endpoints reject.
+    """
+    streaming_calls, session = await _run_harness_tool_call_turn(chat_client_base, stream=True)
+    non_streaming_calls, _ = await _run_harness_tool_call_turn(chat_client_base, stream=False)
+
+    assert len(streaming_calls) == 2
+    second_call = streaming_calls[1]
+    assert _tool_call_ordering_problems(second_call) == []
+    assert sum(1 for message in second_call if message.text == "look up widgets") == 1
+    assert sum(1 for message in second_call for content in message.contents if content.type == "function_call") == 1
+    # The streaming path must build the same transcript as the non-streaming path.
+    assert [message.text for message in second_call] == [message.text for message in non_streaming_calls[1]]
+    # The local sentinel is control-flow state and must never become a service session id.
+    assert session.service_session_id is None
