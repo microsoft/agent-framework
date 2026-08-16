@@ -68,6 +68,9 @@ public sealed class ChatClientAgentOptions
     /// <remarks>
     /// This setting is independent of <see cref="ChatOptions.AllowMultipleToolCalls"/>, which controls whether
     /// a model may return multiple tool calls in a single response. The default is <see langword="false"/>.
+    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When using a custom chat client stack, configure <see cref="FunctionInvokingChatClient.AllowConcurrentInvocation"/>
+    /// directly on its <see cref="FunctionInvokingChatClient"/> instance.
     /// </remarks>
     public bool AllowConcurrentInvocation { get; set; }
 
