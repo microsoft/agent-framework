@@ -63,6 +63,8 @@ def mock_redis_client():
     client.llen = AsyncMock(return_value=0)
     client.ltrim = AsyncMock()
     client.delete = AsyncMock()
+    client.exists = AsyncMock(return_value=0)
+    client.renamenx = AsyncMock(return_value=0)
 
     mock_pipeline = AsyncMock()
     mock_pipeline.rpush = AsyncMock()
@@ -420,8 +422,18 @@ class TestRedisHistoryProviderRedisKey:
             mock_from_url.return_value = mock_redis_client
             provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", key_prefix="msgs")
 
-        assert provider._redis_key("session-123") == "msgs\x1fmem\x1fsession-123"
-        assert provider._redis_key(None) == "msgs\x1fmem\x1fdefault"
+        assert provider._redis_key("session-123") == "4:msgs3:mem11:session-123"
+        assert provider._redis_key(None) == "4:msgs3:mem7:default"
+
+    def test_key_join_is_injective(self, mock_redis_client: MagicMock):
+        # moonbox3's review case: any fixed separator can be smuggled inside an
+        # opaque id, so the components are length-prefixed instead.
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            first = RedisHistoryProvider("audit\x1fx", redis_url="redis://localhost:6379", key_prefix="msgs")
+            second = RedisHistoryProvider("audit", redis_url="redis://localhost:6379", key_prefix="msgs")
+
+        assert first._redis_key("y") != second._redis_key("x\x1fy")
 
     def test_keys_isolated_per_source_id(self, mock_redis_client: MagicMock):
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
@@ -459,6 +471,35 @@ class TestRedisHistoryProviderGetMessages:
         messages = await provider.get_messages("s1")
         assert messages == []
 
+    async def test_migrates_legacy_key_on_first_read(self, mock_redis_client: MagicMock):
+        msg = Message(role="user", contents=["legacy hello"])
+        legacy_payload = json.dumps(msg.to_dict())
+        # new key empty, legacy key still holds the pre-scoping data
+        mock_redis_client.lrange = AsyncMock(side_effect=[[], [legacy_payload]])
+        mock_redis_client.exists = AsyncMock(return_value=1)
+        mock_redis_client.renamenx = AsyncMock(return_value=1)
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        messages = await provider.get_messages("s1")
+        mock_redis_client.renamenx.assert_called_once_with("chat_messages:s1", "13:chat_messages3:mem2:s1")
+        assert len(messages) == 1
+        assert messages[0].text == "legacy hello"
+
+    async def test_no_migration_when_new_key_has_data(self, mock_redis_client: MagicMock):
+        msg = Message(role="user", contents=["current"])
+        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg.to_dict())])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        messages = await provider.get_messages("s1")
+        mock_redis_client.exists.assert_not_called()
+        assert len(messages) == 1
+
 
 class TestRedisHistoryProviderSaveMessages:
     async def test_saves_serialized_messages(self, mock_redis_client: MagicMock):
@@ -490,7 +531,7 @@ class TestRedisHistoryProviderSaveMessages:
 
         await provider.save_messages("s1", [Message(role="user", contents=["msg"])])
 
-        mock_redis_client.ltrim.assert_called_once_with("chat_messages\x1fmem\x1fs1", -10, -1)
+        mock_redis_client.ltrim.assert_called_once_with("13:chat_messages3:mem2:s1", -10, -1)
 
     async def test_no_trim_when_under_limit(self, mock_redis_client: MagicMock):
         mock_redis_client.llen = AsyncMock(return_value=3)
@@ -511,7 +552,7 @@ class TestRedisHistoryProviderClear:
             provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
 
         await provider.clear("session-1")
-        mock_redis_client.delete.assert_called_once_with("chat_messages\x1fmem\x1fsession-1")
+        mock_redis_client.delete.assert_called_once_with("13:chat_messages3:mem9:session-1", "chat_messages:session-1")
 
     async def test_clear_leaves_other_source_ids_untouched(self, mock_redis_client: MagicMock):
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
@@ -522,7 +563,9 @@ class TestRedisHistoryProviderClear:
         await audit.clear("session-1")
         # the destructive case from #7471: clearing one provider must not
         # delete the shared session's messages belonging to another provider
-        mock_redis_client.delete.assert_called_once_with("chat_messages\x1faudit\x1fsession-1")
+        mock_redis_client.delete.assert_called_once_with(
+            "13:chat_messages5:audit9:session-1", "chat_messages:session-1"
+        )
         assert primary._redis_key("session-1") not in mock_redis_client.delete.call_args.args
 
 

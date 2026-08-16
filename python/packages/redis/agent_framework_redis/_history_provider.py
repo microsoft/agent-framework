@@ -9,6 +9,7 @@ This module provides ``RedisHistoryProvider``, built on the new
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import suppress
 from typing import Any, ClassVar
 
 import redis.asyncio as redis
@@ -106,13 +107,20 @@ class RedisHistoryProvider(HistoryProvider):
         else:
             self._redis_client = redis.from_url(redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
 
-    # Unit separator: source ids and session ids are opaque strings and can
-    # legitimately contain ':', which would make colon-joined keys ambiguous.
-    _KEY_SEP = "\x1f"
+    # Keys length-prefix each component ("<len>:<value>") so the join stays
+    # injective no matter which bytes the source/session ids carry; any fixed
+    # separator can be smuggled inside an opaque id and collide two sessions.
+    # Sessions written before source_id scoping live under
+    # "<key_prefix>:<session_id>" and migrate lazily on first read.
 
     def _redis_key(self, session_id: str | None) -> str:
         """Get the Redis key for a given session's messages."""
-        return self._KEY_SEP.join([self.key_prefix, self.source_id, session_id or "default"])
+        parts = (self.key_prefix, self.source_id, session_id or "default")
+        return "".join(f"{len(part)}:{part}" for part in parts)
+
+    def _legacy_redis_key(self, session_id: str | None) -> str:
+        """Pre-scoping key layout, read only to migrate existing sessions."""
+        return f"{self.key_prefix}:{session_id or 'default'}"
 
     async def get_messages(
         self,
@@ -134,6 +142,16 @@ class RedisHistoryProvider(HistoryProvider):
         mark_feature_used(FeatureIndex.REDIS)
         key = self._redis_key(session_id)
         redis_messages: list[str] = await self._redis_client.lrange(key, 0, -1)  # type: ignore[misc]
+        if not redis_messages:
+            # Lazy migration: a session last written with the pre-scoping key
+            # layout moves under its new key on first read. renamenx keeps this
+            # atomic and no-ops if a concurrent write already landed there; the
+            # legacy list then stays put and remains clearable via clear().
+            legacy_key = self._legacy_redis_key(session_id)
+            if legacy_key != key and await self._redis_client.exists(legacy_key):  # type: ignore[misc]
+                with suppress(Exception):  # a legacy key that vanished mid-read is a no-op
+                    await self._redis_client.renamenx(legacy_key, key)  # type: ignore[misc]
+                redis_messages = await self._redis_client.lrange(key, 0, -1)  # type: ignore[misc]
         messages: list[Message] = []
         if redis_messages:
             for serialized in redis_messages:  # type: ignore[union-attr]
@@ -193,7 +211,7 @@ class RedisHistoryProvider(HistoryProvider):
         Args:
             session_id: The session ID to clear messages for.
         """
-        await self._redis_client.delete(self._redis_key(session_id))
+        await self._redis_client.delete(self._redis_key(session_id), self._legacy_redis_key(session_id))
 
     async def aclose(self) -> None:
         """Close the Redis connection."""
