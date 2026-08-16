@@ -638,6 +638,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             platform_context=request_context,
                         )
                 latest_checkpoint = await restore_checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+
+                if latest_checkpoint is None and previous_response_id is not None:
+                    # A previous_response_id must have a prior workflow checkpoint to resume from
+                    raise RuntimeError(
+                        f"Cannot find an existing workflow checkpoint for previous_response_id={previous_response_id}."
+                    )
+
                 if latest_checkpoint is not None:
                     # If we have a prior checkpoint, restore it first (drive the workflow
                     # back to idle with prior state intact), then make a separate call that

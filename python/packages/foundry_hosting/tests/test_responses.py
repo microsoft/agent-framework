@@ -426,7 +426,7 @@ class TestResponsesHostServerInit:
         workflow_agent = _build_text_workflow_agent("hello from workflow")
         with pytest.raises(RuntimeError, match="steerable_conversations"):
             ResponsesHostServer(
-                workflow_agent,
+                cast(SupportsAgentRun, workflow_agent),
                 store=InMemoryResponseProvider(),
                 options=ResponsesServerOptions(steerable_conversations=True),
             )
@@ -4388,6 +4388,31 @@ class TestWorkflowAgentHosting:
         # At most the restore-only replay call happened; the new-turn call (which would deliver
         # "hi again") must never fire.
         assert inner.run_count <= run_count_after_first_turn + 1
+
+    async def test_previous_response_requires_existing_workflow_checkpoint(self) -> None:
+        """A previous_response_id naming a scope with no checkpoint must fail loudly rather than
+        silently starting a fresh workflow run (which could repeat side effects or misinterpret a
+        continuation as a new request)."""
+        workflow_agent, inner = _build_multi_update_workflow_agent(["hello"])
+        server = _make_server(workflow_agent)
+        request = CreateResponse(model="m", input="hi", previous_response_id="response-missing")
+        context = ResponseContext(response_id="response-current", mode_flags=MagicMock())
+
+        with patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])):
+            handler = server._handle_response(request, context, asyncio.Event())  # pyright: ignore[reportPrivateUsage]
+            events = [event async for event in handler]
+
+        failed_events = [
+            event for event in events if isinstance(event, Mapping) and event.get("type") == "response.failed"
+        ]
+        assert len(failed_events) == 1
+        failed_event = cast(Mapping[str, Any], failed_events[0])
+        response = cast(Mapping[str, Any], failed_event["response"])
+        error = cast(Mapping[str, Any], response["error"])
+        assert (
+            "Cannot find an existing workflow checkpoint for previous_response_id=response-missing." in error["message"]
+        )
+        assert inner.run_count == 0
 
     async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")
