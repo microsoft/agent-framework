@@ -50,6 +50,34 @@ agent = GitHubCopilotAgent(
 > Note: with the default (deny-all) permission handler, an `always_require` tool is denied
 > unless you wire an approving `on_permission_request`.
 
+### Approving for the rest of the session
+
+`PermissionDecisionApproveForSession` scopes its approval with either an `approval` (tool
+prompts) or a `domain` (URL prompts). Both are optional, so a bare
+`PermissionDecisionApproveForSession()` carries no scope at all and the Copilot CLI cannot
+interpret it.
+
+`GitHubCopilotAgent` therefore scopes such a decision automatically, using the request that
+triggered it — a shell prompt becomes an approval for that prompt's command identifiers, an
+MCP prompt an approval for that server and tool, a URL prompt an approval for that URL's
+domain, and so on:
+
+```python
+from copilot.generated.rpc import PermissionDecisionApproveForSession
+
+
+def on_permission_request(request, invocation):
+    # Scoped to `request` automatically; approves that kind of call for the whole session.
+    return PermissionDecisionApproveForSession()
+```
+
+The decision is only ever narrowed, never widened. When the prompt reports that it cannot
+offer session-scoped approval (`can_offer_session_approval=False`), or the request kind has
+no session-scoped approval at all (such as a `hook` prompt), the decision is downgraded to a
+single-use approval and a warning is logged. Pass an explicit `approval=` or `domain=` when
+you want to approve something other than the request being handled — decisions that already
+specify a scope are forwarded unchanged.
+
 ### Deprecated: `on_function_approval`
 
 The `on_function_approval` callback is **deprecated**. It still works (and is still enforced

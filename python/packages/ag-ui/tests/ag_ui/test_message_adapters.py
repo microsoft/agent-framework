@@ -100,6 +100,56 @@ def test_agui_tool_result_to_agent_framework():
     assert message.additional_properties.get("tool_call_id") == "call_123"
 
 
+@pytest.mark.parametrize("approved", [None, "true", "false", 1, 0, []])
+def test_function_approval_requires_real_boolean(approved: Any) -> None:
+    """Missing and malformed decisions are converted to explicit rejection."""
+    approval: dict[str, Any] = {
+        "id": "approval_1",
+        "call_id": "call_1",
+        "name": "sensitive_action",
+        "arguments": {},
+    }
+    if approved is not None:
+        approval["approved"] = approved
+
+    messages = agui_messages_to_agent_framework([{"role": "user", "content": "", "function_approvals": [approval]}])
+
+    response = messages[0].contents[0]
+    assert response.type == "function_approval_response"
+    assert response.approved is False
+
+
+@pytest.mark.parametrize(
+    ("accepted", "expected"),
+    [(True, True), (False, False), ("true", False), (1, False), (None, False)],
+)
+def test_tool_approval_accepted_requires_real_boolean(accepted: Any, expected: bool) -> None:
+    """Only the literal boolean true authorizes a raw tool approval payload."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "sensitive_action", "arguments": {}},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "toolCallId": "call_1",
+                "content": json.dumps({"accepted": accepted}),
+            },
+        ]
+    )
+
+    response = messages[1].contents[0]
+    assert response.type == "function_approval_response"
+    assert response.approved is expected
+
+
 def test_agui_tool_approval_updates_tool_call_arguments():
     """Tool approval updates matching tool call arguments for snapshots and agent context.
 
@@ -1995,3 +2045,39 @@ def test_parse_multimodal_media_part_unknown_source_value_fallback():
     )
     assert result is not None
     assert "aGVsbG8=" in result.uri  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+
+
+def test_parse_multimodal_media_part_url_value_field():
+    """Source with type='url' reads the URL from the 'value' field per AG-UI spec."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    result = _parse_multimodal_media_part(
+        {
+            "type": "document",
+            "source": {
+                "type": "url",
+                "value": "https://example.com/files/document.pdf",
+                "mime_type": "application/pdf",
+            },
+        }
+    )
+    assert result is not None
+    assert result.uri == "https://example.com/files/document.pdf"
+    assert result.media_type == "application/pdf"
+
+
+def test_parse_multimodal_media_part_url_field_backward_compat():
+    """Source with type='url' still supports the non-spec 'url' and 'uri' fields."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    from_url = _parse_multimodal_media_part(
+        {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}}
+    )
+    assert from_url is not None
+    assert from_url.uri == "https://example.com/a.png"
+
+    from_uri = _parse_multimodal_media_part(
+        {"type": "image", "source": {"type": "uri", "uri": "https://example.com/b.png"}}
+    )
+    assert from_uri is not None
+    assert from_uri.uri == "https://example.com/b.png"

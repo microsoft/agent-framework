@@ -285,6 +285,7 @@ from ._workflows._function_executor import FunctionExecutor, executor
 from ._workflows._functional import (
     FunctionalWorkflow,
     FunctionalWorkflowAgent,
+    FunctionalWorkflowDefinition,
     RunContext,
     StepWrapper,
     get_run_context,
@@ -442,6 +443,7 @@ __all__ = [
     "FunctionTool",
     "FunctionalWorkflow",
     "FunctionalWorkflowAgent",
+    "FunctionalWorkflowDefinition",
     "GeneratedEmbeddings",
     "GraphConnectivityError",
     "HistoryProvider",
