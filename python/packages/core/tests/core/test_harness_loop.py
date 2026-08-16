@@ -1496,7 +1496,10 @@ async def test_turn_scoped_after_run_sees_run_options() -> None:
         context_providers=[provider],
     )
 
-    await agent.run("start", options={"custom_flag": "yes"})
+    await agent.run(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "start",
+        options={"custom_flag": "yes"},  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
+    )
 
     assert provider.seen_options == [{"custom_flag": "yes"}]
 
