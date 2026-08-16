@@ -5,8 +5,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentSession, Content, SessionStore, WorkflowCheckpoint, WorkflowCheckpointException
-from azure.ai.agentserver.core import AgentConfig
+from agent_framework import AgentSession, Content, WorkflowCheckpoint, WorkflowCheckpointException
+from azure.ai.agentserver.core import AgentConfig, FoundryAgentRequestContext
 from azure.ai.agentserver.core.storage import FoundryStorageConflictError
 
 from agent_framework_foundry_hosting import ContextScopedStoreProvider, StoreProvider
@@ -17,7 +17,6 @@ from agent_framework_foundry_hosting._state_store import (
     FoundryCheckpointStore,
     FoundryFunctionApprovalStore,
     FunctionApprovalStoreProvider,
-    InMemoryFunctionApprovalStore,
 )
 
 
@@ -60,6 +59,10 @@ def _config(*, is_hosted: bool) -> AgentConfig:
     )
 
 
+def _platform_context(call_id: str = "call-1", user_id: str = "user-1") -> FoundryAgentRequestContext:
+    return FoundryAgentRequestContext(call_id=call_id, user_id=user_id)
+
+
 def test_storage_providers_use_public_abstraction() -> None:
     assert issubclass(CheckpointStoreProvider, ContextScopedStoreProvider)
     assert not issubclass(CheckpointStoreProvider, StoreProvider)
@@ -75,11 +78,11 @@ async def test_save_uses_context_scoped_store() -> None:
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ) as get_or_create:
-        result = await FoundryCheckpointStore("context-1").save(checkpoint)
+        result = await FoundryCheckpointStore("context-1", _platform_context()).save(checkpoint)
 
     assert result == "checkpoint-1"
-    get_or_create.assert_awaited_once_with("checkpoints/context-1", user_isolation=True)
-    store.set_item.assert_awaited_once_with("checkpoint-1", checkpoint.to_dict())
+    get_or_create.assert_awaited_once_with("checkpoints/context-1", user_isolation=True, user_id="user-1")
+    store.set_item.assert_awaited_once_with("checkpoint-1", checkpoint.to_dict(), call_id="call-1")
 
 
 async def test_load_returns_checkpoint() -> None:
@@ -91,9 +94,10 @@ async def test_load_returns_checkpoint() -> None:
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
-        result = await FoundryCheckpointStore("context-1").load("checkpoint-1")
+        result = await FoundryCheckpointStore("context-1", _platform_context()).load("checkpoint-1")
 
     assert result == checkpoint
+    store.get_item.assert_awaited_once_with("checkpoint-1", call_id="call-1")
 
 
 async def test_load_raises_for_missing_checkpoint() -> None:
@@ -107,7 +111,7 @@ async def test_load_raises_for_missing_checkpoint() -> None:
         ),
         pytest.raises(WorkflowCheckpointException, match="No checkpoint found with ID missing"),
     ):
-        await FoundryCheckpointStore("context-1").load("missing")
+        await FoundryCheckpointStore("context-1", _platform_context()).load("missing")
 
 
 async def test_list_checkpoints_paginates_and_filters_by_workflow() -> None:
@@ -134,11 +138,14 @@ async def test_list_checkpoints_paginates_and_filters_by_workflow() -> None:
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
-        result = await FoundryCheckpointStore("context-1").list_checkpoints(workflow_name="workflow")
+        result = await FoundryCheckpointStore("context-1", _platform_context()).list_checkpoints(
+            workflow_name="workflow"
+        )
 
     assert result == [matching]
-    assert store.list_keys.await_args_list[0].kwargs == {"after": None}
-    assert store.list_keys.await_args_list[1].kwargs == {"after": "cursor-1"}
+    assert store.list_keys.await_args_list[0].kwargs == {"after": None, "call_id": "call-1"}
+    assert store.list_keys.await_args_list[1].kwargs == {"after": "cursor-1", "call_id": "call-1"}
+    assert all(call.kwargs == {"call_id": "call-1"} for call in store.get_item.await_args_list)
 
 
 @pytest.mark.parametrize(("deleted_id", "expected"), [("item-id", True), (None, False)])
@@ -150,13 +157,14 @@ async def test_delete_reports_whether_checkpoint_existed(deleted_id: str | None,
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
-        result = await FoundryCheckpointStore("context-1").delete("checkpoint-1")
+        result = await FoundryCheckpointStore("context-1", _platform_context()).delete("checkpoint-1")
 
     assert result is expected
+    store.delete_item.assert_awaited_once_with("checkpoint-1", call_id="call-1")
 
 
 async def test_get_latest_uses_timestamp_and_list_ids_filters() -> None:
-    storage = FoundryCheckpointStore("context-1")
+    storage = FoundryCheckpointStore("context-1", _platform_context())
     older = _checkpoint("older", timestamp="2026-01-01T00:00:00+00:00")
     newer = _checkpoint("newer", timestamp="2026-01-02T00:00:00+00:00")
     storage.list_checkpoints = AsyncMock(return_value=[newer, older])  # zuban:ignore
@@ -166,33 +174,36 @@ async def test_get_latest_uses_timestamp_and_list_ids_filters() -> None:
 
 
 async def test_get_latest_returns_none_when_no_checkpoints_exist() -> None:
-    storage = FoundryCheckpointStore("context-1")
+    storage = FoundryCheckpointStore("context-1", _platform_context())
     storage.list_checkpoints = AsyncMock(return_value=[])  # zuban:ignore
 
     assert await storage.get_latest(workflow_name="workflow") is None
 
 
 @pytest.mark.parametrize("is_hosted", [True, False])
-def test_checkpoint_storage_provider_caches_storage_by_context(is_hosted: bool) -> None:
+def test_checkpoint_storage_provider_creates_request_scoped_storage(is_hosted: bool) -> None:
     provider = CheckpointStoreProvider()
     config = _config(is_hosted=is_hosted)
+    first_context = _platform_context("call-1")
+    second_context = _platform_context("call-2")
 
-    first = provider.get_store(config=config, context_id="context-1")
-    second = provider.get_store(config=config, context_id="context-2")
+    first = provider.get_store(config=config, context_id="context-1", platform_context=first_context)
+    second = provider.get_store(config=config, context_id="context-1", platform_context=second_context)
 
-    if is_hosted:
-        assert type(first) is FoundryCheckpointStore
-        assert type(second) is FoundryCheckpointStore
-
-    assert provider.get_store(config=config, context_id="context-1") is first
+    assert type(first) is FoundryCheckpointStore
+    assert type(second) is FoundryCheckpointStore
     assert second is not first
+    assert first.platform_context is first_context
+    assert second.platform_context is second_context
 
 
 @pytest.mark.parametrize(
     "create_store",
     [
-        lambda: FoundryCheckpointStore(""),
-        lambda: CheckpointStoreProvider().get_store(config=_config(is_hosted=True), context_id=""),
+        lambda: FoundryCheckpointStore("", _platform_context()),
+        lambda: CheckpointStoreProvider().get_store(
+            config=_config(is_hosted=True), context_id="", platform_context=_platform_context()
+        ),
     ],
 )
 def test_checkpoint_stores_require_context_id(create_store: Callable[[], Any]) -> None:
@@ -219,13 +230,14 @@ async def test_save_and_load_function_approval_request() -> None:
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ) as get_or_create:
-        storage = FoundryFunctionApprovalStore()
+        storage = FoundryFunctionApprovalStore(_platform_context())
         await storage.save_approval_request("approval-1", request)
         loaded = await storage.load_approval_request("approval-1")
 
     assert get_or_create.await_count == 2
-    get_or_create.assert_awaited_with("function_approvals", user_isolation=True)
-    store.create_item.assert_awaited_once_with("approval-1", request.to_dict())
+    get_or_create.assert_awaited_with("function_approvals", user_isolation=True, user_id="user-1")
+    store.create_item.assert_awaited_once_with("approval-1", request.to_dict(), call_id="call-1")
+    store.get_item.assert_awaited_once_with("approval-1", call_id="call-1")
     assert loaded == request
     function_call = loaded.function_call
     assert function_call is not None
@@ -244,7 +256,9 @@ async def test_save_duplicate_function_approval_request_raises() -> None:
         ),
         pytest.raises(ValueError, match="Approval request with ID 'approval-1' already exists"),
     ):
-        await FoundryFunctionApprovalStore().save_approval_request("approval-1", _approval_request("approval-1"))
+        await FoundryFunctionApprovalStore(_platform_context()).save_approval_request(
+            "approval-1", _approval_request("approval-1")
+        )
 
 
 async def test_load_missing_function_approval_request_raises() -> None:
@@ -258,39 +272,32 @@ async def test_load_missing_function_approval_request_raises() -> None:
         ),
         pytest.raises(KeyError, match="Approval request with ID 'missing' does not exist"),
     ):
-        await FoundryFunctionApprovalStore().load_approval_request("missing")
+        await FoundryFunctionApprovalStore(_platform_context()).load_approval_request("missing")
 
 
-@pytest.mark.parametrize(
-    ("is_hosted", "expected_type"),
-    [(True, FoundryFunctionApprovalStore), (False, InMemoryFunctionApprovalStore)],
-)
-def test_function_approval_storage_provider_selects_backend(
-    is_hosted: bool,
-    expected_type: type[FoundryFunctionApprovalStore] | type[InMemoryFunctionApprovalStore],
-) -> None:
+@pytest.mark.parametrize("is_hosted", [True, False])
+def test_function_approval_storage_provider_uses_foundry_store(is_hosted: bool) -> None:
     provider = FunctionApprovalStoreProvider()
     config = _config(is_hosted=is_hosted)
+    platform_context = _platform_context()
 
-    storage = provider.get_store(config=config)
+    storage = provider.get_store(config=config, platform_context=platform_context)
 
-    assert type(storage) is expected_type
-    assert provider.get_store(config=config) is storage
+    assert type(storage) is FoundryFunctionApprovalStore
+    assert storage.platform_context is platform_context
 
 
-def test_function_approval_storage_provider_creates_only_requested_backend() -> None:
-    with (
-        patch("agent_framework_foundry_hosting._state_store.FoundryFunctionApprovalStore") as foundry_storage_type,
-        patch("agent_framework_foundry_hosting._state_store.InMemoryFunctionApprovalStore") as in_memory_storage_type,
-    ):
+def test_function_approval_storage_provider_creates_request_scoped_storage() -> None:
+    with patch("agent_framework_foundry_hosting._state_store.FoundryFunctionApprovalStore") as storage_type:
         provider = FunctionApprovalStoreProvider()
-        config = _config(is_hosted=True)
-        storage = provider.get_store(config=config)
+        config = _config(is_hosted=False)
+        first_context = _platform_context("call-1")
+        second_context = _platform_context("call-2")
+        provider.get_store(config=config, platform_context=first_context)
+        provider.get_store(config=config, platform_context=second_context)
 
-        assert provider.get_store(config=config) is storage
-
-    foundry_storage_type.assert_called_once_with()
-    in_memory_storage_type.assert_not_called()
+    assert storage_type.call_args_list[0].args == (first_context,)
+    assert storage_type.call_args_list[1].args == (second_context,)
 
 
 async def test_set_agent_session_uses_scoped_store() -> None:
@@ -302,10 +309,10 @@ async def test_set_agent_session_uses_scoped_store() -> None:
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ) as get_or_create:
-        await FoundryAgentSessionStore().set("storage-session-1", session)
+        await FoundryAgentSessionStore(_platform_context()).set("storage-session-1", session)
 
-    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True)
-    store.set_item.assert_awaited_once_with("storage-session-1", session.to_dict())
+    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True, user_id="user-1")
+    store.set_item.assert_awaited_once_with("storage-session-1", session.to_dict(), call_id="call-1")
 
 
 async def test_get_agent_session_returns_deserialized_session() -> None:
@@ -318,13 +325,13 @@ async def test_get_agent_session_returns_deserialized_session() -> None:
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ) as get_or_create:
-        result = await FoundryAgentSessionStore().get("storage-session-1")
+        result = await FoundryAgentSessionStore(_platform_context()).get("storage-session-1")
 
     assert result is not None
     assert result.to_dict() == session.to_dict()
     assert result is not session
-    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True)
-    store.get_item.assert_awaited_once_with("storage-session-1")
+    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True, user_id="user-1")
+    store.get_item.assert_awaited_once_with("storage-session-1", call_id="call-1")
 
 
 async def test_get_missing_agent_session_returns_none() -> None:
@@ -335,7 +342,7 @@ async def test_get_missing_agent_session_returns_none() -> None:
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
-        result = await FoundryAgentSessionStore().get("missing")
+        result = await FoundryAgentSessionStore(_platform_context()).get("missing")
 
     assert result is None
 
@@ -347,38 +354,31 @@ async def test_delete_agent_session_is_idempotent() -> None:
         "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
         new=AsyncMock(return_value=store),
     ):
-        await FoundryAgentSessionStore().delete("storage-session-1")
+        await FoundryAgentSessionStore(_platform_context()).delete("storage-session-1")
 
-    store.delete_item.assert_awaited_once_with("storage-session-1")
+    store.delete_item.assert_awaited_once_with("storage-session-1", call_id="call-1")
 
 
-@pytest.mark.parametrize(
-    ("is_hosted", "expected_type"),
-    [(True, FoundryAgentSessionStore), (False, SessionStore)],
-)
-def test_agent_session_storage_provider_selects_backend(
-    is_hosted: bool,
-    expected_type: type[FoundryAgentSessionStore] | type[SessionStore],
-) -> None:
+@pytest.mark.parametrize("is_hosted", [True, False])
+def test_agent_session_storage_provider_uses_foundry_store(is_hosted: bool) -> None:
     provider = AgentSessionStoreProvider()
     config = _config(is_hosted=is_hosted)
+    platform_context = _platform_context()
 
-    storage = provider.get_store(config=config)
+    storage = provider.get_store(config=config, platform_context=platform_context)
 
-    assert type(storage) is expected_type
-    assert provider.get_store(config=config) is storage
+    assert type(storage) is FoundryAgentSessionStore
+    assert storage.platform_context is platform_context
 
 
-def test_agent_session_storage_provider_creates_only_requested_backend() -> None:
-    with (
-        patch("agent_framework_foundry_hosting._state_store.FoundryAgentSessionStore") as foundry_storage_type,
-        patch("agent_framework_foundry_hosting._state_store.SessionStore") as in_memory_storage_type,
-    ):
+def test_agent_session_storage_provider_creates_request_scoped_storage() -> None:
+    with patch("agent_framework_foundry_hosting._state_store.FoundryAgentSessionStore") as storage_type:
         provider = AgentSessionStoreProvider()
         config = _config(is_hosted=False)
-        storage = provider.get_store(config=config)
+        first_context = _platform_context("call-1")
+        second_context = _platform_context("call-2")
+        provider.get_store(config=config, platform_context=first_context)
+        provider.get_store(config=config, platform_context=second_context)
 
-        assert provider.get_store(config=config) is storage
-
-    foundry_storage_type.assert_not_called()
-    in_memory_storage_type.assert_called_once_with()
+    assert storage_type.call_args_list[0].args == (first_context,)
+    assert storage_type.call_args_list[1].args == (second_context,)

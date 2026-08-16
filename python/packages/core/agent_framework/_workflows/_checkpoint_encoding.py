@@ -78,6 +78,7 @@ def register_checkpoint_type(cls: type[Any]) -> None:
         raise TypeError("Checkpoint types must be classes.")
     _REGISTERED_CHECKPOINT_TYPE_KEYS.add(_type_to_key(cls))
 
+
 # Marker to identify pickled values in serialized JSON
 _PICKLE_MARKER = "__pickled__"
 _TYPE_MARKER = "__type__"

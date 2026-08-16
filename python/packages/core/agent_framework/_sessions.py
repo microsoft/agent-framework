@@ -1260,6 +1260,27 @@ def _response_contains_follow_up_request(response: ChatResponse) -> bool:
     )
 
 
+def _carry_over_stream_control_state(response: ChatResponse, inner_response: ChatResponse) -> None:
+    """Copy control-flow state from an inner final response onto a rebuilt outer response.
+
+    A response rebuilt from streamed updates can only see state that was emitted on an update.
+    Middleware that runs closer to the leaf client (for example
+    :class:`PerServiceCallHistoryPersistingMiddleware`) applies its continuation state through a
+    result hook, i.e. on the inner final response *after* the stream has been consumed, so that
+    state has to be carried over explicitly. Dropping it makes the function-invocation loop treat
+    the turn as if no history were managed and resend the whole turn, duplicating the transcript.
+
+    Args:
+        response: The outer response rebuilt from the streamed updates.
+        inner_response: The final response of the innermost stream that produced those updates.
+    """
+    response.conversation_id = inner_response.conversation_id
+    if inner_response.has_internal_conversation_id():
+        response.mark_internal_conversation_id()
+    else:
+        response.clear_internal_conversation_id()
+
+
 def _split_service_call_messages(messages: Sequence[Message]) -> tuple[list[Message], dict[str, list[Message]]]:
     """Split service-call messages into input messages and attributed context messages."""
     input_messages: list[Message] = []
@@ -1383,6 +1404,7 @@ class MessageInjectionMiddleware(ChatMiddleware):
         context: ChatContext,
         call_next: Callable[[], Awaitable[None]],
         session: AgentSession,
+        inner_responses: list[ChatResponse],
     ) -> AsyncIterable[ChatResponseUpdate]:
         while True:
             context.messages = self._drain_pending_messages(session, context.messages)
@@ -1396,11 +1418,26 @@ class MessageInjectionMiddleware(ChatMiddleware):
             async for update in stream:
                 yield update
             response = await stream.get_final_response()
+            inner_responses.append(response)
             if _response_contains_follow_up_request(response) or not self._has_pending_messages(session):
                 return
             self._update_context_conversation_id(context, response.conversation_id)
             empty_messages: list[Message] = []
             context.messages = empty_messages
+
+    @staticmethod
+    def _finalize_injected_stream(
+        updates: Sequence[ChatResponseUpdate],
+        inner_responses: Sequence[ChatResponse],
+        response_format: Any | None,
+    ) -> ChatResponse:
+        """Rebuild the outer response from the streamed updates, keeping inner continuation state."""
+        response = ChatResponse.from_updates(updates, output_format_type=response_format)
+        if inner_responses:
+            # The last inner response is the one the non-streaming path would return, so it also
+            # owns the continuation state for the next function-loop iteration.
+            _carry_over_stream_control_state(response, inner_responses[-1])
+        return response
 
     async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
         """Inject pending session messages into chat model calls.
@@ -1424,9 +1461,10 @@ class MessageInjectionMiddleware(ChatMiddleware):
             return
 
         response_format = context.options.get("response_format") if context.options is not None else None
+        inner_responses: list[ChatResponse] = []
         context.result = ResponseStream(
-            self._stream_injected_messages(context, call_next, session),
-            finalizer=lambda updates: ChatResponse.from_updates(updates, output_format_type=response_format),
+            self._stream_injected_messages(context, call_next, session, inner_responses),
+            finalizer=lambda updates: self._finalize_injected_stream(updates, inner_responses, response_format),
         )
 
 
