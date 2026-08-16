@@ -1765,4 +1765,44 @@ async def test_file_checkpoint_storage_roundtrip_empty_collections():
         assert loaded.pending_request_info_events == {}
 
 
+async def test_memory_checkpoint_storage_load_returns_caller_owned_copy():
+    """Mutating a loaded checkpoint must not change what a later read returns."""
+    storage = InMemoryCheckpointStorage()
+    checkpoint = WorkflowCheckpoint(
+        workflow_name="test-workflow",
+        graph_signature_hash="test-hash",
+        state={"answer": "original"},
+    )
+    await storage.save(checkpoint)
+
+    loaded = await storage.load(checkpoint.checkpoint_id)
+    loaded.state["answer"] = "mutated"
+
+    reloaded = await storage.load(checkpoint.checkpoint_id)
+    assert reloaded.state["answer"] == "original"
+
+
+async def test_memory_checkpoint_storage_list_and_get_latest_return_caller_owned_copies():
+    """list_checkpoints and get_latest follow the same read-isolation contract as load."""
+    storage = InMemoryCheckpointStorage()
+    checkpoint = WorkflowCheckpoint(
+        workflow_name="test-workflow",
+        graph_signature_hash="test-hash",
+        state={"answer": "original"},
+    )
+    await storage.save(checkpoint)
+
+    listed = await storage.list_checkpoints(workflow_name="test-workflow")
+    listed[0].state["answer"] = "mutated-via-list"
+
+    latest = await storage.get_latest(workflow_name="test-workflow")
+    assert latest is not None
+    assert latest.state["answer"] == "original"
+
+    latest.state["answer"] = "mutated-via-get-latest"
+
+    reloaded = await storage.load(checkpoint.checkpoint_id)
+    assert reloaded.state["answer"] == "original"
+
+
 # endregion
