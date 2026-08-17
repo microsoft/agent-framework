@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_TOOLBOX_SCOPE = "https://ai.azure.com/.default"
 # Default timeout (seconds) for toolbox MCP requests.
 _DEFAULT_TIMEOUT = 120.0
+# Environment variable used to inject platform-provided toolbox feature flags.
+_TOOLSET_FEATURES_ENV_VAR = "FOUNDRY_AGENT_TOOLSET_FEATURES"
 # Mandatory preview feature flag for Foundry toolbox requests.
 _MANDATORY_TOOLBOX_FEATURE = "Toolboxes=V1Preview"
 
@@ -113,7 +115,8 @@ class _ToolboxAuth(httpx.Auth):
     def __init__(self, credential: AzureCredentialTypes, scope: str) -> None:
         self._credential = credential
         self._scope = scope
-        self._features_header = _build_toolbox_features_header(os.environ.get("FOUNDRY_AGENT_TOOLSET_FEATURES"))
+        # Feature flags are startup configuration, matching the .NET toolbox service.
+        self._features_header = _build_toolbox_features_header(os.environ.get(_TOOLSET_FEATURES_ENV_VAR))
 
     def _apply_headers(self, request: httpx.Request, token: AccessToken) -> None:
         request.headers["Authorization"] = f"Bearer {token.token}"

@@ -200,6 +200,16 @@ def test_sync_auth_flow_injects_bearer_token() -> None:
     assert cred.scopes == ["https://ai.azure.com/.default"]
 
 
+def test_sync_auth_flow_injects_foundry_features_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FOUNDRY_AGENT_TOOLSET_FEATURES", "FeatureOne=Enabled")
+    auth = _ToolboxAuth(_FakeCredential(), "scope")  # type: ignore
+    request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
+
+    prepared = next(auth.sync_auth_flow(request))
+
+    assert prepared.headers["Foundry-Features"] == "Toolboxes=V1Preview,FeatureOne=Enabled"
+
+
 def test_sync_auth_flow_rejects_async_credential() -> None:
     auth = _ToolboxAuth(_FakeAsyncCredential(), "scope")  # type: ignore
     request = httpx.Request("POST", "https://h/toolboxes/tb/mcp")
