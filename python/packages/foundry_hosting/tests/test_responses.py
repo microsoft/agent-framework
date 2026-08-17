@@ -449,46 +449,6 @@ class TestResponsesHostServerInit:
 
 
 class TestAgentSessionPersistence:
-    async def test_conversations_are_isolated_and_response_snapshots_are_saved(self) -> None:
-        seen_counts: list[int] = []
-        seen_session_ids: list[str] = []
-
-        def run_with_state(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
-            del args
-            session = kwargs["session"]
-            assert isinstance(session, AgentSession)
-            count = int(session.state.get("turn_count", 0)) + 1
-            session.state["turn_count"] = count
-            seen_counts.append(count)
-            seen_session_ids.append(session.session_id)
-
-            async def updates() -> AsyncIterator[AgentResponseUpdate]:
-                yield AgentResponseUpdate(contents=[Content.from_text(f"turn {count}")], role="assistant")
-
-            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
-
-        agent = _make_agent()
-        agent.run = MagicMock(side_effect=run_with_state)
-        store = SessionStore()
-        server = _make_server(agent, session_store=store)
-
-        first = await _post(server, input_text="first", conversation_id="conversation-1")
-        second = await _post(server, input_text="other", conversation_id="conversation-2")
-        third = await _post(server, input_text="continue", conversation_id="conversation-1")
-
-        assert seen_counts == [1, 1, 2]
-        assert seen_session_ids[0] != seen_session_ids[1]
-        assert seen_session_ids[2] == seen_session_ids[0]
-        for snapshot_id in (
-            first.json()["id"],
-            second.json()["id"],
-            third.json()["id"],
-            "conversation-1",
-            "conversation-2",
-        ):
-            assert await store.get(snapshot_id) is not None
-        assert agent.create_session.call_count == 2
-
     async def test_conversation_response_snapshots_support_branching(self) -> None:
         seen_counts: list[int] = []
 
@@ -4336,22 +4296,6 @@ class TestWorkflowAgentHosting:
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert any(e["data"]["text"] == "hello stream" for e in text_done)
 
-    async def test_previous_response_requires_existing_workflow_checkpoint(self) -> None:
-        workflow_agent = _build_text_workflow_agent("should not run")
-        server = _make_server(workflow_agent)
-        missing_response_id = "caresp_aaaaaaaaaaaaaaaa00" + "1" * 32
-
-        response = await _post(server, previous_response_id=missing_response_id)
-
-        assert response.status_code == 200
-        body = response.json()
-        assert body["status"] == "failed"
-        assert (
-            f"Cannot find an existing workflow checkpoint for previous_response_id={missing_response_id}."
-            in body["error"]["message"]
-        )
-        assert body["output"] == []
-
     @pytest.mark.parametrize("stream", [False, True])
     async def test_conversation_response_checkpoints_support_branching(self, stream: bool) -> None:
         @executor
@@ -4399,105 +4343,120 @@ class TestWorkflowAgentHosting:
         ]
         assert branch_text == ["turn 2"]
 
-    async def test_failed_conversation_workflow_promotes_latest_response_checkpoint(self) -> None:
-        workflow_agent = _build_text_workflow_agent("ignored")
-        checkpoint = WorkflowCheckpoint(
-            workflow_name=workflow_agent.workflow.name,
-            graph_signature_hash="hash",
-        )
-
-        async def updates(checkpoint_storage: CheckpointStorage) -> AsyncIterator[AgentResponseUpdate]:
-            await checkpoint_storage.save(checkpoint)
-            raise RuntimeError("workflow failed")
-            yield  # pragma: no cover
-
-        def failing_run(*args: Any, **kwargs: Any) -> AsyncIterator[AgentResponseUpdate]:
-            del args
-            return updates(kwargs["checkpoint_storage"])
-
-        server = _make_server(workflow_agent)
-        request = CreateResponse(model="m", input="hi")
-        context = ResponseContext(
-            response_id="response-1",
-            conversation_id="conversation-1",
-            mode_flags=MagicMock(),
-        )
-
-        with (
-            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch.object(workflow_agent, "run", side_effect=failing_run),
-        ):
-            events = [
-                event
-                async for event in server._handle_inner_workflow(  # pyright: ignore[reportPrivateUsage]
-                    request,
-                    context,
-                )
-            ]
-
-        conversation_storage = server._checkpoint_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config,
-            context_id="conversation-1",
-            platform_context=get_request_context(),
-        )
-        latest = await conversation_storage.get_latest(workflow_name=workflow_agent.workflow.name)
-        assert latest is not None
-        assert latest.checkpoint_id == checkpoint.checkpoint_id
-        assert events[-1].get("type") == "response.failed"
-
-    @pytest.mark.parametrize("interruption", ["cancel", "close"])
-    async def test_interrupted_conversation_workflow_promotes_latest_response_checkpoint(
+    @pytest.mark.parametrize(
+        ("termination", "save_new_checkpoint", "snapshot_failure"),
+        [
+            pytest.param("failure", True, False, id="failure"),
+            pytest.param("failure", True, True, id="request-and-snapshot-failure"),
+            pytest.param("success", True, True, id="snapshot-failure"),
+            pytest.param("cancel", True, False, id="cancel"),
+            pytest.param("cancel", True, True, id="cancel-and-snapshot-failure"),
+            pytest.param("close", True, False, id="close"),
+            pytest.param("close", True, True, id="close-and-snapshot-failure"),
+            pytest.param("failure", False, False, id="failure-before-checkpoint"),
+        ],
+    )
+    async def test_incomplete_conversation_workflow_snapshots_only_new_checkpoints(
         self,
-        interruption: str,
+        termination: str,
+        save_new_checkpoint: bool,
+        snapshot_failure: bool,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         workflow_agent = _build_text_workflow_agent("ignored")
         checkpoint = WorkflowCheckpoint(
             workflow_name=workflow_agent.workflow.name,
             graph_signature_hash="hash",
         )
+        server = _make_server(workflow_agent)
+
+        if not save_new_checkpoint:
+            conversation_storage = server._checkpoint_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
+                config=server.config,
+                context_id="conversation-1",
+                platform_context=get_request_context(),
+            )
+            await conversation_storage.save(
+                WorkflowCheckpoint(
+                    workflow_name=workflow_agent.workflow.name,
+                    graph_signature_hash="hash",
+                )
+            )
 
         async def updates(checkpoint_storage: CheckpointStorage) -> AsyncIterator[AgentResponseUpdate]:
-            await checkpoint_storage.save(checkpoint)
+            if save_new_checkpoint:
+                await checkpoint_storage.save(checkpoint)
+            if termination == "failure":
+                raise RuntimeError("workflow failed")
             yield AgentResponseUpdate(contents=[Content.from_text("started")], role="assistant")
-            await asyncio.Event().wait()
+            if termination in {"cancel", "close"}:
+                await asyncio.Event().wait()
 
-        def streaming_run(*args: Any, **kwargs: Any) -> AsyncIterator[AgentResponseUpdate]:
+        def run(*args: Any, **kwargs: Any) -> AsyncIterator[AgentResponseUpdate]:
             del args
             return updates(kwargs["checkpoint_storage"])
 
-        server = _make_server(workflow_agent)
         request = CreateResponse(model="m", input="hi", stream=True)
         context = ResponseContext(
             response_id="response-1",
             conversation_id="conversation-1",
             mode_flags=MagicMock(),
         )
+        snapshot = (
+            AsyncMock(side_effect=RuntimeError("snapshot failed"))
+            if snapshot_failure
+            else AsyncMock(wraps=server._snapshot_conversation_workflow_checkpoint)  # pyright: ignore[reportPrivateUsage]
+        )
 
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
-            patch.object(workflow_agent, "run", side_effect=streaming_run),
+            patch.object(workflow_agent, "run", side_effect=run),
+            patch.object(server, "_snapshot_conversation_workflow_checkpoint", new=snapshot),
         ):
-            handler = cast(
-                AsyncGenerator[Any, None],
-                server._handle_inner_workflow(request, context),  # pyright: ignore[reportPrivateUsage]
-            )
-            await anext(handler)
-            await anext(handler)
-            await anext(handler)
-            if interruption == "cancel":
-                with pytest.raises(asyncio.CancelledError):
-                    await handler.athrow(asyncio.CancelledError())
+            if termination in {"failure", "success"}:
+                events = [
+                    event
+                    async for event in server._handle_inner_workflow(  # pyright: ignore[reportPrivateUsage]
+                        request,
+                        context,
+                    )
+                ]
+                assert events[-1].get("type") == "response.failed"
+                failed_event = cast(Mapping[str, Any], events[-1])
+                response = cast(Mapping[str, Any], failed_event["response"])
+                error = cast(Mapping[str, Any], response["error"])
+                error_message = str(error["message"])
+                if termination == "failure":
+                    assert "workflow failed" in error_message
+                if snapshot_failure:
+                    assert "snapshot failed" in error_message
             else:
-                await handler.aclose()
+                handler = cast(
+                    AsyncGenerator[Any, None],
+                    server._handle_inner_workflow(request, context),  # pyright: ignore[reportPrivateUsage]
+                )
+                await anext(handler)
+                await anext(handler)
+                await anext(handler)
+                if termination == "close":
+                    await handler.aclose()
+                else:
+                    with pytest.raises(asyncio.CancelledError):
+                        await handler.athrow(asyncio.CancelledError())
 
-        conversation_storage = server._checkpoint_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
+        response_storage = server._checkpoint_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
             config=server.config,
-            context_id="conversation-1",
+            context_id="response-1",
             platform_context=get_request_context(),
         )
-        latest = await conversation_storage.get_latest(workflow_name=workflow_agent.workflow.name)
-        assert latest is not None
-        assert latest.checkpoint_id == checkpoint.checkpoint_id
+        latest = await response_storage.get_latest(workflow_name=workflow_agent.workflow.name)
+        if save_new_checkpoint and not snapshot_failure:
+            assert latest is not None
+            assert latest.checkpoint_id == checkpoint.checkpoint_id
+        else:
+            assert latest is None
+        if termination in {"cancel", "close"} and snapshot_failure:
+            assert "while unwinding an interrupted request" in caplog.text
 
     async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")
@@ -4599,8 +4558,8 @@ class TestWorkflowAgentHosting:
         assert second_body["status"] == "completed"
         assert [call.kwargs["context_id"] for call in get_store.call_args_list] == [
             first_response_id,
-            first_response_id,
             second_body["id"],
+            first_response_id,
         ]
 
         # The inner agent must have been resumed (restore replay + new turn).

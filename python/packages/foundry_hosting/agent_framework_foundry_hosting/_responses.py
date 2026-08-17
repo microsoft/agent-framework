@@ -513,11 +513,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if are_options_set:
                 logger.warning("Workflow agent doesn't support runtime options. They will be ignored.")
 
-            previous_response_id = request.get("previous_response_id")
-            if previous_response_id is not None and context.conversation_id is not None:
-                raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
-            context_id = previous_response_id or context.conversation_id
-
             if not isinstance(self._agent, WorkflowAgent):
                 raise RuntimeError("Agent is not a workflow agent.")
 
@@ -525,6 +520,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # but call _ensure_agent_ready for symmetry with the regular path so
             # any future async resources owned by the workflow are entered here.
             await self._ensure_agent_ready()
+
+            checkpoint_save_id = context.conversation_id or context.response_id
+            _validate_checkpoint_context_id(checkpoint_save_id)
+            checkpoint_storage = self._checkpoint_storage_provider.get_store(
+                config=self.config,
+                context_id=checkpoint_save_id,
+                platform_context=request_context,
+            )
 
             # Determine the latest checkpoint (if any) so we can resume the
             # workflow's prior state for this turn. The directory is keyed by
@@ -535,38 +538,30 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # on every turn we restore the latest checkpoint and feed the new
             # input back into the start executor as a continuation rather than
             # a fresh run.
-            latest_checkpoint_id: str | None = None
-            restore_checkpoint_storage: CheckpointStorage | None = None
-            if context_id is not None:
-                _validate_checkpoint_context_id(context_id)
-                restore_checkpoint_storage = self._checkpoint_storage_provider.get_store(
-                    config=self.config,
-                    context_id=context_id,
-                    platform_context=request_context,
-                )
+            if request.get("previous_response_id") is not None and context.conversation_id is not None:
+                raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
+            previous_response_id = request.get("previous_response_id")
+            checkpoint_load_id = context.conversation_id or previous_response_id
+            latest_checkpoint = None
+            restore_checkpoint_storage = checkpoint_storage
+            if checkpoint_load_id is not None:
+                _validate_checkpoint_context_id(checkpoint_load_id)
+                if checkpoint_load_id != checkpoint_save_id:
+                    restore_checkpoint_storage = self._checkpoint_storage_provider.get_store(
+                        config=self.config,
+                        context_id=checkpoint_load_id,
+                        platform_context=request_context,
+                    )
                 latest_checkpoint = await restore_checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
-                if latest_checkpoint is not None:
-                    latest_checkpoint_id = latest_checkpoint.checkpoint_id
-                elif previous_response_id is not None:
+                if latest_checkpoint is None and previous_response_id is not None:
                     raise RuntimeError(
                         f"Cannot find an existing workflow checkpoint for previous_response_id={previous_response_id}."
                     )
 
-            # Storage that will receive checkpoints written during this turn.
-            # Every turn writes under its current response_id so a later request
-            # can branch from that exact state via previous_response_id. When a
-            # conversation_id is set, its store is updated after the run as a
-            # latest-state alias while the response snapshot remains unchanged.
-            write_context_id = context.response_id
-            _validate_checkpoint_context_id(write_context_id)
-            checkpoint_storage = self._checkpoint_storage_provider.get_store(
-                config=self.config,
-                context_id=write_context_id,
-                platform_context=request_context,
-            )
-
             request_failure: Exception | None = None
+            save_failure: Exception | None = None
             request_interrupted = False
+
             try:
                 # Multi-turn pattern: when we have a prior checkpoint, restore it
                 # first (drive the workflow back to idle with prior state intact),
@@ -584,10 +579,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 # ``run(input_messages, ...)`` call may contain ``function_call_output``
                 # items (carried as FunctionResult/FunctionApprovalResponse content)
                 # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-                if latest_checkpoint_id is not None:
+                if latest_checkpoint is not None:
                     async for _ in self._agent.run(
                         stream=True,
-                        checkpoint_id=latest_checkpoint_id,
+                        checkpoint_id=latest_checkpoint.checkpoint_id,
                         checkpoint_storage=restore_checkpoint_storage,
                     ):
                         pass
@@ -618,70 +613,71 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 raise
             except Exception as ex:
                 request_failure = ex
-                raise
+                logger.error(
+                    "Failed to produce response for workflow agent",
+                    exc_info=(type(ex), ex, ex.__traceback__),
+                )
             finally:
                 try:
-                    await self._finalize_workflow_checkpoints(
-                        checkpoint_storage,
-                        workflow_name=self._agent.workflow.name,
-                        conversation_id=context.conversation_id,
-                        platform_context=request_context,
-                    )
+                    if context.conversation_id is not None:
+                        await self._snapshot_conversation_workflow_checkpoint(
+                            checkpoint_storage,
+                            workflow_name=self._agent.workflow.name,
+                            response_id=context.response_id,
+                            previous_checkpoint_id=(
+                                latest_checkpoint.checkpoint_id if latest_checkpoint is not None else None
+                            ),
+                            platform_context=request_context,
+                        )
                 except Exception as save_error:
+                    save_failure = save_error
                     if request_interrupted:
-                        logger.error(
-                            "Failed to finalize workflow checkpoints while unwinding an interrupted request",
-                            exc_info=(type(save_error), save_error, save_error.__traceback__),
-                        )
+                        message = "Failed to snapshot the workflow checkpoint while unwinding an interrupted request"
                     elif request_failure is not None:
-                        logger.error(
-                            "Failed to finalize workflow checkpoints after a workflow failure",
-                            exc_info=(type(save_error), save_error, save_error.__traceback__),
-                        )
+                        message = "Failed to snapshot the workflow checkpoint after a workflow failure"
                     else:
-                        raise
-            yield response_event_stream.emit_completed()
+                        message = "Failed to snapshot the workflow checkpoint after a successful request"
+                    logger.error(message, exc_info=(type(save_error), save_error, save_error.__traceback__))
+
+            if request_failure is not None and save_failure is not None:
+                failure = RuntimeError(
+                    f"Workflow request failed: {str(request_failure) or type(request_failure).__name__}; "
+                    f"checkpoint snapshot also failed: {str(save_failure) or type(save_failure).__name__}"
+                )
+                for event in self._emit_failure(response_event_stream, tracker, failure):
+                    yield event
+            elif request_failure is not None:
+                for event in self._emit_failure(response_event_stream, tracker, request_failure):
+                    yield event
+            elif save_failure is not None:
+                for event in self._emit_failure(response_event_stream, tracker, save_failure):
+                    yield event
+            else:
+                yield response_event_stream.emit_completed()
         except Exception as ex:
             logger.exception("Failed to produce response for workflow agent")
             for event in self._emit_failure(response_event_stream, tracker, ex):
                 yield event
 
-    async def _finalize_workflow_checkpoints(
+    async def _snapshot_conversation_workflow_checkpoint(
         self,
-        response_storage: CheckpointStorage,
+        conversation_storage: CheckpointStorage,
         *,
         workflow_name: str,
-        conversation_id: str | None,
+        response_id: str,
+        previous_checkpoint_id: str | None,
         platform_context: FoundryAgentRequestContext,
     ) -> None:
-        """Keep one response checkpoint and update the conversation's latest-state alias."""
-        await self._delete_not_latest_checkpoints(response_storage, workflow_name)
-        if conversation_id is None:
+        """Snapshot a conversation turn's latest workflow checkpoint under its response ID."""
+        latest_checkpoint = await conversation_storage.get_latest(workflow_name=workflow_name)
+        if latest_checkpoint is None or latest_checkpoint.checkpoint_id == previous_checkpoint_id:
             return
-
-        latest_checkpoint = await response_storage.get_latest(workflow_name=workflow_name)
-        if latest_checkpoint is None:
-            return
-        conversation_storage = self._checkpoint_storage_provider.get_store(
+        response_storage = self._checkpoint_storage_provider.get_store(
             config=self.config,
-            context_id=conversation_id,
+            context_id=response_id,
             platform_context=platform_context,
         )
-        await conversation_storage.save(latest_checkpoint)
-        await self._delete_not_latest_checkpoints(conversation_storage, workflow_name)
-
-    @staticmethod
-    async def _delete_not_latest_checkpoints(
-        checkpoint_storage: CheckpointStorage,
-        workflow_name: str,
-    ) -> None:
-        """Delete all checkpoints except the latest one."""
-        latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=workflow_name)
-        if latest_checkpoint is not None:
-            all_checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow_name)
-            for checkpoint in all_checkpoints:
-                if checkpoint.checkpoint_id != latest_checkpoint.checkpoint_id:
-                    await checkpoint_storage.delete(checkpoint.checkpoint_id)
+        await response_storage.save(latest_checkpoint)
 
     @staticmethod
     def _emit_failure(
