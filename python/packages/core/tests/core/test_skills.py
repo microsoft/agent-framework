@@ -676,6 +676,16 @@ class TestBuildSkillsInstructionPrompt:
         assert "<description>Does stuff.</description>" in prompt
         assert "load_skill" in prompt
 
+    def test_default_prompt_distinguishes_script_argument_shapes(self) -> None:
+        skills = [
+            InlineSkill(frontmatter=SkillFrontmatter(name="my-skill", description="Does stuff."), instructions="Body"),
+        ]
+        prompt = SkillsProvider._create_instructions(None, skills)
+        assert prompt is not None
+        assert "JSON object, including for inline scripts" in prompt
+        assert "file-based scripts that document CLI-style positional arguments" in prompt
+        assert "not as top-level tool parameters" in prompt
+
     def test_skills_sorted_alphabetically(self) -> None:
         skills = [
             InlineSkill(frontmatter=SkillFrontmatter(name="zebra", description="Z skill."), instructions="Body"),
