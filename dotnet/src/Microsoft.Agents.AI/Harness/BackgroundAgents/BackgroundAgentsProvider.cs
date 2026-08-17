@@ -35,6 +35,11 @@ namespace Microsoft.Agents.AI;
 /// </list>
 /// </para>
 /// <para>
+/// Background tasks are tracked per session and keep running until they complete. When a host is finished with a
+/// session it should call <see cref="ReleaseSessionAsync"/> to cancel and await any in-flight tasks, so that
+/// abandoned work does not continue to invoke models and tools in the background.
+/// </para>
+/// <para>
 /// <strong>Security considerations:</strong> The agents passed to the constructor are delegated
 /// arbitrary work by the parent agent — the parent sends them text input (which may include content
 /// derived from the parent's own untrusted context) and receives back whatever text they produce. A
@@ -60,7 +65,16 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
         {background_agents}
         """;
 
+    private const string ReleasedRuntimeStartError =
+        "Error: The background agents runtime for this session has been released. No new background tasks can be started.";
+
+    private const string ReleasedRuntimeContinueError =
+        "Error: The background agents runtime for this session has been released. Background tasks can no longer be continued.";
+
+    private const string ReleasedTaskCanceledMessage = "Task was canceled because the session was released.";
+
     private readonly Dictionary<string, AIAgent> _agents;
+    private static readonly TimeSpan s_defaultReleaseTimeout = TimeSpan.FromSeconds(30);
     private readonly ProviderSessionState<BackgroundAgentState> _sessionState;
     private readonly ProviderSessionState<BackgroundAgentRuntimeState> _runtimeSessionState;
     private readonly string _instructions;
@@ -149,6 +163,248 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
     }
 
     /// <summary>
+    /// Releases all runtime state held for the specified session, cancelling and awaiting any in-flight background tasks.
+    /// </summary>
+    /// <param name="session">The agent session whose background runtime should be released.</param>
+    /// <param name="cancelRunning">
+    /// <see langword="true"/> to cancel any background tasks that are still running; <see langword="false"/> to require that
+    /// all background tasks have already completed.
+    /// </param>
+    /// <param name="timeout">
+    /// The maximum amount of time to wait for cancelled tasks to finish. Defaults to 30 seconds when <see langword="null"/>.
+    /// Use <see cref="Timeout.InfiniteTimeSpan"/> to wait indefinitely. If the timeout elapses, the remaining tasks are
+    /// abandoned rather than blocking the caller.
+    /// </param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests while waiting.</param>
+    /// <returns>A task that represents the asynchronous release operation.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="session"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="timeout"/> is negative and is not <see cref="Timeout.InfiniteTimeSpan"/>.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="cancelRunning"/> is <see langword="false"/> and one or more background tasks are still running.</exception>
+    /// <remarks>
+    /// <para>
+    /// Background tasks continue to execute — invoking models and tools — even after a host stops using the session
+    /// that started them. Hosts should call this method when a conversation ends, or from their own eviction policy,
+    /// so that abandoned work is stopped instead of running to completion with results nobody will read.
+    /// </para>
+    /// <para>
+    /// This method is idempotent: releasing an already-released session does nothing. Once released, the
+    /// <c>background_agents_start_task</c> and <c>background_agents_continue_task</c> tools refuse to run for that
+    /// session, and any tasks that were still running are recorded as
+    /// <see cref="BackgroundTaskStatus.Failed"/> so a restored session does not report phantom running work.
+    /// </para>
+    /// <para>
+    /// It is also safe to call concurrently. A caller that arrives while another release of the same session is
+    /// still in progress waits for that release to finish rather than returning early, so a completed call always
+    /// means the background tasks have been cancelled, awaited and cleaned up. Such a caller observes only its own
+    /// <paramref name="cancellationToken"/>; it neither inherits the in-progress release's failure nor is held up
+    /// by that caller's <paramref name="timeout"/>.
+    /// </para>
+    /// </remarks>
+    public async Task ReleaseSessionAsync(
+        AgentSession session,
+        bool cancelRunning = true,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(session);
+
+        TimeSpan effectiveTimeout = timeout ?? s_defaultReleaseTimeout;
+        if (effectiveTimeout < TimeSpan.Zero && effectiveTimeout != Timeout.InfiniteTimeSpan)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(timeout),
+                effectiveTimeout,
+                "The timeout must not be negative, unless it is Timeout.InfiniteTimeSpan.");
+        }
+
+        BackgroundAgentRuntimeState runtimeState = this._runtimeSessionState.GetOrInitializeState(session);
+        BackgroundAgentState state = this._sessionState.GetOrInitializeState(session);
+
+        KeyValuePair<int, Task<AgentResponse>>[] trackedTasks = [];
+        HashSet<int> pendingTaskIds = [];
+        TaskCompletionSource<bool>? releaseCompletion = null;
+        Task? releaseInProgress = null;
+
+        lock (runtimeState.SyncRoot)
+        {
+            if (runtimeState.IsReleased)
+            {
+                // A release is already in progress or has completed. Await it rather than returning early, so that
+                // a completed call always means the in-flight tasks have been cancelled, awaited and cleaned up.
+                releaseInProgress = runtimeState.ReleaseCompletion?.Task;
+            }
+            else
+            {
+                trackedTasks = runtimeState.InFlightTasks.ToArray();
+
+                // Snapshot which tasks were still pending before anything is cancelled. Tasks that had already
+                // finished keep their real outcome; only these pending ones are reported as released.
+                pendingTaskIds = [.. trackedTasks.Where(t => !t.Value.IsCompleted).Select(t => t.Key)];
+
+                if (!cancelRunning && pendingTaskIds.Count > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot release the session because {pendingTaskIds.Count} background task(s) are still running. Pass cancelRunning: true to cancel them.");
+                }
+
+                // Cancel before publishing the release. If cancelling throws, the runtime is left un-released so
+                // that the caller can retry, rather than being flagged as released with tasks still running.
+                foreach (int taskId in pendingTaskIds)
+                {
+                    if (runtimeState.TaskCancellations.TryGetValue(taskId, out CancellationTokenSource? cts))
+                    {
+                        try
+                        {
+                            cts.Cancel();
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            // The source was already disposed by a concurrent finalization; nothing to cancel.
+                        }
+                    }
+                }
+
+                // Continuations run asynchronously so that a waiting caller never resumes inline on the thread
+                // that is completing the release.
+                releaseCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                runtimeState.ReleaseCompletion = releaseCompletion;
+                runtimeState.IsReleased = true;
+            }
+        }
+
+        if (releaseCompletion is null)
+        {
+            if (releaseInProgress is not null)
+            {
+                await AwaitReleaseInProgressAsync(releaseInProgress, cancellationToken).ConfigureAwait(false);
+            }
+
+            return;
+        }
+
+        try
+        {
+            await WaitForTasksAsync(trackedTasks.Select(t => t.Value), effectiveTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (runtimeState.SyncRoot)
+            {
+                // Finalize every tracked task that actually finished, so successful results and real failure
+                // reasons are preserved rather than being overwritten with a release failure.
+                foreach (var kvp in trackedTasks)
+                {
+                    BackgroundTaskInfo? tracked = state.Tasks.FirstOrDefault(t => t.Id == kvp.Key);
+                    if (tracked is null || tracked.Status != BackgroundTaskStatus.Running || !kvp.Value.IsCompleted)
+                    {
+                        continue;
+                    }
+
+                    FinalizeTask(tracked, kvp.Value, runtimeState);
+
+                    if (kvp.Value.IsCanceled && pendingTaskIds.Contains(kvp.Key))
+                    {
+                        // Report the actual reason rather than the generic cancellation message.
+                        tracked.ErrorText = ReleasedTaskCanceledMessage;
+                    }
+                }
+
+                foreach (int taskId in runtimeState.TaskCancellations.Keys.ToArray())
+                {
+                    DisposeTaskCancellation(runtimeState, taskId);
+                }
+
+                runtimeState.InFlightTasks.Clear();
+                runtimeState.BackgroundTaskSessions.Clear();
+
+                // Anything still running was abandoned (for example after the timeout elapsed).
+                foreach (BackgroundTaskInfo task in state.Tasks)
+                {
+                    if (task.Status == BackgroundTaskStatus.Running)
+                    {
+                        task.Status = BackgroundTaskStatus.Failed;
+                        task.ErrorText = ReleasedTaskCanceledMessage;
+                    }
+                }
+            }
+
+            this._sessionState.SaveState(session, state);
+            this._runtimeSessionState.SaveState(session, runtimeState);
+
+            // Signalled last so that any caller awaiting this release observes fully cleaned-up state. Completed
+            // successfully even when this caller failed, because the cleanup above always runs.
+            releaseCompletion.TrySetResult(true);
+        }
+    }
+
+    /// <summary>
+    /// Waits for a release that another caller started to finish its cleanup, giving up if the caller's own
+    /// <paramref name="cancellationToken"/> is signalled.
+    /// </summary>
+    private static async Task AwaitReleaseInProgressAsync(Task releaseInProgress, CancellationToken cancellationToken)
+    {
+        if (releaseInProgress.IsCompleted || !cancellationToken.CanBeCanceled)
+        {
+            // The release completion is never faulted or cancelled, so awaiting it cannot throw.
+            await releaseInProgress.ConfigureAwait(false);
+            return;
+        }
+
+        // Do not let this caller be held up by the releasing caller's timeout.
+        var cancellation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using (cancellationToken.Register(static state => ((TaskCompletionSource<bool>)state!).TrySetResult(true), cancellation))
+        {
+            await Task.WhenAny(releaseInProgress, cancellation.Task).ConfigureAwait(false);
+        }
+
+        if (!releaseInProgress.IsCompleted)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+
+    /// <summary>
+    /// Waits for the specified tasks to finish, observing their exceptions and giving up once the timeout elapses.
+    /// </summary>
+    private static async Task WaitForTasksAsync(IEnumerable<Task> tasks, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        // Attach an observer to every task, including those that already completed, so that a fault is always
+        // observed. Otherwise clearing the last reference to a faulted task can surface an UnobservedTaskException.
+        Task[] observers = tasks.Select(t => t.ContinueWith(
+            static antecedent => _ = antecedent.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default)).ToArray();
+
+        // Observers never fault, so awaiting them cannot throw.
+        Task[] pending = observers.Where(o => !o.IsCompleted).ToArray();
+        if (pending.Length == 0)
+        {
+            return;
+        }
+
+        Task all = Task.WhenAll(pending);
+
+        if (timeout == Timeout.InfiniteTimeSpan && !cancellationToken.CanBeCanceled)
+        {
+            await all.ConfigureAwait(false);
+            return;
+        }
+
+        using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task delay = Task.Delay(timeout, delayCts.Token);
+
+        Task winner = await Task.WhenAny(all, delay).ConfigureAwait(false);
+        delayCts.Cancel();
+
+        if (winner != all)
+        {
+            // The wait was abandoned; the remaining tasks are left to finish on their own.
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+
+    /// <summary>
     /// Validates the agent collection and builds a case-insensitive name dictionary.
     /// </summary>
     private static Dictionary<string, AIAgent> ValidateAndBuildAgentDictionary(IEnumerable<AIAgent> agents)
@@ -204,25 +460,28 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
     private void TryRefreshTaskState(BackgroundAgentState state, BackgroundAgentRuntimeState runtimeState, AgentSession? session)
     {
         bool changed = false;
-        foreach (BackgroundTaskInfo task in state.Tasks)
+        lock (runtimeState.SyncRoot)
         {
-            if (task.Status != BackgroundTaskStatus.Running)
+            foreach (BackgroundTaskInfo task in state.Tasks)
             {
-                continue;
-            }
+                if (task.Status != BackgroundTaskStatus.Running)
+                {
+                    continue;
+                }
 
-            if (!runtimeState.InFlightTasks.TryGetValue(task.Id, out Task<AgentResponse>? inFlight))
-            {
-                // In-flight reference lost (e.g., after restart/deserialization).
-                task.Status = BackgroundTaskStatus.Lost;
-                changed = true;
-                continue;
-            }
+                if (!runtimeState.InFlightTasks.TryGetValue(task.Id, out Task<AgentResponse>? inFlight))
+                {
+                    // In-flight reference lost (e.g., after restart/deserialization).
+                    task.Status = BackgroundTaskStatus.Lost;
+                    changed = true;
+                    continue;
+                }
 
-            if (inFlight.IsCompleted)
-            {
-                FinalizeTask(task, inFlight, runtimeState);
-                changed = true;
+                if (inFlight.IsCompleted)
+                {
+                    FinalizeTask(task, inFlight, runtimeState);
+                    changed = true;
+                }
             }
         }
 
@@ -235,6 +494,7 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
     /// <summary>
     /// Finalizes a task by extracting results from the completed Task and updating the BackgroundTaskInfo.
     /// </summary>
+    /// <remarks>Callers must hold <see cref="BackgroundAgentRuntimeState.SyncRoot"/>.</remarks>
     private static void FinalizeTask(BackgroundTaskInfo taskInfo, Task<AgentResponse> completedTask, BackgroundAgentRuntimeState runtimeState)
     {
         if (completedTask.Status == TaskStatus.RanToCompletion)
@@ -256,6 +516,65 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
         }
 
         runtimeState.InFlightTasks.Remove(taskInfo.Id);
+        DisposeTaskCancellation(runtimeState, taskInfo.Id);
+    }
+
+    /// <summary>
+    /// Removes and disposes the <see cref="CancellationTokenSource"/> tracked for the specified task, if any.
+    /// </summary>
+    /// <remarks>Callers must hold <see cref="BackgroundAgentRuntimeState.SyncRoot"/>.</remarks>
+    private static void DisposeTaskCancellation(BackgroundAgentRuntimeState runtimeState, int taskId)
+    {
+        if (runtimeState.TaskCancellations.TryGetValue(taskId, out CancellationTokenSource? cts))
+        {
+            runtimeState.TaskCancellations.Remove(taskId);
+            cts.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Starts a background run for the specified task, tracking the resulting task, the background agent session,
+    /// and a <see cref="CancellationTokenSource"/> that allows the run to be cancelled when the session is released.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> if the run was started and tracked; <see langword="false"/> if the session was
+    /// released before the run could be registered, in which case nothing is started.
+    /// </returns>
+    /// <remarks>
+    /// All references for the task are registered under a single acquisition of
+    /// <see cref="BackgroundAgentRuntimeState.SyncRoot"/>, so a concurrent release can never observe a partially
+    /// registered task, nor can a caller re-add references to a runtime that has already been released.
+    /// </remarks>
+    private static bool StartTrackedRun(BackgroundAgentRuntimeState runtimeState, int taskId, AIAgent agent, string input, AgentSession subSession)
+    {
+        lock (runtimeState.SyncRoot)
+        {
+            // Re-check under the lock: the session may have been released while the caller awaited session creation.
+            // Starting here would produce a task that is never tracked and therefore never cancelled.
+            if (runtimeState.IsReleased)
+            {
+                return false;
+            }
+
+            // Replace any cancellation source left over from a previous run of the same task.
+            DisposeTaskCancellation(runtimeState, taskId);
+
+            var cts = new CancellationTokenSource();
+            runtimeState.TaskCancellations[taskId] = cts;
+
+            // Registered here rather than by the caller so that the session reference cannot be re-added to a
+            // runtime that a concurrent release has already cleared. For a continued task this simply re-assigns
+            // the session the caller read from this same dictionary.
+            runtimeState.BackgroundTaskSessions[taskId] = subSession;
+
+            // Wrap in Task.Run to fork the ExecutionContext. AIAgent.RunAsync is a non-async
+            // method that synchronously sets the static AsyncLocal CurrentRunContext. Without
+            // this isolation, the background agent's RunAsync would overwrite the outer (calling)
+            // agent's CurrentRunContext, corrupting all subsequent tool invocations in the
+            // same FICC batch.
+            runtimeState.InFlightTasks[taskId] = Task.Run(() => agent.RunAsync(input, subSession, cancellationToken: cts.Token), cts.Token);
+            return true;
+        }
     }
 
     private AITool[] CreateTools(BackgroundAgentState state, BackgroundAgentRuntimeState runtimeState, AgentSession? session)
@@ -270,6 +589,11 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                     [Description("The request to pass to the background agent.")] string input,
                     [Description("A description of the task used to identify the task later.")] string description) =>
                 {
+                    if (runtimeState.IsReleased)
+                    {
+                        return ReleasedRuntimeStartError;
+                    }
+
                     if (!this._agents.TryGetValue(agentName, out AIAgent? agent))
                     {
                         return $"Error: No background agent found with name '{agentName}'. Available agents: {string.Join(", ", this._agents.Keys)}";
@@ -288,13 +612,13 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                     // Create a dedicated session for this background task so it can be continued later.
                     AgentSession subSession = await agent.CreateSessionAsync().ConfigureAwait(false);
 
-                    // Wrap in Task.Run to fork the ExecutionContext. AIAgent.RunAsync is a non-async
-                    // method that synchronously sets the static AsyncLocal CurrentRunContext. Without
-                    // this isolation, the background agent's RunAsync would overwrite the outer (calling)
-                    // agent's CurrentRunContext, corrupting all subsequent tool invocations in the
-                    // same FICC batch.
-                    runtimeState.InFlightTasks[taskId] = Task.Run(() => agent.RunAsync(input, subSession));
-                    runtimeState.BackgroundTaskSessions[taskId] = subSession;
+                    if (!StartTrackedRun(runtimeState, taskId, agent, input, subSession))
+                    {
+                        // The session was released while the background session was being created.
+                        state.Tasks.Remove(taskInfo);
+                        this._sessionState.SaveState(session, state);
+                        return ReleasedRuntimeStartError;
+                    }
 
                     this._sessionState.SaveState(session, state);
                     return $"Background task {taskId} started on agent '{agentName}'.";
@@ -317,11 +641,14 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                     // Collect in-flight tasks matching the requested IDs (including already-completed ones,
                     // since Task.WhenAny returns immediately for completed tasks).
                     var waitableTasks = new List<(int Id, Task<AgentResponse> Task)>();
-                    foreach (int id in taskIds)
+                    lock (runtimeState.SyncRoot)
                     {
-                        if (runtimeState.InFlightTasks.TryGetValue(id, out Task<AgentResponse>? inFlight))
+                        foreach (int id in taskIds)
                         {
-                            waitableTasks.Add((id, inFlight));
+                            if (runtimeState.InFlightTasks.TryGetValue(id, out Task<AgentResponse>? inFlight))
+                            {
+                                waitableTasks.Add((id, inFlight));
+                            }
                         }
                     }
 
@@ -351,7 +678,14 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                     BackgroundTaskInfo? taskInfo = state.Tasks.FirstOrDefault(t => t.Id == completedEntry.Id);
                     if (taskInfo is not null)
                     {
-                        FinalizeTask(taskInfo, completedEntry.Task, runtimeState);
+                        lock (runtimeState.SyncRoot)
+                        {
+                            if (taskInfo.Status == BackgroundTaskStatus.Running)
+                            {
+                                FinalizeTask(taskInfo, completedEntry.Task, runtimeState);
+                            }
+                        }
+
                         this._sessionState.SaveState(session, state);
                     }
 
@@ -420,6 +754,11 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
             AIFunctionFactory.Create(
                 (int taskId, string text) =>
                 {
+                    if (runtimeState.IsReleased)
+                    {
+                        return ReleasedRuntimeContinueError;
+                    }
+
                     this.TryRefreshTaskState(state, runtimeState, session);
 
                     BackgroundTaskInfo? taskInfo = state.Tasks.FirstOrDefault(t => t.Id == taskId);
@@ -443,7 +782,13 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                         return $"Error: Agent '{taskInfo.AgentName}' is no longer available.";
                     }
 
-                    if (!runtimeState.BackgroundTaskSessions.TryGetValue(taskId, out AgentSession? subSession))
+                    AgentSession? subSession;
+                    lock (runtimeState.SyncRoot)
+                    {
+                        _ = runtimeState.BackgroundTaskSessions.TryGetValue(taskId, out subSession);
+                    }
+
+                    if (subSession is null)
                     {
                         return $"Error: Session for task {taskId} is no longer available.";
                     }
@@ -454,7 +799,13 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                     taskInfo.ErrorText = null;
 
                     // Wrap in Task.Run to isolate the ExecutionContext (see StartBackgroundTask comment).
-                    runtimeState.InFlightTasks[taskId] = Task.Run(() => agent.RunAsync(text, subSession));
+                    if (!StartTrackedRun(runtimeState, taskId, agent, text, subSession))
+                    {
+                        taskInfo.Status = BackgroundTaskStatus.Failed;
+                        taskInfo.ErrorText = ReleasedTaskCanceledMessage;
+                        this._sessionState.SaveState(session, state);
+                        return ReleasedRuntimeContinueError;
+                    }
 
                     this._sessionState.SaveState(session, state);
                     return $"Task {taskId} continued with new input.";
@@ -486,8 +837,12 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
                     state.Tasks.Remove(taskInfo);
 
                     // Clean up runtime references.
-                    runtimeState.InFlightTasks.Remove(taskId);
-                    runtimeState.BackgroundTaskSessions.Remove(taskId);
+                    lock (runtimeState.SyncRoot)
+                    {
+                        runtimeState.InFlightTasks.Remove(taskId);
+                        runtimeState.BackgroundTaskSessions.Remove(taskId);
+                        DisposeTaskCancellation(runtimeState, taskId);
+                    }
 
                     this._sessionState.SaveState(session, state);
                     return $"Task {taskId} cleared.";

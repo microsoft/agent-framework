@@ -120,6 +120,7 @@ from ._sessions import (
     _current_run_identity,  # pyright: ignore[reportPrivateUsage]
     _RunPersistenceGate,  # pyright: ignore[reportPrivateUsage]
 )
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -1610,6 +1611,7 @@ def create_agent_hooks_middleware_from_emitter(
 
 
 def _build_bundle(config: _AgentHooksConfig) -> MiddlewareBundle:
+    mark_feature_used(FeatureIndex.CORE_AGENT_HOOKS)
     return MiddlewareBundle([
         _AgentHooksAgentMiddleware(config),
         _AgentHooksChatMiddleware(config),

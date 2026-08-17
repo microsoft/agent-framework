@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import asdict, dataclass, is_dataclass
@@ -26,7 +27,7 @@ from agent_framework import (
 )
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
-from azure.ai.agentserver.core import get_request_context
+from azure.ai.agentserver.core import FoundryAgentRequestContext, get_request_context
 from azure.ai.agentserver.responses import (
     ResponseContext,
     ResponseProviderProtocol,
@@ -62,10 +63,6 @@ from mcp import McpError
 from typing_extensions import Any
 
 from ._feature_usage import FeatureIndex
-from ._request_context import (
-    validate_foundry_request_context,
-    validate_path_segment,
-)
 from ._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
@@ -78,6 +75,20 @@ from ._state_store import (
 logger = logging.getLogger(__name__)
 
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+
+
+def _validate_checkpoint_context_id(context_id: str) -> None:
+    """Validate that a checkpoint context ID is a single safe path component in case file-based storage is used."""
+    if (
+        not context_id
+        or "/" in context_id
+        or "\\" in context_id
+        or "\x00" in context_id
+        or context_id.strip(".") == ""
+        or os.path.isabs(context_id)
+        or os.path.splitdrive(context_id)[0]
+    ):
+        raise RuntimeError(f"Invalid context id: {context_id!r}")
 
 
 def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
@@ -311,9 +322,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
         """Handle the creation of a response."""
-        request_context = get_request_context()
-        validate_foundry_request_context(request_context, is_hosted=self.config.is_hosted)
-
         if self._is_workflow_agent:
             # Workflow agents are handled differently because they require checkpoint restoration
             return self._handle_inner_workflow(request, context)
@@ -371,33 +379,24 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             return
 
         try:
-            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
-            session_storage = self._session_storage_provider.get_store(config=self.config)
-            if request.get("previous_response_id") is not None and context.conversation_id is not None:
+            request_context = get_request_context()
+            approval_storage = self._function_approval_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
+            session_storage = self._session_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
+
+            previous_response_id = request.get("previous_response_id")
+            if previous_response_id is not None and context.conversation_id is not None:
                 raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
-            # Agent sessions are either tied to the conversation_id (for multi-turn conversation mode)
-            # or the previous_response_id (for response chaining). If neither is present, a new session
-            # is created for this request and stored under the current response_id. The current response_id
-            # will become the previous_response_id for the next request in a response chain, allowing the
-            # session to be retrieved.
-            if (previous_response_id := request.get("previous_response_id")) is not None:
-                session = await session_storage.get(previous_response_id)
-                if session is None:
+            session_load_id = context.conversation_id or previous_response_id
+            session = await session_storage.get(session_load_id) if session_load_id is not None else None
+            if session is None:
+                if previous_response_id is not None and context.conversation_id is None:
                     raise RuntimeError(
-                        f"Cannot find an existing agent session for previous_response_id={previous_response_id}. "
-                        "Ensure that the previous response was created successfully and that the ID is correct."
+                        f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
                     )
-            elif (conversation_id := context.conversation_id) is not None:
-                session = await session_storage.get(conversation_id)
-                if session is None:
-                    # Note that we cannot determine if the session was deleted or never existed,
-                    # so we log a warning and create a new session.
-                    logger.info(
-                        "Cannot find an existing agent session for id=%s. Creating a new session.",
-                        conversation_id,
-                    )
-                    session = self._agent.create_session()
-            else:
                 session = self._agent.create_session()
         except Exception as ex:
             logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
@@ -503,7 +502,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         tracker: _OutputItemTracker | None = None
 
         try:
-            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
+            request_context = get_request_context()
+            approval_storage = self._function_approval_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
@@ -526,30 +528,28 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             # Determine the latest checkpoint (if any) so we can resume the
             # workflow's prior state for this turn. The directory is keyed by
-            # the inbound context id (conversation_id when set, otherwise
-            # previous_response_id). Multi-turn declarative workflows need the
-            # workflow's internal state (e.g. Conversation.messages,
+            # the platform derived context_id. Multi-turn declarative workflows
+            # need the workflow's internal state (e.g. Conversation.messages,
             # intermediate Local.* variables) to survive across user turns;
             # the only place that state lives is the workflow checkpoint, so
             # on every turn we restore the latest checkpoint and feed the new
             # input back into the start executor as a continuation rather than
             # a fresh run.
             latest_checkpoint_id: str | None = None
-            restore_storage: CheckpointStorage | None = None
+            restore_checkpoint_storage: CheckpointStorage | None = None
             if context_id is not None:
-                validate_path_segment(context_id, kind="context id")
-                restore_storage = self._checkpoint_storage_provider.get_store(
+                _validate_checkpoint_context_id(context_id)
+                restore_checkpoint_storage = self._checkpoint_storage_provider.get_store(
                     config=self.config,
                     context_id=context_id,
+                    platform_context=request_context,
                 )
-                latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
+                latest_checkpoint = await restore_checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
                 if latest_checkpoint is not None:
                     latest_checkpoint_id = latest_checkpoint.checkpoint_id
                 elif previous_response_id is not None:
                     raise RuntimeError(
-                        f"Cannot find an existing workflow checkpoint for "
-                        f"previous_response_id={previous_response_id}. "
-                        "Ensure that the previous response was created successfully and that the ID is correct."
+                        f"Cannot find an existing workflow checkpoint for previous_response_id={previous_response_id}."
                     )
 
             # Storage that will receive checkpoints written during this turn.
@@ -558,10 +558,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # conversation_id is set, its store is updated after the run as a
             # latest-state alias while the response snapshot remains unchanged.
             write_context_id = context.response_id
-            validate_path_segment(write_context_id, kind="context id")
-            write_storage = self._checkpoint_storage_provider.get_store(
+            _validate_checkpoint_context_id(write_context_id)
+            checkpoint_storage = self._checkpoint_storage_provider.get_store(
                 config=self.config,
                 context_id=write_context_id,
+                platform_context=request_context,
             )
 
             request_failure: Exception | None = None
@@ -587,7 +588,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     async for _ in self._agent.run(
                         stream=True,
                         checkpoint_id=latest_checkpoint_id,
-                        checkpoint_storage=restore_storage,
+                        checkpoint_storage=restore_checkpoint_storage,
                     ):
                         pass
 
@@ -597,7 +598,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 async for update in self._agent.run(
                     input_messages,
                     stream=True,
-                    checkpoint_storage=write_storage,
+                    checkpoint_storage=checkpoint_storage,
                 ):
                     for content in update.contents:
                         for event in tracker.handle(content):
@@ -621,9 +622,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             finally:
                 try:
                     await self._finalize_workflow_checkpoints(
-                        write_storage,
+                        checkpoint_storage,
                         workflow_name=self._agent.workflow.name,
                         conversation_id=context.conversation_id,
+                        platform_context=request_context,
                     )
                 except Exception as save_error:
                     if request_interrupted:
@@ -650,6 +652,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         *,
         workflow_name: str,
         conversation_id: str | None,
+        platform_context: FoundryAgentRequestContext,
     ) -> None:
         """Keep one response checkpoint and update the conversation's latest-state alias."""
         await self._delete_not_latest_checkpoints(response_storage, workflow_name)
@@ -662,16 +665,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         conversation_storage = self._checkpoint_storage_provider.get_store(
             config=self.config,
             context_id=conversation_id,
+            platform_context=platform_context,
         )
         await conversation_storage.save(latest_checkpoint)
         await self._delete_not_latest_checkpoints(conversation_storage, workflow_name)
 
     @staticmethod
-    async def _delete_not_latest_checkpoints(checkpoint_storage: CheckpointStorage, workflow_name: str) -> None:
-        """Delete all checkpoints except the latest one.
-
-        We only need the last checkpoint for each invocation.
-        """
+    async def _delete_not_latest_checkpoints(
+        checkpoint_storage: CheckpointStorage,
+        workflow_name: str,
+    ) -> None:
+        """Delete all checkpoints except the latest one."""
         latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=workflow_name)
         if latest_checkpoint is not None:
             all_checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow_name)
@@ -731,6 +735,7 @@ class _OutputItemTracker:
         self._reasoning_encrypted_content: str | None = None
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
+        self._outstanding_function_calls: dict[str, str | None] = {}
         self.needs_async = False
 
     def handle(self, content: Content) -> Generator[ResponseStreamEvent]:
@@ -759,6 +764,15 @@ class _OutputItemTracker:
                     yield self._summary_part.emit_text_delta(content.text)
 
         elif content.type == "function_call" and content.call_id is not None:
+            # Declaration-only calls replay request metadata after the streamed call. Scope suppression to the
+            # outstanding occurrence because a call_id may be reused after its terminal result.
+            if (
+                content.user_input_request
+                and content.arguments is None
+                and content.call_id in self._outstanding_function_calls
+                and self._outstanding_function_calls[content.call_id] == content.name
+            ):
+                return
             if self._active_type != "function_call" or self._active_id != content.call_id:
                 yield from self._close()
                 yield from self._open_function_call(content)
@@ -766,6 +780,12 @@ class _OutputItemTracker:
             self._accumulated.append(args_str)
             if self._fc_builder is not None:
                 yield self._fc_builder.emit_arguments_delta(args_str)
+
+        elif content.type == "function_result":
+            yield from self._close()
+            if content.call_id is not None:
+                self._outstanding_function_calls.pop(content.call_id, None)
+            self.needs_async = True
 
         elif content.type == "mcp_server_tool_call" and content.tool_name:
             key = content.call_id or f"{content.server_name or 'default'}::{content.tool_name}"
@@ -844,6 +864,7 @@ class _OutputItemTracker:
         )
         self._active_type = "function_call"
         self._active_id = content.call_id
+        self._outstanding_function_calls[content.call_id or ""] = content.name
         yield self._fc_builder.emit_added()
 
     def _open_mcp_call(self, content: Content) -> Generator[ResponseStreamEvent]:
