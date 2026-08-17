@@ -26,6 +26,9 @@
   <ItemGroup Condition="'$(InjectSharedDiagnosticIds)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\DiagnosticIds\*.cs" LinkBase="Shared\DiagnosticIds" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedUsage)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Usage\*.cs" LinkBase="Shared\Usage" />
+  </ItemGroup>
   <ItemGroup Condition="'$(InjectSharedRedaction)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Redaction\*.cs" LinkBase="Shared\Redaction" />
   </ItemGroup>

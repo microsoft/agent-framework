@@ -27,10 +27,10 @@ namespace Microsoft.Agents.AI.Hosting;
 /// who knows or guesses another caller's <c>sessionStoreId</c> can resume
 /// that other caller's persisted thread. The framework provides
 /// <see cref="IsolationKeyScopedAgentSessionStore"/> as a decorator that rewrites
-/// <c>sessionStoreId</c> to include an isolation key resolved from a
-/// <see cref="SessionIsolationKeyProvider"/> (for example, the ASP.NET Core
-/// <c>ClaimsIdentitySessionIsolationKeyProvider</c> wired up via
-/// <c>UseClaimsBasedSessionIsolation(...)</c>). When no provider is registered, the
+/// <c>sessionStoreId</c> to include an isolation key resolved from an
+/// <see cref="AgentIsolationKeyProvider"/> (for example, the ASP.NET Core
+/// <c>ClaimsIdentityAgentIsolationKeyProvider</c> wired up via
+/// <c>UseClaimsBasedAgentIsolation(...)</c>). When no provider is registered, the
 /// store behaves as a single-namespace persistence layer — appropriate for
 /// single-user / first-run / prototyping scenarios but unsafe for multi-user hosts.
 /// </para>

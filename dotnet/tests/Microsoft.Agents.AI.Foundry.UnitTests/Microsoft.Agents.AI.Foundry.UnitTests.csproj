@@ -21,6 +21,7 @@
     <Compile Remove="FoundryEvalConverterTests.cs" />
     <Compile Remove="FoundryEvalsTests.cs" />
     <Compile Remove="ClientHeadersExtensionsTests.cs" />
+    <Compile Remove="FoundryHostedRequestTests.cs" />
     <Compile Remove="ServedModelTestHelpers.cs" />
     <Compile Remove="ServedModelScopeTests.cs" />
     <Compile Remove="ServedModelPolicyTests.cs" />

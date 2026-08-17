@@ -115,7 +115,8 @@ listed below.
 
 - `agent-framework-core`: functional workflow APIs from
   `agent_framework/_workflows/_functional.py`, including `RunContext`, `step`,
-  `FunctionalWorkflow`, `workflow`, and `FunctionalWorkflowAgent`
+  `FunctionalWorkflowDefinition`, `FunctionalWorkflow`, `workflow`, and
+  `FunctionalWorkflowAgent`
 
 #### `HARNESS`
 
@@ -140,8 +141,8 @@ listed below.
 
 - `agent-framework-core`: `SessionStore` and `FileSessionStore` from
   `agent_framework/_sessions.py`
-- `agent-framework-foundry-hosting`: `FoundrySessionStore` from
-  `agent_framework_foundry_hosting/_session_store.py`
+- `agent-framework-foundry-hosting`: `FoundryAgentSessionStore` from
+  `agent_framework_foundry_hosting/_state_store.py`
 
 #### `TO_PROMPT_AGENT`
 

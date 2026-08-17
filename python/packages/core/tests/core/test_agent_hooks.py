@@ -9,6 +9,7 @@ from typing import Any, cast
 import pytest
 
 import agent_framework
+import agent_framework._telemetry as telemetry
 from agent_framework import (
     Agent,
     AgentContext,
@@ -153,6 +154,23 @@ FULL_TOOL_RUN_POINTS = [
 # endregion
 
 # region Factory validation
+
+
+@pytest.mark.parametrize("factory_kind", ["managed", "host_owned"])
+@requires_sdk
+def test_agent_hooks_factories_activate_feature_telemetry(factory_kind: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(telemetry, "_feature_mask", 0)
+    monkeypatch.setattr(telemetry, "IS_TELEMETRY_ENABLED", True)
+    monkeypatch.setenv(telemetry.FEATURE_MASK_DISABLED_ENV_VAR, "false")
+
+    if factory_kind == "managed":
+        create_agent_hooks_middleware([AllowGuard()])
+    else:
+        emitter = InterceptionEmitter().register(AllowGuard())
+        builder = AgentContextBuilder(agent_id="a", framework="agent-framework", session_id="s")
+        create_agent_hooks_middleware_from_emitter(emitter, builder)
+
+    assert telemetry.get_feature_token() == "v1.40000"
 
 
 @requires_sdk

@@ -101,10 +101,10 @@ else
     throw new ArgumentException("Either A2AServer:ApiKey or A2AServer:ConnectionString & agentName must be provided");
 }
 
-// IMPORTANT: In production, register a SessionIsolationKeyProvider to isolate sessions and tasks by authenticated caller.
+// IMPORTANT: In production, register an AgentIsolationKeyProvider to isolate sessions and tasks by authenticated caller.
 // Without this, contextId/taskId alone are the lookup keys — any caller who knows them can access another caller's data.
 // Example using claims-based identity:
-// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+// builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 // By default, NoopAgentSessionStore is used — sessions are not persisted across requests.
 // To enable multi-turn conversations, register a session store explicitly, e.g.:

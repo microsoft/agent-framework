@@ -52,7 +52,7 @@ def mock_memory_client() -> AsyncMock:
     mock_client = AsyncMock()
     mock_client.search_cosmos = AsyncMock(return_value=[])
     mock_client.get_user_summary = AsyncMock(return_value=None)
-    mock_client.add_cosmos = AsyncMock()
+    mock_client.upsert_memory = AsyncMock()
     mock_client.create_memory_store = AsyncMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock()
@@ -468,8 +468,8 @@ class TestAfterRun:
             agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )
 
-        assert mock_memory_client.add_cosmos.await_count == 2
-        calls = mock_memory_client.add_cosmos.await_args_list
+        assert mock_memory_client.upsert_memory.await_count == 2
+        calls = mock_memory_client.upsert_memory.await_args_list
 
         # Check input message stored
         assert calls[0].kwargs["role"] == "user"
@@ -499,7 +499,7 @@ class TestAfterRun:
             agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )
 
-        stored_roles = [c.kwargs["role"] for c in mock_memory_client.add_cosmos.await_args_list]
+        stored_roles = [c.kwargs["role"] for c in mock_memory_client.upsert_memory.await_args_list]
         assert stored_roles == ["user", "agent"]
         # No raw "assistant" role should ever be sent to the toolkit.
         assert "assistant" not in stored_roles
@@ -520,7 +520,7 @@ class TestAfterRun:
             agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
         )
 
-        call_kwargs = mock_memory_client.add_cosmos.await_args_list[0].kwargs
+        call_kwargs = mock_memory_client.upsert_memory.await_args_list[0].kwargs
         assert call_kwargs["user_id"] == "user-456"
         assert call_kwargs["thread_id"] == "thread-789"
 
@@ -541,8 +541,8 @@ class TestAfterRun:
         )
 
         # Only one message should be stored
-        assert mock_memory_client.add_cosmos.await_count == 1
-        call_kwargs = mock_memory_client.add_cosmos.await_args_list[0].kwargs
+        assert mock_memory_client.upsert_memory.await_count == 1
+        call_kwargs = mock_memory_client.upsert_memory.await_args_list[0].kwargs
         assert call_kwargs["content"] == "Valid message"
 
     async def test_skips_whitespace_only_messages(self, mock_memory_client: AsyncMock) -> None:
@@ -563,15 +563,35 @@ class TestAfterRun:
         )
 
         # Whitespace-only input and the whitespace-only response are both skipped.
-        assert mock_memory_client.add_cosmos.await_count == 1
-        call_kwargs = mock_memory_client.add_cosmos.await_args_list[0].kwargs
+        assert mock_memory_client.upsert_memory.await_count == 1
+        call_kwargs = mock_memory_client.upsert_memory.await_args_list[0].kwargs
         assert call_kwargs["content"] == "Trimmed message"
+
+    async def test_falls_back_to_add_cosmos_on_older_toolkit(self) -> None:
+        """Toolkit versions predating the upsert_memory rename still receive turns.
+
+        The declared azure-cosmos-agent-memory range spans both names, so a resolved
+        install can expose either one; picking neither would silently drop every turn.
+        """
+        legacy_client = AsyncMock(spec=["add_cosmos", "search_cosmos", "get_user_summary"])
+        legacy_client.add_cosmos = AsyncMock()
+
+        provider = CosmosMemoryContextProvider(memory_client=legacy_client)
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
+
+        await provider.after_run(
+            agent=_STUB_AGENT, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+        )
+
+        assert legacy_client.add_cosmos.await_count == 1
+        assert legacy_client.add_cosmos.await_args_list[0].kwargs["content"] == "Hello"
 
     async def test_storage_failure_logs_warning(
         self, mock_memory_client: AsyncMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Storage failures are logged but don't raise."""
-        mock_memory_client.add_cosmos.side_effect = Exception("Storage failed")
+        mock_memory_client.upsert_memory.side_effect = Exception("Storage failed")
 
         provider = CosmosMemoryContextProvider(memory_client=mock_memory_client)
         session = AgentSession(session_id="test-session")

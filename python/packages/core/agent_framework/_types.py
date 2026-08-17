@@ -1304,7 +1304,7 @@ class Content:
         """Create function approval response content."""
         return cls(
             "function_approval_response",
-            approved=approved,
+            approved=approved if type(approved) is bool else False,
             id=id,
             function_call=function_call,
             annotations=annotations,
@@ -1456,6 +1456,9 @@ class Content:
         # Handle nested Content objects (e.g., function_call in function_approval_request)
         if (function_call := remaining.get("function_call")) and isinstance(function_call, dict):
             remaining["function_call"] = cls.from_dict(function_call)  # type: ignore[reportUnknownArgumentType]
+
+        if content_type == "function_approval_response" and type(remaining.get("approved")) is not bool:
+            remaining["approved"] = False
 
         # Handle list of Content objects (e.g., inputs in code_interpreter_tool_call)
         if (input_items := remaining.get("inputs")) and isinstance(input_items, list):

@@ -6,22 +6,22 @@ using System.Threading.Tasks;
 namespace Microsoft.Agents.AI.Hosting.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="SessionIsolationKeyProvider"/> and its contract.
+/// Unit tests for <see cref="AgentIsolationKeyProvider"/> and its contract.
 /// </summary>
-public class SessionIsolationKeyProviderTests
+public class AgentIsolationKeyProviderTests
 {
     /// <summary>
     /// Verify that a concrete provider can return a non-null isolation key.
     /// </summary>
     [Fact]
-    public async Task GetSessionIsolationKeyAsyncReturnsNonNullKeyAsync()
+    public async Task GetIsolationKeyAsyncReturnsNonNullKeyAsync()
     {
         // Arrange
         const string ExpectedKey = "test-key";
-        var provider = new TestSessionIsolationKeyProvider(ExpectedKey);
+        var provider = new TestAgentIsolationKeyProvider(ExpectedKey);
 
         // Act
-        string? result = await provider.GetSessionIsolationKeyAsync();
+        string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.Equal(ExpectedKey, result);
@@ -31,13 +31,13 @@ public class SessionIsolationKeyProviderTests
     /// Verify that a concrete provider can return null when no key is available.
     /// </summary>
     [Fact]
-    public async Task GetSessionIsolationKeyAsyncReturnsNullWhenNoKeyAvailableAsync()
+    public async Task GetIsolationKeyAsyncReturnsNullWhenNoKeyAvailableAsync()
     {
         // Arrange
-        var provider = new TestSessionIsolationKeyProvider(null);
+        var provider = new TestAgentIsolationKeyProvider(null);
 
         // Act
-        string? result = await provider.GetSessionIsolationKeyAsync();
+        string? result = await provider.GetIsolationKeyAsync();
 
         // Assert
         Assert.Null(result);
@@ -47,33 +47,33 @@ public class SessionIsolationKeyProviderTests
     /// Verify that cancellation token is passed through to the provider implementation.
     /// </summary>
     [Fact]
-    public async Task GetSessionIsolationKeyAsyncPassesCancellationTokenAsync()
+    public async Task GetIsolationKeyAsyncPassesCancellationTokenAsync()
     {
         // Arrange
-        var provider = new TestCancellableSessionIsolationKeyProvider();
+        var provider = new TestCancellableAgentIsolationKeyProvider();
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
         // Act & Assert
         await Assert.ThrowsAsync<TaskCanceledException>(
-            async () => await provider.GetSessionIsolationKeyAsync(cts.Token));
+            async () => await provider.GetIsolationKeyAsync(cts.Token));
     }
 
     #region Test Implementations
 
     /// <summary>
-    /// Test implementation of <see cref="SessionIsolationKeyProvider"/> for testing purposes.
+    /// Test implementation of <see cref="AgentIsolationKeyProvider"/> for testing purposes.
     /// </summary>
-    private sealed class TestSessionIsolationKeyProvider : SessionIsolationKeyProvider
+    private sealed class TestAgentIsolationKeyProvider : AgentIsolationKeyProvider
     {
         private readonly string? _key;
 
-        public TestSessionIsolationKeyProvider(string? key)
+        public TestAgentIsolationKeyProvider(string? key)
         {
             this._key = key;
         }
 
-        public override ValueTask<string?> GetSessionIsolationKeyAsync(CancellationToken cancellationToken = default)
+        public override ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken = default)
         {
             return new ValueTask<string?>(this._key);
         }
@@ -82,9 +82,9 @@ public class SessionIsolationKeyProviderTests
     /// <summary>
     /// Test implementation that respects cancellation tokens.
     /// </summary>
-    private sealed class TestCancellableSessionIsolationKeyProvider : SessionIsolationKeyProvider
+    private sealed class TestCancellableAgentIsolationKeyProvider : AgentIsolationKeyProvider
     {
-        public override async ValueTask<string?> GetSessionIsolationKeyAsync(CancellationToken cancellationToken = default)
+        public override async ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken = default)
         {
             await Task.Delay(1000, cancellationToken);
             return "key";
