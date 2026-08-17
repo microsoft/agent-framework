@@ -134,7 +134,7 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
         #   "errors" : [
         #       {
         #           "name": "Name of the MCP tool that requires consent",
-        #           "type" : "mcp",
+        #           "type" : "mcp" | "a2a_preview",
         #           "error": {
         #               "code": "CONSENT_REQUIRED",
         #               "message": consent_url,
@@ -157,7 +157,7 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
             for error in consent_details["errors"]:
                 if (
                     isinstance(error, dict)
-                    and error.get("type") == "mcp"  # type: ignore
+                    and error.get("type") in ("mcp", "a2a_preview")  # type: ignore
                     and "error" in error
                     and isinstance(error["error"], dict)
                     and error["error"].get("code") == "CONSENT_REQUIRED"  # type: ignore
