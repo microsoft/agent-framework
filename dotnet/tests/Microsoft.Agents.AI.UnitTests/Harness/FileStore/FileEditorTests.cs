@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 
 namespace Microsoft.Agents.AI.UnitTests.Harness.FileMemory;
 
@@ -218,13 +219,33 @@ public class FileEditorTests
     [InlineData("match", "match")]
     [InlineData("", "")]
     [InlineData("a\rb\n", "a\rb")]
-    public void TrimLineTerminator_RemovesOnlyTheTrailingTerminator(string line, string expected)
+    public void LineContentLength_ExcludesOnlyTheTrailingTerminator(string line, string expected)
     {
         // Act
-        string trimmed = FileEditor.TrimLineTerminator(line);
+        int length = FileEditor.LineContentLength(line);
+
+        // Assert — the length delimits exactly the line's text, which is the range searches match over.
+        Assert.Equal(expected.Length, length);
+        Assert.Equal(expected, line.Substring(0, length));
+    }
+
+    [Theory]
+    [InlineData("beta match\r\n")]
+    [InlineData("beta match\n")]
+    [InlineData("beta match\r")]
+    [InlineData("beta match")]
+    public void LineContentLength_BoundsAnEndAnchoredMatch(string line)
+    {
+        // Arrange — the callers match over a range instead of a trimmed copy, so '$' has to anchor at
+        // the returned length rather than at the end of the string.
+        var regex = new Regex("match$", RegexOptions.IgnoreCase);
+
+        // Act
+        Match match = regex.Match(line, 0, FileEditor.LineContentLength(line));
 
         // Assert
-        Assert.Equal(expected, trimmed);
+        Assert.True(match.Success);
+        Assert.Equal(5, match.Index);
     }
 
     #endregion

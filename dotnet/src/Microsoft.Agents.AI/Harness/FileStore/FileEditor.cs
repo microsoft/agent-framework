@@ -135,23 +135,26 @@ internal static class FileEditor
     }
 
     /// <summary>
-    /// Returns <paramref name="line"/> without the <c>\r\n</c>, <c>\n</c>, or lone <c>\r</c> that
-    /// terminates it, so search patterns are matched against a line's text rather than its line break.
+    /// Returns the length of <paramref name="line"/> up to but excluding the <c>\r\n</c>, <c>\n</c>, or
+    /// lone <c>\r</c> that terminates it, so search patterns are matched against a line's text rather
+    /// than its line break.
     /// </summary>
     /// <remarks>
-    /// Leaving any part of the terminator in place would make an end-anchored pattern such as
-    /// <c>match$</c> fail on a CRLF or lone-CR line whose text is exactly <c>match</c>.
+    /// Leaving any part of the terminator in range would make an end-anchored pattern such as
+    /// <c>match$</c> fail on a CRLF or lone-CR line whose text is exactly <c>match</c>. This returns a
+    /// length rather than a trimmed string because the callers scan every line before knowing which ones
+    /// match, and copying each one would duplicate nearly the whole file on every search.
     /// </remarks>
-    internal static string TrimLineTerminator(string line)
+    internal static int LineContentLength(string line)
     {
         if (line.EndsWith("\r\n", StringComparison.Ordinal))
         {
-            return line.Substring(0, line.Length - 2);
+            return line.Length - 2;
         }
 
         return line.EndsWith("\n", StringComparison.Ordinal) || line.EndsWith("\r", StringComparison.Ordinal)
-            ? line.Substring(0, line.Length - 1)
-            : line;
+            ? line.Length - 1
+            : line.Length;
     }
 
     private static int CountOccurrences(string content, string value)

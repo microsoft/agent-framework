@@ -329,7 +329,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// Thrown when either bound is not positive, when <paramref name="endLine"/> precedes
     /// <paramref name="startLine"/>, or when <paramref name="startLine"/> is past the last line.
     /// </exception>
-    [Description("Read part of a file by 1-based inclusive line number; omit endLine to read to the end of the file, and an endLine past the last line is clamped. Line numbers match file_access_grep and file_access_replace_lines. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line.")]
+    [Description("Read part of a file by 1-based inclusive line number; omit endLine to read to the end of the file, and an endLine past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line.")]
     private async Task<string> ReadLinesAsync(string fileName, int startLine, int? endLine = null, CancellationToken cancellationToken = default)
     {
         string path = StorePaths.NormalizeRelativePath(fileName);

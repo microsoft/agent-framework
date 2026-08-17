@@ -213,7 +213,8 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
 
             for (int i = 0; i < lines.Count; i++)
             {
-                Match match = regex.Match(FileEditor.TrimLineTerminator(lines[i]));
+                // Match over the line's text only, without copying it out of the line.
+                Match match = regex.Match(lines[i], 0, FileEditor.LineContentLength(lines[i]));
                 if (match.Success)
                 {
                     matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i] });
