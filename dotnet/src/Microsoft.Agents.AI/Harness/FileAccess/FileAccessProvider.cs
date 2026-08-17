@@ -318,6 +318,13 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <param name="endLine">The 1-based line number to read through, inclusive. When <see langword="null"/>, reads to the end of the file.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The numbered lines, or a not-found message.</returns>
+    /// <remarks>
+    /// The line numbers agree with the ones <c>file_access_grep</c> reports for the
+    /// <see cref="AgentFileStore"/> implementations in this package, because both split the content the
+    /// same way. Grep runs through <see cref="AgentFileStore.SearchAsync"/>, whose contract does not
+    /// prescribe a split, so a custom store can report numbers that address different lines than this
+    /// method and <c>file_access_replace_lines</c> do.
+    /// </remarks>
     /// <exception cref="ArgumentException">
     /// Thrown when either bound is not positive, when <paramref name="endLine"/> precedes
     /// <paramref name="startLine"/>, or when <paramref name="startLine"/> is past the last line.

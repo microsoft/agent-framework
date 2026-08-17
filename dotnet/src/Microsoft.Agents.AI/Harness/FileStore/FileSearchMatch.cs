@@ -22,9 +22,12 @@ public sealed class FileSearchMatch
     /// Gets or sets the matching line, verbatim.
     /// </summary>
     /// <remarks>
-    /// The line keeps its own terminator (<c>\r\n</c>, <c>\n</c>, or a lone <c>\r</c>), except on a final
-    /// line that the content does not terminate. Together with <see cref="LineNumber"/> addressing the
-    /// same lines the line-edit tools use, this makes the value reusable as a literal replacement line.
+    /// For the <see cref="AgentFileStore"/> implementations in this package, the line keeps its own
+    /// terminator (<c>\r\n</c>, <c>\n</c>, or a lone <c>\r</c>), except on a final line that the content
+    /// does not terminate. Together with <see cref="LineNumber"/> addressing the same lines the line-edit
+    /// tools use, this makes the value reusable as a literal replacement line. A custom store populates
+    /// this type from its own <see cref="AgentFileStore.SearchAsync"/> and is not held to either property
+    /// by the base contract.
     /// </remarks>
     [JsonPropertyName("line")]
     public string Line { get; set; } = string.Empty;

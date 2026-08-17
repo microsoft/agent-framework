@@ -172,8 +172,11 @@ internal static class FileEditor
     /// <c>\r</c>) attached. The final line has no terminator when the content does not end with a newline.
     /// </summary>
     /// <remarks>
-    /// This is the single definition of a "line" shared by the search and line-edit tools, so the line
-    /// numbers reported by <c>grep</c> address the same lines that <c>replace_lines</c> edits.
+    /// This is the single definition of a "line" shared by the line-edit tools and by the
+    /// <see cref="AgentFileStore"/> implementations in this package, so for those stores the line numbers
+    /// reported by <c>grep</c> address the same lines that <c>replace_lines</c> edits. A custom store
+    /// supplies its own <see cref="AgentFileStore.SearchAsync"/>, whose contract does not require this
+    /// split, so that alignment does not follow automatically for one.
     /// </remarks>
     internal static List<string> SplitLinesKeepEnds(string content)
     {
