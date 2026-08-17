@@ -237,10 +237,10 @@ def _split_lines_keepends(content: str) -> list[str]:
 
     This is the single definition of a line shared by ``grep``, ``read_lines`` and
     ``replace_lines``, so a ``line_number`` obtained from one always targets the same
-    line in the others and stays in range. Splitting solely on ``\n`` (a trailing
-    ``\r`` stays attached to the line) means the result has
-    trailing ``\n`` yields a final empty (editable) line, and empty content yields a
-    single empty line. ``"".join(...)`` reproduces ``content`` verbatim.
+    line in the others and stays in range. Splitting solely on ``\n`` (a trailing ``\r``
+    stays attached to the line) means the result has ``len(content.split("\n"))``
+    elements: a trailing ``\n`` yields a final empty (editable) line, and empty content
+    yields a single empty line. ``"".join(...)`` reproduces ``content`` verbatim.
     """
     segments = content.split("\n")
     lines = [segment + "\n" for segment in segments[:-1]]
@@ -511,9 +511,9 @@ def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -
     included, so a match can be fed straight back to ``replace_lines`` as a ``new_line``
     without losing a ``\r\n``. The pattern is matched against the line without its
     trailing terminator, so ``$`` anchors to the end of the line's text even on a CRLF
-    file. A snippet of up to
-    ``±_SEARCH_SNIPPET_RADIUS`` characters around the first match is included. Returns
-    ``None`` when no lines match.
+    file, and conversely a pattern matching a literal ``\r`` does not match the one a
+    CRLF line ends with. A snippet of up to ``±_SEARCH_SNIPPET_RADIUS`` characters around
+    the first match is included. Returns ``None`` when no lines match.
     """
     lines = _split_lines_keepends(content)
     matching_lines: list[FileSearchMatch] = []
