@@ -7,9 +7,10 @@ import base64
 import json
 import logging
 import os
+import re
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Literal, cast
 from urllib.parse import urlparse
 
@@ -176,25 +177,52 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     return None
 
 
+# Characters allowed in a registered host name, and in the bracketed IPv6 form that
+# ``urlparse`` reports with its brackets already stripped.
+_HOST_PATTERN = re.compile(r"^[A-Za-z0-9._~%-]+$")
+_IPV6_HOST_PATTERN = re.compile(r"^[0-9A-Fa-f:.%-]+$")
+
+
+def _is_valid_consent_host(hostname: str) -> bool:
+    """Return whether *hostname* is syntactically usable by a standard URL client.
+
+    ``urlparse`` does not reject hosts that contain illegal characters, so values such as
+    ``exa mple.com`` are reported as a hostname even though no client can resolve them.
+    """
+    pattern = _IPV6_HOST_PATTERN if ":" in hostname else _HOST_PATTERN
+    return bool(pattern.match(hostname))
+
+
 def _validated_consent_link(consent_link: str | None) -> str | None:
-    """Return *consent_link* when it is an absolute HTTPS URL with a host, else ``None``.
+    """Return *consent_link* when it is an absolute HTTPS URL a client can open, else ``None``.
 
     A consent link is rendered as a clickable prompt by the client, so anything that is
     not an absolute ``https`` URL is dropped rather than surfaced. ``urlparse`` raises
-    ``ValueError`` for malformed authorities (for example ``https://[broken``), and a
-    non-empty ``netloc`` is not sufficient on its own (``https://@`` has one but no host),
-    so both conditions are handled here.
+    ``ValueError`` for malformed authorities (for example ``https://[broken``) and for
+    invalid ports, but only when ``port`` is read, so it is accessed here. A non-empty
+    ``netloc`` is not sufficient on its own (``https://@`` has one but no host), and a
+    non-empty ``hostname`` is not either (``https://exa mple.com`` reports one).
     """
     if not consent_link:
+        return None
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in consent_link):
+        # ``urlparse`` silently strips tab and newline, which would let a link carrying
+        # control characters through even though it is not safe to render or log.
+        logger.warning("Skipping oauth_consent_request with whitespace in the consent_link.")
         return None
     try:
         parsed = urlparse(consent_link)
         hostname = parsed.hostname
+        # Reading ``port`` is what validates it; ``https://host:bad`` raises here.
+        _ = parsed.port
     except ValueError:
         logger.warning("Skipping oauth_consent_request with a malformed consent_link.")
         return None
     if parsed.scheme.lower() != "https" or not hostname:
         logger.warning("Skipping oauth_consent_request with a non-HTTPS consent_link.")
+        return None
+    if not _is_valid_consent_host(hostname):
+        logger.warning("Skipping oauth_consent_request with an invalid consent_link host.")
         return None
     return consent_link
 
@@ -235,6 +263,30 @@ def _emit_oauth_consent_item(
 def _consent_incomplete_reason(count: int) -> str:
     """Return the ``response.incomplete`` reason for *count* pending consent requests."""
     return f"OAuth consent required for {count} tool(s)."
+
+
+def _consent_unusable_link_error(count: int) -> RuntimeError:
+    """Return the error reported when consent is required but no link can be surfaced."""
+    return RuntimeError(
+        f"OAuth consent is required for {count} tool(s), but no usable HTTPS consent link was "
+        "provided, so the request cannot be completed."
+    )
+
+
+@dataclass
+class _ConsentTracker:
+    """Tracks the OAuth consent requests seen while converting content for one response.
+
+    A consent request means the turn is blocked until the user grants access, so the
+    outcome has to be recorded even when the link cannot be shown. ``emitted`` drives the
+    terminal ``response.incomplete``, while ``dropped`` records requests whose link was
+    unusable so that the response fails instead of silently reporting success. Both are
+    keyed by ``(consent_link, server_label)`` because a ``WorkflowAgent`` replays the
+    inner agent's content as workflow output, so the same request can arrive twice.
+    """
+
+    emitted: set[tuple[str, str]] = field(default_factory=set[tuple[str, str]])
+    dropped: set[tuple[str, str]] = field(default_factory=set[tuple[str, str]])
 
 
 def _consent_server_label(content: Content) -> str:
@@ -485,7 +537,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request_failure: Exception | None = None
         save_failure: Exception | None = None
         request_interrupted = False
-        emitted_consent_requests: set[tuple[str, str]] = set()
+        consent_tracker = _ConsentTracker()
 
         try:
             if self._uses_hosted_responses_history:
@@ -518,7 +570,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             response_event_stream,
                             content,
                             approval_storage=approval_storage,
-                            emitted_consent_requests=emitted_consent_requests,
+                            consent_tracker=consent_tracker,
                         ):
                             yield item
                         tracker.needs_async = False
@@ -561,12 +613,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         elif save_failure is not None:
             for event in self._emit_failure(response_event_stream, tracker, save_failure):
                 yield event
-        elif emitted_consent_requests:
+        elif consent_tracker.emitted:
             # The turn cannot finish until the user completes OAuth consent, so the response
             # ends as `incomplete` rather than `completed`, matching the connect-time path.
-            yield response_event_stream.emit_incomplete(
-                reason=_consent_incomplete_reason(len(emitted_consent_requests))
-            )
+            yield response_event_stream.emit_incomplete(reason=_consent_incomplete_reason(len(consent_tracker.emitted)))
+        elif consent_tracker.dropped:
+            # Consent was required but no link could be surfaced, so there is nothing for the
+            # user to act on. Failing is the honest outcome; `completed` would hide the block.
+            for event in self._emit_failure(
+                response_event_stream, tracker, _consent_unusable_link_error(len(consent_tracker.dropped))
+            ):
+                yield event
         else:
             yield response_event_stream.emit_completed()
 
@@ -666,7 +723,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     pass
 
             tracker = _OutputItemTracker(response_event_stream)
-            emitted_consent_requests: set[tuple[str, str]] = set()
+            consent_tracker = _ConsentTracker()
 
             # Run the workflow agent in streaming mode with the new user input.
             async for update in self._agent.run(
@@ -682,7 +739,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                             response_event_stream,
                             content,
                             approval_storage=approval_storage,
-                            emitted_consent_requests=emitted_consent_requests,
+                            consent_tracker=consent_tracker,
                         ):
                             yield item
                         tracker.needs_async = False
@@ -691,10 +748,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in tracker.close():
                 yield event
 
-            if emitted_consent_requests:
+            if consent_tracker.emitted:
                 yield response_event_stream.emit_incomplete(
-                    reason=_consent_incomplete_reason(len(emitted_consent_requests))
+                    reason=_consent_incomplete_reason(len(consent_tracker.emitted))
                 )
+            elif consent_tracker.dropped:
+                # Consent was required but no link could be surfaced, so there is nothing for
+                # the user to act on. Failing is the honest outcome; `completed` would hide it.
+                for event in self._emit_failure(
+                    response_event_stream, tracker, _consent_unusable_link_error(len(consent_tracker.dropped))
+                ):
+                    yield event
             else:
                 yield response_event_stream.emit_completed()
         except Exception as ex:
@@ -1701,7 +1765,7 @@ async def _to_outputs(
     content: Content,
     *,
     approval_storage: FunctionApprovalStore | None = None,
-    emitted_consent_requests: set[tuple[str, str]] | None = None,
+    consent_tracker: _ConsentTracker | None = None,
 ) -> AsyncIterator[ResponseStreamEvent]:
     """Converts a Content object to an async sequence of ResponseStreamEvent objects.
 
@@ -1709,8 +1773,9 @@ async def _to_outputs(
         stream: The ResponseEventStream to use for building events.
         content: The Content to convert.
         approval_storage: An optional ApprovalStorage instance to use for saving and loading function approval requests.
-        emitted_consent_requests: An optional set of ``(consent_link, server_label)`` pairs already emitted for
-            this response. It is updated in place and used to suppress duplicate OAuth consent prompts.
+        consent_tracker: An optional :class:`_ConsentTracker` recording the OAuth consent requests seen for this
+            response. It is updated in place, used to suppress duplicate consent prompts, and read by the caller to
+            pick the terminal event.
 
     Yields:
         ResponseStreamEvent: The converted event objects.
@@ -1823,16 +1888,22 @@ async def _to_outputs(
         # An OBO/on-behalf-of tool can require consent mid-run, after the agent has already
         # been entered. Surface the link as an `oauth_consent_request` output item so the
         # client can render a consent prompt instead of an empty assistant turn.
+        server_label = _consent_server_label(content)
         consent_link = _consent_link_from_content(content)
-        if consent_link is not None:
-            server_label = _consent_server_label(content)
+        if consent_link is None:
+            # The turn is still blocked on consent even though the link cannot be rendered,
+            # so record it: reporting success here would look exactly like the silent drop
+            # this branch exists to fix.
+            if consent_tracker is not None:
+                consent_tracker.dropped.add((content.consent_link or "", server_label))
+        else:
             # A `WorkflowAgent` replays the inner agent's content as workflow output, so the
             # same consent request can arrive more than once in one response. Emitting it
             # twice would show the user duplicate consent prompts.
             consent_key = (consent_link, server_label)
-            if emitted_consent_requests is None or consent_key not in emitted_consent_requests:
-                if emitted_consent_requests is not None:
-                    emitted_consent_requests.add(consent_key)
+            if consent_tracker is None or consent_key not in consent_tracker.emitted:
+                if consent_tracker is not None:
+                    consent_tracker.emitted.add(consent_key)
                 for event in _emit_oauth_consent_item(
                     stream,
                     str(stream.response["id"]),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -10,17 +11,44 @@ from agent_framework import ChatResponseUpdate, Content
 
 logger = logging.getLogger(__name__)
 
+# Characters allowed in a registered host name, and in the bracketed IPv6 form that
+# ``urlparse`` reports with its brackets already stripped.
+_HOST_PATTERN = re.compile(r"^[A-Za-z0-9._~%-]+$")
+_IPV6_HOST_PATTERN = re.compile(r"^[0-9A-Fa-f:.%-]+$")
+
+
+def _is_valid_consent_host(hostname: str) -> bool:
+    """Return whether *hostname* is syntactically usable by a standard URL client.
+
+    ``urlparse`` does not reject hosts that contain illegal characters, so values such as
+    ``exa mple.com`` are reported as a hostname even though no client can resolve them.
+    """
+    pattern = _IPV6_HOST_PATTERN if ":" in hostname else _HOST_PATTERN
+    return bool(pattern.match(hostname))
+
 
 def _validate_consent_link(consent_link: str, item_id: str) -> str:
-    """Validate a consent link is HTTPS with a valid host.
+    """Validate a consent link is HTTPS with a valid host and port.
 
     Returns the link unchanged if valid, or an empty string if not. ``urlparse`` raises
-    ``ValueError`` for malformed authorities (for example ``https://[broken``), and a
-    non-empty ``netloc`` is not sufficient on its own (``https://@`` has one but no host).
+    ``ValueError`` for malformed authorities (for example ``https://[broken``) and for
+    invalid ports, but only when ``port`` is read, so it is accessed here. A non-empty
+    ``netloc`` is not sufficient on its own (``https://@`` has one but no host), and a
+    non-empty ``hostname`` is not either (``https://exa mple.com`` reports one).
     """
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in consent_link):
+        # ``urlparse`` silently strips tab and newline, which would let a link carrying
+        # control characters through even though it is not safe to render or log.
+        logger.warning(
+            "Skipping oauth_consent_request with whitespace or control characters in consent_link (item id=%s)",
+            item_id,
+        )
+        return ""
     try:
         parsed = urlparse(consent_link)
         hostname = parsed.hostname
+        # Reading ``port`` is what validates it; ``https://host:bad`` raises here.
+        _ = parsed.port
     except ValueError:
         logger.warning(
             "Skipping oauth_consent_request with malformed consent_link (item id=%s)",
@@ -30,6 +58,12 @@ def _validate_consent_link(consent_link: str, item_id: str) -> str:
     if parsed.scheme.lower() != "https" or not hostname:
         logger.warning(
             "Skipping oauth_consent_request with non-HTTPS consent_link (item id=%s)",
+            item_id,
+        )
+        return ""
+    if not _is_valid_consent_host(hostname):
+        logger.warning(
+            "Skipping oauth_consent_request with an invalid consent_link host (item id=%s)",
             item_id,
         )
         return ""

@@ -3865,9 +3865,20 @@ class TestMidRunOAuthConsentSurfacing:
 
     @pytest.mark.parametrize(
         "consent_link",
-        ["", "http://consent.example.com/obo", "not-a-url", "https:///path", "https://[broken", "https://@"],
+        [
+            "",
+            "http://consent.example.com/obo",
+            "not-a-url",
+            "https:///path",
+            "https://[broken",
+            "https://@",
+            "https://consent.example.com:bad/obo",
+            "https://consent.example.com:99999/obo",
+            "https://cons ent.example.com/obo",
+            "https://cons|ent.example.com/obo",
+        ],
     )
-    async def test_invalid_consent_link_is_skipped(self, consent_link: str) -> None:
+    async def test_unusable_consent_link_fails_the_response(self, consent_link: str) -> None:
         agent = _make_agent(
             stream_updates=[
                 AgentResponseUpdate(
@@ -3885,10 +3896,41 @@ class TestMidRunOAuthConsentSurfacing:
 
         added = [e for e in events if e["event"] == "response.output_item.added"]
         assert not any(e["data"]["item"]["type"] == "oauth_consent_request" for e in added)
-        # A link we cannot render is not a consent prompt, so the turn still completes
-        # rather than failing the whole response.
-        assert types[-1] == "response.completed"
-        assert "response.failed" not in types
+        # The turn is still blocked on consent, so reporting success would repeat the silent
+        # drop this feature exists to fix. There is no link to act on, hence `failed`.
+        assert types[-1] == "response.failed"
+        assert "response.completed" not in types
+        assert "response.incomplete" not in types
+        failed = [e for e in events if e["event"] == "response.failed"]
+        assert "OAuth consent is required" in failed[0]["data"]["response"]["error"]["message"]
+
+    async def test_usable_consent_link_still_wins_over_an_unusable_one(self) -> None:
+        """A response with one renderable link stays actionable, so it ends `incomplete`."""
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[
+                        Content(type="oauth_consent_request", consent_link="http://insecure.example.com/obo"),
+                        Content(type="oauth_consent_request", consent_link="https://consent.example.com/obo"),
+                    ],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=True)
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+
+        added = [
+            e
+            for e in events
+            if e["event"] == "response.output_item.added" and e["data"]["item"]["type"] == "oauth_consent_request"
+        ]
+        assert len(added) == 1
+        assert added[0]["data"]["item"]["consent_link"] == "https://consent.example.com/obo"
+        assert types[-1] == "response.incomplete"
 
     async def test_server_label_falls_back_to_raw_representation(self) -> None:
         """The Foundry parser carries ``server_label`` in additional properties, but a
@@ -4403,7 +4445,7 @@ class TestWorkflowAgentHosting:
         assert len(incomplete) == 1
         assert "1 tool(s)" in json.dumps(incomplete[0]["data"])
 
-    async def test_mid_run_invalid_consent_link_still_completes(self) -> None:
+    async def test_mid_run_unusable_consent_link_fails_the_workflow_response(self) -> None:
         workflow_agent = _build_contents_workflow_agent([
             Content(type="oauth_consent_request", consent_link="https://[broken")
         ])
@@ -4415,7 +4457,11 @@ class TestWorkflowAgentHosting:
 
         added = [e for e in events if e["event"] == "response.output_item.added"]
         assert not any(e["data"]["item"]["type"] == "oauth_consent_request" for e in added)
-        assert types[-1] == "response.completed"
+        # The workflow is blocked on consent with no link to show, so it must not report success.
+        assert types[-1] == "response.failed"
+        assert "response.completed" not in types
+        failed = [e for e in events if e["event"] == "response.failed"]
+        assert "OAuth consent is required" in failed[0]["data"]["response"]["error"]["message"]
 
     async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
         workflow_agent, mock_agent = _build_approval_workflow_agent(approval_request_id="apr_wf_ns")

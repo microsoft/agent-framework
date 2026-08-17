@@ -61,6 +61,66 @@ def test_validate_consent_link_rejects_netloc_without_host(caplog: pytest.LogCap
     assert "non-HTTPS" in caplog.text
 
 
+@pytest.mark.parametrize(
+    "consent_link",
+    [
+        "https://consent.example.com:bad/obo",
+        "https://consent.example.com:99999/obo",
+    ],
+)
+def test_validate_consent_link_rejects_invalid_port(consent_link: str, caplog: pytest.LogCaptureFixture) -> None:
+    """``urlparse`` only validates the port when it is read, so an invalid port must be caught."""
+    with caplog.at_level(logging.WARNING):
+        result = _validate_consent_link(consent_link, "item-7")
+    assert result == ""
+    assert "malformed" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "consent_link",
+    [
+        "https://cons|ent.example.com/obo",
+        "https://exa^mple.com/obo",
+    ],
+)
+def test_validate_consent_link_rejects_invalid_host_characters(
+    consent_link: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``urlparse`` reports a hostname for values that no URL client can resolve."""
+    with caplog.at_level(logging.WARNING):
+        result = _validate_consent_link(consent_link, "item-8")
+    assert result == ""
+    assert "invalid consent_link host" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "consent_link",
+    [
+        "https://cons\tent.example.com/obo",
+        "https://consent.example.com/obo\n",
+    ],
+)
+def test_validate_consent_link_rejects_control_characters(consent_link: str, caplog: pytest.LogCaptureFixture) -> None:
+    """``urlparse`` strips tab and newline, so they must be rejected before parsing."""
+    with caplog.at_level(logging.WARNING):
+        result = _validate_consent_link(consent_link, "item-10")
+    assert result == ""
+    assert "control characters" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "consent_link",
+    [
+        "https://consent.example.com/obo",
+        "https://consent.example.com:8443/obo",
+        "https://[2001:db8::1]/obo",
+    ],
+)
+def test_validate_consent_link_accepts_usable_links(consent_link: str) -> None:
+    """Valid ports and IPv6 literals stay usable and must not be dropped."""
+    assert _validate_consent_link(consent_link, "item-9") == consent_link
+
+
 # endregion
 
 # region try_parse_oauth_consent_event tests
