@@ -235,9 +235,12 @@ def _apply_replace(content: str, old_string: str, new_string: str, replace_all: 
 def _split_lines_keepends(content: str) -> list[str]:
     r"""Split ``content`` into lines on ``\n`` only, keeping the terminator attached.
 
-    This is the single definition of a line shared by ``grep``, ``read_lines`` and
-    ``replace_lines``, so a ``line_number`` obtained from one always targets the same
-    line in the others and stays in range. Splitting solely on ``\n`` (a trailing ``\r``
+    This is the single definition of a line used by ``read_lines``, ``replace_lines`` and the
+    :class:`AgentFileStore` implementations in this package, so for those stores a ``line_number``
+    obtained from ``grep`` always targets the same line in the others and stays in range. A custom
+    store supplies its own :meth:`AgentFileStore.search`, whose contract does not require this
+    split, so the alignment does not follow automatically for one. Splitting solely on ``\n``
+    (a trailing ``\r``
     stays attached to the line) means the result has ``len(content.split("\n"))``
     elements: a trailing ``\n`` yields a final empty (editable) line, and empty content
     yields a single empty line. ``"".join(...)`` reproduces ``content`` verbatim.
@@ -290,9 +293,9 @@ def _line_edits(edits: list[Any]) -> list[tuple[int, str]]:
 def _slice_lines(content: str, start_line: int, end_line: int | None) -> list[str]:
     """Return the 1-based inclusive ``[start_line, end_line]`` slice of ``content``, terminators kept.
 
-    Uses :func:`_split_lines_keepends`, so a ``line_number`` from ``grep`` addresses the
-    same line here and in ``replace_lines``, including the trailing empty line of a
-    newline-terminated file. ``end_line`` of ``None`` reads to the end of the file, and an
+    Uses :func:`_split_lines_keepends`, so a ``line_number`` from ``grep`` on one of this
+    package's stores addresses the same line here and in ``replace_lines``, including the
+    trailing empty line of a newline-terminated file. ``end_line`` of ``None`` reads to the end of the file, and an
     ``end_line`` past the last line is clamped rather than rejected. Validating
     ``start_line`` before clamping keeps every successful slice non-empty.
 
@@ -325,7 +328,9 @@ class FileSearchMatch(SerializationMixin):
 
         Args:
             line_number: The 1-based line number where the match was found.
-            line: The matching line verbatim, including its own terminator.
+            line: The matching line. The stores in this package report it verbatim,
+                terminator included; a custom :meth:`AgentFileStore.search` is not
+                bound to that by the base contract.
         """
         if line_number < 1:
             raise ValueError("line_number must be a positive integer.")
