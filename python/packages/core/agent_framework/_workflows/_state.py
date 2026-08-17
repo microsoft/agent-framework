@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import copy
 from typing import Any
 
 
@@ -104,18 +105,31 @@ class State:
         self._pending.clear()
 
     def export_state(self) -> dict[str, Any]:
-        """Export a serialized copy of the committed state.
+        """Export an isolated copy of the committed state.
 
         Note: Does not include pending changes.
+
+        The returned dict (and any mutable containers reachable through its
+        values) is a deep copy, so later mutations to the live ``State`` —
+        including in-place mutation of values handed out by :meth:`get` —
+        will not be reflected in the exported snapshot. This matches the
+        isolation that :class:`RunnerContext` already applies to ``messages``
+        in the checkpoint-construction path and is what makes a snapshot
+        safe to share with another workflow instance.
         """
-        return dict(self._committed)
+        return copy.deepcopy(self._committed)
 
     def import_state(self, state: dict[str, Any]) -> None:
         """Import state from a serialized dictionary.
 
         Merges into committed state. Does not affect pending changes.
+
+        The incoming ``state`` dict is deep-copied before merge, so later
+        in-place mutations of the caller's dict (or any mutable container
+        reachable through its values) will not leak into the committed
+        state. This is the import-side counterpart to :meth:`export_state`.
         """
-        self._committed.update(state)
+        self._committed.update(copy.deepcopy(state))
 
 
 class _DeleteSentinelType:

@@ -301,3 +301,101 @@ class TestExportImport:
         # Pending is still there
         assert state.get("pending_key") == "pending_value"
         assert "pending_key" in state._pending  # pyright: ignore[reportPrivateUsage]
+
+
+class TestStateIsolation:
+    """Tests for isolation between State instances across export/import.
+
+    Regression tests for https://github.com/microsoft/agent-framework/issues/7683
+    — checkpoint state must be isolated from live workflow state across
+    restoration and storage boundaries, so a resumed workflow mutating its
+    own state cannot corrupt the snapshot it was restored from.
+    """
+
+    def test_export_isolates_mutable_list_value(self) -> None:
+        """Mutating a list value on the source State must not mutate the exported snapshot."""
+        source = State()
+        source.set("history", ["step-1"])
+        source.commit()
+
+        snapshot = source.export_state()
+
+        # Read, mutate in place, write back on the live state.
+        history = source.get("history")
+        assert history is not None
+        history.append("step-2")
+        source.set("history", history)
+        source.commit()
+
+        # The snapshot taken before the mutation must be unchanged.
+        assert snapshot == {"history": ["step-1"]}
+
+    def test_export_isolates_mutable_dict_value(self) -> None:
+        """Mutating a dict value on the source State must not mutate the exported snapshot."""
+        source = State()
+        source.set("counters", {"a": 1})
+        source.commit()
+
+        snapshot = source.export_state()
+
+        counters = source.get("counters")
+        assert counters is not None
+        counters["b"] = 2
+        source.set("counters", counters)
+        source.commit()
+
+        assert snapshot == {"counters": {"a": 1}}
+
+    def test_import_does_not_alias_caller_state(self) -> None:
+        """Mutating the caller's dict after import_state must not affect committed state."""
+        state = State()
+        incoming = {"history": ["step-1"]}
+        state.import_state(incoming)
+
+        # Caller mutates their dict in place after import.
+        incoming["history"].append("step-2")
+        incoming["extra"] = "leaked"
+
+        # Committed state must be unaffected.
+        assert state.get("history") == ["step-1"]
+        assert state.has("extra") is False
+
+    def test_roundtrip_restoration_isolates_checkpoint(self) -> None:
+        """The full export → import round-trip must keep a checkpoint stable under in-place mutation.
+
+        Mirrors the checkpoint build / restore path used by RunnerContext.build_checkpoint
+        and Runner.restore_checkpoint, where the workflow does
+            history = restored.get("history")
+            history.append("...")
+            restored.set("history", history)
+        after being resumed.
+        """
+        source = State()
+        source.set("history", ["step-1"])
+        source.commit()
+        checkpoint_state = source.export_state()
+
+        restored = State()
+        restored.import_state(checkpoint_state)
+
+        history = restored.get("history")
+        assert history is not None
+        history.append("step-2")
+        restored.set("history", history)
+        restored.commit()
+
+        # Checkpoint snapshot must remain at the original value.
+        assert checkpoint_state == {"history": ["step-1"]}
+
+    def test_export_returns_independent_dict(self) -> None:
+        """Mutating the returned dict itself must not affect the source State."""
+        source = State()
+        source.set("a", 1)
+        source.commit()
+
+        snapshot = source.export_state()
+        snapshot["b"] = 2
+        snapshot.pop("a")
+
+        assert source.get("a") == 1
+        assert source.has("b") is False

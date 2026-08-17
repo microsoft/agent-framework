@@ -213,16 +213,28 @@ class InMemoryCheckpointStorage:
         return checkpoint.checkpoint_id
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
-        """Load a checkpoint by ID."""
+        """Load a checkpoint by ID.
+
+        Returns a deep copy of the stored checkpoint so that callers can
+        freely mutate the returned object (and any nested containers) without
+        affecting the storage backend's internal representation. This makes
+        the returned checkpoint symmetric with what :meth:`save` accepted.
+        """
         checkpoint = self._checkpoints.get(checkpoint_id)
         if checkpoint:
             logger.debug(f"Loaded checkpoint {checkpoint_id} from memory")
-            return checkpoint
+            return copy.deepcopy(checkpoint)
         raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
-        """List checkpoint objects for a given workflow name."""
-        return [cp for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
+        """List checkpoint objects for a given workflow name.
+
+        Returns deep copies so callers cannot mutate the storage backend's
+        internal checkpoint objects through the returned list.
+        """
+        return [
+            copy.deepcopy(cp) for cp in self._checkpoints.values() if cp.workflow_name == workflow_name
+        ]
 
     async def delete(self, checkpoint_id: CheckpointID) -> bool:
         """Delete a checkpoint by ID."""
@@ -233,13 +245,17 @@ class InMemoryCheckpointStorage:
         return False
 
     async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
-        """Get the latest checkpoint for a given workflow name."""
+        """Get the latest checkpoint for a given workflow name.
+
+        Returns a deep copy, matching the isolation guarantees of
+        :meth:`load` and :meth:`list_checkpoints`.
+        """
         checkpoints = [cp for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
         if not checkpoints:
             return None
         latest_checkpoint = max(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
         logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
-        return latest_checkpoint
+        return copy.deepcopy(latest_checkpoint)
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""
