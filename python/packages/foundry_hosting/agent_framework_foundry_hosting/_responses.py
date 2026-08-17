@@ -14,6 +14,7 @@ from typing import Literal, cast
 
 from agent_framework import (
     ChatOptions,
+    CheckpointID,
     CheckpointStorage,
     Content,
     ContextProvider,
@@ -24,6 +25,7 @@ from agent_framework import (
     SessionStore,
     SupportsAgentRun,
     WorkflowAgent,
+    WorkflowCheckpoint,
 )
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
@@ -75,6 +77,39 @@ from ._state_store import (
 logger = logging.getLogger(__name__)
 
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
+
+
+class _CapturingCheckpointStorage:
+    """Delegate storage while retaining the latest successful checkpoint save.
+
+    The workflow runner does not expose the checkpoint it creates. Capturing it
+    here lets the host snapshot the current turn under its response ID without
+    rescanning the conversation's full checkpoint history.
+    """
+
+    def __init__(self, storage: CheckpointStorage) -> None:
+        self._storage = storage
+        self.latest_checkpoint: WorkflowCheckpoint | None = None
+
+    async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
+        checkpoint_id = await self._storage.save(checkpoint)
+        self.latest_checkpoint = checkpoint
+        return checkpoint_id
+
+    async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
+        return await self._storage.load(checkpoint_id)
+
+    async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
+        return await self._storage.list_checkpoints(workflow_name=workflow_name)
+
+    async def delete(self, checkpoint_id: CheckpointID) -> bool:
+        return await self._storage.delete(checkpoint_id)
+
+    async def get_latest(self, *, workflow_name: str) -> WorkflowCheckpoint | None:
+        return await self._storage.get_latest(workflow_name=workflow_name)
+
+    async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
+        return await self._storage.list_checkpoint_ids(workflow_name=workflow_name)
 
 
 def _validate_checkpoint_context_id(context_id: str) -> None:
@@ -561,6 +596,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             request_failure: Exception | None = None
             save_failure: Exception | None = None
             request_interrupted = False
+            write_checkpoint_storage = _CapturingCheckpointStorage(checkpoint_storage)
 
             try:
                 # Multi-turn pattern: when we have a prior checkpoint, restore it
@@ -593,7 +629,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 async for update in self._agent.run(
                     input_messages,
                     stream=True,
-                    checkpoint_storage=checkpoint_storage,
+                    checkpoint_storage=write_checkpoint_storage,
                 ):
                     for content in update.contents:
                         for event in tracker.handle(content):
@@ -619,14 +655,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
             finally:
                 try:
-                    if context.conversation_id is not None:
+                    if write_checkpoint_storage.latest_checkpoint is not None and context.conversation_id is not None:
                         await self._snapshot_conversation_workflow_checkpoint(
-                            checkpoint_storage,
-                            workflow_name=self._agent.workflow.name,
+                            write_checkpoint_storage.latest_checkpoint,
                             response_id=context.response_id,
-                            previous_checkpoint_id=(
-                                latest_checkpoint.checkpoint_id if latest_checkpoint is not None else None
-                            ),
                             platform_context=request_context,
                         )
                 except Exception as save_error:
@@ -661,23 +693,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
     async def _snapshot_conversation_workflow_checkpoint(
         self,
-        conversation_storage: CheckpointStorage,
+        checkpoint: WorkflowCheckpoint,
         *,
-        workflow_name: str,
         response_id: str,
-        previous_checkpoint_id: str | None,
         platform_context: FoundryAgentRequestContext,
     ) -> None:
         """Snapshot a conversation turn's latest workflow checkpoint under its response ID."""
-        latest_checkpoint = await conversation_storage.get_latest(workflow_name=workflow_name)
-        if latest_checkpoint is None or latest_checkpoint.checkpoint_id == previous_checkpoint_id:
-            return
         response_storage = self._checkpoint_storage_provider.get_store(
             config=self.config,
             context_id=response_id,
             platform_context=platform_context,
         )
-        await response_storage.save(latest_checkpoint)
+        await response_storage.save(checkpoint)
 
     @staticmethod
     def _emit_failure(
