@@ -2049,6 +2049,63 @@ def _build_mixed_approval_batch_endpoint(
     return TestClient(app), executed, messages_received, state
 
 
+def _build_parallel_gated_approval_batch_endpoint(
+    streaming_chat_client_stub: Any,
+    *,
+    snapshot_store: InMemoryAGUIThreadSnapshotStore | None = None,
+) -> tuple[TestClient, list[str], list[Message], dict[str, str]]:
+    executed: list[str] = []
+    messages_received: list[Message] = []
+    state = {"phase": "pause"}
+
+    def first_tool() -> str:
+        executed.append("first")
+        return "first result"
+
+    def second_tool() -> str:
+        executed.append("second")
+        return "second result"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        del options, kwargs
+        if state["phase"] == "pause":
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(call_id="call_first", name="first_tool", arguments="{}"),
+                    Content.from_function_call(call_id="call_second", name="second_tool", arguments="{}"),
+                ],
+                role="assistant",
+            )
+            return
+        messages_received[:] = list(messages)
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[
+            FunctionTool(name="first_tool", description="First tool", func=first_tool, approval_mode="always_require"),
+            FunctionTool(
+                name="second_tool", description="Second tool", func=second_tool, approval_mode="always_require"
+            ),
+        ],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        AgentFrameworkAgent(agent=agent, require_confirmation=False),
+        path="/approval",
+        snapshot_store=snapshot_store,
+        snapshot_scope_resolver=(lambda _request: "tenant-a") if snapshot_store is not None else None,
+    )
+    return TestClient(app), executed, messages_received, state
+
+
 def _build_tool_approval_queue_endpoint(
     streaming_chat_client_stub: Any,
 ) -> tuple[TestClient, list[str], list[Message], dict[str, str], AgentFrameworkAgent]:
@@ -2284,6 +2341,75 @@ async def test_endpoint_agent_approval_resume_releases_already_approved_sibling(
     ]
     replayed_call_ids = [content.call_id for content in replayed_results if content.call_id is not None]
     assert sorted(replayed_call_ids) == ["call_sensitive", "call_weather"]
+
+
+async def test_endpoint_agent_approval_resume_executes_every_gated_call_in_parallel_batch(streaming_chat_client_stub):
+    """A complete resume for a parallel gated batch must execute every approved call."""
+    client, executed, messages_received, state = _build_parallel_gated_approval_batch_endpoint(
+        streaming_chat_client_stub,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    pause_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-pause",
+            "threadId": "thread-parallel-gated",
+            "messages": [{"id": "user-1", "role": "user", "content": "Run both tools"}],
+        },
+    )
+
+    assert pause_response.status_code == 200
+    pause_events = _decode_sse_events(pause_response)
+    pause_finished = [event for event in pause_events if event.get("type") == "RUN_FINISHED"]
+    interrupts = _run_finished_interrupts(pause_finished[-1])
+    assert [interrupt["id"] for interrupt in interrupts] == ["call_first", "call_second"]
+    assert not [event for event in pause_events if event.get("type") == "TOOL_CALL_RESULT"]
+
+    state["phase"] = "resume"
+    resume_response = client.post(
+        "/approval",
+        json={
+            "runId": "run-resume",
+            "threadId": "thread-parallel-gated",
+            "messages": [],
+            "resume": [
+                {"interruptId": "call_first", "status": "resolved", "payload": {"accepted": True}},
+                {"interruptId": "call_second", "status": "resolved", "payload": {"accepted": True}},
+            ],
+        },
+    )
+
+    assert resume_response.status_code == 200
+    resume_events = _decode_sse_events(resume_response)
+    tool_results = [
+        (event["toolCallId"], event["content"]) for event in resume_events if event.get("type") == "TOOL_CALL_RESULT"
+    ]
+    assert tool_results == [("call_first", "first result"), ("call_second", "second result")]
+    assert executed == ["first", "second"]
+    assert not any("Tool execution skipped" in str(event.get("content")) for event in resume_events)
+
+    hydrate_response = client.post(
+        "/approval",
+        json={"runId": "run-hydrate", "threadId": "thread-parallel-gated", "messages": []},
+    )
+    assert hydrate_response.status_code == 200
+    hydrated_messages = _latest_messages_snapshot(hydrate_response)
+    replayed_results = [
+        (message.get("toolCallId"), message.get("content"))
+        for message in hydrated_messages
+        if message.get("role") == "tool" and message.get("toolCallId") in {"call_first", "call_second"}
+    ]
+    assert replayed_results == [("call_first", "first result"), ("call_second", "second result")]
+    assert not any("Tool execution skipped" in str(message.get("content")) for message in hydrated_messages)
+
+    replayed_provider_results = [
+        content for message in messages_received for content in message.contents if content.type == "function_result"
+    ]
+    assert [(content.call_id, content.result) for content in replayed_provider_results] == [
+        ("call_first", "first result"),
+        ("call_second", "second result"),
+    ]
 
 
 async def test_endpoint_agent_approval_resume_persists_replayable_tool_results(streaming_chat_client_stub):

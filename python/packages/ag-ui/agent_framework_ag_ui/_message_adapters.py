@@ -75,6 +75,41 @@ def _function_result_call_ids(messages: list[Message]) -> set[str]:
     return result_ids
 
 
+def _is_approval_control_user_message(msg: Message) -> bool:
+    """Whether a user message is only tool-approval controls, not a new turn.
+
+    Resume synthesis emits one user message per interrupt. A later sibling
+    approval in the same batch must still consume its own call id; it is not a
+    follow-up that abandons remaining gated calls.
+    """
+    has_approval = False
+    for content in msg.contents or []:
+        if content.type == "function_approval_response":
+            has_approval = True
+            continue
+        if content.type == "text" and (content.text or "").strip():
+            return False
+        if content.type not in {"function_approval_response", "text"}:
+            return False
+    return has_approval
+
+
+def _approval_control_identity(msg: Message) -> tuple[tuple[str | None, str | None], ...] | None:
+    """Stable identity for an approval-control user message.
+
+    ID-less approval messages hashing only ``str(Content)`` can collapse two
+    distinct call occurrences from the same assistant batch.
+    """
+    contents = msg.contents or []
+    if not contents or any(content.type != "function_approval_response" for content in contents):
+        return None
+    identities: list[tuple[str | None, str | None]] = []
+    for content in contents:
+        call_id = content.function_call.call_id if content.function_call is not None else None
+        identities.append((content.id, str(call_id) if call_id else None))
+    return tuple(identities)
+
+
 def _sanitize_tool_history(
     messages: list[Message],
     *,
@@ -217,7 +252,7 @@ def _sanitize_tool_history(
                 except (json.JSONDecodeError, KeyError) as exc:
                     logger.debug(f"Could not parse user message as confirm_changes response: {type(exc).__name__}")
 
-            if pending_tool_call_ids:
+            if pending_tool_call_ids and not _is_approval_control_user_message(msg):
                 logger.info(
                     f"User message arrived with {len(pending_tool_call_ids)} pending tool calls - "
                     "injecting synthetic results"
@@ -342,8 +377,12 @@ def _deduplicate_messages(messages: list[Message]) -> list[Message]:
             if msg.message_id:
                 key = ("id", msg.message_id)
             else:
-                content_str = str([str(c) for c in msg.contents]) if msg.contents else ""
-                key = ("content", role_value, hash(content_str))
+                approval_identity = _approval_control_identity(msg)
+                if approval_identity is not None:
+                    key = ("approval", approval_identity)
+                else:
+                    content_str = str([str(c) for c in msg.contents]) if msg.contents else ""
+                    key = ("content", role_value, hash(content_str))
 
             if key in seen_keys:
                 logger.info(f"Skipping duplicate message at index {idx}: role={role_value}")

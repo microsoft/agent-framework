@@ -31,8 +31,10 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - `Interrupt` and `ResumeEntry` come from the `ag-ui-protocol` package (`ag_ui.core`), not from an Agent Framework-specific interrupt model.
 - Tool approval interrupts, including approvals surfaced through workflow `request_info`, advertise standard
   `approved` and full-replacement `editedArgs` responses while retaining the existing `accepted` alias and direct
-  partial edits for MAF client compatibility. A `cancelled` resume completes normally without executing that call;
-  resolved siblings in the same complete resume still proceed.
+  partial edits for MAF client compatibility. A `cancelled` resume completes normally without executing that
+  call; resolved siblings in the same complete resume still proceed. Consecutive approval-control user messages
+  for a parallel `always_require` batch keep leftover gated call ids open; they are not treated as follow-up that
+  skip remaining siblings.
 - Approval-time execution preserves each call's complete result group. Follow-up user-input requests remain in the
   resumed messages, while `TOOL_CALL_RESULT` events are emitted only for terminal `function_result` contents.
 - Approval responses for tools injected during `before_run` are deferred to the in-run approval middleware rather

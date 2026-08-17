@@ -1204,7 +1204,109 @@ def test_sanitize_json_confirm_changes_response():
     assert len(result) >= 1
 
 
+def _approval_control_user_message(*, call_id: str, name: str, approved: bool) -> Message:
+    function_call = Content.from_function_call(call_id=call_id, name=name, arguments="{}")
+    return Message(
+        role="user",
+        contents=[
+            Content.from_function_approval_response(
+                approved=approved,
+                id=call_id,
+                function_call=function_call,
+            )
+        ],
+    )
+
+
+def test_sanitize_consecutive_approval_controls_keep_gated_siblings():
+    """Consecutive AG-UI approval-control messages must not skip leftover gated calls."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="c1", name="first_tool", arguments="{}"),
+            Content.from_function_call(call_id="c2", name="second_tool", arguments="{}"),
+        ],
+    )
+    first_approval = _approval_control_user_message(call_id="c1", name="first_tool", approved=True)
+    second_approval = _approval_control_user_message(call_id="c2", name="second_tool", approved=True)
+
+    result = _sanitize_tool_history([assistant_msg, first_approval, second_approval])
+
+    assert [msg.role for msg in result] == ["assistant", "user", "user"]
+    assert not [msg for msg in result if msg.role == "tool"]
+    assert not any(
+        content.type == "function_result" and "skipped" in str(content.result).lower()
+        for msg in result
+        for content in (msg.contents or [])
+    )
+
+
+def test_sanitize_consecutive_approval_controls_keep_mixed_decisions():
+    """Approve-then-reject sibling controls must reach the resolver without skip injection."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="c1", name="first_tool", arguments="{}"),
+            Content.from_function_call(call_id="c2", name="second_tool", arguments="{}"),
+        ],
+    )
+    first_approval = _approval_control_user_message(call_id="c1", name="first_tool", approved=True)
+    second_rejection = _approval_control_user_message(call_id="c2", name="second_tool", approved=False)
+
+    result = _sanitize_tool_history([assistant_msg, first_approval, second_rejection])
+
+    assert [msg.role for msg in result] == ["assistant", "user", "user"]
+    assert not [msg for msg in result if msg.role == "tool"]
+
+
+def test_sanitize_approval_then_followup_still_skips_leftover_sibling():
+    """Real follow-up user text after one approval still abandons leftover siblings."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="c1", name="first_tool", arguments="{}"),
+            Content.from_function_call(call_id="c2", name="second_tool", arguments="{}"),
+        ],
+    )
+    first_approval = _approval_control_user_message(call_id="c1", name="first_tool", approved=True)
+    followup = Message(role="user", contents=[Content.from_text(text="Actually, never mind")])
+
+    result = _sanitize_tool_history([assistant_msg, first_approval, followup])
+
+    tool_results = [msg for msg in result if msg.role == "tool"]
+    assert len(tool_results) == 1
+    assert tool_results[0].contents[0].call_id == "c2"
+    assert "skipped" in str(tool_results[0].contents[0].result).lower()
+    assert [msg.role for msg in result] == ["assistant", "user", "tool", "user"]
+
+
 # ── Deduplication edge cases ──
+
+
+def test_deduplicate_idless_approval_controls_for_distinct_calls():
+    """ID-less approval-control messages for distinct call ids are preserved."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    first_approval = _approval_control_user_message(call_id="c1", name="first_tool", approved=True)
+    second_approval = _approval_control_user_message(call_id="c2", name="second_tool", approved=True)
+    first_approval.message_id = None
+    second_approval.message_id = None
+
+    result = _deduplicate_messages([first_approval, second_approval])
+
+    assert len(result) == 2
+    assert [
+        content.function_call.call_id
+        for msg in result
+        for content in (msg.contents or [])
+        if content.type == "function_approval_response" and content.function_call is not None
+    ] == ["c1", "c2"]
 
 
 def test_deduplicate_tool_results():
