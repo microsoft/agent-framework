@@ -682,8 +682,9 @@ class TestBuildSkillsInstructionPrompt:
         ]
         prompt = SkillsProvider._create_instructions(None, skills)
         assert prompt is not None
-        assert "JSON object, including for inline scripts" in prompt
-        assert "file-based scripts that document CLI-style positional arguments" in prompt
+        script_guidance = [line for line in prompt.splitlines() if "script" in line]
+        assert any("JSON object" in line and "inline scripts" in line for line in script_guidance)
+        assert any("array of strings" in line and "file-based scripts" in line for line in script_guidance)
         assert "not as top-level tool parameters" in prompt
 
     def test_skills_sorted_alphabetically(self) -> None:

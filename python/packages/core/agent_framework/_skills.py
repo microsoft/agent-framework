@@ -1818,7 +1818,7 @@ SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
     "- Pass named script arguments inside `args` as a JSON object, including for inline scripts"
     ' (e.g. `args: {"length": 24}`), not as top-level tool parameters.\n'
     "- For file-based scripts that document CLI-style positional arguments, pass `args` as an array of strings"
-    ' (e.g. `args: ["input.docx", "--output", "result.idx"]).\n'
+    ' (e.g. `args: ["input.docx", "--output", "result.idx"]`).\n'
 )
 
 # endregion
