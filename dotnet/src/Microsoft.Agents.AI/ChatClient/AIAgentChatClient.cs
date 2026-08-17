@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// This adapter is the inverse of <see cref="ChatClientAgent"/>: rather than building an agent on top of a chat client,
 /// it exposes an existing agent to any component that consumes the <see cref="IChatClient"/> abstraction, such as
-/// <see cref="ChatClientBuilder"/> pipelines or <see cref="Microsoft.Extensions.AI.ChatClientExtensions"/> helpers.
+/// <see cref="ChatClientBuilder"/> pipelines or <see cref="ChatClientExtensions"/> helpers.
 /// </para>
 /// <para>
 /// The adapter does not own the lifetime of the wrapped agent or session, so <see cref="Dispose"/> is a no-op.
