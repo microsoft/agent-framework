@@ -402,6 +402,38 @@ def _parse_headers(header_str: str) -> dict[str, str]:
     return headers
 
 
+def _grpc_compression(compression: str | None) -> Any:
+    """Map a compression name ("gzip"/"deflate"/"none") to the grpc.Compression enum."""
+    if compression is None:
+        return None
+    import grpc
+
+    try:
+        return {
+            "gzip": grpc.Compression.Gzip,
+            "deflate": grpc.Compression.Deflate,
+            "none": grpc.Compression.NoCompression,
+        }[compression.lower()]
+    except KeyError as exc:
+        raise ValueError(f"Invalid compression '{compression}'. Expected 'gzip', 'deflate' or 'none'.") from exc
+
+
+def _http_compression(compression: str | None) -> Any:
+    """Map a compression name ("gzip"/"deflate"/"none") to the HTTP exporter's Compression enum."""
+    if compression is None:
+        return None
+    from opentelemetry.exporter.otlp.proto.http import Compression
+
+    try:
+        return {
+            "gzip": Compression.Gzip,
+            "deflate": Compression.Deflate,
+            "none": Compression.NoCompression,
+        }[compression.lower()]
+    except KeyError as exc:
+        raise ValueError(f"Invalid compression '{compression}'. Expected 'gzip', 'deflate' or 'none'.") from exc
+
+
 def _create_otlp_exporters(
     endpoint: str | None = None,
     protocol: str = "grpc",
@@ -412,6 +444,8 @@ def _create_otlp_exporters(
     metrics_headers: dict[str, str] | None = None,
     logs_endpoint: str | None = None,
     logs_headers: dict[str, str] | None = None,
+    timeout: float | None = None,
+    compression: str | None = None,
 ) -> list[LogRecordExporter | SpanExporter | MetricExporter]:
     """Create OTLP exporters for a given endpoint and protocol.
 
@@ -425,12 +459,18 @@ def _create_otlp_exporters(
         metrics_headers: Optional specific headers for metrics. Overrides headers parameter.
         logs_endpoint: Optional specific endpoint for logs. Overrides endpoint parameter.
         logs_headers: Optional specific headers for logs. Overrides headers parameter.
+        timeout: Optional export timeout in seconds, applied to all exporters. If None, each
+            exporter falls back to reading OTEL_EXPORTER_OTLP_TIMEOUT itself. Default is None.
+        compression: Optional compression ("gzip", "deflate" or "none"), applied to all
+            exporters. If None, each exporter falls back to reading
+            OTEL_EXPORTER_OTLP_COMPRESSION itself. Default is None.
 
     Returns:
         List containing OTLPLogExporter, OTLPSpanExporter, and OTLPMetricExporter.
 
     Raises:
         ImportError: If the required OTLP exporter package is not installed.
+        ValueError: If `compression` is not a recognized value.
     """
     # Determine actual endpoints and headers to use
     actual_traces_endpoint = traces_endpoint or endpoint
@@ -463,11 +503,15 @@ def _create_otlp_exporters(
                 "Install it with: pip install opentelemetry-exporter-otlp-proto-grpc"
             ) from exc
 
+        grpc_compression = _grpc_compression(compression)
+
         if actual_logs_endpoint:
             exporters.append(
                 GRPCLogExporter(
                     endpoint=actual_logs_endpoint,
                     headers=actual_logs_headers if actual_logs_headers else None,
+                    timeout=timeout,
+                    compression=grpc_compression,
                 )
             )
         if actual_traces_endpoint:
@@ -475,6 +519,8 @@ def _create_otlp_exporters(
                 GRPCSpanExporter(
                     endpoint=actual_traces_endpoint,
                     headers=actual_traces_headers if actual_traces_headers else None,
+                    timeout=timeout,
+                    compression=grpc_compression,
                 )
             )
         if actual_metrics_endpoint:
@@ -482,6 +528,8 @@ def _create_otlp_exporters(
                 GRPCMetricExporter(
                     endpoint=actual_metrics_endpoint,
                     headers=actual_metrics_headers if actual_metrics_headers else None,
+                    timeout=timeout,
+                    compression=grpc_compression,
                 )
             )
 
@@ -503,11 +551,15 @@ def _create_otlp_exporters(
                 "Install it with: pip install opentelemetry-exporter-otlp-proto-http"
             ) from exc
 
+        http_compression = _http_compression(compression)
+
         if actual_logs_endpoint:
             exporters.append(
                 HTTPLogExporter(
                     endpoint=actual_logs_endpoint,
                     headers=actual_logs_headers if actual_logs_headers else None,
+                    timeout=timeout,
+                    compression=http_compression,
                 )
             )
         if actual_traces_endpoint:
@@ -515,6 +567,8 @@ def _create_otlp_exporters(
                 HTTPSpanExporter(
                     endpoint=actual_traces_endpoint,
                     headers=actual_traces_headers if actual_traces_headers else None,
+                    timeout=timeout,
+                    compression=http_compression,
                 )
             )
         if actual_metrics_endpoint:
@@ -522,6 +576,8 @@ def _create_otlp_exporters(
                 HTTPMetricExporter(
                     endpoint=actual_metrics_endpoint,
                     headers=actual_metrics_headers if actual_metrics_headers else None,
+                    timeout=timeout,
+                    compression=http_compression,
                 )
             )
 
@@ -531,11 +587,20 @@ def _create_otlp_exporters(
 def _get_exporters_from_env(
     env_file_path: str | None = None,
     env_file_encoding: str | None = None,
+    endpoint: str | None = None,
+    protocol: str | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float | None = None,
+    compression: str | None = None,
 ) -> list[LogRecordExporter | SpanExporter | MetricExporter]:
     """Parse OpenTelemetry environment variables and create exporters.
 
     This function reads standard OpenTelemetry environment variables to configure
-    OTLP exporters for traces, logs, and metrics.
+    OTLP exporters for traces, logs, and metrics. The ``endpoint``, ``protocol``,
+    ``headers``, ``timeout`` and ``compression`` parameters let callers override the
+    corresponding *base* (all-signal) environment variable programmatically; signal-specific
+    environment variables (e.g. ``OTEL_EXPORTER_OTLP_TRACES_ENDPOINT``) still take precedence
+    over both, matching the normal OTel env var precedence rules.
 
     The following environment variables are supported:
     - OTEL_EXPORTER_OTLP_ENDPOINT: Base endpoint for all signals
@@ -547,15 +612,35 @@ def _get_exporters_from_env(
     - OTEL_EXPORTER_OTLP_TRACES_HEADERS: Headers specifically for traces
     - OTEL_EXPORTER_OTLP_METRICS_HEADERS: Headers specifically for metrics
     - OTEL_EXPORTER_OTLP_LOGS_HEADERS: Headers specifically for logs
+    - OTEL_EXPORTER_OTLP_TIMEOUT: Export timeout in seconds, for all signals
+    - OTEL_EXPORTER_OTLP_COMPRESSION: Compression to use ("gzip" or "deflate"), for all signals
+
+    Note:
+        Signal-specific timeout/compression env vars, and mTLS/certificate/insecure-channel
+        options, are not resolved here. They are still honored because the underlying
+        ``OTLPSpanExporter``/``OTLPLogExporter``/``OTLPMetricExporter`` constructors read
+        those environment variables themselves whenever the corresponding constructor
+        argument is left unset. Callers needing programmatic control over those options
+        can construct exporters directly and pass them via ``configure_otel_providers(exporters=...)``.
 
     Args:
         env_file_path: Path to a .env file to load environment variables from.
             Default is None, which does not load a .env file.
         env_file_encoding: Encoding to use when reading the .env file.
             Default is None, which uses the system default encoding.
+        endpoint: Override the base OTLP endpoint. Takes precedence over
+            OTEL_EXPORTER_OTLP_ENDPOINT if set. Default is None.
+        protocol: Override the OTLP protocol ("grpc" or "http/protobuf"). Takes
+            precedence over OTEL_EXPORTER_OTLP_PROTOCOL if set. Default is None.
+        headers: Override the base OTLP headers. Merged with (and taking precedence
+            over) OTEL_EXPORTER_OTLP_HEADERS if set. Default is None.
+        timeout: Override the base OTLP export timeout, in seconds. Takes precedence
+            over OTEL_EXPORTER_OTLP_TIMEOUT if set. Default is None.
+        compression: Override the base OTLP compression ("gzip" or "deflate"). Takes
+            precedence over OTEL_EXPORTER_OTLP_COMPRESSION if set. Default is None.
 
     Returns:
-        List of configured exporters (empty if no relevant env vars are set).
+        List of configured exporters (empty if no relevant env vars/parameters are set).
 
     References:
         - https://opentelemetry.io/docs/languages/sdk-configuration/general/
@@ -565,16 +650,16 @@ def _get_exporters_from_env(
     if env_file_path is not None:
         load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
-    # Get base endpoint
-    base_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    # Get base endpoint (explicit parameter takes precedence over the env var)
+    base_endpoint = endpoint if endpoint is not None else os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
-    # Get signal-specific endpoints (these override base endpoint and are used verbatim)
+    # Get signal-specific endpoints (these override base endpoint/param and are used verbatim)
     traces_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
     metrics_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
     logs_endpoint_specific = os.getenv("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
 
-    # Get protocol (default is grpc)
-    protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").lower()
+    # Get protocol (explicit parameter takes precedence over the env var; default is grpc)
+    resolved_protocol = (protocol if protocol is not None else os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")).lower()
 
     # Per the OTel spec, OTEL_EXPORTER_OTLP_ENDPOINT is a *base* URL for HTTP — the SDK
     # auto-appends /v1/{traces,metrics,logs} when it reads the env var directly. The
@@ -586,7 +671,7 @@ def _get_exporters_from_env(
     traces_endpoint: str | None
     metrics_endpoint: str | None
     logs_endpoint: str | None
-    if protocol in ("http/protobuf", "http") and base_endpoint:
+    if resolved_protocol in ("http/protobuf", "http") and base_endpoint:
         base_for_http = base_endpoint.rstrip("/")
         traces_endpoint = traces_endpoint_specific or f"{base_for_http}/v1/traces"
         metrics_endpoint = metrics_endpoint_specific or f"{base_for_http}/v1/metrics"
@@ -596,11 +681,10 @@ def _get_exporters_from_env(
         metrics_endpoint = metrics_endpoint_specific or base_endpoint
         logs_endpoint = logs_endpoint_specific or base_endpoint
 
-    # Get base headers
-    base_headers_str = os.getenv("OTEL_EXPORTER_OTLP_HEADERS", "")
-    base_headers = _parse_headers(base_headers_str)
+    # Get base headers (explicit parameter takes precedence over the env var)
+    base_headers = headers if headers is not None else _parse_headers(os.getenv("OTEL_EXPORTER_OTLP_HEADERS", ""))
 
-    # Get signal-specific headers (these merge with base headers)
+    # Get signal-specific headers (these merge with, and take precedence over, base headers)
     traces_headers_str = os.getenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "")
     metrics_headers_str = os.getenv("OTEL_EXPORTER_OTLP_METRICS_HEADERS", "")
     logs_headers_str = os.getenv("OTEL_EXPORTER_OTLP_LOGS_HEADERS", "")
@@ -609,15 +693,19 @@ def _get_exporters_from_env(
     metrics_headers = {**base_headers, **_parse_headers(metrics_headers_str)}
     logs_headers = {**base_headers, **_parse_headers(logs_headers_str)}
 
-    # Create exporters using helper function
+    # Create exporters using helper function. `timeout`/`compression` are forwarded as-is
+    # (including None) — when None, the underlying OTLP exporter classes resolve them from
+    # OTEL_EXPORTER_OTLP_TIMEOUT / OTEL_EXPORTER_OTLP_COMPRESSION themselves.
     return _create_otlp_exporters(
-        protocol=protocol,
+        protocol=resolved_protocol,
         traces_endpoint=traces_endpoint,
         traces_headers=traces_headers if traces_headers else None,
         metrics_endpoint=metrics_endpoint,
         metrics_headers=metrics_headers if metrics_headers else None,
         logs_endpoint=logs_endpoint,
         logs_headers=logs_headers if logs_headers else None,
+        timeout=timeout,
+        compression=compression,
     )
 
 
@@ -757,6 +845,29 @@ class ObservabilitySettings:
         vs_code_extension_port: The port the AI Toolkit or Microsoft Foundry VS Code extensions are listening on.
             Default is None.
             Can be set via environment variable VS_CODE_EXTENSION_PORT.
+        service_name: Override the service name reported in telemetry. Default is None, which
+            falls back to the environment variable OTEL_SERVICE_NAME, or "agent_framework".
+        service_version: Override the service version reported in telemetry. Default is None,
+            which falls back to the environment variable OTEL_SERVICE_VERSION, or the installed
+            package version.
+        resource_attributes: Additional OpenTelemetry resource attributes to attach to every
+            span, log and metric. Default is None. These are merged with (and take precedence
+            over) attributes from the environment variable OTEL_RESOURCE_ATTRIBUTES.
+        otlp_endpoint: Override the base OTLP endpoint. Default is None, which falls back to
+            the environment variable OTEL_EXPORTER_OTLP_ENDPOINT. Signal-specific endpoint
+            environment variables (e.g. OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) still take
+            precedence over this, matching standard OTel env var rules.
+        otlp_protocol: Override the OTLP protocol ("grpc" or "http/protobuf"). Default is
+            None, which falls back to the environment variable OTEL_EXPORTER_OTLP_PROTOCOL,
+            or "grpc".
+        otlp_headers: Override the base OTLP headers. Default is None, which falls back to
+            the environment variable OTEL_EXPORTER_OTLP_HEADERS. Signal-specific header
+            environment variables still merge with, and take precedence over, this.
+        otlp_timeout: Override the OTLP export timeout, in seconds. Default is None, which
+            falls back to the environment variable OTEL_EXPORTER_OTLP_TIMEOUT, or 10 seconds.
+        otlp_compression: Override the OTLP compression ("gzip", "deflate" or "none").
+            Default is None, which falls back to the environment variable
+            OTEL_EXPORTER_OTLP_COMPRESSION, or no compression.
 
     Examples:
         .. code-block:: python
@@ -776,6 +887,22 @@ class ObservabilitySettings:
         """Initialize the settings."""
         env_file_path = kwargs.pop("env_file_path", None)
         env_file_encoding = kwargs.pop("env_file_encoding", None)
+        # service_name/service_version/resource_attributes deliberately bypass
+        # `load_settings()`: that helper falls back to a generic `<FIELD_NAME>` env var
+        # (e.g. SERVICE_NAME), which doesn't match the OTel-standard OTEL_SERVICE_NAME /
+        # OTEL_RESOURCE_ATTRIBUTES vars that `create_resource()` already reads. Keeping
+        # them as plain overrides avoids introducing a second, conflicting env var.
+        service_name = kwargs.pop("service_name", None)
+        service_version = kwargs.pop("service_version", None)
+        resource_attributes = kwargs.pop("resource_attributes", None)
+        # Same rationale as above: these mirror OTEL_EXPORTER_OTLP_ENDPOINT / _PROTOCOL /
+        # _HEADERS / _TIMEOUT / _COMPRESSION, which `_get_exporters_from_env()` already
+        # reads directly, so they bypass `load_settings()` too.
+        otlp_endpoint = kwargs.pop("otlp_endpoint", None)
+        otlp_protocol = kwargs.pop("otlp_protocol", None)
+        otlp_headers = kwargs.pop("otlp_headers", None)
+        otlp_timeout = kwargs.pop("otlp_timeout", None)
+        otlp_compression = kwargs.pop("otlp_compression", None)
         data = load_settings(
             _ObservabilitySettingsData,
             env_file_path=env_file_path,
@@ -803,6 +930,14 @@ class ObservabilitySettings:
         self.vs_code_extension_port: int | None = data.get("vs_code_extension_port")
         self.env_file_path = env_file_path
         self.env_file_encoding = env_file_encoding
+        self.service_name: str | None = service_name
+        self.service_version: str | None = service_version
+        self.resource_attributes: dict[str, Any] | None = resource_attributes
+        self.otlp_endpoint: str | None = otlp_endpoint
+        self.otlp_protocol: str | None = otlp_protocol
+        self.otlp_headers: dict[str, str] | None = otlp_headers
+        self.otlp_timeout: float | None = otlp_timeout
+        self.otlp_compression: str | None = otlp_compression
         self._executed_setup = False
 
     @property
@@ -903,11 +1038,17 @@ class ObservabilitySettings:
 
         exporters: list[LogRecordExporter | SpanExporter | MetricExporter] = []
 
-        # 1. Add exporters from standard OTEL environment variables
+        # 1. Add exporters from standard OTEL environment variables, with programmatic
+        #    overrides for endpoint/protocol/headers/timeout/compression taking precedence.
         exporters.extend(
             _get_exporters_from_env(
                 env_file_path=self.env_file_path,
                 env_file_encoding=self.env_file_encoding,
+                endpoint=self.otlp_endpoint,
+                protocol=self.otlp_protocol,
+                headers=self.otlp_headers,
+                timeout=self.otlp_timeout,
+                compression=self.otlp_compression,
             )
         )
 
@@ -971,8 +1112,11 @@ class ObservabilitySettings:
         log_exporters: list[LogRecordExporter] = []
         metric_exporters: list[MetricExporter] = []
         resource = create_resource(
+            service_name=self.service_name,
+            service_version=self.service_version,
             env_file_path=self.env_file_path,
             env_file_encoding=self.env_file_encoding,
+            **(self.resource_attributes or {}),
         )
         for exp in exporters:
             if isinstance(exp, SpanExporter):
@@ -1232,6 +1376,14 @@ def enable_instrumentation(
 
 def configure_otel_providers(
     *,
+    service_name: str | None = None,
+    service_version: str | None = None,
+    resource_attributes: dict[str, Any] | None = None,
+    otlp_endpoint: str | None = None,
+    otlp_protocol: str | None = None,
+    otlp_headers: dict[str, str] | None = None,
+    otlp_timeout: float | None = None,
+    otlp_compression: str | None = None,
     enable_sensitive_data: bool | None = None,
     enable_console_exporters: bool | None = None,
     exporters: list[LogRecordExporter | SpanExporter | MetricExporter] | None = None,
@@ -1270,6 +1422,31 @@ def configure_otel_providers(
         the `create_metric_views()` helper function to get default views.
 
     Keyword Args:
+        service_name: Override the service name reported in telemetry. Overrides the
+            environment variable OTEL_SERVICE_NAME if set. Default is None, which falls
+            back to OTEL_SERVICE_NAME or "agent_framework".
+        service_version: Override the service version reported in telemetry. Overrides
+            the environment variable OTEL_SERVICE_VERSION if set. Default is None, which
+            falls back to OTEL_SERVICE_VERSION or the installed package version.
+        resource_attributes: Additional OpenTelemetry resource attributes (e.g.
+            `deployment_environment`) to attach to every span, log and metric. These are
+            merged with (and take precedence over) attributes from the environment
+            variable OTEL_RESOURCE_ATTRIBUTES. Default is None.
+        otlp_endpoint: Override the base OTLP endpoint used by the environment-variable-driven
+            exporters. Overrides OTEL_EXPORTER_OTLP_ENDPOINT if set. Default is None.
+            Signal-specific endpoint environment variables (e.g.
+            OTEL_EXPORTER_OTLP_TRACES_ENDPOINT) still take precedence over this.
+        otlp_protocol: Override the OTLP protocol ("grpc" or "http/protobuf"). Overrides
+            OTEL_EXPORTER_OTLP_PROTOCOL if set. Default is None, which falls back to "grpc".
+        otlp_headers: Override the base OTLP headers (e.g. for auth tokens). Overrides
+            OTEL_EXPORTER_OTLP_HEADERS if set. Default is None. Signal-specific header
+            environment variables still merge with, and take precedence over, this.
+        otlp_timeout: Override the OTLP export timeout, in seconds. Overrides
+            OTEL_EXPORTER_OTLP_TIMEOUT if set. Default is None, which falls back to 10 seconds.
+        otlp_compression: Override the OTLP compression ("gzip", "deflate" or "none").
+            Overrides OTEL_EXPORTER_OTLP_COMPRESSION if set. Default is None, which falls
+            back to no compression. For mTLS/certificate options or other exporter settings
+            not covered here, construct exporters directly and pass them via `exporters=`.
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
         enable_console_exporters: Enable console exporters for traces, logs, and metrics.
@@ -1301,6 +1478,22 @@ def configure_otel_providers(
             # Enable console output for debugging
             # Set ENABLE_CONSOLE_EXPORTERS=true
             configure_otel_providers()
+
+            # With a custom service name/version and resource attributes, passed
+            # programmatically instead of via OTEL_SERVICE_NAME / OTEL_RESOURCE_ATTRIBUTES
+            configure_otel_providers(
+                service_name="my_service",
+                service_version="1.0.0",
+                resource_attributes={"deployment_environment": "production"},
+            )
+
+            # With a custom OTLP endpoint, headers and compression, passed programmatically
+            # instead of via OTEL_EXPORTER_OTLP_ENDPOINT / _HEADERS / _COMPRESSION
+            configure_otel_providers(
+                otlp_endpoint="https://otel-collector.example.com:4317",
+                otlp_headers={"Authorization": "Bearer <token>"},
+                otlp_compression="gzip",
+            )
 
             # With custom exporters
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -1372,6 +1565,22 @@ def configure_otel_providers(
             settings_kwargs["enable_console_exporters"] = enable_console_exporters
         if vs_code_extension_port is not None:
             settings_kwargs["vs_code_extension_port"] = vs_code_extension_port
+        if service_name is not None:
+            settings_kwargs["service_name"] = service_name
+        if service_version is not None:
+            settings_kwargs["service_version"] = service_version
+        if resource_attributes is not None:
+            settings_kwargs["resource_attributes"] = resource_attributes
+        if otlp_endpoint is not None:
+            settings_kwargs["otlp_endpoint"] = otlp_endpoint
+        if otlp_protocol is not None:
+            settings_kwargs["otlp_protocol"] = otlp_protocol
+        if otlp_headers is not None:
+            settings_kwargs["otlp_headers"] = otlp_headers
+        if otlp_timeout is not None:
+            settings_kwargs["otlp_timeout"] = otlp_timeout
+        if otlp_compression is not None:
+            settings_kwargs["otlp_compression"] = otlp_compression
 
         updated_settings = ObservabilitySettings(**settings_kwargs)
         OBSERVABILITY_SETTINGS.enable_instrumentation = updated_settings.enable_instrumentation
@@ -1380,6 +1589,14 @@ def configure_otel_providers(
         OBSERVABILITY_SETTINGS.vs_code_extension_port = updated_settings.vs_code_extension_port
         OBSERVABILITY_SETTINGS.env_file_path = updated_settings.env_file_path
         OBSERVABILITY_SETTINGS.env_file_encoding = updated_settings.env_file_encoding
+        OBSERVABILITY_SETTINGS.service_name = updated_settings.service_name
+        OBSERVABILITY_SETTINGS.service_version = updated_settings.service_version
+        OBSERVABILITY_SETTINGS.resource_attributes = updated_settings.resource_attributes
+        OBSERVABILITY_SETTINGS.otlp_endpoint = updated_settings.otlp_endpoint
+        OBSERVABILITY_SETTINGS.otlp_protocol = updated_settings.otlp_protocol
+        OBSERVABILITY_SETTINGS.otlp_headers = updated_settings.otlp_headers
+        OBSERVABILITY_SETTINGS.otlp_timeout = updated_settings.otlp_timeout
+        OBSERVABILITY_SETTINGS.otlp_compression = updated_settings.otlp_compression
         OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
     else:
         # Re-read settings from current environment in case env vars were set
@@ -1396,6 +1613,16 @@ def configure_otel_providers(
         OBSERVABILITY_SETTINGS.vs_code_extension_port = (
             vs_code_extension_port if vs_code_extension_port is not None else _read_int_env("VS_CODE_EXTENSION_PORT")
         )
+        # These have no generic env-var fallback here (the OTel exporter/resource
+        # construction code itself resolves the standard OTEL_* env vars when left as None).
+        OBSERVABILITY_SETTINGS.service_name = service_name
+        OBSERVABILITY_SETTINGS.service_version = service_version
+        OBSERVABILITY_SETTINGS.resource_attributes = resource_attributes
+        OBSERVABILITY_SETTINGS.otlp_endpoint = otlp_endpoint
+        OBSERVABILITY_SETTINGS.otlp_protocol = otlp_protocol
+        OBSERVABILITY_SETTINGS.otlp_headers = otlp_headers
+        OBSERVABILITY_SETTINGS.otlp_timeout = otlp_timeout
+        OBSERVABILITY_SETTINGS.otlp_compression = otlp_compression
         OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
 
     OBSERVABILITY_SETTINGS._configure(  # type: ignore[reportPrivateUsage]

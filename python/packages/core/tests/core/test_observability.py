@@ -1138,6 +1138,86 @@ def test_get_exporters_from_env_grpc_base_endpoint_unchanged(monkeypatch):
     assert kwargs["logs_endpoint"] == "http://localhost:4317"
 
 
+def test_get_exporters_from_env_params_override_env(monkeypatch):
+    """endpoint/protocol/headers/timeout/compression params should override the base env vars."""
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://env-endpoint:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "from-env=1")
+    for key in (
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env(
+            endpoint="http://param-endpoint:4317",
+            protocol="http/protobuf",
+            headers={"from-param": "2"},
+            timeout=5.0,
+            compression="gzip",
+        )
+
+    kwargs = create.call_args.kwargs
+    # Param endpoint/protocol win over env, with HTTP path-append applied to the param endpoint
+    assert kwargs["protocol"] == "http/protobuf"
+    assert kwargs["traces_endpoint"] == "http://param-endpoint:4317/v1/traces"
+    # Param headers win over (replace) base env headers
+    assert kwargs["traces_headers"] == {"from-param": "2"}
+    # timeout/compression forwarded as-is
+    assert kwargs["timeout"] == 5.0
+    assert kwargs["compression"] == "gzip"
+
+
+def test_get_exporters_from_env_signal_specific_env_wins_over_param(monkeypatch):
+    """Signal-specific env vars still take precedence over a programmatic base endpoint override."""
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://traces-env:4317")
+    for key in ("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env(endpoint="http://param-endpoint:4317")
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["traces_endpoint"] == "http://traces-env:4317"
+    assert kwargs["metrics_endpoint"] == "http://param-endpoint:4317"
+
+
+def test_configure_otel_providers_otlp_params(monkeypatch):
+    """configure_otel_providers(otlp_endpoint=..., otlp_headers=..., ...) should be forwarded."""
+    from unittest.mock import patch
+
+    from agent_framework import observability
+    from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
+
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    OBSERVABILITY_SETTINGS._executed_setup = False
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        configure_otel_providers(
+            otlp_endpoint="http://custom:4317",
+            otlp_protocol="grpc",
+            otlp_headers={"Authorization": "Bearer token"},
+            otlp_timeout=7.5,
+            otlp_compression="deflate",
+        )
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["traces_endpoint"] == "http://custom:4317"
+    assert kwargs["traces_headers"] == {"Authorization": "Bearer token"}
+    assert kwargs["timeout"] == 7.5
+    assert kwargs["compression"] == "deflate"
+
+
 # region Test create_resource
 
 
@@ -2638,6 +2718,49 @@ def test_observability_settings_configure_already_setup(monkeypatch):
     # Should not re-configure
     settings._configure()
     assert settings.is_setup is True
+
+
+def test_observability_settings_service_name_overrides_env(monkeypatch):
+    """ObservabilitySettings(service_name=...) should be forwarded to create_resource, not just env vars."""
+    from agent_framework import observability
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "env-service")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+
+    settings = ObservabilitySettings(
+        service_name="param-service",
+        service_version="3.2.1",
+        resource_attributes={"deployment_environment": "test"},
+        enable_console_exporters=True,
+    )
+    with patch.object(observability, "create_resource", wraps=observability.create_resource) as create_resource:
+        settings._configure()
+
+    assert create_resource.call_args.kwargs["service_name"] == "param-service"
+    assert create_resource.call_args.kwargs["service_version"] == "3.2.1"
+    assert create_resource.call_args.kwargs["deployment_environment"] == "test"
+
+
+def test_configure_otel_providers_service_name_param(monkeypatch):
+    """configure_otel_providers(service_name=...) should be forwarded to create_resource."""
+    from agent_framework import observability
+    from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
+
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    OBSERVABILITY_SETTINGS._executed_setup = False
+
+    with patch.object(observability, "create_resource", wraps=observability.create_resource) as create_resource:
+        configure_otel_providers(
+            service_name="my-service",
+            service_version="1.2.3",
+            resource_attributes={"deployment_environment": "prod"},
+            enable_console_exporters=True,
+        )
+
+    assert create_resource.call_args.kwargs["service_name"] == "my-service"
+    assert create_resource.call_args.kwargs["service_version"] == "1.2.3"
+    assert create_resource.call_args.kwargs["deployment_environment"] == "prod"
 
 
 # region Test _to_otel_part edge cases
