@@ -1472,13 +1472,13 @@ class FileAccessProvider(ContextProvider):
         .. warning::
             **Security — avoid tool-name collisions.** This rule approves local
             tool calls by tool name only (``file_access_write``,
-            ``file_access_read``, ``file_access_delete``, ``file_access_ls``,
-            ``file_access_grep``, ``file_access_replace``, and
-            ``file_access_replace_lines``). Any other local tool registered under
-            one of these names — for example a tool with a caller-configurable
-            name such as the shell tool — may also be auto-approved, bypassing
-            the human approval boundary. Ensure no other tool collides with these
-            reserved names.
+            ``file_access_read``, ``file_access_read_lines``,
+            ``file_access_delete``, ``file_access_ls``, ``file_access_grep``,
+            ``file_access_replace``, and ``file_access_replace_lines``). Any
+            other local tool registered under one of these names — for example a
+            tool with a caller-configurable name such as the shell tool — may
+            also be auto-approved, bypassing the human approval boundary. Ensure
+            no other tool collides with these reserved names.
 
         Args:
             function_call: The pending ``function_call`` content.
@@ -1538,7 +1538,7 @@ class FileAccessProvider(ContextProvider):
             approval_mode=readonly_approval,
         )
         async def file_access_read_lines(file_name: str, start_line: int, end_line: int | None = None) -> str:
-            """Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Line numbers match file_access_grep and file_access_replace_lines. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line."""  # ruff:ignore[line-too-long]
+            """Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 content = await self.store.read(normalized)
@@ -1642,8 +1642,7 @@ class FileAccessProvider(ContextProvider):
             Leave empty or omit to search all files.
             Returns matching results whose file_name values are paths relative to the store root
             (directly usable with file_access_read), along with snippets and matching lines with line numbers.
-            Each matching line is verbatim, including its own line terminator, so it can be reused as a
-            file_access_replace_lines new_line.
+            Each matching line is verbatim, including its own line terminator.
             The regex_pattern must be 256 characters or fewer.
             """
             glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None
