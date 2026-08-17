@@ -42,6 +42,20 @@ logger = logging.getLogger(__name__)
 DEFAULT_TOOLBOX_SCOPE = "https://ai.azure.com/.default"
 # Default timeout (seconds) for toolbox MCP requests.
 _DEFAULT_TIMEOUT = 120.0
+# Mandatory preview feature flag for Foundry toolbox requests.
+_MANDATORY_TOOLBOX_FEATURE = "Toolboxes=V1Preview"
+
+
+def _build_toolbox_features_header(additional_features: str | None) -> str:
+    """Merge platform-provided features with the mandatory toolbox feature."""
+    if additional_features is None or not additional_features.strip():
+        return _MANDATORY_TOOLBOX_FEATURE
+    if any(
+        feature.strip().casefold() == _MANDATORY_TOOLBOX_FEATURE.casefold()
+        for feature in additional_features.split(",")
+    ):
+        return additional_features
+    return f"{_MANDATORY_TOOLBOX_FEATURE},{additional_features}"
 
 
 def _resolve_toolbox_endpoint() -> str:
@@ -81,7 +95,7 @@ def _toolbox_name_from_endpoint(endpoint: str) -> str:
 
 
 class _ToolboxAuth(httpx.Auth):
-    """Injects a fresh bearer token and the platform call-id on every request.
+    """Injects a fresh bearer token, feature flags, and the platform call-id on every request.
 
     Both the synchronous (``sync_auth_flow``) and asynchronous (``async_auth_flow``)
     httpx auth hooks are implemented, so the same auth works regardless of which
@@ -99,11 +113,13 @@ class _ToolboxAuth(httpx.Auth):
     def __init__(self, credential: AzureCredentialTypes, scope: str) -> None:
         self._credential = credential
         self._scope = scope
+        self._features_header = _build_toolbox_features_header(os.environ.get("FOUNDRY_AGENT_TOOLSET_FEATURES"))
 
     def _apply_headers(self, request: httpx.Request, token: AccessToken) -> None:
         request.headers["Authorization"] = f"Bearer {token.token}"
         for key, value in get_request_context().platform_headers().items():
             request.headers[key] = value
+        request.headers["Foundry-Features"] = self._features_header
 
     def sync_auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         # azure-core credentials cache the token internally and only refresh near
@@ -138,7 +154,8 @@ class FoundryToolbox(MCPStreamableHTTPTool):
     ``MCPStreamableHTTPTool`` by hand it:
 
     - resolves the toolbox endpoint and tool name from the environment when not given,
-    - authenticates every request with a bearer token from ``credential``, and
+    - authenticates every request with a bearer token from ``credential``,
+    - sends the mandatory toolbox preview feature plus platform-provided feature flags, and
     - forwards the platform per-request call-id (``x-agent-foundry-call-id``) so the
       Foundry MCP proxy can resolve the caller context server-side.
 
