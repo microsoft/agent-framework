@@ -167,10 +167,23 @@ Interrupted terminal event shape:
         "responseSchema": {
           "type": "object",
           "properties": {
+            "approved": { "type": "boolean" },
             "accepted": { "type": "boolean" },
-            "arguments": { "type": "object" }
+            "city": { "type": "string" },
+            "editedArgs": {
+              "type": "object",
+              "description": "Full replacement of the tool arguments. Not merged.",
+              "properties": {
+                "city": { "type": "string" }
+              },
+              "required": ["city"],
+              "additionalProperties": false
+            }
           },
-          "required": ["accepted"]
+          "anyOf": [
+            { "required": ["approved"] },
+            { "required": ["accepted"] }
+          ]
         },
         "metadata": {
           "agent_framework": {
@@ -192,6 +205,11 @@ Interrupted terminal event shape:
 
 Resume the paused thread with a canonical `resume` array. Each entry addresses exactly one open interrupt by
 `interruptId`; `status` is `resolved` or `cancelled`; resolved entries carry the approval or workflow response payload.
+Tool approvals use the standard `approved` field and may provide `editedArgs` as a full replacement of the tool
+arguments. For compatibility with existing MAF clients, `accepted` remains an alias for `approved`, and direct
+argument fields remain supported as partial edits. Cancellation is a normal terminal decision: cancelled calls do
+not execute, while resolved siblings in the same complete resume continue normally. The same tool-approval shape and
+resume payloads apply when an agent approval is surfaced through a workflow `request_info` event.
 
 ```json
 {

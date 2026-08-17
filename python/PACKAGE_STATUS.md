@@ -115,7 +115,8 @@ listed below.
 
 - `agent-framework-core`: functional workflow APIs from
   `agent_framework/_workflows/_functional.py`, including `RunContext`, `step`,
-  `FunctionalWorkflow`, `workflow`, and `FunctionalWorkflowAgent`
+  `FunctionalWorkflowDefinition`, `FunctionalWorkflow`, `workflow`, and
+  `FunctionalWorkflowAgent`
 
 #### `HARNESS`
 
