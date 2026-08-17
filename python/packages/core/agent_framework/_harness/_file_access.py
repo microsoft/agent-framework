@@ -1112,7 +1112,10 @@ class FileSystemAgentFileStore(AgentFileStore):
             if not _matches_glob(relative_name, glob_pattern):
                 continue
             try:
-                file_content = entry.read_text(encoding="utf-8")
+                # Decode the bytes rather than using read_text: text mode applies universal
+                # newlines, which would rewrite "\r\n" and a lone "\r" to "\n" and leave grep
+                # describing content that read() -- and therefore replace_lines -- never sees.
+                file_content = entry.read_bytes().decode("utf-8")
             except UnicodeDecodeError:
                 # Skip binary or otherwise non-UTF-8 files so a single
                 # un-decodable entry doesn't abort the whole directory search.

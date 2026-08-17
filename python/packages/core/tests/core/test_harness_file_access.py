@@ -38,6 +38,7 @@ from agent_framework._harness._file_access import (
     _normalize_relative_path,
     _run_search_with_timeout,
     _slice_lines,
+    _split_lines_keepends,
 )
 
 from .conftest import create_junction_or_skip
@@ -354,6 +355,44 @@ async def test_filesystem_store_search_matches_lines_and_filters_globs(tmp_path:
 
     results_all = await store.search("", "error")
     assert {result.file_name for result in results_all} == {"a.md", "b.txt"}
+
+
+async def test_filesystem_store_search_reports_crlf_lines_verbatim(tmp_path: Path) -> None:
+    """A match from a file on disk should carry the terminator the file actually has.
+
+    The store reads search candidates as bytes for this reason: text mode would apply
+    universal newlines and report a CRLF line as if it ended in ``\\n``, so feeding the
+    match back to ``replace_lines`` would rewrite that line's ending.
+    """
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write("notes.md", "alpha\r\nbeta match\r\ngamma\r\n")
+
+    results = await store.search("", "match")
+
+    assert results[0].matching_lines == [FileSearchMatch(line_number=2, line="beta match\r\n")]
+
+
+async def test_filesystem_store_search_line_numbers_address_the_same_lines_as_the_editor(
+    tmp_path: Path,
+) -> None:
+    """Grep's line numbers must index the same lines ``read_lines`` and ``replace_lines`` do.
+
+    Both editors split what ``read`` returns, so any newline translation on the search path
+    would renumber the file underneath them — on a lone-``\\r`` file most of all, where
+    translation turns one line into three.
+    """
+    store = FileSystemAgentFileStore(tmp_path)
+    for content in ("alpha\r\nbeta match\r\ngamma\r\n", "alpha\rbeta match\rgamma", "alpha\nbeta match\ngamma\n"):
+        await store.write("notes.md", content)
+
+        results = await store.search("", "match")
+        line_number = results[0].matching_lines[0].line_number
+        raw = await store.read("notes.md")
+        assert raw is not None
+
+        # The number is in range for the editor, and addresses the very line grep reported.
+        assert _slice_lines(raw, line_number, line_number) == [results[0].matching_lines[0].line]
+        assert _split_lines_keepends(raw)[line_number - 1] == results[0].matching_lines[0].line
 
 
 async def test_filesystem_store_search_is_recursive_with_root_relative_names(tmp_path: Path) -> None:
