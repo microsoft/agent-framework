@@ -32,6 +32,7 @@ from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature
 from agent_framework._mcp import (
     MCPTool,
     _build_prefixed_mcp_name,
+    _describe_error,
     _get_input_model_from_mcp_prompt,
     _normalize_additional_tool_argument_names,
     _normalize_mcp_name,
@@ -3734,6 +3735,58 @@ async def test_connect_cancelled_error_during_session_creation_includes_exceptio
 
         assert "Failed to create MCP session" in str(exc_info.value)
         assert "cancel scope detail" in str(exc_info.value)
+
+
+# Tests for _describe_error helper (cancel-scope / exception-group unmasking)
+
+
+def test_describe_error_keeps_plain_exception_message():
+    assert _describe_error(RuntimeError("boom")) == "boom"
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup is Python >= 3.11")
+def test_describe_error_unwraps_single_member_exception_group():
+    real = RuntimeError("401 Client Error: Unauthorized")
+    group = ExceptionGroup("unhandled errors in a TaskGroup", [real])  # noqa: F821 -- gated to 3.11+ by the skipif above
+    assert _describe_error(group) == "401 Client Error: Unauthorized"
+
+
+def test_describe_error_unmasks_cancel_scope_via_context():
+    real = RuntimeError("401 Client Error: Unauthorized")
+    masked = asyncio.CancelledError("Cancelled via cancel scope")
+    masked.__context__ = real
+    assert _describe_error(masked) == "401 Client Error: Unauthorized"
+
+
+def test_describe_error_keeps_bare_cancellation():
+    assert _describe_error(asyncio.CancelledError("Cancelled via cancel scope")) == "Cancelled via cancel scope"
+
+
+async def test_connect_cancelled_error_unmasks_inner_auth_failure():
+    """A 401 swallowed by the MCP client's cancel scope must be named in the ToolException."""
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
+
+    real = RuntimeError("401 Client Error: Unauthorized")
+    masked = asyncio.CancelledError("Cancelled via cancel scope")
+    masked.__context__ = real
+
+    with patch("mcp.client.session.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__ = AsyncMock(side_effect=masked)
+        mock_session_class.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with pytest.raises(ToolException) as exc_info:
+            await tool.connect()
+
+        message = str(exc_info.value)
+        assert "Failed to create MCP session" in message
+        assert "401 Client Error: Unauthorized" in message
+        assert "Cancelled via cancel scope" not in message
 
 
 async def test_connect_cancelled_error_during_session_creation_logs_with_exc_info():

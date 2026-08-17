@@ -418,6 +418,31 @@ def _should_propagate_cancelled_error(ex: BaseException) -> bool:
     return task is not None and task.cancelling() > 0
 
 
+def _describe_error(ex: BaseException) -> str:
+    """Return the most specific message in *ex*'s chain, unmasking cancel scopes.
+
+    anyio cancel scopes and task groups surface internal failures as a bare
+    ``CancelledError`` ("Cancelled via cancel scope ...") or a single-member
+    ``ExceptionGroup``; the real error (e.g. an HTTP 401 from the MCP server)
+    sits in ``__cause__``/``__context__`` or the group's single leaf. Follow
+    those links so the reported message names the actual failure. A genuine
+    bare cancellation keeps its own message.
+    """
+    current = ex
+    for _ in range(10):  # pathological chains only; normally 0-2 hops
+        inner = getattr(current, "exceptions", None)  # ExceptionGroup leaf
+        if inner is not None and len(inner) == 1:
+            current = inner[0]
+            continue
+        cause = current.__cause__ or current.__context__
+        if cause is None or cause is current:
+            break
+        if isinstance(current, asyncio.CancelledError) and isinstance(cause, asyncio.CancelledError):
+            break  # cancel-of-cancel carries no information
+        current = cause
+    return str(current) or repr(current)
+
+
 # region: MCP Plugin
 
 
@@ -1336,9 +1361,9 @@ class MCPTool:
                     raise
                 command = getattr(self, "command", None)
                 if command:
-                    error_msg = f"Failed to start MCP server '{command}': {ex}"
+                    error_msg = f"Failed to start MCP server '{command}': {_describe_error(ex)}"
                 else:
-                    error_msg = f"Failed to connect to MCP server: {ex}"
+                    error_msg = f"Failed to connect to MCP server: {_describe_error(ex)}"
                 # CancelledError is a BaseException (not Exception) on Python >= 3.8, so
                 # inner_exception=None and ToolException.__init__ won't log exc_info.
                 if isinstance(ex, asyncio.CancelledError):
@@ -1376,7 +1401,7 @@ class MCPTool:
             except (Exception, asyncio.CancelledError) as ex:
                 if await self._close_and_check_cancelled(ex):
                     raise
-                session_error_msg = f"Failed to create MCP session: {ex}"
+                session_error_msg = f"Failed to create MCP session: {_describe_error(ex)}"
                 if isinstance(ex, asyncio.CancelledError):
                     logger.debug(session_error_msg, exc_info=True)
                 raise ToolException(
@@ -1396,9 +1421,9 @@ class MCPTool:
                 if command:
                     args_str = " ".join(getattr(self, "args", []))
                     full_command = f"{command} {args_str}".strip()
-                    error_msg = f"MCP server '{full_command}' failed to initialize: {ex}"
+                    error_msg = f"MCP server '{full_command}' failed to initialize: {_describe_error(ex)}"
                 else:
-                    error_msg = f"MCP server failed to initialize: {ex}"
+                    error_msg = f"MCP server failed to initialize: {_describe_error(ex)}"
                 if isinstance(ex, asyncio.CancelledError):
                     logger.debug(error_msg, exc_info=True)
                 raise ToolException(error_msg, inner_exception=ex if isinstance(ex, Exception) else None) from ex
