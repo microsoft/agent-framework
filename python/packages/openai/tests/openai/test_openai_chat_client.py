@@ -791,6 +791,80 @@ async def test_served_model_header_propagated_to_streaming_updates() -> None:
         assert update.model == "gpt-4o-2024-08-06"
 
 
+class _FakeInstrumentedStream:
+    """A raw streaming response as replaced by a telemetry instrumentor.
+
+    Stands in for the ``AsyncStreamWrapper`` installed when
+    ``AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING`` is enabled: the object *is* the event
+    stream and deliberately exposes neither ``parse`` nor ``headers``.
+    """
+
+    def __init__(self, events: Sequence[object]) -> None:
+        self._events = list(events)
+        self._iterator: Iterator[object] = iter(())
+
+    def __aiter__(self) -> "_FakeInstrumentedStream":
+        self._iterator = iter(self._events)
+        return self
+
+    async def __anext__(self) -> object:
+        try:
+            return next(self._iterator)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+
+async def test_streaming_survives_instrumented_response_without_parse() -> None:
+    """Streaming should work when tracing replaces the raw response with a bare stream.
+
+    Regression test for #7461: the client read ``.headers`` defensively but called
+    ``.parse()`` unconditionally, so enabling Azure GenAI tracing raised
+    ``AttributeError: 'AsyncStreamWrapper' object has no attribute 'parse'`` and every
+    streaming request failed.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    events = [
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=1,
+            logprobs=[],
+            delta="Hello",
+        ),
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=2,
+            logprobs=[],
+            delta=" world",
+        ),
+    ]
+
+    instrumented = _FakeInstrumentedStream(events)
+    assert not hasattr(instrumented, "parse")
+    assert not hasattr(instrumented, "headers")
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses.with_raw_response, "create", new=AsyncMock(return_value=instrumented)),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = _as_chat_response_stream(
+            client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        )
+        updates = [update async for update in stream]
+
+    assert "".join(update.text or "" for update in updates) == "Hello world"
+    # No served-model header is available on an instrumented stream, so updates keep
+    # the deployment alias rather than failing.
+    assert all(update.model == "test-model" for update in updates)
+
+
 async def test_served_model_header_aggregates_into_final_streaming_response() -> None:
     """Aggregating updates via to_chat_response() should preserve the served-model value."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

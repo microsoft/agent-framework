@@ -7,6 +7,7 @@ import logging
 import shlex
 import sys
 from collections.abc import (
+    AsyncGenerator,
     AsyncIterable,
     Awaitable,
     Callable,
@@ -14,6 +15,7 @@ from collections.abc import (
     MutableMapping,
     Sequence,
 )
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from itertools import chain
 from typing import (
@@ -293,6 +295,35 @@ OpenAIChatOptionsT = TypeVar(
 
 
 # region Helpers
+
+
+@asynccontextmanager
+async def _open_event_stream(raw_response: Any) -> AsyncGenerator[Any]:
+    """Yield the event stream for a raw streaming response.
+
+    Normally ``raw_response`` is the SDK's raw-response wrapper, whose ``.parse()``
+    returns the event stream as an async context manager so the underlying socket is
+    closed deterministically.
+
+    Telemetry instrumentors replace that wrapper with an object that *is* the event
+    stream and exposes neither ``.parse()`` nor ``.headers`` -- for example the
+    ``AsyncStreamWrapper`` installed when ``AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING``
+    is enabled. ``.headers`` is already read defensively at the call sites, so read
+    ``.parse`` defensively too and iterate such an object directly, letting the
+    instrumentor own the stream's lifetime.
+
+    Args:
+        raw_response: The object returned by a ``with_raw_response`` streaming call.
+
+    Yields:
+        The event stream to iterate.
+    """
+    parse = getattr(raw_response, "parse", None)
+    if parse is None:
+        yield raw_response
+        return
+    async with parse() as stream:
+        yield stream
 
 
 def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> list[dict[str, Any]]:
@@ -694,7 +725,7 @@ class RawOpenAIChatClient(
                         # proxy ``.headers``. Degrade gracefully so the served-model surfacing is
                         # best-effort instead of crashing the whole call.
                         served_model = self._extract_served_model(getattr(raw_stream_response, "headers", None))
-                        async with raw_stream_response.parse() as stream_response:
+                        async with _open_event_stream(raw_stream_response) as stream_response:
                             async for chunk in stream_response:
                                 update = self._parse_chunk_from_openai(
                                     chunk,
@@ -738,7 +769,7 @@ class RawOpenAIChatClient(
                             )
                             # See note above on ``raw_stream_response.headers``.
                             served_model = self._extract_served_model(getattr(raw_create_response, "headers", None))
-                            async with raw_create_response.parse() as stream_response:
+                            async with _open_event_stream(raw_create_response) as stream_response:
                                 async for chunk in stream_response:
                                     update = self._parse_chunk_from_openai(
                                         chunk,
