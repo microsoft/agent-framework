@@ -21,7 +21,7 @@ public sealed class FeatureUsageActivationTests : IDisposable
     {
         // Arrange
         var agent = new CopilotStudioAgent(CreateTestCopilotClient(), NullLoggerFactory.Instance);
-        AgentSession session = await CopilotStudioAgent.CreateSessionAsync("conversation-id");
+        AgentSession session = await agent.CreateSessionAsync("conversation-id");
 
         // Act
         _ = await Assert.ThrowsAnyAsync<Exception>(() => agent.RunAsync("hello", session));
@@ -35,7 +35,7 @@ public sealed class FeatureUsageActivationTests : IDisposable
     {
         // Arrange
         var agent = new CopilotStudioAgent(CreateTestCopilotClient(), NullLoggerFactory.Instance);
-        AgentSession session = await CopilotStudioAgent.CreateSessionAsync("conversation-id");
+        AgentSession session = await agent.CreateSessionAsync("conversation-id");
 
         // Act
         IAsyncEnumerable<AgentResponseUpdate> stream = agent.RunStreamingAsync("hello", session);

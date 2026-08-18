@@ -51,7 +51,7 @@ public class CopilotStudioAgent : AIAgent
     /// </summary>
     /// <param name="conversationId">The conversation id to continue.</param>
     /// <returns>A new <see cref="AgentSession"/> instance.</returns>
-    public static ValueTask<AgentSession> CreateSessionAsync(string conversationId)
+    public ValueTask<AgentSession> CreateSessionAsync(string conversationId)
         => new(new CopilotStudioAgentSession() { ConversationId = conversationId });
 
     /// <inheritdoc/>

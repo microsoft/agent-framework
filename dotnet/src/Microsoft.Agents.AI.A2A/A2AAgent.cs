@@ -79,7 +79,7 @@ public sealed class A2AAgent : AIAgent
     /// </summary>
     /// <param name="contextId">The context id to continue.</param>
     /// <returns>A value task representing the asynchronous operation. The task result contains a new <see cref="AgentSession"/> instance.</returns>
-    public static ValueTask<AgentSession> CreateSessionAsync(string contextId)
+    public ValueTask<AgentSession> CreateSessionAsync(string contextId)
         => new(new A2AAgentSession() { ContextId = Throw.IfNullOrWhitespace(contextId) });
 
     /// <summary>
@@ -88,7 +88,7 @@ public sealed class A2AAgent : AIAgent
     /// <param name="contextId">The context id to continue.</param>
     /// <param name="taskId">The task id to resume from.</param>
     /// <returns>A value task representing the asynchronous operation. The task result contains a new <see cref="AgentSession"/> instance.</returns>
-    public static ValueTask<AgentSession> CreateSessionAsync(string contextId, string taskId)
+    public ValueTask<AgentSession> CreateSessionAsync(string contextId, string taskId)
         => new(new A2AAgentSession() { ContextId = Throw.IfNullOrWhitespace(contextId), TaskId = Throw.IfNullOrWhitespace(taskId) });
 
     /// <inheritdoc/>

@@ -76,10 +76,12 @@ public sealed class GitHubCopilotAgentTests
     public async Task CreateSessionAsync_WithSessionId_ReturnsSessionWithSessionIdAsync()
     {
         // Arrange
+        CopilotClient copilotClient = new(new CopilotClientOptions());
+        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
         const string TestSessionId = "test-session-id";
 
         // Act
-        var session = await GitHubCopilotAgent.CreateSessionAsync(TestSessionId);
+        var session = await agent.CreateSessionAsync(TestSessionId);
 
         // Assert
         Assert.NotNull(session);
