@@ -2045,3 +2045,39 @@ def test_parse_multimodal_media_part_unknown_source_value_fallback():
     )
     assert result is not None
     assert "aGVsbG8=" in result.uri  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+
+
+def test_parse_multimodal_media_part_url_value_field():
+    """Source with type='url' reads the URL from the 'value' field per AG-UI spec."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    result = _parse_multimodal_media_part(
+        {
+            "type": "document",
+            "source": {
+                "type": "url",
+                "value": "https://example.com/files/document.pdf",
+                "mime_type": "application/pdf",
+            },
+        }
+    )
+    assert result is not None
+    assert result.uri == "https://example.com/files/document.pdf"
+    assert result.media_type == "application/pdf"
+
+
+def test_parse_multimodal_media_part_url_field_backward_compat():
+    """Source with type='url' still supports the non-spec 'url' and 'uri' fields."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    from_url = _parse_multimodal_media_part(
+        {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}}
+    )
+    assert from_url is not None
+    assert from_url.uri == "https://example.com/a.png"
+
+    from_uri = _parse_multimodal_media_part(
+        {"type": "image", "source": {"type": "uri", "uri": "https://example.com/b.png"}}
+    )
+    assert from_uri is not None
+    assert from_uri.uri == "https://example.com/b.png"

@@ -1015,6 +1015,66 @@ class TestStreaming:
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
 
+    @pytest.mark.parametrize(("arguments", "expected_count"), [(None, 1), ("", 2)])
+    async def test_declaration_only_metadata_replay_requires_none_arguments(
+        self, arguments: str | None, expected_count: int
+    ) -> None:
+        metadata = Content.from_function_call("call_1", "search", arguments=arguments)
+        metadata.id = "call_1"
+        metadata.user_input_request = True
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "search", arguments='{"q": "hello"}')],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(contents=[Content.from_text("Waiting for the result")], role="assistant"),
+                AgentResponseUpdate(contents=[metadata], role="assistant"),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        function_items = [
+            event
+            for event in events
+            if event["event"] == "response.output_item.added" and event["data"]["item"]["type"] == "function_call"
+        ]
+        assert len(function_items) == expected_count
+
+    async def test_function_call_id_can_be_reused_after_terminal_result(self) -> None:
+        reused_call = Content.from_function_call("call_1", "search", arguments=None)
+        reused_call.id = "call_1"
+        reused_call.user_input_request = True
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "search", arguments='{"q": "first"}')],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_1", result="first result")],
+                    role="tool",
+                ),
+                AgentResponseUpdate(contents=[reused_call], role="assistant"),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        function_items = [
+            event
+            for event in events
+            if event["event"] == "response.output_item.added" and event["data"]["item"]["type"] == "function_call"
+        ]
+        assert [event["data"]["item"]["call_id"] for event in function_items] == ["call_1", "call_1"]
+
     async def test_function_call_streaming_serializes_dataclass_arguments(self) -> None:
         @dataclass
         class HandoffLikeRequest:
@@ -3541,6 +3601,7 @@ class TestCheckpointContextValidation:
 def _make_consent_error(
     url: str = "https://consent.example.com/auth",
     name: str = "Foundry Toolbox",
+    source_type: str = "mcp",
 ) -> Exception:
     """Build an exception wrapping a Foundry MCP gateway consent error.
 
@@ -3560,7 +3621,7 @@ def _make_consent_error(
         "errors": [
             {
                 "name": name,
-                "type": "mcp",
+                "type": source_type,
                 "error": {
                     "code": "CONSENT_REQUIRED",
                     "message": url,
@@ -3577,6 +3638,16 @@ class TestConsentUrlFromError:
     def test_returns_consent_url_when_inner_arg_is_consent_mcp_error(self) -> None:
         exc = _make_consent_error("https://example.com/consent", name="my-tool")
         assert consent_url_from_error(exc) == [ConsentError(name="my-tool", consent_url="https://example.com/consent")]
+
+    def test_returns_consent_url_for_a2a_preview_source(self) -> None:
+        exc = _make_consent_error(
+            "https://example.com/a2a-consent",
+            name="work-iq",
+            source_type="a2a_preview",
+        )
+        assert consent_url_from_error(exc) == [
+            ConsentError(name="work-iq", consent_url="https://example.com/a2a-consent")
+        ]
 
     def test_returns_none_when_no_mcp_error_in_args(self) -> None:
         assert consent_url_from_error(Exception("boom")) is None
