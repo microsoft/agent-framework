@@ -2,10 +2,8 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using AgentHooks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.AgentHooks;
@@ -14,7 +12,6 @@ namespace Microsoft.Agents.AI.AgentHooks;
 /// Options controlling the AGENT-HOOKS-0.1 enforcement installed by
 /// <see cref="AgentHooksChatClientExtensions.AsAIAgentWithAgentHooks(IChatClient, AgentHooksOptions, ChatClientAgentOptions?, IServiceProvider?)"/>.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentHooksOptions
 {
     private readonly List<KeyValuePair<string?, IInterceptor>> _interceptors = [];

@@ -6,18 +6,18 @@
     <!-- The AGENT-HOOKS wire projection serializes arbitrary tool arguments/results via
          reflection-based System.Text.Json, which is incompatible with trimming/AOT. -->
     <IsAotCompatible>false</IsAotCompatible>
-    <!-- This package's whole surface is experimental (MAAI001) and consumes experimental framework APIs. -->
+    <!-- This package consumes experimental framework APIs (its own maturity is carried
+         by the alpha version suffix, per repo convention for pre-release packages). -->
     <NoWarn>$(NoWarn);MEAI001;MAAI001</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
-    <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
   </PropertyGroup>
 
   <PropertyGroup>
     <!-- Ships as alpha: the package's maturity follows its ResponsibleAI.AgentHooks
-         dependency (alpha), and the whole surface is [Experimental]. -->
+         dependency (alpha). -->
     <VersionSuffix>alpha</VersionSuffix>
   </PropertyGroup>
 
@@ -28,14 +28,15 @@
     <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <PackageReference Include="ResponsibleAI.AgentHooks" />
   </ItemGroup>
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft Agent Framework - agent-hooks enforcement</Title>
-    <Description>AGENT-HOOKS-0.1 interception-contract enforcement for Microsoft Agent Framework agents: fail-closed policy interception across the agent, model-call and tool-call seams, with transform write-back, buffered streaming and verdict-gated history persistence.</Description>
-    <PackageTags>AI, Artificial Intelligence, Agent, SDK, Framework, agent-hooks, Guardrails, Policy, Interception</PackageTags>
+    <Title>Microsoft Agent Framework - Responsible AI Agent-Hooks Protocol Support</Title>
+    <Description>Microsoft Agent Framework support for the Agent-Hooks interception protocol (AGENT-HOOKS-0.1, maintained by the Responsible AI project at github.com/responsibleai/agent-hooks): fail-closed policy interception across the agent, model-call and tool-call seams, with transform write-back, buffered streaming and verdict-gated history persistence.</Description>
+    <PackageTags>AI, Artificial Intelligence, Agent, SDK, Framework, Agent-Hooks, Responsible AI, Guardrails, Policy, Interception</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
