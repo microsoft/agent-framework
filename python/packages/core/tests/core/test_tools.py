@@ -676,8 +676,9 @@ async def test_tool_invoke_telemetry_omits_tool_call_attrs_under_stable_semconv(
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
-    assert OtelAttr.TOOL_ARGUMENTS not in span.attributes  # type: ignore[operator]
-    assert OtelAttr.TOOL_RESULT not in span.attributes  # type: ignore[operator]
+    assert span.attributes is not None
+    assert OtelAttr.TOOL_ARGUMENTS not in span.attributes
+    assert OtelAttr.TOOL_RESULT not in span.attributes
 
 
 async def test_tool_invoke_rejects_unexpected_runtime_kwargs() -> None:
