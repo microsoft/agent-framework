@@ -91,7 +91,7 @@ logger = logging.getLogger("agent_framework")
 # context variable: options reach only the runs the loop itself drives, so a
 # nested ``agent.run()`` (fresh options, its own session) keeps its own turn,
 # and nothing leaks into the caller's context while a stream is paused.
-_LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"
+_LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"  # nosec B105 - a context-options key, not a credential
 
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
