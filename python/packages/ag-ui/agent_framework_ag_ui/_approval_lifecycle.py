@@ -901,7 +901,7 @@ class ApprovalLifecycle:
             result
             for result in results
             if result.type == "function_approval_response"
-            and result.approved
+            and result.approved is True
             and result.function_call is not None
             and result.function_call.call_id == occurrence.identity.call_id
         ]
