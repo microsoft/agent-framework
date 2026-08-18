@@ -342,6 +342,21 @@ that manually replay messages own the equivalent rule: do not resend an approval
 ### Approval request and resume
 
 - A tool that requires approval does not execute before an approved response.
+- With an `AgentSession`, every surfaced local or hosted approval request is stored as an immutable snapshot in one
+  active model batch. A new surfaced batch replaces an abandoned batch instead of accumulating session state.
+- Approval request IDs use the provider function `call_id`, whose conversation-level uniqueness is required for
+  function-call/result correlation. Duplicate request IDs within one batch are rejected as malformed.
+- An inbound response is honored only when its request id matches the pending server-held snapshot.
+- Approval requests replayed in inbound message history do not create, replace, or resurrect approval authority.
+- The executable call id, tool name, arguments, and local or hosted tool metadata are sourced from the recorded
+  request, never from the response payload.
+- A matched approval response consumes its pending entry once. Unmatched, duplicate, and replayed responses do not
+  reach local execution.
+- Tool lookup uses the recorded name against the current registry. A same-name implementation upgrade is allowed;
+  removing the name prevents local execution.
+- Only the strict boolean `True` grants approval. Missing decisions and non-boolean values are rejection, not consent.
+- Direct chat-client invocation without an `AgentSession` preserves pass-through compatibility, matching .NET;
+  authorization sinks still require strict `True`.
 - An approved tool executes exactly once.
 - A rejected tool executes zero times and produces one synthetic rejection `function_result` using the original
   function `call_id`.
@@ -365,6 +380,14 @@ that manually replay messages own the equivalent rule: do not resend an approval
   response for local execution, and leaves hosted approval responses as provider protocol data.
 - Hosted AG-UI approval interrupts expose an accept/reject decision only; argument edits are rejected because the
   hosted provider executes the server-owned request rather than client-edited arguments.
+- AG-UI tool approval resumes accept the standard `approved` decision and full-replacement `editedArgs` payload.
+  Existing MAF clients remain compatible through the `accepted` decision alias and direct partial argument edits.
+- An AG-UI `cancelled` resume is a valid terminal decision, not a run error. In a resume covering parallel open
+  interrupts, resolved siblings still execute and cancelled calls do not. An identical cancellation retry during
+  the retained terminal window also completes normally without restoring authority.
+- AG-UI Approval State capacity is enforced independently for each trusted application scope. Abandoned pending
+  authority expires after its configured window, and indeterminate execution records remain non-retryable until
+  their separate safety window permits reclamation. Reclamation never recreates approval authority.
 - A server-issued approval request must not be replayed inline during service-side continuation.
 - History providers may retain approval control contents in their backing store for audit, but base history replay
   filters them before later model calls.
@@ -376,6 +399,11 @@ that manually replay messages own the equivalent rule: do not resend an approval
 - Model-bound history contains one function call/result pair per completed logical occurrence.
 - Append-only history must not replay stale approval request/response wrappers to the model.
 - Framework-managed and service-managed continuation must preserve the same logical call/result transcript.
+- A streaming response rebuilt from updates by an intermediate middleware must carry over the inner response's
+  conversation id and its internal-conversation-id marker, so framework-managed continuation appends only the latest
+  message instead of replaying a transcript the provider already holds. The rebuilt response mirrors the inner
+  conversation id exactly, including clearing it, and never retains an id emitted by an earlier service call in the
+  same turn.
 - A trusted terminal result consumes the corresponding approval authority in explicit stateless replay; a result in a
   server-registered pending occurrence cannot consume that authority before local execution.
 
@@ -408,12 +436,17 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Rejected streaming resume | Rejection result update precedes final text and tool executes zero times. | `test_approval_resume_returns_result_without_mutating_inputs[streaming-rejected]`, `test_streaming_approval_resume_yields_terminal_result_before_model_text[rejected]` |
 | Mixed approved/rejected batch | Every call gets one correctly correlated terminal result. | `packages/core/tests/core/test_function_invocation_logic.py::test_rejected_approval` |
 | Persisted approval replay | Resume executes with the prior call available. | `test_persisted_approval_messages_replay_correctly` |
-| Hosted approval pass-through | Hosted requests/responses are not processed as local calls. | `test_hosted_tool_approval_response`, `test_hosted_mcp_approval_response_passthrough`, `test_mixed_local_and_hosted_approval_flow` |
+| Hosted approval pass-through | Hosted requests/responses are bound to the recorded provider request and are not processed as local calls. | `test_hosted_tool_approval_response`, `test_hosted_mcp_approval_response_passthrough`, `test_session_approval_binding_reconstructs_hosted_response`, `test_mixed_local_and_hosted_approval_flow` |
 | Approval-time user input | Every user-input request from one approved execution returns in order with assistant role and no extra model call; the execution consumes one call-budget unit. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_returns_all_user_input_requests_without_another_model_call`, `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_user_input_counts_toward_function_call_budget` |
 | Mixed terminal result and follow-up input | Completed siblings remain tool-role while only follow-up input requests use assistant-role messages/updates. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_separates_terminal_results_from_follow_up_requests`, `packages/openai/tests/openai/test_openai_chat_completion_client.py::test_mixed_approval_resume_roles_serialize_function_result_as_tool` |
 | Approval-time middleware termination | Terminal result returns with no extra model call in either response mode. | `packages/core/tests/core/test_function_invocation_logic.py::test_approval_resume_honors_middleware_termination` |
 | Approval re-entry after iteration budget | Pending approved calls resolve once even when prior model calls consumed `max_iterations`. | `packages/core/tests/core/test_harness_tool_approval.py::test_auto_approval_resolves_after_iteration_budget_is_exhausted` |
 | Approval resume with reasoning | Model-bound resume history retains reasoning before the call and terminal result in both modes. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_replays_reasoning_with_function_call_group` |
+| Session-bound substituted response | A response is rebound to the immutable recorded call and cannot replace its call id, tool name, or arguments. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
+| Truthy non-boolean decision | Strings, integers, null, and other non-booleans do not authorize execution. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_treats_truthy_non_boolean_as_rejection`, `packages/core/tests/core/test_types.py::test_function_approval_response_deserialization_rejects_non_boolean_decisions`, `packages/ag-ui/tests/ag_ui/test_message_adapters.py::test_function_approval_requires_real_boolean`, `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_resolve_approval_responses_treats_non_boolean_decision_as_rejection` |
+| Active batch replacement | A newly surfaced model batch replaces abandoned approval authority instead of growing session state. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_binding_replaces_abandoned_batch` |
+| Duplicate request id | Ambiguous request IDs within one active batch fail explicitly. | `packages/core/tests/core/test_function_invocation_logic.py::test_session_approval_batch_rejects_duplicate_request_ids` |
+| Tool registry changes | Same-name upgrades may execute the recorded operation; removing the recorded name executes nothing. | `packages/core/tests/core/test_harness_tool_approval.py::test_approval_resume_allows_same_name_tool_upgrade`, `test_approval_resume_does_not_execute_when_recorded_tool_disappears` |
 
 ### Approval correlation and replay
 
@@ -432,6 +465,8 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Missing result call id | A malformed result does not steal another approval's result. | `test_replace_approval_contents_with_results_skips_results_without_call_id` |
 | Empty approval message cleanup | Fully consumed approval messages are removed from normalized model input. | `test_replace_approval_contents_with_results_prunes_emptied_messages` |
 | Later stateless turn | A prior terminal approval response cannot execute again. | `test_resolved_approval_response_is_inert_on_later_stateless_turn` |
+| Unbound or duplicate response | A response with no pending session request is removed; one request authorizes at most one response. | `test_session_approval_binding_rebinds_consumes_and_rejects_duplicates` |
+| Forged inbound request history | A caller-supplied request wrapper cannot replace the server snapshot or resurrect consumed authority. | `test_session_approval_binding_does_not_trust_inbound_request_history` |
 | Pending history turn | An unresolved approval batch is omitted atomically from unrelated model input while a later decision can still resume it once. | `packages/core/tests/core/test_harness_tool_approval.py::test_pending_approval_from_file_history_stays_resumable_without_model_orphan` |
 | Duplicate function-call prevention | Approval normalization does not create a second call for one round. | `test_no_duplicate_function_calls_after_approval_processing` |
 | Rejection call id | Rejection result uses the function call id, not only the approval id. | `test_rejection_result_uses_function_call_id` |
@@ -449,10 +484,16 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Auto-approval callback | Callback receives the original function call and executes the approved set once. | `test_tool_approval_middleware_auto_approval_rule_receives_function_call` |
 | Shared call budget | Auto-approved re-entry does not reset `max_function_calls`, and every executed approval group counts even when it pauses for input. | `test_tool_approval_middleware_auto_approved_loops_share_function_call_budget`, `test_approval_resume_user_input_counts_toward_function_call_budget` |
 | Standing tool rule | Tool-level approval applies only to later matching tools. | `test_tool_approval_middleware_always_approve_tool_rule` |
+| Forged standing rule | An unbound or substituted hosted response cannot create a standing middleware approval rule for caller-selected metadata. | `test_tool_approval_middleware_drops_forged_standing_approval`, `test_tool_approval_middleware_rebinds_hosted_standing_approval` |
 | Hosted server boundary | Standing approval does not cross `server_label`. | `test_tool_approval_middleware_standing_rules_include_hosted_server_boundary` |
 | Argument-scoped rule | Exact arguments are required; empty arguments are not tool-wide. | `test_tool_approval_middleware_always_approve_tool_with_arguments_rule`, `test_tool_approval_middleware_empty_arguments_rule_is_not_tool_wide` |
 | Provider-injected approval tool | A tool added during `before_run` defers to in-run resolution, executes once, and emits one result. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_deferred_provider_tool_executes` |
 | AG-UI provider boundary | Completed local approval controls from AG-UI request and snapshot replay are absent from raw chat-client input while deferred and hosted approvals keep their respective in-run/provider paths. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_does_not_forward_resolved_local_approval_control_to_chat_client`, `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_deferred_provider_tool_executes`, `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_canonical_resume_preserves_hosted_approval_for_provider`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_removes_duplicate_completed_controls`, `packages/ag-ui/tests/ag_ui/test_run.py::test_filter_local_approval_responses_for_provider_pairs_reused_call_ids_by_occurrence`, `packages/ag-ui/tests/ag_ui/test_run.py::test_canonical_hosted_approval_resume_rejects_edited_arguments_without_mutating_pending` |
+| AG-UI standard approval payload | Agent and workflow tool approvals emit canonical `tool_call` interrupts. `approved` plus full-replacement `editedArgs` executes once and replays idempotently, while legacy `accepted` plus direct partial edits remains supported. Hosted approvals remain decision-only. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_resume_entry_applies_standard_full_replacement_edited_args`, `test_endpoint_agent_approval_replayed_standard_edited_resume_is_idempotent`, `test_endpoint_agent_approval_resume_entry_applies_edited_arguments`, `test_workflow_endpoint_emits_canonical_tool_approval_interrupt`, `test_workflow_endpoint_accepts_canonical_tool_approval_resume`, `test_workflow_endpoint_applies_canonical_approval_edited_args`, `test_workflow_endpoint_accepts_legacy_partial_approval_edits`, `test_workflow_endpoint_hosted_approval_rejects_argument_edits` |
+| AG-UI cancellation | A cancelled interrupt executes zero times and completes normally, including an identical retry during retained cancellation state; resolved siblings in the same complete resume still execute once. Workflow cancellation clears both runner correlation and the owning agent executor's pending request so later approvals remain resumable. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_cancelled_resume_entry_completes_without_execution`, `test_endpoint_agent_approval_replayed_cancellation_completes_idempotently`, `test_endpoint_agent_approval_mixed_cancelled_and_resolved_resume_executes_resolved_tool`, `test_endpoint_workflow_request_info_cancelled_resume_completes_normally`, `test_workflow_endpoint_cancelled_agent_approval_does_not_block_next_approval` |
+| AG-UI approval retention and capacity | Pending authority expires automatically, indeterminate outcomes remain non-retryable until their safety window permits reclamation, and one trusted scope cannot consume another scope's occurrence quota. | `packages/ag-ui/tests/ag_ui/test_approval_lifecycle.py::test_abandoned_pending_occurrence_expires_and_releases_capacity`, `test_indeterminate_occurrence_is_reclaimed_after_its_safety_window`, `test_capacity_is_enforced_per_trusted_scope` |
+| AG-UI local executor unavailable on resume | A claimed local occurrence whose executor disappeared releases its unstarted claim, reports temporary unavailability, and remains safely retryable. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_resume_remains_retryable_when_local_tool_is_temporarily_unavailable` |
+| AG-UI forwarded execution interruption | A provider failure, cancellation, or stream close after forwarding an approval recovers the open occurrence as indeterminate when no idempotency key proves retry safety. | `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_hosted_approval_becomes_indeterminate_when_provider_stream_fails` |
 
 ### Errors, control flow, and limits
 
@@ -479,6 +520,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Pending hosted history replay | Stateless hosted approval requests remain replayable until a response is recorded, then both controls become inert. | `packages/openai/tests/openai/test_openai_chat_client.py::test_stateless_history_preserves_pending_hosted_approval_request_until_response` |
 | Non-history provider plus session | Local history is still auto-injected for approval resume. | `packages/core/tests/core/test_agents.py::test_non_history_context_provider_still_injects_inmemory` |
 | Hosted per-service-call persistence | A host-managed transcript remains available throughout a local function-call loop without being persisted into the framework session and replayed on the next hosted request. | `packages/foundry_hosting/tests/test_responses.py::TestAgentSessionPersistence::test_per_service_call_persistence_preserves_function_loop_history` |
+| Streaming message injection with per-service-call persistence | A streaming response rebuilt from updates mirrors the inner conversation id exactly, including clearing it, and keeps its internal marker, so the next iteration appends only the latest message rather than replaying the whole turn on top of provider-held history, and never persists a conversation id from an earlier injected service call. | `packages/core/tests/core/test_middleware_with_chat.py::TestChatMiddleware::test_message_injection_middleware_streaming_preserves_inner_continuation_state`, `test_message_injection_middleware_streaming_keeps_service_conversation_id_external`, `test_message_injection_middleware_streaming_clears_conversation_id_when_final_call_has_none`, `test_message_injection_middleware_conversation_id_matches_across_streaming_modes`, `packages/core/tests/core/test_harness_agent.py::test_streaming_harness_tool_call_does_not_duplicate_transcript` |
 | Service-side approval decision | Stored hosted request is skipped; the current approved or rejected hosted response is sent, while local approval controls are omitted from provider input. | `packages/openai/tests/openai/test_openai_chat_client.py::test_prepare_messages_strips_approval_request_but_keeps_response_under_storage`, `test_prepare_messages_drops_local_approval_controls` |
 | OpenAI approval serialization | Hosted approval id and decision serialize to `mcp_approval_response`; local approvals remain in-process. | `test_prepare_message_for_openai_with_function_approval_response`, `test_prepare_content_for_opentool_approval_response`, `test_function_approval_response_with_mcp_tool_call` |
 | OpenAI end-to-end hosted approval | Hosted request parses, response sends, and continuation completes. | `test_end_to_end_mcp_approval_flow` |
@@ -487,11 +529,11 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Foundry encrypted reasoning opt-in | Foundry clients omit `reasoning.encrypted_content` by default and preserve an explicit caller opt-in. | `packages/foundry/tests/foundry/test_foundry_chat_client.py::test_get_response_does_not_request_encrypted_reasoning_by_default`, `test_get_response_preserves_explicit_encrypted_reasoning_opt_in`, `packages/foundry/tests/foundry/test_foundry_agent.py::test_foundry_agent_basic_call_does_not_request_unsupported_encrypted_reasoning`, `test_foundry_agent_preserves_caller_requested_encrypted_reasoning`, `packages/foundry_hosting/tests/test_responses_int.py::TestReasoningHostedMcpReplay::test_second_turn_replays_mcp_call_with_encrypted_reasoning` |
 | Opaque reasoning signature replay | Provider-specific opaque reasoning metadata is captured and restored on reconstructed calls. | `packages/gemini/tests/test_gemini_client.py::test_function_call_part_captures_thought_signature_as_reasoning_content`, `test_reconstructed_function_call_replays_thought_signature_from_reasoning_content` |
 | Chat Completions approval wrappers | Framework approval wrappers are not sent as chat messages. | `packages/openai/tests/openai/test_openai_chat_completion_client.py` approval serialization tests |
-| AG-UI approval result event | Approved result emits once with content and persists in snapshot. | `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_approval_resume_emits_tool_call_result`, `test_approval_resume_result_has_content`, `test_approval_resume_snapshot_replaces_approval_payload_with_tool_result`, `test_approval_resume_zero_updates_emits_tool_result` |
-| AG-UI rejection/mixed decision | Transport emits only the events defined for approved and rejected calls without duplicates. | `test_rejection_does_not_emit_tool_call_result`, `test_mixed_approve_reject_emits_only_approved_tool_result`, `test_resolve_approval_responses_returns_only_approved` |
-| AG-UI approval-time follow-up | The full grouped user-input pause remains in message history and emits no synthetic `TOOL_CALL_RESULT`. | `test_resolve_approval_responses_preserves_follow_up_user_input_group` |
-| AG-UI approval execution failure | A grouped executor failure becomes one deterministic terminal error result for the approved call. | `test_resolve_approval_responses_returns_failure_when_grouped_execution_raises` |
-| AG-UI no-approval path | Ordinary tool results do not gain an extra approval result event. | `test_no_approval_no_extra_tool_result` |
+| AG-UI approval result event | Approved result emits once with content and persists in snapshot. | `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_approved_call_emits_one_live_result_under_original_identity`, `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_resume_persists_replayable_tool_results`, `test_endpoint_agent_approval_replayed_resume_entry_reprojects_retained_result` |
+| AG-UI rejection/mixed decision | Transport emits only the events defined for approved and rejected calls without duplicates. | `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_rejected_call_does_not_execute_or_emit_live_result`, `test_mixed_batch_preserves_approved_result_identity_and_order`, `packages/ag-ui/tests/ag_ui/test_endpoint.py::test_endpoint_agent_approval_rejection_releases_already_approved_sibling` |
+| AG-UI approval-time follow-up | The full grouped user-input pause remains in message history and emits no synthetic `TOOL_CALL_RESULT`. | `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_approval_follow_up_group_remains_in_history_without_live_tool_result` |
+| AG-UI approval execution failure | A grouped executor failure becomes one deterministic terminal error result for the approved call. | `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_approval_execution_failure_emits_one_terminal_error_result` |
+| AG-UI no-approval path | Ordinary tool results do not gain an extra approval result event. | `packages/ag-ui/tests/ag_ui/test_approval_result_event.py::test_no_approval_path_emits_no_approval_specific_duplicate_result` |
 | AG-UI `confirm_changes` snapshot | An accepted synthetic confirmation is replaced only when its original function call has a real result; rejection is cleaned explicitly, and missing accepted results remain inert. | `packages/ag-ui/tests/ag_ui/test_confirm_changes_snapshot.py` |
 | AG-UI malformed `confirm_changes` metadata | Non-list tool-call metadata and malformed argument JSON are ignored without guessing a target call. | `test_confirm_changes_target_ignores_non_list_tool_calls`, `test_confirm_changes_target_rejects_malformed_arguments_json` |
 | Compaction pair integrity | Adjacent and non-adjacent pairs, including assistant-embedded results and completed reused-id occurrences, remain atomic without pairing ambiguous or out-of-order ids. | `packages/core/tests/core/test_compaction.py::test_group_annotations_keep_tool_call_and_tool_result_atomic`, `test_group_annotations_include_reasoning_in_tool_call_group`, `test_group_annotations_pair_nonadjacent_function_result_by_call_id`, `test_group_annotations_pair_multiple_nonadjacent_results_with_declaration`, `test_group_annotations_pair_completed_reused_call_id_occurrences`, `test_group_annotations_close_assistant_embedded_result_before_reused_call_id`, `test_sliding_window_does_not_retain_orphan_result_after_assistant_embedded_result`, `test_sliding_window_keeps_reused_call_id_occurrences_atomic`, `test_group_annotations_do_not_pair_ambiguous_duplicate_call_ids` |
@@ -525,6 +567,7 @@ uv run poe syntax -P openai
 uv run poe pyright -P openai
 uv run poe test-typing -P openai
 uv run poe test -P ag-ui
+uv run poe test -P declarative
 uv run --directory packages/foundry_hosting poe test
 ```
 

@@ -259,6 +259,7 @@ from ._workflows._checkpoint import (
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
 )
+from ._workflows._checkpoint_encoding import register_checkpoint_type
 from ._workflows._const import DEFAULT_MAX_ITERATIONS, INTERNAL_SOURCE_ID
 from ._workflows._edge import (
     Case,
@@ -285,6 +286,7 @@ from ._workflows._function_executor import FunctionExecutor, executor
 from ._workflows._functional import (
     FunctionalWorkflow,
     FunctionalWorkflowAgent,
+    FunctionalWorkflowDefinition,
     RunContext,
     StepWrapper,
     get_run_context,
@@ -442,6 +444,7 @@ __all__ = [
     "FunctionTool",
     "FunctionalWorkflow",
     "FunctionalWorkflowAgent",
+    "FunctionalWorkflowDefinition",
     "GeneratedEmbeddings",
     "GraphConnectivityError",
     "HistoryProvider",
@@ -593,6 +596,7 @@ __all__ = [
     "normalize_tools",
     "prepend_agent_framework_to_user_agent",
     "prepend_instructions_to_messages",
+    "register_checkpoint_type",
     "register_state_type",
     "resolve_agent_id",
     "response_handler",
