@@ -66,6 +66,12 @@ internal sealed class InvokeAzureAgentExecutor(InvokeAzureAgent model, ResponseA
     private async ValueTask InvokeAgentAsync(IWorkflowContext context, IEnumerable<ChatMessage>? messages, CancellationToken cancellationToken)
     {
         string? conversationId = this.GetConversationId();
+        if (context.IsParallelForeachBranch() && conversationId is not null)
+        {
+            throw new DeclarativeActionException(
+                $"Parallel Foreach action '{this.Id}' cannot invoke an agent with an explicit conversation target.");
+        }
+
         string agentName = this.GetAgentName();
         bool autoSend = this.GetAutoSendValue();
         Dictionary<string, object?>? inputParameters = this.GetStructuredInputs();

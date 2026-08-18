@@ -72,6 +72,12 @@ internal sealed class InvokeFunctionToolExecutor(
     [SendsMessage(typeof(ExternalInputRequest))]
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        if (context.IsParallelForeachBranch())
+        {
+            throw new DeclarativeActionException(
+                $"Parallel Foreach action '{this.Id}' cannot await external function-tool input.");
+        }
+
         string functionName = this.GetFunctionName();
         bool requireApproval = this.GetRequireApproval();
         Dictionary<string, object?>? arguments = this.GetArguments();

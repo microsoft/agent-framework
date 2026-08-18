@@ -62,6 +62,29 @@ public sealed class ParallelForeachWorkflowTests
     }
 
     [Fact]
+    public async Task ParallelForeachWithOneWorkerRemainsSerializedAsync()
+    {
+        // Arrange
+        ControlledAgentProvider provider = new(delayByIndex: index => TimeSpan.FromMilliseconds((2 - index) * 25));
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\", \"b\", \"c\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 1
+            """,
+            bodyActions: InvokeAgentAction);
+
+        // Act
+        WorkflowObservation observation = await RunWorkflowAsync(yaml, provider);
+
+        // Assert
+        AssertNoWorkflowError(observation);
+        Assert.Equal(["0:a", "1:b", "2:c"], GetAgentResponses(observation));
+        Assert.Equal([0, 1, 2], provider.Completions);
+        Assert.Equal(1, provider.PeakConcurrency);
+    }
+
+    [Fact]
     public async Task ParallelForeachUsesBoundedDefaultLimitAsync()
     {
         // Arrange
@@ -102,6 +125,30 @@ public sealed class ParallelForeachWorkflowTests
         AssertNoWorkflowError(observation);
         Assert.Equal(2, provider.InvocationCount);
         Assert.Equal(2, provider.PeakConcurrency);
+    }
+
+    [Fact]
+    public async Task ParallelForeachPreservesBlankAndExtremeItemValuesAsync()
+    {
+        // Arrange
+        ControlledAgentProvider provider = new(barrierParticipants: 4, barrierTimeout: s_barrierTimeout);
+        string yaml = CreateWorkflowYaml(
+            items: "=[Blank(), -2147483648, 0, 2147483647]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 4
+            """,
+            bodyActions: InvokeAgentAction);
+
+        // Act
+        WorkflowObservation observation = await RunWorkflowAsync(yaml, provider);
+
+        // Assert
+        AssertNoWorkflowError(observation);
+        Assert.Equal(4, provider.InvocationCount);
+        Assert.Equal(
+            ["0:", "1:-2147483648", "2:0", "3:2147483647"],
+            GetAgentResponses(observation));
     }
 
     [Fact]
@@ -165,6 +212,167 @@ public sealed class ParallelForeachWorkflowTests
         Assert.Equal(
             s_orderedResponses,
             provider.Invocations.OrderBy(invocation => invocation.Index).Select(invocation => $"{invocation.Index}:{invocation.Value}"));
+    }
+
+    [Fact]
+    public async Task ParallelForeachStagesWorkflowConversationWritesInSourceOrderAsync()
+    {
+        // Arrange
+        ControlledAgentProvider provider = new(
+            barrierParticipants: 4,
+            barrierTimeout: s_barrierTimeout,
+            delayByIndex: index => TimeSpan.FromMilliseconds((3 - index) * 100),
+            conversationWriteDelay: TimeSpan.FromMilliseconds(25));
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\", \"b\", \"c\", \"d\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 4
+            """,
+            bodyActions: InvokeAgentAction);
+
+        // Act
+        WorkflowObservation observation = await RunWorkflowAsync(yaml, provider);
+
+        // Assert
+        AssertNoWorkflowError(observation);
+        Assert.Equal(s_orderedResponses, provider.WorkflowConversationWrites);
+        Assert.Equal(1, provider.PeakConversationWriteConcurrency);
+        Assert.Equal(provider.InvocationCount, provider.InvocationCompletionsAtFirstConversationWrite);
+    }
+
+    [Fact]
+    public async Task ParallelForeachDoesNotWriteWorkflowConversationWhenAnIterationFailsAsync()
+    {
+        // Arrange
+        ControlledAgentProvider provider = new(
+            barrierParticipants: 4,
+            barrierTimeout: s_barrierTimeout,
+            delayByIndex: index => TimeSpan.FromMilliseconds((3 - index) * 50),
+            failureIndexes: [2],
+            conversationWriteDelay: TimeSpan.FromMilliseconds(10));
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\", \"b\", \"c\", \"d\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 4
+            """,
+            bodyActions: InvokeAgentAction);
+
+        // Act
+        WorkflowObservation observation = await RunWorkflowAsync(yaml, provider);
+
+        // Assert
+        AssertWorkflowError(observation);
+        Assert.Empty(provider.WorkflowConversationWrites);
+    }
+
+    [Fact]
+    public async Task ParallelForeachConversationReplayCannotMutateBufferedEventsAsync()
+    {
+        // Arrange
+        ControlledAgentProvider provider = new(mutateConversationWrites: true);
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\", \"b\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 2
+            """,
+            bodyActions: InvokeAgentAction);
+
+        // Act
+        WorkflowObservation observation = await RunWorkflowAsync(yaml, provider);
+
+        // Assert
+        AssertNoWorkflowError(observation);
+        Assert.Equal(["0:a", "1:b"], GetAgentResponses(observation));
+        Assert.Equal(["0:a", "1:b"], provider.WorkflowConversationWrites);
+    }
+
+    [Fact]
+    public async Task NestedParallelForeachKeepsConversationWritesStagedUntilTheOuterCommitAsync()
+    {
+        // Arrange
+        ControlledAgentProvider provider = new(
+            barrierParticipants: 2,
+            barrierTimeout: s_barrierTimeout,
+            delayByIndex: index => TimeSpan.FromMilliseconds((1 - index) * 50),
+            conversationWriteDelay: TimeSpan.FromMilliseconds(15));
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\", \"b\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 2
+            """,
+            bodyActions: """
+                    - kind: Foreach
+                      id: inner_parallel_loop
+                      items: =[1, 2]
+                      value: Local.InnerItem
+                      index: Local.InnerIndex
+                      mode: Parallel
+                      maxParallelism: 2
+                      actions:
+                        - kind: InvokeAzureAgent
+                          id: nested_invoke_agent
+                          agent:
+                            name: TestAgent
+                          input:
+                            arguments:
+                              value: =Concatenate(Text(Local.Index), ":", Text(Local.InnerIndex), ":", Local.Item)
+                              index: =Local.InnerIndex
+                          output:
+                            autoSend: true
+            """);
+
+        // Act
+        WorkflowObservation observation = await RunWorkflowAsync(yaml, provider);
+
+        // Assert
+        AssertNoWorkflowError(observation);
+        Assert.Equal(["0:0:0:a", "1:0:1:a", "0:1:0:b", "1:1:1:b"], provider.WorkflowConversationWrites);
+        Assert.Equal(1, provider.PeakConversationWriteConcurrency);
+    }
+
+    [Fact]
+    public async Task NestedParallelForeachHonorsTheProductOfLimitsAsync()
+    {
+        // Arrange
+        ControlledAgentProvider provider = new(barrierParticipants: 4, barrierTimeout: s_barrierTimeout);
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\", \"b\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 2
+            """,
+            bodyActions: """
+                    - kind: Foreach
+                      id: inner_parallel_loop
+                      items: =[1, 2]
+                      value: Local.InnerItem
+                      index: Local.InnerIndex
+                      mode: Parallel
+                      maxParallelism: 2
+                      actions:
+                        - kind: InvokeAzureAgent
+                          id: nested_invoke_agent
+                          agent:
+                            name: TestAgent
+                          input:
+                            arguments:
+                              value: =Local.Item
+                              index: =Local.InnerIndex
+                          output:
+                            autoSend: false
+            """);
+
+        // Act
+        WorkflowObservation observation = await RunWorkflowAsync(yaml, provider);
+
+        // Assert
+        AssertNoWorkflowError(observation);
+        Assert.Equal(4, provider.InvocationCount);
+        Assert.Equal(4, provider.PeakConcurrency);
     }
 
     [Fact]
@@ -248,6 +456,40 @@ public sealed class ParallelForeachWorkflowTests
         Assert.Contains(Flatten(error), exception => exception.Message.Contains("iteration 1", StringComparison.OrdinalIgnoreCase));
         Assert.Empty(GetAgentResponses(observation));
         Assert.DoesNotContain(observation.Events.OfType<MessageActivityEvent>(), evt => evt.Message.Trim().StartsWith("Branch ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ParallelForeachRetainsSimultaneousBranchFailuresInSourceOrderAsync()
+    {
+        // Arrange
+        ControlledAgentProvider provider = new(
+            barrierParticipants: 4,
+            barrierTimeout: s_barrierTimeout,
+            failureIndexes: [1, 3],
+            failureBarrierParticipants: 2);
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\", \"b\", \"c\", \"d\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 4
+            """,
+            bodyActions: InvokeAgentAction);
+
+        // Act
+        WorkflowObservation observation = await RunWorkflowAsync(yaml, provider);
+
+        // Assert
+        Exception error = AssertWorkflowError(observation);
+        AggregateException aggregate = Assert.Single(
+            Flatten(error).OfType<AggregateException>(),
+            exception => exception.Message.StartsWith("Parallel Foreach 'parallel_loop' failed.", StringComparison.Ordinal));
+        string[] iterationFailures = [.. aggregate.InnerExceptions.Select(exception => exception.Message)];
+        Assert.Equal(
+            [
+                "Parallel Foreach 'parallel_loop' iteration 1 failed.",
+                "Parallel Foreach 'parallel_loop' iteration 3 failed.",
+            ],
+            iterationFailures);
     }
 
     [Fact]
@@ -559,6 +801,199 @@ public sealed class ParallelForeachWorkflowTests
         Assert.Contains("checkpoint", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void ParallelForeachRejectsConversationTermination()
+    {
+        // Arrange
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 2
+            """,
+            bodyActions: """
+                    - kind: EndConversation
+                      id: end_conversation_in_parallel
+            """);
+
+        // Act
+        DeclarativeModelException exception = Assert.Throws<DeclarativeModelException>(() => BuildWorkflow(yaml, new ControlledAgentProvider()));
+
+        // Assert
+        Assert.Contains("terminates", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ParallelForeachRejectsGotoOutsideBody()
+    {
+        // Arrange
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 2
+            """,
+            bodyActions: """
+                    - kind: GotoAction
+                      id: goto_after_parallel
+                      actionId: after_parallel
+            """,
+            afterActions: """
+                - kind: SendActivity
+                  id: after_parallel
+                  activity: after
+            """);
+
+        // Act
+        DeclarativeModelException exception = Assert.Throws<DeclarativeModelException>(() => BuildWorkflow(yaml, new ControlledAgentProvider()));
+
+        // Assert
+        Assert.Contains("GotoAction", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("parallel", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ParallelForeachAllowsGotoWithinBodyAsync()
+    {
+        // Arrange
+        ControlledAgentProvider provider = new();
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 2
+            """,
+            bodyActions: $$"""
+                    - kind: GotoAction
+                      id: goto_agent
+                      actionId: invoke_agent
+
+                    - kind: SendActivity
+                      id: skipped_activity
+                      activity: never
+
+            {{InvokeAgentAction}}
+            """);
+
+        // Act
+        WorkflowObservation observation = await RunWorkflowAsync(yaml, provider);
+
+        // Assert
+        AssertNoWorkflowError(observation);
+        Assert.Equal(["0:a"], GetAgentResponses(observation));
+        Assert.DoesNotContain(observation.Events.OfType<MessageActivityEvent>(), evt => evt.Message.Trim() == "never");
+    }
+
+    [Fact]
+    public void ParallelForeachRejectsFunctionToolCheckpoint()
+    {
+        // Arrange
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 2
+            """,
+            bodyActions: """
+                    - kind: InvokeFunctionTool
+                      id: invoke_function_tool
+                      functionName: TestFunction
+                      requireApproval: false
+            """);
+
+        // Act
+        DeclarativeModelException exception = Assert.Throws<DeclarativeModelException>(() => BuildWorkflow(yaml, new ControlledAgentProvider()));
+
+        // Assert
+        Assert.Contains("external input", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("EndWorkflow", "terminates")]
+    [InlineData("AddConversationMessage", "conversation")]
+    [InlineData("CopyConversationMessages", "conversation")]
+    [InlineData("InvokeMcpTool", "external input")]
+    [InlineData("HttpRequestAction", "conversation")]
+    public void ParallelForeachRejectsUnsafeBodyActions(string actionKind, string expectedMessagePart)
+    {
+        // Arrange
+        string action = actionKind switch
+        {
+            "EndWorkflow" => """
+                    - kind: EndWorkflow
+                      id: end_workflow_in_parallel
+            """,
+            "AddConversationMessage" => """
+                    - kind: AddConversationMessage
+                      id: add_message_in_parallel
+                      message: Local.Message
+                      role: User
+                      conversationId: =System.ConversationId
+                      content:
+                        - type: Text
+                          value: parallel
+            """,
+            "CopyConversationMessages" => """
+                    - kind: CopyConversationMessages
+                      id: copy_messages_in_parallel
+                      conversationId: =System.ConversationId
+                      messages: =[UserMessage("parallel")]
+            """,
+            "InvokeMcpTool" => """
+                    - kind: InvokeMcpTool
+                      id: invoke_mcp_in_parallel
+                      serverUrl: https://example.test/mcp
+                      toolName: test
+            """,
+            "HttpRequestAction" => """
+                    - kind: HttpRequestAction
+                      id: http_in_parallel
+                      method: GET
+                      url: https://example.test
+                      conversationId: =System.ConversationId
+            """,
+            _ => throw new ArgumentOutOfRangeException(nameof(actionKind), actionKind, null),
+        };
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 2
+            """,
+            bodyActions: action);
+
+        // Act
+        DeclarativeModelException exception = Assert.Throws<DeclarativeModelException>(() => BuildWorkflow(yaml, new ControlledAgentProvider()));
+
+        // Assert
+        Assert.Contains(expectedMessagePart, exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ParallelForeachRejectsExplicitAgentConversationTarget()
+    {
+        // Arrange
+        string yaml = CreateWorkflowYaml(
+            items: "=[\"a\"]",
+            executionOptions: """
+                  mode: Parallel
+                  maxParallelism: 2
+            """,
+            bodyActions: """
+                    - kind: InvokeAzureAgent
+                      id: explicit_conversation_agent
+                      conversationId: =System.ConversationId
+                      agent:
+                        name: TestAgent
+            """);
+
+        // Act
+        DeclarativeModelException exception = Assert.Throws<DeclarativeModelException>(() => BuildWorkflow(yaml, new ControlledAgentProvider()));
+
+        // Assert
+        Assert.Contains("conversation target", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("BreakLoop")]
     [InlineData("ContinueLoop")]
@@ -765,18 +1200,27 @@ public sealed class ParallelForeachWorkflowTests
         private readonly TaskCompletionSource<bool> _barrier = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<bool> _cancellationObserved = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<bool> _firstInvocationStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _failureBarrier = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<bool> _noActiveInvocations = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly int _barrierParticipants;
         private readonly TimeSpan _barrierTimeout;
         private readonly Func<int, TimeSpan>? _delayByIndex;
         private readonly HashSet<int> _failureIndexes;
+        private readonly int _failureBarrierParticipants;
         private readonly HashSet<int> _waitUntilCanceledIndexes;
         private readonly bool _waitUntilCanceled;
         private readonly bool _requestApproval;
+        private readonly TimeSpan _conversationWriteDelay;
+        private readonly bool _mutateConversationWrites;
         private int _activeCount;
+        private int _activeConversationWrites;
         private int _barrierArrivals;
+        private int _completedInvocations;
+        private int _failureBarrierArrivals;
+        private int _invocationCompletionsAtFirstConversationWrite = -1;
         private int _invocationCount;
         private int _peakConcurrency;
+        private int _peakConversationWriteConcurrency;
 
         public ControlledAgentProvider(
             int barrierParticipants = 1,
@@ -785,20 +1229,30 @@ public sealed class ParallelForeachWorkflowTests
             IEnumerable<int>? failureIndexes = null,
             IEnumerable<int>? waitUntilCanceledIndexes = null,
             bool waitUntilCanceled = false,
-            bool requestApproval = false)
+            bool requestApproval = false,
+            TimeSpan? conversationWriteDelay = null,
+            int failureBarrierParticipants = 0,
+            bool mutateConversationWrites = false)
         {
             this._barrierParticipants = barrierParticipants;
             this._barrierTimeout = barrierTimeout ?? TimeSpan.Zero;
             this._delayByIndex = delayByIndex;
             this._failureIndexes = failureIndexes is null ? [] : [.. failureIndexes];
+            this._failureBarrierParticipants = failureBarrierParticipants;
             this._waitUntilCanceledIndexes = waitUntilCanceledIndexes is null ? [] : [.. waitUntilCanceledIndexes];
             this._waitUntilCanceled = waitUntilCanceled;
             this._requestApproval = requestApproval;
+            this._conversationWriteDelay = conversationWriteDelay ?? TimeSpan.Zero;
+            this._mutateConversationWrites = mutateConversationWrites;
         }
 
         public int InvocationCount => Volatile.Read(ref this._invocationCount);
 
         public int PeakConcurrency => Volatile.Read(ref this._peakConcurrency);
+
+        public int PeakConversationWriteConcurrency => Volatile.Read(ref this._peakConversationWriteConcurrency);
+
+        public int InvocationCompletionsAtFirstConversationWrite => Volatile.Read(ref this._invocationCompletionsAtFirstConversationWrite);
 
         public int ActiveCount => Volatile.Read(ref this._activeCount);
 
@@ -806,17 +1260,56 @@ public sealed class ParallelForeachWorkflowTests
 
         public ConcurrentQueue<int> Completions { get; } = [];
 
+        public ConcurrentQueue<string> WorkflowConversationWrites { get; } = [];
+
+        public string? WorkflowConversationId { get; private set; }
+
         public Task CancellationObserved => this._cancellationObserved.Task;
 
         public Task FirstInvocationStarted => this._firstInvocationStarted.Task;
 
         public Task NoActiveInvocations => this._noActiveInvocations.Task;
 
-        public override Task<string> CreateConversationAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(Guid.NewGuid().ToString("N"));
+        public override Task<string> CreateConversationAsync(CancellationToken cancellationToken = default)
+        {
+            this.WorkflowConversationId = Guid.NewGuid().ToString("N");
+            return Task.FromResult(this.WorkflowConversationId);
+        }
 
-        public override Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default) =>
-            Task.FromResult(conversationMessage);
+        public override async Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
+        {
+            if (string.Equals(conversationId, this.WorkflowConversationId, StringComparison.Ordinal)
+                && conversationMessage.Text.IndexOf(':') >= 0)
+            {
+                int active = Interlocked.Increment(ref this._activeConversationWrites);
+                UpdatePeak(ref this._peakConversationWriteConcurrency, active);
+                Interlocked.CompareExchange(
+                    ref this._invocationCompletionsAtFirstConversationWrite,
+                    Volatile.Read(ref this._completedInvocations),
+                    -1);
+                try
+                {
+                    if (this._conversationWriteDelay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(this._conversationWriteDelay, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    string originalText = conversationMessage.Text;
+                    this.WorkflowConversationWrites.Enqueue(originalText);
+                    if (this._mutateConversationWrites)
+                    {
+                        conversationMessage.Contents.Clear();
+                        conversationMessage.Contents.Add(new TextContent("mutated"));
+                    }
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref this._activeConversationWrites);
+                }
+            }
+
+            return conversationMessage;
+        }
 
         public override Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
@@ -864,10 +1357,22 @@ public sealed class ParallelForeachWorkflowTests
 
                 if (this._failureIndexes.Contains(index))
                 {
+                    if (this._failureBarrierParticipants > 0)
+                    {
+                        int arrivals = Interlocked.Increment(ref this._failureBarrierArrivals);
+                        if (arrivals == this._failureBarrierParticipants)
+                        {
+                            this._failureBarrier.TrySetResult(true);
+                        }
+
+                        await this._failureBarrier.Task.ConfigureAwait(false);
+                    }
+
                     throw new InvalidOperationException($"Failure for iteration {index}.");
                 }
 
                 this.Completions.Enqueue(index);
+                Interlocked.Increment(ref this._completedInvocations);
 
                 if (this._requestApproval)
                 {

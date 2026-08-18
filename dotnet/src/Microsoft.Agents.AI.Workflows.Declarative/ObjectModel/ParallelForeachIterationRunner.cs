@@ -10,6 +10,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
+using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
@@ -17,7 +18,8 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 internal sealed record ParallelForeachIterationResult(
     int Index,
     WorkflowStateChange[] StateChanges,
-    WorkflowEvent[] Events);
+    WorkflowEvent[] Events,
+    ChatMessage[] ConversationMessages);
 
 /// <summary>
 /// Runs one Foreach body through the existing workflow runtime with isolated formula state.
@@ -26,22 +28,65 @@ internal static class ParallelForeachIterationRunner
 {
     public static void ValidateBody(Foreach model)
     {
-        foreach (DialogAction action in model.Descendants().OfType<DialogAction>())
+        DialogAction[] bodyActions =
+        [
+            .. model.Descendants()
+                .OfType<DialogAction>()
+                .Where(action => BelongsToLoopBody(action, model)),
+        ];
+        HashSet<string> bodyActionIds =
+        [
+            .. bodyActions
+                .Select(action => action.Id.Value),
+        ];
+
+        foreach (DialogAction action in bodyActions)
         {
             if (action is Question or RequestExternalInput)
             {
-                throw new DeclarativeModelException(
-                    $"Parallel Foreach '{model.Id.Value}' cannot safely checkpoint while action " +
-                    $"'{action.Id.Value}' ({action.GetType().Name}) is awaiting external input.");
+                Reject(model, action, "it can await external input and cannot be checkpointed safely");
+            }
+
+            if (action is InvokeFunctionTool or InvokeMcpTool)
+            {
+                Reject(model, action, "it can suspend for external input and cannot be checkpointed safely");
+            }
+
+            if (action is AddConversationMessage or CopyConversationMessages)
+            {
+                Reject(model, action, "it mutates a conversation immediately and cannot be staged safely");
+            }
+
+            if (action is InvokeAzureAgent { ConversationId: not null } or HttpRequestAction { ConversationId: not null })
+            {
+                Reject(model, action, "an explicit conversation target cannot be isolated per iteration");
+            }
+
+            if (action is EndDialog or EndConversation or CancelAllDialogs or CancelDialog)
+            {
+                Reject(model, action, "it terminates or cancels workflow-wide control flow");
             }
 
             if (action is BreakLoop or ContinueLoop && TargetsLoop(action, model))
             {
-                throw new DeclarativeModelException(
-                    $"Parallel Foreach '{model.Id.Value}' does not support {action.GetType().Name} targeting the parallel loop.");
+                Reject(model, action, $"{action.GetType().Name} cannot target the parallel loop");
+            }
+
+            if (action is GotoAction gotoAction)
+            {
+                string targetId = gotoAction.ActionId.Value;
+                if (!bodyActionIds.Contains(targetId) || TargetsDifferentParallelLoop(gotoAction, model))
+                {
+                    Reject(model, action, $"GotoAction target '{targetId}' is outside the parallel body");
+                }
             }
         }
     }
+
+    private static void Reject(Foreach model, DialogAction action, string reason) =>
+        throw new DeclarativeModelException(
+            $"Parallel Foreach '{model.Id.Value}' cannot execute action '{action.Id.Value}' " +
+            $"({action.GetType().Name}): {reason}.");
 
     public static async Task<ParallelForeachIterationResult> RunAsync(
         Foreach model,
@@ -50,6 +95,7 @@ internal static class ParallelForeachIterationRunner
         WorkflowStateSnapshot stateSnapshot,
         DeclarativeWorkflowOptions workflowOptions,
         TimeSpan? timeout,
+        Action<Exception> reportFailure,
         CancellationToken cancellationToken)
     {
         using CancellationTokenSource timeoutSource = new();
@@ -60,6 +106,9 @@ internal static class ParallelForeachIterationRunner
         }
 
         WorkflowFormulaState branchState = WorkflowFormulaState.CreateBranch(workflowOptions.CreateRecalcEngine(), stateSnapshot);
+        WorkflowConversationMessageBuffer conversationMessageBuffer = new();
+        branchState.ConversationMessageBuffer = conversationMessageBuffer;
+        branchState.ParallelFailureReporter = reportFailure;
         SetLoopVariable(branchState, model.Value!.Path, new PortableValue(value.AsPortable()).ToFormula());
         if (model.Index is not null)
         {
@@ -138,7 +187,7 @@ internal static class ParallelForeachIterationRunner
             ];
             WorkflowEvent[] bufferedEvents = [.. events.Where(workflowEvent => ShouldReplay(workflowEvent, model.Id.Value))];
 
-            return new(index, stateChanges, bufferedEvents);
+            return new(index, stateChanges, bufferedEvents, [.. conversationMessageBuffer.Messages]);
         }
         catch (OperationCanceledException) when (timeoutSource.IsCancellationRequested)
         {
@@ -189,6 +238,34 @@ internal static class ParallelForeachIterationRunner
             and not RequestInfoEvent
             and not ExecutorFailedEvent) &&
         (workflowEvent is not ExecutorEvent executorEvent || executorEvent.ExecutorId != rootExecutorId);
+
+    private static bool TargetsDifferentParallelLoop(DialogAction action, Foreach loop)
+    {
+        BotElement? ancestor = action.Parent;
+        while (ancestor is not null && ancestor is not Foreach)
+        {
+            ancestor = ancestor.Parent;
+        }
+        return ancestor is Foreach ancestorLoop
+            && !ancestorLoop.Id.Equals(loop.Id)
+            && ForeachExecutionOptions.Parse(ancestorLoop).IsParallel;
+    }
+
+    private static bool BelongsToLoopBody(DialogAction action, Foreach loop)
+    {
+        BotElement? ancestor = action.Parent;
+        while (ancestor is not null)
+        {
+            if (ancestor is Foreach ancestorLoop && ForeachExecutionOptions.Parse(ancestorLoop).IsParallel)
+            {
+                return ancestorLoop.Id.Equals(loop.Id);
+            }
+
+            ancestor = ancestor.Parent;
+        }
+
+        return false;
+    }
 
     private static bool TargetsLoop(DialogAction action, Foreach loop)
     {

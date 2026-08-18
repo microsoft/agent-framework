@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,6 +10,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Agents.ObjectModel.Abstractions;
+using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using Microsoft.Shared.Diagnostics;
 
@@ -98,6 +100,9 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
             Exception?[] iterationFailures = new Exception?[values.Length];
             int nextIndex = -1;
 
+            void RecordIterationFailure(int index, Exception exception) =>
+                Interlocked.CompareExchange(ref iterationFailures[index], exception, null);
+
             using CancellationTokenSource groupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             int workerCount = Math.Min(values.Length, this._executionOptions.MaxParallelism);
             Task[] workers =
@@ -108,23 +113,26 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
             await Task.WhenAll(workers).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
 
-            Exception[] failures =
-            [
-                .. iterationFailures
-                    .Select(
-                        (exception, index) =>
-                            exception is null
-                                ? null
-                                : new DeclarativeActionException(
-                                    $"Parallel Foreach '{this.Id}' iteration {index} failed.",
-                                    exception))
-                    .Where(exception => exception is not null)
-                    .Cast<Exception>(),
-            ];
-            if (failures.Length > 0)
+            List<Exception> failures = [];
+            for (int index = 0; index < iterationFailures.Length; index++)
+            {
+                if (iterationFailures[index] is Exception exception)
+                {
+                    failures.Add(
+                        new DeclarativeActionException(
+                            $"Parallel Foreach '{this.Id}' iteration {index} failed.",
+                            exception));
+                }
+            }
+
+            if (failures.Count > 0)
             {
                 throw new AggregateException($"Parallel Foreach '{this.Id}' failed.", failures);
             }
+
+            WorkflowConversationMessageBuffer? parentConversationBuffer =
+                (context as DeclarativeWorkflowContext)?.ConversationMessageBuffer;
+            string? workflowConversationId = parentConversationBuffer is null ? context.GetWorkflowConversation() : null;
 
             foreach (ParallelForeachIterationResult iterationResult in iterationResults.Cast<ParallelForeachIterationResult>())
             {
@@ -137,6 +145,32 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
                 {
                     await context.AddEventAsync(workflowEvent, cancellationToken).ConfigureAwait(false);
                 }
+
+                if (iterationResult.ConversationMessages.Length > 0)
+                {
+                    if (parentConversationBuffer is not null)
+                    {
+                        foreach (ChatMessage message in iterationResult.ConversationMessages)
+                        {
+                            parentConversationBuffer.Add(message);
+                        }
+                    }
+                    else if (workflowConversationId is null)
+                    {
+                        throw new DeclarativeActionException(
+                            $"Parallel Foreach '{this.Id}' produced workflow-conversation messages without a workflow conversation.");
+                    }
+                    else
+                    {
+                        foreach (ChatMessage message in iterationResult.ConversationMessages)
+                        {
+                            await workflowOptions.AgentProvider.CreateMessageAsync(
+                                workflowConversationId,
+                                message,
+                                cancellationToken).ConfigureAwait(false);
+                        }
+                    }
+                }
             }
 
             return default;
@@ -146,7 +180,10 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
                 while (!groupCancellation.IsCancellationRequested)
                 {
                     int iterationIndex = Interlocked.Increment(ref nextIndex);
-                    if (iterationIndex >= values.Length)
+                    // Use an unsigned comparison so an exhausted allocator cannot wrap around and
+                    // address a negative array index when an extreme item count is combined with
+                    // multiple workers.
+                    if ((uint)iterationIndex >= (uint)values.Length)
                     {
                         return;
                     }
@@ -160,6 +197,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
                             stateSnapshot,
                             workflowOptions,
                             this._executionOptions.IterationTimeout,
+                            exception => RecordIterationFailure(iterationIndex, exception),
                             groupCancellation.Token).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (groupCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -168,7 +206,7 @@ internal sealed class ForeachExecutor : DeclarativeActionExecutor<Foreach>
                     }
                     catch (Exception exception)
                     {
-                        iterationFailures[iterationIndex] = exception;
+                        RecordIterationFailure(iterationIndex, exception);
                         groupCancellation.Cancel();
                         return;
                     }

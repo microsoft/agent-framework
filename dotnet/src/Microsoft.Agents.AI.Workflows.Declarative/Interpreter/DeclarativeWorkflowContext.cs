@@ -32,6 +32,7 @@ internal sealed class DeclarativeWorkflowContext : IWorkflowContext
 
     private IWorkflowContext Source { get; }
     public WorkflowFormulaState State { get; }
+    internal WorkflowConversationMessageBuffer? ConversationMessageBuffer => this.State.ConversationMessageBuffer;
     public IReadOnlyDictionary<string, string>? TraceContext => this.Source.TraceContext;
 
     /// <inheritdoc/>

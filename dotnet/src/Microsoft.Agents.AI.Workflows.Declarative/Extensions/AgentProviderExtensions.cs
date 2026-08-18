@@ -3,8 +3,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
@@ -29,6 +32,17 @@ internal static class AgentProviderExtensions
         // contract here. Workflow.AsAIAgent separately removes matching streamed/completed
         // message duplicates at its hosting boundary.
         bool isWorkflowConversation = context.IsWorkflowConversation(conversationId, out string? workflowConversationId);
+        WorkflowConversationMessageBuffer? conversationMessageBuffer =
+            (context as DeclarativeWorkflowContext)?.ConversationMessageBuffer;
+
+        // An agent provider may mutate the supplied conversation while it is invoked. A parallel
+        // branch cannot safely share the workflow conversation, so reject an explicit use before
+        // the provider is called. Responses targeting the workflow conversation are staged below.
+        if (conversationMessageBuffer is not null && isWorkflowConversation)
+        {
+            throw new DeclarativeActionException(
+                $"Parallel Foreach action '{executorId}' cannot invoke an agent with the shared workflow conversation.");
+        }
         autoSend |= isWorkflowConversation;
 
         // Assign stable IDs to content-bearing chat updates before emitting and aggregating them.
@@ -100,7 +114,14 @@ internal static class AgentProviderExtensions
         {
             foreach (ChatMessage message in response.Messages)
             {
-                await agentProvider.CreateMessageAsync(workflowConversationId, message, cancellationToken).ConfigureAwait(false);
+                if (conversationMessageBuffer is null)
+                {
+                    await agentProvider.CreateMessageAsync(workflowConversationId, message, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    conversationMessageBuffer.Add(message);
+                }
             }
         }
 
@@ -152,5 +173,36 @@ internal static class AgentProviderExtensions
         // No inner exception: DeclarativeActionException is unwrapped to its inner exception when
         // reported, which would discard this message.
         throw new DeclarativeActionException($"Agent '{agentName}' failed [{errorCode}]: {errorMessage}");
+    }
+}
+
+/// <summary>
+/// Owns workflow-conversation messages produced by one parallel Foreach branch until the
+/// parent executor can replay them in source order.
+/// </summary>
+internal sealed class WorkflowConversationMessageBuffer
+{
+    private static readonly JsonTypeInfo<ChatMessage> s_messageTypeInfo =
+        (JsonTypeInfo<ChatMessage>)AgentAbstractionsJsonUtilities.DefaultOptions.GetTypeInfo(typeof(ChatMessage));
+
+    private readonly List<ChatMessage> _messages = [];
+
+    public IReadOnlyList<ChatMessage> Messages => this._messages;
+
+    public void Add(ChatMessage message)
+    {
+        try
+        {
+            JsonElement serialized = JsonSerializer.SerializeToElement(message, s_messageTypeInfo);
+            ChatMessage copy = serialized.Deserialize(s_messageTypeInfo)
+                ?? throw new JsonException("The staged conversation message deserialized to null.");
+            this._messages.Add(copy);
+        }
+        catch (Exception exception) when (exception is JsonException or NotSupportedException)
+        {
+            throw new DeclarativeActionException(
+                "A parallel Foreach response could not be isolated for deterministic conversation replay.",
+                exception);
+        }
     }
 }

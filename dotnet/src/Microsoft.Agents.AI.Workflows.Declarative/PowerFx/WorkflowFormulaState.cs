@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -36,6 +37,19 @@ internal sealed class WorkflowFormulaState
     public RecalcEngine Engine { get; }
 
     public WorkflowExpressionEngine Evaluator { get; }
+
+    /// <summary>
+    /// Gets the branch-local workflow-conversation staging buffer, when this state is running
+    /// inside a parallel Foreach iteration.
+    /// </summary>
+    internal WorkflowConversationMessageBuffer? ConversationMessageBuffer { get; set; }
+
+    /// <summary>
+    /// Receives action failures while this state is executing as an isolated parallel
+    /// Foreach branch. The runner uses this side channel so a peer cancellation cannot
+    /// hide an error that was already raised by the branch action.
+    /// </summary>
+    internal Action<Exception>? ParallelFailureReporter { get; set; }
 
     public WorkflowFormulaState(RecalcEngine engine)
     {
@@ -78,7 +92,7 @@ internal sealed class WorkflowFormulaState
                 .SelectMany(
                     scopeName =>
                         this.Keys(scopeName)
-                            .OrderBy(variableName => variableName, System.StringComparer.Ordinal)
+                            .OrderBy(variableName => variableName, StringComparer.Ordinal)
                             .Select(
                                 variableName =>
                                     new WorkflowStateEntry(
