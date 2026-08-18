@@ -153,9 +153,9 @@ class RedisHistoryProvider(HistoryProvider):
             # atomic and no-ops if a concurrent write already landed there; the
             # legacy list then stays put and remains clearable via clear().
             legacy_key = self._legacy_redis_key(session_id)
-            if legacy_key != key and await self._redis_client.exists(legacy_key):  # type: ignore[misc]
+            if legacy_key != key and await self._redis_client.exists(legacy_key):
                 with suppress(Exception):  # a legacy key that vanished mid-read is a no-op
-                    await self._redis_client.renamenx(legacy_key, key)  # type: ignore[misc]
+                    await self._redis_client.renamenx(legacy_key, key)
                 redis_messages = await self._redis_client.lrange(key, 0, -1)  # type: ignore[misc]
         messages: list[Message] = []
         if redis_messages:
