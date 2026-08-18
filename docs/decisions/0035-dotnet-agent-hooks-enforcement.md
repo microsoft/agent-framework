@@ -37,6 +37,6 @@ The [AGENT-HOOKS-0.1](https://github.com/responsibleai/agent-hooks) interception
 ## Consequences
 
 - Good: zero existing-source changes; the optional native dependency is isolated in one leaf package; enforcement properties are structural rather than convention-based.
-- Accepted: the package is build-only (not in the release solution filter) pending a maturity decision on the alpha dependency; a sample follows once the API shape settles.
+- Accepted: the package ships in the release solution filter as a preview package (the repo's default suffix; maintainer decision on the PR) — the whole surface stays `[Experimental]` and the `ResponsibleAI.AgentHooks` dependency is alpha; a sample follows once the API shape settles.
 - Known limitations (documented on the factory): hosted (service-executed) tools never reach the function seam and are intercepted via the `post_model_call` content projection; service-managed (conversation-id) history is durable at the service and ungateable; the deferred-OTel decorator sits above the chat seam, so sensitive-data request spans observe pre-transform content; a chat-seam projection failure fails the run closed but without a synthesized `host_error` record (SDK affordance gap, responsibleai/agent-hooks#70).
 - The trust model is the spec's: cooperative contract, not a security boundary — the misuse rejections catch accidental foot-guns loudly, not in-process adversaries.

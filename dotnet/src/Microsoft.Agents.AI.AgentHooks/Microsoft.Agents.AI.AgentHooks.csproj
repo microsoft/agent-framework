@@ -15,6 +15,9 @@
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
   </PropertyGroup>
 
+  <!-- Ships as preview (the repo default version suffix; the whole surface is [Experimental]). -->
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
     <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
@@ -25,8 +28,9 @@
 
   <PropertyGroup>
     <!-- NuGet Package Settings -->
-    <Title>Microsoft.Agents.AI.AgentHooks</Title>
-    <Description>AGENT-HOOKS-0.1 interception-contract enforcement for Microsoft Agent Framework agents.</Description>
+    <Title>Microsoft Agent Framework - agent-hooks enforcement</Title>
+    <Description>AGENT-HOOKS-0.1 interception-contract enforcement for Microsoft Agent Framework agents: fail-closed policy interception across the agent, model-call and tool-call seams, with transform write-back, buffered streaming and verdict-gated history persistence.</Description>
+    <PackageTags>AI, Artificial Intelligence, Agent, SDK, Framework, agent-hooks, Guardrails, Policy, Interception</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
