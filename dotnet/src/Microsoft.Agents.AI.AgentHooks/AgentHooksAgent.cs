@@ -325,9 +325,9 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
                 "Decorate the chat client supplied to the agent-hooks factory instead.");
         }
 
-        bool wrapBase = HasUnwrappedProviderOverride(options.AdditionalProperties);
+        bool wrapBase = this.HasUnwrappedProviderOverride(options.AdditionalProperties);
         bool wrapChat = options is ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } chatProperties } &&
-            HasUnwrappedProviderOverride(chatProperties);
+            this.HasUnwrappedProviderOverride(chatProperties);
         if (!wrapBase && !wrapChat && options is not ChatClientAgentRunOptions)
         {
             return options;
@@ -384,20 +384,33 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
         return true;
     }
 
-    private static bool HasUnwrappedProviderOverride(AdditionalPropertiesDictionary? properties) =>
+    private bool HasUnwrappedProviderOverride(AdditionalPropertiesDictionary? properties) =>
         properties is not null &&
         properties.TryGetValue(out ChatHistoryProvider? overrideProvider) &&
-        overrideProvider is not null and not AgentHooksGatingChatHistoryProvider;
+        overrideProvider is not null &&
+        !this.IsOwnGatingWrapper(overrideProvider);
 
     private void WrapProviderOverride(AdditionalPropertiesDictionary? properties)
     {
         if (properties is not null &&
             properties.TryGetValue(out ChatHistoryProvider? overrideProvider) &&
-            overrideProvider is not null and not AgentHooksGatingChatHistoryProvider)
+            overrideProvider is not null &&
+            !this.IsOwnGatingWrapper(overrideProvider))
         {
             bool perServiceCall = this.GetService<ChatClientAgentOptions>()?.RequirePerServiceCallChatHistoryPersistence is true;
             properties[typeof(ChatHistoryProvider).FullName!] =
                 new AgentHooksGatingChatHistoryProvider(overrideProvider, this._configuration, perServiceCall);
         }
     }
+
+    /// <summary>
+    /// Whether <paramref name="provider"/> is a gating wrapper owned by <em>this</em>
+    /// installation. Ownership matters: a gating wrapper belonging to a different
+    /// agent-hooks installation runs inline under this run's state (its own gate is not
+    /// covering here), so it must be re-wrapped like any unguarded provider — skipping
+    /// it would let a denied run's history persist through the foreign wrapper.
+    /// </summary>
+    private bool IsOwnGatingWrapper(ChatHistoryProvider provider) =>
+        provider is AgentHooksGatingChatHistoryProvider wrapper &&
+        ReferenceEquals(wrapper.Configuration, this._configuration);
 }

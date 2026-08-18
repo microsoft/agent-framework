@@ -3,42 +3,10 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using System.Threading.Tasks;
 using AgentHooks;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.AgentHooks;
-
-/// <summary>
-/// The configuration shared by all seams composed by one factory call.
-/// </summary>
-/// <remarks>
-/// Reference identity of this object is the ownership token: the chat and tool seams
-/// only bind to an ambient run state created by their own factory call, so nesting two
-/// agent-hooks-enabled agents can never silently misroute emissions.
-/// </remarks>
-internal sealed class AgentHooksConfiguration
-{
-    public required IReadOnlyList<KeyValuePair<string?, IInterceptor>> Interceptors { get; init; }
-
-    public IApprovalResolver? Resolver { get; init; }
-
-    public EnforcementMode Mode { get; init; } = EnforcementMode.Enforce;
-
-    public CompositionConfig? Composition { get; init; }
-
-    public IdentityProvider? IdentityProvider { get; init; }
-
-    public TimeSpan? Timeout { get; init; }
-
-    public Action<InterceptionRecord>? RecordSink { get; init; }
-
-    /// <summary>Host-owned session: when set, the middleware emits only the per-run points on this emitter.</summary>
-    public InterceptionEmitter? Emitter { get; init; }
-
-    /// <summary>Host-owned session: the builder matching <see cref="Emitter"/>.</summary>
-    public AgentContextBuilder? Builder { get; init; }
-}
 
 /// <summary>
 /// Per-run enforcement state shared by the seams via an <see cref="AsyncLocal{T}"/>.
@@ -96,58 +64,4 @@ internal sealed class AgentHooksRunState
     /// the verdicted content, never the pre-transform value.
     /// </summary>
     public IList<ChatMessage>? VerdictedResponseMessages { get; set; }
-}
-
-/// <summary>
-/// Collects a guarded run's durable persistence side effects so they only execute after
-/// the covering verdict permits the content.
-/// </summary>
-/// <remarks>
-/// The .NET equivalent of the Python feature's run persistence gate, radically simplified
-/// by construction ownership: the gate is consulted only by the gating provider wrappers
-/// that the agent-hooks factory itself installed on its own agent, so nested or sibling
-/// agents (which have their own providers) always persist inline at their own run
-/// boundaries, with no run-identity bookkeeping.
-/// </remarks>
-internal sealed class RunPersistenceGate
-{
-    private readonly object _lock = new();
-    private List<Func<CancellationToken, ValueTask>>? _pending;
-
-    /// <summary>Queue one deferred persistence callback.</summary>
-    public void Collect(Func<CancellationToken, ValueTask> persist)
-    {
-        lock (this._lock)
-        {
-            (this._pending ??= []).Add(persist);
-        }
-    }
-
-    /// <summary>Execute the deferred persistence in order (the covering verdict permitted the content).</summary>
-    public async ValueTask FlushAsync(CancellationToken cancellationToken)
-    {
-        List<Func<CancellationToken, ValueTask>>? pending;
-        lock (this._lock)
-        {
-            pending = this._pending;
-            this._pending = null;
-        }
-
-        if (pending is not null)
-        {
-            foreach (var persist in pending)
-            {
-                await persist(cancellationToken).ConfigureAwait(false);
-            }
-        }
-    }
-
-    /// <summary>Discard the deferred persistence (the covering verdict denied the content).</summary>
-    public void Drop()
-    {
-        lock (this._lock)
-        {
-            this._pending = null;
-        }
-    }
 }

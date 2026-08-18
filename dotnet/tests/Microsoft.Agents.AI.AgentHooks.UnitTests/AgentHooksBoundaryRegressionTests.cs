@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using AgentHooks;
 using Microsoft.Extensions.AI;
@@ -136,6 +137,35 @@ public class AgentHooksBoundaryRegressionTests
 
         // Assert
         Assert.Empty(overrideProvider.Stored);
+    }
+
+    [Fact]
+    public async Task ForeignGatingWrapperOverrideIsRewrappedAsync()
+    {
+        // Arrange: a gating wrapper belonging to a DIFFERENT agent-hooks installation
+        // (e.g. extracted from another guarded agent) is passed as a per-run provider
+        // override. It runs inline under this run's state — its own gate is not covering
+        // here — so skipping the re-wrap because "it is already a gating wrapper" would
+        // let this run's denied history persist straight through it.
+        var recording = new RecordingHistoryProvider();
+        var foreignConfiguration = new AgentHooksConfiguration
+        {
+            Interceptors = [new KeyValuePair<string?, IInterceptor>(null, new AllowGuard())],
+        };
+        var foreignWrapper = new AgentHooksGatingChatHistoryProvider(recording, foreignConfiguration, perServiceCallPersistence: false);
+        var client = new MockChatClient().EnqueueText("secret");
+        var agent = client.AsAIAgentWithAgentHooks(
+            new AgentHooksOptions(new PointGuard(InterceptionPoint.Output, Verdict.Deny("egress_blocked"))));
+        var session = await agent.CreateSessionAsync();
+        var runOptions = new ChatClientAgentRunOptions { AdditionalProperties = [] };
+        runOptions.AdditionalProperties!.Add<ChatHistoryProvider>(foreignWrapper);
+
+        // Act
+        _ = await Assert.ThrowsAsync<InterceptionBlockedException>(
+            () => agent.RunAsync(UserMessage("hi"), session, runOptions));
+
+        // Assert: the denied run's history never reached the underlying provider.
+        Assert.Empty(recording.Stored);
     }
 
     [Fact]
