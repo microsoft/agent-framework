@@ -17,14 +17,15 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
 public sealed class WorkflowAGUIExtensionsTests
 {
     [Fact]
-    public async Task AsAGUIChatResponseUpdatesAsync_MapsExecutorInvokedToStepStartedAsync()
+    public async Task MapWorkflowEventsToAGUI_MapsExecutorInvokedToStepStartedAsync()
     {
         // Arrange
         AgentResponseUpdate update = CreateUpdate(new ExecutorInvokedEvent("reviewer", "input"));
 
         // Act
         ChatResponseUpdate result = await ToAsyncEnumerableAsync(update)
-            .AsAGUIChatResponseUpdatesAsync()
+            .AsChatResponseUpdatesAsync()
+            .MapWorkflowEventsToAGUI()
             .SingleAsync();
 
         // Assert
@@ -33,14 +34,15 @@ public sealed class WorkflowAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAGUIChatResponseUpdatesAsync_MapsExecutorCompletedToStepFinishedAsync()
+    public async Task MapWorkflowEventsToAGUI_MapsExecutorCompletedToStepFinishedAsync()
     {
         // Arrange
         AgentResponseUpdate update = CreateUpdate(new ExecutorCompletedEvent("reviewer", "result"));
 
         // Act
         ChatResponseUpdate result = await ToAsyncEnumerableAsync(update)
-            .AsAGUIChatResponseUpdatesAsync()
+            .AsChatResponseUpdatesAsync()
+            .MapWorkflowEventsToAGUI()
             .SingleAsync();
 
         // Assert
@@ -49,7 +51,7 @@ public sealed class WorkflowAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task AsAGUIChatResponseUpdatesAsync_MapsExecutorFailedAndPreservesErrorAsync()
+    public async Task MapWorkflowEventsToAGUI_MapsExecutorFailedAndPreservesErrorAsync()
     {
         // Arrange
         ErrorContent error = new("An error occurred while executing the workflow.");
@@ -59,7 +61,8 @@ public sealed class WorkflowAGUIExtensionsTests
 
         // Act
         List<ChatResponseUpdate> results = await ToAsyncEnumerableAsync(update)
-            .AsAGUIChatResponseUpdatesAsync()
+            .AsChatResponseUpdatesAsync()
+            .MapWorkflowEventsToAGUI()
             .ToListAsync();
 
         // Assert
@@ -67,11 +70,12 @@ public sealed class WorkflowAGUIExtensionsTests
         results[0].RawRepresentation.Should().BeOfType<StepFinishedEvent>()
             .Which.StepName.Should().Be("reviewer");
         results[0].Contents.Should().BeEmpty();
+        results[1].RawRepresentation.Should().BeSameAs(update);
         results[1].Contents.Should().ContainSingle().Which.Should().BeSameAs(error);
     }
 
     [Fact]
-    public async Task AsAGUIChatResponseUpdatesAsync_ForwardsOtherUpdatesThroughExistingConversionAsync()
+    public async Task MapWorkflowEventsToAGUI_ForwardsOtherUpdatesUnchangedAsync()
     {
         // Arrange
         WorkflowStartedEvent workflowStarted = new("workflow");
@@ -79,11 +83,15 @@ public sealed class WorkflowAGUIExtensionsTests
         AgentResponseUpdate update = CreateUpdate(workflowStarted, text);
 
         // Act
-        ChatResponseUpdate result = await ToAsyncEnumerableAsync(update)
-            .AsAGUIChatResponseUpdatesAsync()
+        ChatResponseUpdate convertedUpdate = await ToAsyncEnumerableAsync(update)
+            .AsChatResponseUpdatesAsync()
+            .SingleAsync();
+        ChatResponseUpdate result = await ToAsyncEnumerableAsync(convertedUpdate)
+            .MapWorkflowEventsToAGUI()
             .SingleAsync();
 
         // Assert
+        result.Should().BeSameAs(convertedUpdate);
         result.RawRepresentation.Should().BeSameAs(update);
         result.Contents.Should().ContainSingle().Which.Should().BeSameAs(text);
     }
@@ -100,6 +108,13 @@ public sealed class WorkflowAGUIExtensionsTests
 
     private static async IAsyncEnumerable<AgentResponseUpdate> ToAsyncEnumerableAsync(
         AgentResponseUpdate update)
+    {
+        await Task.Yield();
+        yield return update;
+    }
+
+    private static async IAsyncEnumerable<ChatResponseUpdate> ToAsyncEnumerableAsync(
+        ChatResponseUpdate update)
     {
         await Task.Yield();
         yield return update;

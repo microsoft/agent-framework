@@ -11,44 +11,44 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 
 internal static class WorkflowAGUIExtensions
 {
-    internal static async IAsyncEnumerable<ChatResponseUpdate> AsAGUIChatResponseUpdatesAsync(
-        this IAsyncEnumerable<AgentResponseUpdate> updates)
+#pragma warning disable VSTHRD200 // The name describes a stream transformation, consistent with the requested pipeline.
+    internal static async IAsyncEnumerable<ChatResponseUpdate> MapWorkflowEventsToAGUI(
+        this IAsyncEnumerable<ChatResponseUpdate> updates)
     {
         ArgumentNullException.ThrowIfNull(updates);
 
-        await foreach (AgentResponseUpdate update in updates.ConfigureAwait(false))
+        await foreach (ChatResponseUpdate update in updates.ConfigureAwait(false))
         {
             switch (update.RawRepresentation)
             {
-                case ExecutorInvokedEvent invoked:
-                    yield return CreateEventUpdate(
-                        update,
-                        new StepStartedEvent { StepName = invoked.ExecutorId });
+                case AgentResponseUpdate { RawRepresentation: ExecutorInvokedEvent invoked }:
+                    update.RawRepresentation = new StepStartedEvent { StepName = invoked.ExecutorId };
+                    yield return update;
                     break;
 
-                case ExecutorCompletedEvent completed:
-                    yield return CreateEventUpdate(
-                        update,
-                        new StepFinishedEvent { StepName = completed.ExecutorId });
+                case AgentResponseUpdate { RawRepresentation: ExecutorCompletedEvent completed }:
+                    update.RawRepresentation = new StepFinishedEvent { StepName = completed.ExecutorId };
+                    yield return update;
                     break;
 
-                case ExecutorFailedEvent failed:
+                case AgentResponseUpdate { RawRepresentation: ExecutorFailedEvent failed }:
                     yield return CreateEventUpdate(
                         update,
                         new StepFinishedEvent { StepName = failed.ExecutorId },
                         includeContents: false);
-                    yield return update.AsChatResponseUpdate();
+                    yield return update;
                     break;
 
                 default:
-                    yield return update.AsChatResponseUpdate();
+                    yield return update;
                     break;
             }
         }
     }
+#pragma warning restore VSTHRD200
 
     private static ChatResponseUpdate CreateEventUpdate(
-        AgentResponseUpdate update,
+        ChatResponseUpdate update,
         BaseEvent evt,
         bool includeContents = true)
         => new()
