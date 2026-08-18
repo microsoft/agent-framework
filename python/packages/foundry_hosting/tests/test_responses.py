@@ -3758,6 +3758,40 @@ class TestOAuthConsentSurfacing:
         assert len(oauth_items) == 1
         assert oauth_items[0]["consent_link"] == "https://consent.example.com/obo"
 
+    async def test_mid_stream_consent_content_streams_oauth_output_item(self) -> None:
+        # Companion to the non-streaming case above: a streaming client must see the consent
+        # item as a proper added/done output item pair, not lose it to the unsupported-content
+        # warning in `_to_outputs`.
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_oauth_consent_request("https://consent.example.com/obo")],
+                    role="assistant",
+                )
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="list my tasks", stream=True)
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+
+        added = [e for e in events if e["event"] == "response.output_item.added"]
+        oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]
+        assert len(oauth_added) == 1
+        assert oauth_added[0]["data"]["item"]["consent_link"] == "https://consent.example.com/obo"
+        assert oauth_added[0]["data"]["item"]["server_label"] == "agent_framework"
+
+        done = [e for e in events if e["event"] == "response.output_item.done"]
+        oauth_done = [e for e in done if e["data"]["item"]["type"] == "oauth_consent_request"]
+        assert len(oauth_done) == 1
+        assert oauth_done[0]["data"]["item"]["id"] == oauth_added[0]["data"]["item"]["id"]
+
+        # Unlike the initialization-time path, which ends the response as `response.incomplete`,
+        # consent surfaced mid-stream still terminates as `response.completed`: `_to_outputs` is
+        # a content converter with no authority over response-level status.
+        assert _sse_event_types(events)[-1] == "response.completed"
+
     async def test_streaming_consent_error_emits_oauth_output_item(self) -> None:
         agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")])
         agent.__aenter__.side_effect = _make_consent_error("https://consent.example.com/auth")
