@@ -863,11 +863,14 @@ def _agent_updates_from_response(response: AgentResponse[Any]) -> list[AgentResp
 
 
 def _normalized_tools(tools: Any, *, point: str) -> list[Any]:
-    """Normalize a tools value for projection; empty (with a warning) when it cannot be."""
+    """Normalize a tools value for projection; empty (with a warning) when it cannot be.
+
+    Everything — including the emptiness check inside ``normalize_tools`` — runs under
+    the guard, so a tools container whose ``__bool__``/``__len__``/``__iter__`` raises
+    degrades to omitting the projection instead of aborting the emission mid-run.
+    """
     from ._tools import normalize_tools
 
-    if not tools:
-        return []
     try:
         return list(normalize_tools(tools))
     except Exception:
@@ -876,20 +879,36 @@ def _normalized_tools(tools: Any, *, point: str) -> list[Any]:
 
 
 def _projected_tool_name(item: Any) -> str:
+    """Project a tool's display name; hosted-tool mappings fall back to their ``type``."""
     from ._tools import _get_tool_name  # type: ignore[reportPrivateUsage]
 
+    fallback = type(item).__name__
     name = _get_tool_name(item)
-    return name if name else type(item).__name__
+    if name:
+        return name
+    if isinstance(item, Mapping):
+        # Hosted-tool mappings carry top-level fields (no nested "function"), e.g.
+        # {"type": "web_search"} or {"type": "web_search_20250305", "name": "web_search"}.
+        mapping = cast("Mapping[str, Any]", item)
+        for key in ("name", "type"):
+            value = mapping.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return fallback
 
 
 def _tool_description(item: Any) -> str | None:
     """Extract a tool description from a tool object or dict tool definition."""
     if isinstance(item, Mapping):
-        function = cast("Mapping[str, Any]", item).get("function")
-        if isinstance(function, Mapping):
-            description = cast("Mapping[str, Any]", function).get("description")
-            return description if isinstance(description, str) else None
-        return None
+        mapping = cast("Mapping[str, Any]", item)
+        function = mapping.get("function")
+        # Function-tool dicts nest the description; hosted-tool mappings keep it top-level.
+        description = (
+            cast("Mapping[str, Any]", function).get("description")
+            if isinstance(function, Mapping)
+            else mapping.get("description")
+        )
+        return description if isinstance(description, str) else None
     description = getattr(item, "description", None)
     return description if isinstance(description, str) else None
 
@@ -908,10 +927,12 @@ def _tool_names(context: AgentContext) -> list[str]:
     """
     agent_options = getattr(context.agent, "default_options", None)
     agent_tools: Any = (
-        cast("Mapping[str, Any]", agent_options).get("tools")
-        if isinstance(agent_options, Mapping)
-        else getattr(context.agent, "tools", None)
+        cast("Mapping[str, Any]", agent_options).get("tools") if isinstance(agent_options, Mapping) else None
     )
+    if agent_tools is None:
+        # Custom agent implementations (no default_options mapping, or one without a
+        # tools entry) keep exposing their declared tools through the legacy attribute.
+        agent_tools = getattr(context.agent, "tools", None)
     return [
         _projected_tool_name(item)
         for tools in (agent_tools, context.tools)

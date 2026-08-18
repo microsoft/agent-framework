@@ -495,6 +495,70 @@ async def test_pre_model_call_omits_tools_when_call_has_none(chat_client_base: M
     assert "tools" not in pre_model
 
 
+@requires_sdk
+async def test_hosted_tool_mappings_project_top_level_name_and_description(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Hosted-tool mappings project their top-level fields, with ``type`` naming unnamed tools.
+
+    The provider factories return plain mappings without a nested ``function`` object
+    (e.g. OpenAI's ``{"type": "web_search"}``, Anthropic's ``{"type": "web_search_20250305",
+    "name": "web_search"}``); those must not be projected as ``{"name": "dict"}``.
+    """
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        tools=[
+            {"type": "web_search"},
+            {"type": "web_search_20250305", "name": "web_search"},
+            {"type": "custom_hosted", "name": "lookup", "description": "Look things up."},
+        ],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("hello")
+
+    pre_model = guard.contexts_for("pre_model_call")[0]
+    assert pre_model["tools"] == [
+        {"name": "web_search"},
+        {"name": "web_search"},
+        {"name": "lookup", "description": "Look things up."},
+    ]
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["web_search", "web_search", "lookup"]
+
+
+@requires_sdk
+def test_tools_projection_survives_hostile_tools_container(caplog: pytest.LogCaptureFixture) -> None:
+    """A tools container whose ``__bool__`` raises degrades to omission, never an emission abort."""
+    from agent_framework._agent_hooks import _pre_model_call_tools
+
+    class HostileTools:
+        def __bool__(self) -> bool:
+            raise RuntimeError("hostile __bool__")
+
+        def __iter__(self) -> Any:
+            return iter([])
+
+    with caplog.at_level("WARNING", logger="agent_framework._agent_hooks"):
+        assert _pre_model_call_tools({"tools": HostileTools()}) is None
+    assert "could not normalize the tools" in caplog.text
+
+
+@requires_sdk
+def test_startup_snapshot_falls_back_to_legacy_tools_attribute() -> None:
+    """A custom agent whose ``default_options`` mapping has no tools entry keeps its
+    ``tools``-attribute projection (the pre-existing fallback for non-``Agent`` hosts)."""
+    from agent_framework._agent_hooks import _tool_names
+
+    class LegacyAgent:
+        default_options = {"temperature": 0.2}  # mapping-valued, but no "tools" key
+        tools = [weather_tool]
+
+    context = AgentContext(agent=cast("Any", LegacyAgent()), messages=[])
+    assert _tool_names(context) == ["weather_tool"]
+
+
 # endregion
 
 # region Deny-before-execution
