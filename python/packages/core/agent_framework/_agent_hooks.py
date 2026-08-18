@@ -918,7 +918,9 @@ def _tool_names(context: AgentContext) -> list[str]:
 
     This is deliberately the run-start snapshot: the tools declared on the agent
     (:class:`~agent_framework.Agent` stores them in ``default_options["tools"]``) plus
-    this invocation's run-level tools. Tools registered dynamically during the run (for
+    this invocation's run-level tools — whichever supported form they arrive in (the
+    ``tools=`` keyword, or a ``tools`` entry in the run's options dict; the run gives
+    the named parameter precedence). Tools registered dynamically during the run (for
     example by context providers during run preparation, or by MCP servers whose
     functions expand at connect time) cannot be known at ``agent_startup`` time; they
     surface in each ``pre_model_call`` emission's ``tools`` projection (the completed
@@ -933,9 +935,15 @@ def _tool_names(context: AgentContext) -> list[str]:
         # Custom agent implementations (no default_options mapping, or one without a
         # tools entry) keep exposing their declared tools through the legacy attribute.
         agent_tools = getattr(context.agent, "tools", None)
+    run_tools: Any = context.tools
+    if run_tools is None and isinstance(context.options, Mapping):
+        # Run-level tools may also arrive inside the run's options dict; mirror the
+        # run's own precedence (`tools_ = tools if tools is not None else
+        # opts.pop("tools", None)`), where the named parameter wins.
+        run_tools = context.options.get("tools")
     return [
         _projected_tool_name(item)
-        for tools in (agent_tools, context.tools)
+        for tools in (agent_tools, run_tools)
         for item in _normalized_tools(tools, point="agent_startup")
     ]
 

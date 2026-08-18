@@ -559,6 +559,27 @@ def test_startup_snapshot_falls_back_to_legacy_tools_attribute() -> None:
     assert _tool_names(context) == ["weather_tool"]
 
 
+@requires_sdk
+async def test_options_route_run_tools_appear_on_both_projections(chat_client_base: MockBaseChatClient) -> None:
+    """Run-level tools passed as ``options={"tools": ...}`` (instead of the ``tools=``
+    keyword) appear in the run-start snapshot and the per-call projection alike."""
+
+    @tool(approval_mode="never_require")
+    def options_route_tool(city: str) -> str:
+        """Arrives through the options dict."""
+        return city
+
+    guard = AllowGuard()
+    agent = Agent(client=chat_client_base, tools=[weather_tool], middleware=[create_agent_hooks_middleware([guard])])
+
+    await agent.run("hello", options={"tools": [options_route_tool]})
+
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool", "options_route_tool"]
+    pre_model = guard.contexts_for("pre_model_call")[0]
+    assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool", "options_route_tool"]
+
+
 # endregion
 
 # region Deny-before-execution
