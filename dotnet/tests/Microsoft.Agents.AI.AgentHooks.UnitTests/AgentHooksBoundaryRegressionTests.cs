@@ -299,6 +299,22 @@ public class AgentHooksBoundaryRegressionTests
     }
 
     [Fact]
+    public void UseProvidedChatClientAsIsIsRejected()
+    {
+        // Arrange: UseProvidedChatClientAsIs signals a fully custom, do-not-touch client
+        // stack — incompatible with a factory whose job is to decorate that client and
+        // rely on the agent's default pipeline above it. Honoring it would silently
+        // change where (and whether) the seams sit.
+        var client = new MockChatClient();
+
+        // Act / Assert
+        var exception = Assert.Throws<ArgumentException>(() => client.AsAIAgentWithAgentHooks(
+            new AgentHooksOptions(new AllowGuard()),
+            new ChatClientAgentOptions { UseProvidedChatClientAsIs = true }));
+        Assert.Contains("UseProvidedChatClientAsIs", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SuppliedClientContainingFunctionInvocationIsRejected()
     {
         // Arrange: a supplied client that already contains a FunctionInvokingChatClient

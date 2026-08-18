@@ -22,24 +22,34 @@ internal static class InputCodec
     /// message projects as its content string (so string-matching perimeter guards fire);
     /// multi-message or rich input projects as a list of per-message objects.
     /// </summary>
-    public static JsonObject ToWire(IReadOnlyList<ChatMessage> messages)
+    /// <remarks>
+    /// The content and role are returned alongside the payload object so callers never
+    /// have to re-read them out of the payload by property name — the projection is the
+    /// single producer, and this shape makes the "both fields always exist" invariant
+    /// hold by construction rather than by lookup.
+    /// </remarks>
+    public static (JsonObject Payload, JsonNode? Content, string Role) ToWire(IReadOnlyList<ChatMessage> messages)
     {
+        JsonNode? content;
+        string role;
         if (messages.Count == 1)
         {
-            return new JsonObject
-            {
-                ["content"] = Wire.ContentsToWire(messages[0].Contents),
-                ["role"] = Wire.InputRole(messages[0].Role),
-            };
+            content = Wire.ContentsToWire(messages[0].Contents);
+            role = Wire.InputRole(messages[0].Role);
         }
-
-        var content = new JsonArray();
-        foreach (var message in messages)
+        else
         {
-            content.Add(MessageToWire(message));
+            var parts = new JsonArray();
+            foreach (var message in messages)
+            {
+                parts.Add(MessageToWire(message));
+            }
+
+            content = parts;
+            role = "user";
         }
 
-        return new JsonObject { ["content"] = content, ["role"] = "user" };
+        return (new JsonObject { ["content"] = content, ["role"] = role }, content, role);
     }
 
     /// <summary>Write a transformed <c>input</c> target back into the run's message list.</summary>

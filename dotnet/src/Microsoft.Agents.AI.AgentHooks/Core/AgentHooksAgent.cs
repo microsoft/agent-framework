@@ -247,11 +247,12 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
             _ = await state.Emitter.EmitAsync(state.Builder.AgentStartup(this.ResolveToolNames(options)), cancellationToken).ConfigureAwait(false);
         }
 
+        // The projection returns content and role directly (single producer, invariant
+        // by construction) so nothing here re-reads payload properties by name.
         var before = InputCodec.ToWire(messages);
-        string role = (before["role"] as System.Text.Json.Nodes.JsonValue)?.GetValue<string>() ?? "user";
         var outcome = await state.Emitter.EmitAsync(
-            state.Builder.Input(before["content"]?.DeepClone(), role), cancellationToken).ConfigureAwait(false);
-        InputCodec.WriteBack(messages, before, outcome.Target);
+            state.Builder.Input(before.Content?.DeepClone(), before.Role), cancellationToken).ConfigureAwait(false);
+        InputCodec.WriteBack(messages, before.Payload, outcome.Target);
     }
 
     /// <summary>Emit <c>output</c> over the assembled response; apply output transforms. Returns whether the response changed.</summary>
@@ -276,8 +277,12 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            // agent_shutdown is a best-effort trail closure: a failure to emit it must
-            // not mask the run's own outcome (which is already propagating).
+            // agent_shutdown is a best-effort trail closure: a failure to emit it
+            // (including I/O-style faults from a record sink) must not mask the run's
+            // own outcome, which is already propagating — but it is logged so the
+            // incomplete session trail is trackable. Truly fatal exceptions
+            // (OutOfMemory; StackOverflow is uncatchable) are not swallowed.
+            state.Configuration.Logger.LogAgentShutdownEmissionFailed(reason, exception);
         }
     }
 

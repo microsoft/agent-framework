@@ -1,11 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using AgentHooks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.AgentHooks;
@@ -91,7 +89,6 @@ namespace Microsoft.Agents.AI.AgentHooks;
 /// owns the session boundaries.
 /// </para>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class AgentHooksChatClientExtensions
 {
     /// <summary>
@@ -191,7 +188,30 @@ public static class AgentHooksChatClientExtensions
                 nameof(chatClient));
         }
 
+        // Diagnostics logger, resolved the same way the agent resolves its own.
+        configuration.Logger =
+            ((services?.GetService(typeof(Extensions.Logging.ILoggerFactory)) as Extensions.Logging.ILoggerFactory)
+                ?? chatClient.GetService<Extensions.Logging.ILoggerFactory>()
+                ?? Extensions.Logging.Abstractions.NullLoggerFactory.Instance)
+            .CreateLogger("Microsoft.Agents.AI.AgentHooks");
+
         var options = agentOptions?.Clone() ?? new ChatClientAgentOptions();
+        if (options.UseProvidedChatClientAsIs)
+        {
+            // UseProvidedChatClientAsIs signals a fully custom, do-not-touch client
+            // stack — which is incompatible with this factory by definition: it always
+            // decorates the supplied client with the enforcement's chat seam and relies
+            // on the agent's default pipeline placing the function-invocation loop above
+            // that seam. Honoring the flag would silently change where (and whether) the
+            // seams sit, so it is rejected loudly instead.
+            throw new ArgumentException(
+                $"{nameof(ChatClientAgentOptions.UseProvidedChatClientAsIs)} is not supported with the agent-hooks " +
+                "factory: the factory always decorates the supplied chat client with the enforcement's chat seam " +
+                "and relies on the agent's default pipeline above it. Supply the raw chat client and let the " +
+                "factory compose the stack.",
+                nameof(agentOptions));
+        }
+
         bool perServiceCallPersistence = options.RequirePerServiceCallChatHistoryPersistence;
 
         // Durability gating: wrap the durable-write providers so end-of-run writes defer

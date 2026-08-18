@@ -3,6 +3,8 @@
 using System;
 using System.Collections.Generic;
 using AgentHooks;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Microsoft.Agents.AI.AgentHooks;
 
@@ -35,4 +37,7 @@ internal sealed class AgentHooksConfiguration
 
     /// <summary>Host-owned session: the builder matching <see cref="Emitter"/>.</summary>
     public AgentContextBuilder? Builder { get; init; }
+
+    /// <summary>The logger for enforcement diagnostics (swallowed best-effort failures are tracked here).</summary>
+    public ILogger Logger { get; set; } = NullLogger.Instance;
 }
