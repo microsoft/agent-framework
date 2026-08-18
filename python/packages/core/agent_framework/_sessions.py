@@ -236,7 +236,7 @@ def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]
         logger.debug("sequence alignment check failed, falling back to set-based deduplication")
 
     existing_set = set(existing_hashes)
-    new_msgs = []
+    new_msgs: list[Message] = []
     for m, h in zip(incoming, incoming_hashes):
         if h not in existing_set:
             new_msgs.append(m)
