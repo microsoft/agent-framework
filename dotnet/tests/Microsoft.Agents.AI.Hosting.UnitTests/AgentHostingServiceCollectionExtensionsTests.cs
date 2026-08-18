@@ -386,14 +386,12 @@ public class AgentHostingServiceCollectionExtensionsTests
         // This verifies the application's service provider was forwarded, not null or an empty provider.
         var spField = typeof(FunctionInvokingChatClient)
             .GetField("_serviceProvider", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(spField);
 
-        if (spField is not null)
-        {
-            var innerProvider = spField.GetValue(funcClient) as IServiceProvider;
-            Assert.NotNull(innerProvider);
-            var marker = innerProvider!.GetService<IMarkerService>();
-            Assert.NotNull(marker);
-        }
+        var innerProvider = spField!.GetValue(funcClient) as IServiceProvider;
+        Assert.NotNull(innerProvider);
+        var marker = innerProvider!.GetService<IMarkerService>();
+        Assert.NotNull(marker);
     }
 
     private interface IMarkerService;
