@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from agent_framework import WorkflowCheckpointException
+from agent_framework import WorkflowCheckpointException, register_checkpoint_type
 from agent_framework._workflows._checkpoint import FileCheckpointStorage
 from agent_framework._workflows._checkpoint_encoding import (
     _PICKLE_MARKER,
@@ -210,6 +210,13 @@ class _AllowedTestState:
     value: int
 
 
+@dataclass
+class _GloballyRegisteredTestState:
+    """Test dataclass registered for process-wide checkpoint deserialization."""
+
+    name: str
+
+
 def test_restricted_decode_blocks_unlisted_user_type():
     """User-defined types are blocked when not in allowed_checkpoint_types."""
     original = _AllowedTestState(name="test", value=42)
@@ -299,6 +306,25 @@ async def test_file_storage_allows_listed_user_type():
         assert isinstance(loaded.state["data"], _AllowedTestState)
         assert loaded.state["data"].name == "allowed"
         assert loaded.state["data"].value == 99
+
+
+async def test_file_storage_allows_globally_registered_user_type() -> None:
+    """A registered type can be restored without configuring the storage instance."""
+    from agent_framework import WorkflowCheckpoint
+
+    register_checkpoint_type(_GloballyRegisteredTestState)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = FileCheckpointStorage(tmpdir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test",
+            graph_signature_hash="hash",
+            state={"data": _GloballyRegisteredTestState(name="registered")},
+        )
+        await storage.save(checkpoint)
+        loaded = await storage.load(checkpoint.checkpoint_id)
+
+        assert loaded.state["data"] == _GloballyRegisteredTestState(name="registered")
 
 
 async def test_file_storage_round_trips_marker_shaped_dict_state() -> None:

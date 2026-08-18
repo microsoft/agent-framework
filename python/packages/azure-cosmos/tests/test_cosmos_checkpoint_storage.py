@@ -609,6 +609,13 @@ class _AppState:
     count: int
 
 
+@dataclass
+class _GloballyRegisteredAppState:
+    """Application-defined state type registered for all checkpoint backends."""
+
+    label: str
+
+
 _APP_STATE_TYPE_KEY = f"{_AppState.__module__}:{_AppState.__qualname__}"
 
 
@@ -677,6 +684,21 @@ async def test_load_allows_listed_app_type(mock_container: MagicMock) -> None:
     assert isinstance(loaded.state["data"], _AppState)
     assert loaded.state["data"].label == "ok"
     assert loaded.state["data"].count == 7
+
+
+async def test_load_allows_globally_registered_app_type(mock_container: MagicMock) -> None:
+    """Registered application types load without configuring the Cosmos storage instance."""
+    from agent_framework import register_checkpoint_type
+
+    checkpoint = _make_checkpoint_with_state({"data": _GloballyRegisteredAppState(label="registered")})
+    doc = _checkpoint_to_cosmos_document(checkpoint)
+    mock_container.query_items.return_value = _to_async_iter([doc])
+
+    register_checkpoint_type(_GloballyRegisteredAppState)
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+    loaded = await storage.load(checkpoint.checkpoint_id)
+
+    assert loaded.state["data"] == _GloballyRegisteredAppState(label="registered")
 
 
 async def test_list_checkpoints_blocks_unlisted_app_type(mock_container: MagicMock) -> None:

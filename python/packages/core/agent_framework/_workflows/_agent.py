@@ -64,7 +64,18 @@ class WorkflowAgent(BaseAgent):
             return {"request_id": self.request_id, "request_event": self.request_event.to_dict()}
 
         @classmethod
-        def from_dict(cls, payload: dict[str, Any]) -> WorkflowAgent.RequestInfoFunctionArgs:
+        def from_dict(
+            cls,
+            payload: dict[str, Any],
+            *,
+            allowed_types: Mapping[str, type[Any]] | None = None,
+        ) -> WorkflowAgent.RequestInfoFunctionArgs:
+            """Create request-info function arguments from a dictionary.
+
+            Args:
+                payload: Serialized request-info function arguments.
+                allowed_types: Optional exact mapping of serialized names to trusted custom types.
+            """
             if "request_id" not in payload or "request_event" not in payload:
                 raise ValueError(
                     "Invalid payload for RequestInfoFunctionArgs. 'request_id' and 'request_event' are required."
@@ -74,7 +85,10 @@ class WorkflowAgent(BaseAgent):
 
             return cls(
                 request_id=payload.get("request_id", ""),
-                request_event=WorkflowEvent.from_dict(payload.get("request_event", {})),
+                request_event=WorkflowEvent.from_dict(
+                    payload.get("request_event", {}),
+                    allowed_types=allowed_types,
+                ),
             )
 
     def __init__(
