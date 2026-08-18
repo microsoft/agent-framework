@@ -28,7 +28,7 @@ import logging
 import os
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Awaitable, Mapping, MutableMapping
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, cast
 
@@ -79,6 +79,11 @@ _SEARCH_SNIPPET_RADIUS = 50
 _MAX_SEARCH_PATTERN_LENGTH = 256
 _SEARCH_TIMEOUT_SECONDS = 10.0
 
+#: How much file content :meth:`AgentFileStore.search` accumulates before handing a batch
+#: to a worker thread. Sized so the per-hop cost is negligible against the scan itself while
+#: peak memory stays bounded no matter how many candidates a store returns.
+_SCAN_BATCH_CHARS = 4_000_000
+
 # Errno raised by POSIX ``open`` when ``O_NOFOLLOW`` was requested and the
 # leaf path component is a symbolic link. Used to translate the kernel-level
 # refusal into the same :class:`ValueError` the static probe raises so the
@@ -107,24 +112,33 @@ def _compile_search_regex(pattern: str) -> re.Pattern[str]:
 
 
 async def _run_search_with_timeout(
-    fn: Callable[[], list[FileSearchResult]],
+    work: Awaitable[list[FileSearchResult]],
 ) -> list[FileSearchResult]:
-    """Run ``fn`` in a worker thread with a bounded wall-clock timeout.
+    """Await ``work`` under a bounded wall-clock timeout.
+
+    Callers pass an awaitable rather than a callable so the same bound covers
+    both shapes of search: a whole scan offloaded with :func:`asyncio.to_thread`
+    (what the stores in this package do) and the base
+    :meth:`AgentFileStore.search` pipeline, which keeps store I/O on the event
+    loop and offloads only the per-file regex work. In both cases the
+    model-supplied pattern executes in a worker thread, never on the loop.
 
     Raises:
         ValueError: When the search does not complete within
             :data:`_SEARCH_TIMEOUT_SECONDS` seconds.
     """
     try:
-        return await asyncio.wait_for(asyncio.to_thread(fn), timeout=_SEARCH_TIMEOUT_SECONDS)
+        return await asyncio.wait_for(work, timeout=_SEARCH_TIMEOUT_SECONDS)
     except asyncio.TimeoutError as exc:
         # On Python 3.10 ``asyncio.wait_for`` raises ``asyncio.TimeoutError``
         # which is distinct from the builtin ``TimeoutError`` (the two were
         # unified in 3.11). Catching the asyncio alias works on every
         # supported version.
         raise ValueError(
-            f"Regex search did not complete within {_SEARCH_TIMEOUT_SECONDS:g} seconds. "
-            "Use a more specific pattern (avoid nested quantifiers such as '(a+)+')."
+            f"Search did not complete within {_SEARCH_TIMEOUT_SECONDS:g} seconds. The bound covers "
+            "the whole search, so this is either a pathological pattern (avoid nested quantifiers "
+            "such as '(a+)+') or a store too slow to read this many files in time. Narrow the "
+            "pattern, or search a smaller directory."
         ) from exc
 
 
@@ -212,6 +226,19 @@ def _matches_glob(file_name: str, glob_pattern: str | None) -> bool:
     return fnmatch.fnmatchcase(file_name.lower(), glob_pattern.lower())
 
 
+def _combine_search_path(directory: str, relative: str) -> str:
+    """Join a search ``directory`` and a path relative to it into one store path.
+
+    Both sides may be blank (the root, or the directory itself), so the result is
+    trimmed rather than assembled with a bare ``/``.
+    """
+    base = directory.strip("/")
+    tail = relative.strip("/")
+    if not base:
+        return tail
+    return f"{base}/{tail}" if tail else base
+
+
 def _apply_replace(content: str, old_string: str, new_string: str, replace_all: bool) -> tuple[str, int]:
     """Replace ``old_string`` with ``new_string`` in ``content``.
 
@@ -251,7 +278,12 @@ def _split_lines_keepends(content: str) -> list[str]:
     return lines
 
 
-def _apply_replace_lines(content: str, edits: list[tuple[int, str]]) -> str:
+def _strip_line_terminator(line: str) -> str:
+    r"""Return ``line`` without its trailing ``\r\n``, ``\n`` or ``\r``."""
+    return line.removesuffix("\n").removesuffix("\r")
+
+
+def _apply_replace_lines(content: str, edits: list[tuple[int, str, str | None]]) -> str:
     r"""Apply literal 1-based line replacements to ``content``.
 
     Each ``new_line`` is written **verbatim** in place of the target line,
@@ -260,33 +292,62 @@ def _apply_replace_lines(content: str, edits: list[tuple[int, str]]) -> str:
     and its terminator), and a ``new_line`` containing embedded newlines expands
     one line into several.
 
+    When an edit carries an ``expected_line``, the current text of the target
+    line must match it once both sides have their terminator stripped. That
+    turns a stale or mis-numbered edit into a refusal instead of a silent
+    overwrite of the wrong line, and it is the one check that also covers the
+    file changing between the read and the write.
+
     Raises :class:`ValueError` when no edits are provided, when any line number
-    is out of range, or when a line number is targeted more than once.
+    is out of range, when a line number is targeted more than once, or when an
+    ``expected_line`` does not match.
     """
     if not edits:
         raise ValueError("At least one line edit must be provided.")
     lines = _split_lines_keepends(content)
     seen: set[int] = set()
-    for line_number, _ in edits:
+    for line_number, _, expected_line in edits:
         if line_number in seen:
             raise ValueError(f"Duplicate line_number {line_number} in edits.")
         seen.add(line_number)
         if line_number < 1 or line_number > len(lines):
             raise ValueError(f"line_number {line_number} is out of range (file has {len(lines)} lines).")
-    for line_number, new_line in edits:
+        if expected_line is not None:
+            actual = _strip_line_terminator(lines[line_number - 1])
+            if actual != _strip_line_terminator(expected_line):
+                raise ValueError(
+                    f"line_number {line_number} does not contain the expected text "
+                    f"(expected {_strip_line_terminator(expected_line)!r}, found {actual!r}). "
+                    "Re-read the file to get current line numbers."
+                )
+    for line_number, new_line, _ in edits:
         lines[line_number - 1] = new_line
     return "".join(lines)
 
 
-def _line_edits(edits: list[Any]) -> list[tuple[int, str]]:
-    """Normalize ``replace_lines`` edits (pydantic models or dicts) to ``(line_number, new_line)``."""
-    normalized: list[tuple[int, str]] = []
+def _line_edits(edits: list[Any]) -> list[tuple[int, str, str | None]]:
+    """Normalize ``replace_lines`` edits (pydantic models or dicts) to tuples.
+
+    Each tuple is ``(line_number, new_line, expected_line)``, where
+    ``expected_line`` is ``None`` when the caller did not supply one.
+    """
+    normalized: list[tuple[int, str, str | None]] = []
     for edit in edits:
         if isinstance(edit, Mapping):
             mapping = cast("Mapping[str, Any]", edit)
-            normalized.append((int(mapping["line_number"]), str(mapping["new_line"])))
+            expected = mapping.get("expected_line")
+            normalized.append((
+                int(mapping["line_number"]),
+                str(mapping["new_line"]),
+                None if expected is None else str(expected),
+            ))
         else:
-            normalized.append((int(edit.line_number), str(edit.new_line)))
+            expected = getattr(edit, "expected_line", None)
+            normalized.append((
+                int(edit.line_number),
+                str(edit.new_line),
+                None if expected is None else str(expected),
+            ))
     return normalized
 
 
@@ -526,6 +587,8 @@ def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -
     line_start_offset = 0
 
     for line_number, line in enumerate(lines, start=1):
+        # Inlined rather than calling _strip_line_terminator: this runs once per line of
+        # every searched file, and the extra call is measurable on a large corpus.
         scanned = line.removesuffix("\n").removesuffix("\r")
         match = regex.search(scanned)
         if match is not None:
@@ -620,7 +683,109 @@ class AgentFileStore(ABC):
             path: The relative path of the file to check.
         """
 
-    @abstractmethod
+    #: Set to ``True`` by a store that overrides :meth:`search` and guarantees its
+    #: ``line_number`` values are coordinates in :meth:`split_lines` — normally because
+    #: it reports through :meth:`scan_content`. Declaring this opts the store out of the
+    #: alignment check :class:`FileAccessProvider` otherwise runs on every ``grep``,
+    #: which costs one extra read per *matched* file. Stores that do not override
+    #: :meth:`search` need not set it: the base implementation is aligned by
+    #: construction and is never checked.
+    #:
+    #: This is a promise, not a hint. Declaring it while numbering lines differently
+    #: reinstates exactly the failure the check exists to catch — ``replace_lines``
+    #: silently editing the wrong line — so only set it if a test pins the alignment.
+    reports_aligned_line_numbers: ClassVar[bool] = False
+
+    @staticmethod
+    def split_lines(content: str) -> list[str]:
+        r"""Split ``content`` into the lines this store's line numbers address.
+
+        This is the published definition of a line for the whole file-access
+        surface: ``read_lines``, ``replace_lines`` and every ``line_number``
+        reported by :meth:`search` are coordinates in this list. Splitting is on
+        ``\n`` only, with the terminator kept attached, so a trailing ``\r``
+        stays on its line, a trailing ``\n`` yields a final empty (editable)
+        line, and ``"".join(...)`` reproduces ``content`` verbatim.
+
+        A store that overrides :meth:`search` must number its matches by this
+        split — otherwise ``grep`` and the line editor disagree and an edit
+        lands on the wrong line. The rule is per-SDK: it is not required to
+        match the .NET implementation, only to be consistent within this one.
+        """
+        return _split_lines_keepends(content)
+
+    @staticmethod
+    def scan_content(file_name: str, content: str, regex: re.Pattern[str]) -> FileSearchResult | None:
+        """Find every line of ``content`` matching ``regex``, numbered by :meth:`split_lines`.
+
+        This is the numbering primitive the base :meth:`search` uses, published so a
+        store that supplies its own :meth:`search` can produce aligned results
+        rather than re-deriving them. Lines are reported verbatim, terminator
+        included; the pattern is matched against the line without its terminator.
+
+        Args:
+            file_name: The name recorded on the result, relative to the searched directory.
+            content: The file's full text.
+            regex: A compiled pattern, normally from the same source string passed
+                to :meth:`search`.
+
+        Returns:
+            The match metadata, or ``None`` when no line matches.
+        """
+        return _search_file_content(file_name, content, regex)
+
+    async def find_matching_files(
+        self,
+        directory: str,
+        regex_pattern: str,
+        glob_pattern: str | None = None,
+        *,
+        recursive: bool = False,
+    ) -> list[str]:
+        """Return the names of files that **may** contain a match for ``regex_pattern``.
+
+        This is the hook a store uses to narrow the search to the files worth
+        reading. Semantics are deliberately a **superset**:
+        returning a file that turns out not to match is harmless — the base
+        :meth:`search` re-scans every candidate and discards it — while omitting
+        a file loses the match. A backend with a native search index should
+        override this and push ``regex_pattern`` down to it, accepting that a
+        dialect mismatch costs recall and nothing else.
+
+        The default implementation has no index to narrow with, so it walks :meth:`list_children`
+        and returns every file in scope. Overriding :meth:`search` instead is also
+        supported, but then line numbering is the store's responsibility (see
+        :meth:`split_lines`) and :class:`FileAccessProvider` verifies it.
+
+        Args:
+            directory: The relative directory to search. Use ``""`` for the root.
+            regex_pattern: The pattern :meth:`search` was called with, as a hint. It is the bare
+                source string: :meth:`search` compiles it **case-insensitively**, so an index
+                queried case-sensitively with it will miss files and silently lose those matches.
+            glob_pattern: The same optional glob :meth:`search` received, matched
+                against each file's path relative to ``directory``.
+
+        Keyword Args:
+            recursive: When ``False`` (default) only direct children are in scope.
+
+        Returns:
+            File paths relative to ``directory``, using forward slashes.
+        """
+        del regex_pattern  # No index to narrow with here; a native backend overrides this.
+        names: list[str] = []
+        pending: list[str] = [""]
+        while pending:
+            relative_dir = pending.pop()
+            listed = await self.list_children(_combine_search_path(directory, relative_dir))
+            for entry in listed:
+                child = f"{relative_dir}/{entry.name}".lstrip("/")
+                if entry.type == FileStoreEntry.DIRECTORY:
+                    if recursive:
+                        pending.append(child)
+                elif _matches_glob(child, glob_pattern):
+                    names.append(child)
+        return names
+
     async def search(
         self,
         directory: str,
@@ -630,6 +795,17 @@ class AgentFileStore(ABC):
         recursive: bool = False,
     ) -> list[FileSearchResult]:
         """Search files in ``directory`` for content matching ``regex_pattern``.
+
+        The base implementation asks :meth:`find_matching_files` which files to
+        consider, then reads and scans each one itself, so every ``line_number``
+        it reports is a coordinate in :meth:`split_lines` by construction and a
+        number from ``grep`` always addresses the same line in ``read_lines`` and
+        ``replace_lines``. Store I/O stays on the event loop; only the
+        model-supplied regex runs in a worker thread.
+
+        Overriding this method is supported — a backend that can perform the
+        whole search natively should — but the override then owns line numbering
+        and must follow :meth:`split_lines`, typically via :meth:`scan_content`.
 
         Args:
             directory: The relative directory to search. Use ``""`` for the root.
@@ -650,7 +826,71 @@ class AgentFileStore(ABC):
             The list of files whose content matched, with snippet and matching
             line metadata. Each result's ``file_name`` is the path relative to
             ``directory`` (forward slashes).
+
+        Raises:
+            ValueError: When the search does not complete within
+                :data:`_SEARCH_TIMEOUT_SECONDS` seconds.
         """
+        regex = _compile_search_regex(regex_pattern)
+        return await _run_search_with_timeout(self._scan_candidate_files(directory, regex, glob_pattern, recursive))
+
+    async def _scan_candidate_files(
+        self,
+        directory: str,
+        regex: re.Pattern[str],
+        glob_pattern: str | None,
+        recursive: bool,
+    ) -> list[FileSearchResult]:
+        """Read and scan each candidate from :meth:`find_matching_files`.
+
+        The glob and the non-recursive rule are re-applied here so a store that
+        over-returns (which :meth:`find_matching_files` explicitly permits)
+        cannot widen the caller's scope.
+        """
+        names = await self.find_matching_files(directory, regex.pattern, glob_pattern, recursive=recursive)
+        results: list[FileSearchResult] = []
+        batch: list[tuple[str, str]] = []
+        batch_chars = 0
+
+        def scan_batch(pending: list[tuple[str, str]]) -> list[FileSearchResult]:
+            found: list[FileSearchResult] = []
+            for candidate_name, candidate_content in pending:
+                # Called on the class, not the instance: a store that overrides the public
+                # scan_content must not be able to skew the numbers while still counting as
+                # aligned by construction.
+                result = AgentFileStore.scan_content(candidate_name, candidate_content, regex)
+                if result is not None:
+                    found.append(result)
+            return found
+
+        for name in names:
+            if not _matches_glob(name, glob_pattern) or (not recursive and "/" in name):
+                continue
+            try:
+                content = await self.read(_combine_search_path(directory, name))
+            except (OSError, ValueError):
+                # ``read`` raises ValueError for non-UTF-8 bytes and for symlinked paths, and
+                # OSError for a file deleted or made unreadable under us. Skip either so one
+                # unreadable file cannot abort the whole search, mirroring
+                # FileSystemAgentFileStore's own behaviour.
+                logger.warning("Skipping unreadable file during search: %s", name)
+                continue
+            if content is None:
+                continue  # Deleted between enumeration and read.
+            batch.append((name, content))
+            batch_chars += len(content)
+            # Scan in batches rather than one file at a time: the offload exists to keep
+            # a pathological regex off the event loop, and one hop per file costs more
+            # than the scan itself once per-file work is sub-millisecond. Bounding the
+            # batch by size rather than count keeps peak memory independent of how many
+            # candidates the store returned.
+            if batch_chars >= _SCAN_BATCH_CHARS:
+                results.extend(await asyncio.to_thread(scan_batch, batch))
+                batch = []
+                batch_chars = 0
+        if batch:
+            results.extend(await asyncio.to_thread(scan_batch, batch))
+        return results
 
     @abstractmethod
     async def create_directory(self, path: str) -> None:
@@ -792,12 +1032,12 @@ class InMemoryAgentFileStore(AgentFileStore):
                 relative_display = display[len(prefix) :]
                 if not _matches_glob(relative_display, glob_pattern):
                     continue
-                result = _search_file_content(relative_display, file_content, regex)
+                result = AgentFileStore.scan_content(relative_display, file_content, regex)
                 if result is not None:
                     results.append(result)
             return results
 
-        return await _run_search_with_timeout(scan)
+        return await _run_search_with_timeout(asyncio.to_thread(scan))
 
     async def create_directory(self, path: str) -> None:
         """No-op: directories are implicit from file paths in the in-memory store."""
@@ -1068,7 +1308,9 @@ class FileSystemAgentFileStore(AgentFileStore):
         """
         full_dir = self._resolve_safe_directory_path(directory)
         regex = _compile_search_regex(regex_pattern)
-        return await _run_search_with_timeout(lambda: self._search_files_sync(full_dir, regex, glob_pattern, recursive))
+        return await _run_search_with_timeout(
+            asyncio.to_thread(self._search_files_sync, full_dir, regex, glob_pattern, recursive)
+        )
 
     @staticmethod
     def _enumerate_search_files(full_dir: Path, recursive: bool) -> list[tuple[str, Path]]:
@@ -1123,7 +1365,7 @@ class FileSystemAgentFileStore(AgentFileStore):
                 logger.warning("Skipping non-UTF-8 file during search: %s", entry)
                 skipped.append(relative_name)
                 continue
-            result = _search_file_content(relative_name, file_content, regex)
+            result = AgentFileStore.scan_content(relative_name, file_content, regex)
             if result is not None:
                 results.append(result)
         if skipped:
@@ -1139,6 +1381,95 @@ class FileSystemAgentFileStore(AgentFileStore):
         """Ensure the directory at ``path`` exists, creating it if necessary."""
         full_path = self._resolve_safe_directory_path(path)
         await asyncio.to_thread(lambda: full_path.mkdir(parents=True, exist_ok=True))
+
+
+#: ``search`` implementations known to number lines with :meth:`AgentFileStore.split_lines`: the
+#: base implementation by construction, and the two stores shipped here because they report through
+#: :meth:`AgentFileStore.scan_content`. Anything else is verified before its numbers reach the model.
+#:
+#: Keyed on the function object rather than declared with
+#: :attr:`AgentFileStore.reports_aligned_line_numbers`, because that attribute is inherited: a store
+#: subclassing one of these and overriding ``search`` would keep the declaration and be trusted with
+#: numbers it computed itself. Dropping out of this set is automatic. (The .NET port declares the
+#: property instead, which is safe there only because both of its shipped stores are sealed.)
+_ALIGNED_SEARCH_IMPLEMENTATIONS: frozenset[Any] = frozenset({
+    AgentFileStore.search,
+    InMemoryAgentFileStore.search,
+    FileSystemAgentFileStore.search,
+})
+
+_MISALIGNED_SEARCH_MESSAGE = (
+    "Could not search files: this store's line numbers do not line up with the numbering used by "
+    "file_access_read_lines and file_access_replace_lines, so editing by the reported numbers would "
+    "change the wrong lines (or a file changed while the search ran). Use file_access_read or "
+    "file_access_read_lines to locate the content before editing."
+)
+
+
+async def _verify_search_alignment(
+    store: AgentFileStore,
+    directory: str,
+    results: list[FileSearchResult],
+    regex_pattern: str,
+) -> str | None:
+    """Check that a store's reported line numbers address the lines the editor will edit.
+
+    Skipped entirely when the store uses a ``search`` implementation already known to
+    be aligned. Otherwise every reported ``line_number`` is re-checked by running the
+    pattern against that line of :meth:`AgentFileStore.split_lines`, which is what
+    ``replace_lines`` will index into. Matching by pattern rather than by string
+    equality is deliberate: a custom store is not required to report the line verbatim
+    with its terminator, so comparing text would reject correct stores.
+
+    This is detection, not proof — a pattern that matches every line (``.``) passes
+    even if the numbering is skewed — and it is deliberately whole-call: a single
+    skewed file means the store's coordinates cannot be trusted anywhere.
+
+    Returns:
+        ``None`` when the numbers are trustworthy, otherwise a message for the model.
+    """
+    if not results or store.reports_aligned_line_numbers or type(store).search in _ALIGNED_SEARCH_IMPLEMENTATIONS:
+        return None
+
+    async def collect() -> list[tuple[FileSearchResult, str]]:
+        gathered: list[tuple[FileSearchResult, str]] = []
+        for result in results:
+            try:
+                content = await store.read(_combine_search_path(directory, result.file_name))
+            except (OSError, ValueError):
+                # Deleted, unreadable, or not UTF-8. ``search`` itself skips these, so the check
+                # must not report the same race as a store-correctness fault.
+                logger.warning("Skipping unverifiable file during search check: %s", result.file_name)
+                continue
+            if content is None:
+                continue
+            gathered.append((result, content))
+        return gathered
+
+    regex = _compile_search_regex(regex_pattern)
+
+    def check(scanned: list[tuple[FileSearchResult, str]]) -> bool:
+        for result, content in scanned:
+            lines = AgentFileStore.split_lines(content)
+            for match in result.matching_lines:
+                if match.line_number > len(lines):
+                    return False
+                if regex.search(_strip_line_terminator(lines[match.line_number - 1])) is None:
+                    return False
+        return True
+
+    async def verify() -> bool:
+        scanned = await collect()
+        # The model supplies this pattern, so it runs in a worker thread rather than on the loop.
+        return await asyncio.to_thread(check, scanned)
+
+    try:
+        # The bound covers the reads as well as the scan: on a remote store the reads dominate,
+        # and an unbounded verification pass would hang grep for as long as they take.
+        aligned = await asyncio.wait_for(verify(), timeout=_SEARCH_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        return _MISALIGNED_SEARCH_MESSAGE
+    return None if aligned else _MISALIGNED_SEARCH_MESSAGE
 
 
 class _WriteFileInput(BaseModel):
@@ -1226,6 +1557,18 @@ class _LineEdit(BaseModel):
             )
         ),
     ]
+    expected_line: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Optional: the text you believe is currently on that line, as reported by "
+                "file_access_grep or file_access_read_lines. When supplied, the edit is rejected "
+                "unless it matches, which catches an out-of-date line number or a file that changed "
+                "since you looked. The trailing newline is ignored in the comparison."
+            ),
+        ),
+    ] = None
 
 
 class _ReplaceLinesInput(BaseModel):
@@ -1365,6 +1708,7 @@ class FileAccessProvider(ContextProvider):
         disable_write_tools: bool = False,
         disable_readonly_tool_approval: bool = False,
         disable_write_tool_approval: bool = False,
+        disable_search_alignment_check: bool = False,
     ) -> None:
         """Initialize the file access provider.
 
@@ -1391,6 +1735,18 @@ class FileAccessProvider(ContextProvider):
                 ``file_access_replace``, ``file_access_replace_lines``) are
                 registered with ``approval_mode="never_require"`` so they run
                 without host approval. Defaults to ``False`` (approval required).
+            disable_search_alignment_check: When ``True``, ``file_access_grep`` skips the
+                check that a store's reported ``line_number`` values address the same
+                lines ``file_access_read_lines`` and ``file_access_replace_lines`` act
+                on. That check only runs for a store which overrides
+                :meth:`AgentFileStore.search` without declaring
+                :attr:`AgentFileStore.reports_aligned_line_numbers`, and costs one extra
+                read per *matched* file. Turn it off only when the store's alignment is
+                established some other way: without it, a mis-numbered grep result is
+                handed to the model and an edit can land on the wrong line silently.
+                Prefer setting ``reports_aligned_line_numbers`` on the store, which is
+                narrower — it opts out one store rather than every store this provider
+                is ever given. Defaults to ``False`` (the check runs).
         """
         super().__init__(source_id)
         self.store = store
@@ -1398,6 +1754,7 @@ class FileAccessProvider(ContextProvider):
         self.disable_write_tools = disable_write_tools
         self.disable_readonly_tool_approval = disable_readonly_tool_approval
         self.disable_write_tool_approval = disable_write_tool_approval
+        self.disable_search_alignment_check = disable_search_alignment_check
         # Serializes mutating tool operations (write/delete/replace/replace_lines).
         # The provider is shared across sessions/agents, so read-modify-write tools
         # (replace/replace_lines) could otherwise interleave and lose updates. Note
@@ -1652,6 +2009,12 @@ class FileAccessProvider(ContextProvider):
             target = directory if directory and directory.strip() else ""
             try:
                 results = await self.store.search(target, regex_pattern, glob_filter, recursive=True)
+                if not self.disable_search_alignment_check:
+                    # Inside the same guard: the check compiles the pattern itself, so a store that
+                    # accepts one this package would reject must not throw out of the tool.
+                    misaligned = await _verify_search_alignment(self.store, target, results, regex_pattern)
+                    if misaligned is not None:
+                        return misaligned
             except ValueError as exc:
                 return f"Could not search files: {exc}"
             except OSError as exc:

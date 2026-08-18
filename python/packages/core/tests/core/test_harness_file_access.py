@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -844,7 +845,16 @@ async def test_run_search_with_timeout_raises_value_error(monkeypatch: pytest.Mo
         return []
 
     with pytest.raises(ValueError, match="did not complete"):
-        await _run_search_with_timeout(slow)
+        await _run_search_with_timeout(asyncio.to_thread(slow))
+
+    async def slow_pipeline() -> list[FileSearchResult]:
+        await asyncio.sleep(0.5)
+        return []
+
+    # The same bound covers the base ``search`` pipeline, which is awaited directly
+    # rather than offloaded as a whole.
+    with pytest.raises(ValueError, match="did not complete"):
+        await _run_search_with_timeout(slow_pipeline())
 
 
 async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
@@ -1090,17 +1100,20 @@ async def test_filesystem_store_rejects_symlinked_intermediate_directory(tmp_pat
 async def _prepare_access_tools(
     chat_client_base: SupportsChatGetResponse,
     *,
+    store: AgentFileStore | None = None,
     disable_write_tools: bool = False,
     disable_readonly_tool_approval: bool = False,
     disable_write_tool_approval: bool = False,
+    disable_search_alignment_check: bool = False,
 ) -> list[object]:
     """Prepare a FileAccessProvider and return its registered tools."""
     session = AgentSession(session_id="session-1")
     provider = FileAccessProvider(
-        store=InMemoryAgentFileStore(),
+        store=store if store is not None else InMemoryAgentFileStore(),
         disable_write_tools=disable_write_tools,
         disable_readonly_tool_approval=disable_readonly_tool_approval,
         disable_write_tool_approval=disable_write_tool_approval,
+        disable_search_alignment_check=disable_search_alignment_check,
     )
     agent = Agent(client=chat_client_base, context_providers=[provider])
     _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
@@ -1460,3 +1473,461 @@ async def test_file_access_disable_write_tools_hides_write_tools(
     assert "file_access_delete" not in names
     assert "file_access_replace" not in names
     assert "file_access_replace_lines" not in names
+
+
+# region AgentFileStore line-numbering contract
+
+
+class _ContentOnlyStore(AgentFileStore):
+    """A store that implements only the mandatory members.
+
+    Before the line-numbering contract this class could not exist: ``search`` was
+    abstract. It now inherits the base implementation and must produce line
+    numbers that address the same lines as ``read_lines``/``replace_lines``.
+    """
+
+    def __init__(self) -> None:
+        self.files: dict[str, str] = {}
+
+    async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
+        self.files[path] = content
+
+    async def read(self, path: str) -> str | None:
+        return self.files.get(path)
+
+    async def delete(self, path: str) -> bool:
+        return self.files.pop(path, None) is not None
+
+    async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
+        prefix = f"{directory}/" if directory else ""
+        found: dict[str, str] = {}
+        for path in self.files:
+            if not path.startswith(prefix):
+                continue
+            head, _, rest = path[len(prefix) :].partition("/")
+            found[head] = FileStoreEntry.DIRECTORY if rest else FileStoreEntry.FILE
+        return [FileStoreEntry(name=name, type=kind) for name, kind in found.items()]
+
+    async def file_exists(self, path: str) -> bool:
+        return path in self.files
+
+    async def create_directory(self, path: str) -> None:
+        return None
+
+
+class _SkewedStore(_ContentOnlyStore):
+    """Overrides ``search`` and numbers lines with ``splitlines``, which disagrees."""
+
+    async def search(
+        self,
+        directory: str,
+        regex_pattern: str,
+        glob_pattern: str | None = None,
+        *,
+        recursive: bool = False,
+    ) -> list[FileSearchResult]:
+        regex = re.compile(regex_pattern, re.IGNORECASE)
+        results: list[FileSearchResult] = []
+        for name, content in self.files.items():
+            matches = [
+                FileSearchMatch(line_number=number, line=line)
+                for number, line in enumerate(content.splitlines(keepends=True), start=1)
+                if regex.search(line.rstrip("\r\n"))
+            ]
+            if matches:
+                results.append(FileSearchResult(file_name=name, snippet="", matching_lines=matches))
+        return results
+
+
+class _AlignedOverrideStore(_ContentOnlyStore):
+    """Overrides ``search`` but numbers through the published primitive."""
+
+    async def search(
+        self,
+        directory: str,
+        regex_pattern: str,
+        glob_pattern: str | None = None,
+        *,
+        recursive: bool = False,
+    ) -> list[FileSearchResult]:
+        regex = re.compile(regex_pattern, re.IGNORECASE)
+        results: list[FileSearchResult] = []
+        for name, content in self.files.items():
+            result = AgentFileStore.scan_content(name, content, regex)
+            if result is not None:
+                results.append(result)
+        return results
+
+
+def test_split_lines_is_the_published_rule() -> None:
+    """``AgentFileStore.split_lines`` should expose the module's own split."""
+    for content in ("a\nb\n", "a\rb", "", "x", "a\r\nb\r\n", "a\x0cb\nc"):
+        assert AgentFileStore.split_lines(content) == _split_lines_keepends(content)
+
+
+def test_scan_content_numbers_by_split_lines() -> None:
+    """``scan_content`` should report coordinates into ``split_lines``."""
+    content = "alpha\r\nbeta match\r\ngamma\r\n"
+    result = AgentFileStore.scan_content("f.txt", content, re.compile("match", re.IGNORECASE))
+    assert result is not None
+    match = result.matching_lines[0]
+    assert AgentFileStore.split_lines(content)[match.line_number - 1] == match.line
+
+
+async def test_store_without_search_now_works_and_stays_aligned() -> None:
+    """A store implementing only the mandatory members gets aligned numbers for free."""
+    store = _ContentOnlyStore()
+    raw = "header\x0cintro\nDEBUG = 1\nkeep me\nDEBUG = 2\n"
+    await store.write("cfg.txt", raw)
+
+    results = await store.search("", "keep me", recursive=True)
+    assert len(results) == 1
+    number = results[0].matching_lines[0].line_number
+
+    # The number grep reports addresses the same line the editor will touch.
+    assert _slice_lines(raw, number, number) == [results[0].matching_lines[0].line]
+    assert _split_lines_keepends(raw)[number - 1] == "keep me\n"
+
+
+async def test_base_search_reapplies_glob_and_recursion_when_a_store_over_returns() -> None:
+    """``find_matching_files`` may over-return; the base must not widen the caller's scope."""
+
+    class _OverReturningStore(_ContentOnlyStore):
+        async def find_matching_files(
+            self,
+            directory: str,
+            regex_pattern: str,
+            glob_pattern: str | None = None,
+            *,
+            recursive: bool = False,
+        ) -> list[str]:
+            del directory, regex_pattern, glob_pattern, recursive
+            return list(self.files)
+
+    store = _OverReturningStore()
+    await store.write("top.md", "needle\n")
+    await store.write("notes.txt", "needle\n")
+    await store.write("nested/deep.md", "needle\n")
+
+    only_md = await store.search("", "needle", "*.md", recursive=True)
+    assert sorted(result.file_name for result in only_md) == ["nested/deep.md", "top.md"]
+
+    shallow = await store.search("", "needle", recursive=False)
+    assert sorted(result.file_name for result in shallow) == ["notes.txt", "top.md"]
+
+
+async def test_base_search_skips_files_read_cannot_decode() -> None:
+    """One unreadable file must not abort the whole search."""
+
+    class _PartlyUnreadableStore(_ContentOnlyStore):
+        async def read(self, path: str) -> str | None:
+            if path == "binary.bin":
+                raise ValueError("not UTF-8")
+            return await super().read(path)
+
+    store = _PartlyUnreadableStore()
+    await store.write("binary.bin", "ignored")
+    await store.write("good.txt", "needle\n")
+
+    results = await store.search("", "needle", recursive=True)
+    assert [result.file_name for result in results] == ["good.txt"]
+
+
+async def test_grep_refuses_a_store_whose_line_numbers_are_skewed(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A store that numbers lines differently must not hand those numbers to the model."""
+    store = _SkewedStore()
+    await store.write("cfg.txt", "header\x0cintro\nDEBUG = 1\nkeep me\nDEBUG = 2\n")
+
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+    result = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
+
+    assert "do not line up" in result
+
+
+async def test_grep_accepts_an_override_that_uses_the_published_primitive(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """An overriding store that numbers through ``scan_content`` passes verification."""
+    store = _AlignedOverrideStore()
+    await store.write("cfg.txt", "header\x0cintro\nDEBUG = 1\nkeep me\nDEBUG = 2\n")
+
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+    payload = json.loads(_text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0]))
+
+    assert payload[0]["matching_lines"][0]["line_number"] == 3
+
+
+async def test_shipped_stores_are_trusted_and_not_re_read(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Verification must be skipped for the stores shipped here, so grep stays one pass."""
+    store = InMemoryAgentFileStore()
+    await store.write("cfg.txt", "alpha\nkeep me\n")
+    reads: list[str] = []
+    original_read = store.read
+
+    async def counting_read(path: str) -> str | None:
+        reads.append(path)
+        return await original_read(path)
+
+    store.read = counting_read  # pyright: ignore[reportAttributeAccessIssue]
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+    await grep.invoke(arguments={"regex_pattern": "keep me"})
+
+    assert reads == []
+
+
+# endregion
+
+# region expected_line write guard
+
+
+async def test_replace_lines_applies_when_expected_line_matches(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A correct ``expected_line`` should not get in the way."""
+    store = InMemoryAgentFileStore()
+    await store.write("f.txt", "one\ntwo\nthree\n")
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    replace = _tool_by_name(tools, FileAccessProvider.REPLACE_LINES_TOOL_NAME)
+
+    await replace.invoke(
+        arguments={
+            "file_name": "f.txt",
+            "edits": [{"line_number": 2, "new_line": "TWO\n", "expected_line": "two"}],
+        }
+    )
+    assert await store.read("f.txt") == "one\nTWO\nthree\n"
+
+
+async def test_replace_lines_refuses_when_expected_line_differs(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A stale or mis-numbered edit must be refused, leaving the file untouched."""
+    store = InMemoryAgentFileStore()
+    await store.write("f.txt", "one\ntwo\nthree\n")
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    replace = _tool_by_name(tools, FileAccessProvider.REPLACE_LINES_TOOL_NAME)
+
+    result = _text(
+        (
+            await replace.invoke(
+                arguments={
+                    "file_name": "f.txt",
+                    "edits": [{"line_number": 3, "new_line": "X\n", "expected_line": "two"}],
+                }
+            )
+        )[0]
+    )
+
+    assert "does not contain the expected text" in result
+    assert await store.read("f.txt") == "one\ntwo\nthree\n"
+
+
+async def test_expected_line_ignores_the_line_terminator(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A grep line comes back with its terminator; passing it through must still match."""
+    store = InMemoryAgentFileStore()
+    await store.write("f.txt", "alpha\r\nbeta\r\n")
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    replace = _tool_by_name(tools, FileAccessProvider.REPLACE_LINES_TOOL_NAME)
+
+    await replace.invoke(
+        arguments={
+            "file_name": "f.txt",
+            "edits": [{"line_number": 2, "new_line": "BETA\r\n", "expected_line": "beta\r\n"}],
+        }
+    )
+    assert await store.read("f.txt") == "alpha\r\nBETA\r\n"
+
+
+async def test_replace_lines_without_expected_line_is_unchanged(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """The guard is opt-in; omitting it must behave exactly as before."""
+    store = InMemoryAgentFileStore()
+    await store.write("f.txt", "one\ntwo\n")
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    replace = _tool_by_name(tools, FileAccessProvider.REPLACE_LINES_TOOL_NAME)
+
+    await replace.invoke(arguments={"file_name": "f.txt", "edits": [{"line_number": 1, "new_line": "ONE\n"}]})
+    assert await store.read("f.txt") == "ONE\ntwo\n"
+
+
+# endregion
+
+
+# region verification opt-outs
+
+
+async def test_store_can_declare_its_line_numbers_aligned(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """``reports_aligned_line_numbers`` opts one store out of the alignment check."""
+
+    class _DeclaredAligned(_AlignedOverrideStore):
+        reports_aligned_line_numbers = True
+
+    store = _DeclaredAligned()
+    await store.write("cfg.txt", "alpha\nkeep me\n")
+    reads: list[str] = []
+    original_read = store.read
+
+    async def counting_read(path: str) -> str | None:
+        reads.append(path)
+        return await original_read(path)
+
+    store.read = counting_read  # pyright: ignore[reportAttributeAccessIssue]
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+    payload = json.loads(_text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0]))
+
+    assert payload[0]["matching_lines"][0]["line_number"] == 2
+    assert reads == []  # The check never re-read the file.
+
+
+async def test_declaring_alignment_is_trusted_even_when_wrong(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """The declaration is a promise: a store that lies is believed, and edits go wrong.
+
+    Pins the documented hazard so nobody "fixes" the opt-out into a no-op.
+    """
+
+    class _LyingStore(_SkewedStore):
+        reports_aligned_line_numbers = True
+
+    store = _LyingStore()
+    await store.write("cfg.txt", "header\x0cintro\nDEBUG = 1\nkeep me\nDEBUG = 2\n")
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+    result = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
+
+    assert "do not line up" not in result
+    assert json.loads(result)[0]["matching_lines"][0]["line_number"] == 4  # the skewed number
+
+
+async def test_provider_can_disable_the_alignment_check(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """``disable_search_alignment_check`` turns the check off for every store."""
+    store = _SkewedStore()
+    await store.write("cfg.txt", "header\x0cintro\nDEBUG = 1\nkeep me\nDEBUG = 2\n")
+
+    checked = await _prepare_access_tools(chat_client_base, store=store)
+    assert "do not line up" in _text(
+        (
+            await _tool_by_name(checked, FileAccessProvider.GREP_TOOL_NAME).invoke(
+                arguments={"regex_pattern": "keep me"}
+            )
+        )[0]
+    )
+
+    unchecked = await _prepare_access_tools(chat_client_base, store=store, disable_search_alignment_check=True)
+    payload = json.loads(
+        _text(
+            (
+                await _tool_by_name(unchecked, FileAccessProvider.GREP_TOOL_NAME).invoke(
+                    arguments={"regex_pattern": "keep me"}
+                )
+            )[0]
+        )
+    )
+    assert payload[0]["matching_lines"][0]["line_number"] == 4
+
+
+def test_stores_do_not_declare_alignment_by_default() -> None:
+    """Nothing ships with the declaration set, including the two stores that are trusted.
+
+    They are trusted through ``_ALIGNED_SEARCH_IMPLEMENTATIONS`` instead, keyed on the
+    ``search`` function itself. Declaring the attribute on them would be inherited by any
+    subclass, so a store extending one and overriding ``search`` would keep the declaration
+    and be trusted with numbers it computed itself — pinned by the next test.
+    """
+    assert AgentFileStore.reports_aligned_line_numbers is False
+    assert InMemoryAgentFileStore.reports_aligned_line_numbers is False
+    assert FileSystemAgentFileStore.reports_aligned_line_numbers is False
+
+
+async def test_subclassing_a_shipped_store_does_not_inherit_its_trust(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Overriding ``search`` on a subclass of a shipped store must drop it out of the trusted set."""
+
+    class _SkewedSubclass(InMemoryAgentFileStore):
+        async def search(
+            self,
+            directory: str,
+            regex_pattern: str,
+            glob_pattern: str | None = None,
+            *,
+            recursive: bool = False,
+        ) -> list[FileSearchResult]:
+            del directory, glob_pattern, recursive
+            return [
+                FileSearchResult(
+                    file_name="cfg.txt",
+                    snippet="",
+                    matching_lines=[FileSearchMatch(line_number=1, line=regex_pattern)],
+                )
+            ]
+
+    store = _SkewedSubclass()
+    await store.write("cfg.txt", "alpha\nkeep me\n")
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+
+    assert "do not line up" in _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
+
+
+# endregion
+
+
+async def test_base_search_batches_its_scans_without_changing_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Batch size must control how often the scan is offloaded, and nothing else.
+
+    The base ``search`` hands content to a worker thread in batches rather than one
+    file at a time, because at sub-millisecond per-file cost the thread hop dominates.
+    Pins both halves of that: the batching is real (offload count follows
+    ``_SCAN_BATCH_CHARS``) and results are identical either side of a batch boundary.
+    """
+    store = _ContentOnlyStore()
+    for index in range(12):
+        await store.write(f"f{index}.txt", f"alpha {index}\r\nneedle here\r\ngamma\n")
+
+    offloads: list[str] = []
+    original_to_thread = asyncio.to_thread
+
+    async def counting_to_thread(func, /, *args, **kwargs):  # type: ignore[no-untyped-def]
+        offloads.append(getattr(func, "__name__", repr(func)))
+        return await original_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", counting_to_thread)
+
+    # The whole corpus is far below the default batch size, so one offload.
+    single = await store.search("", "needle here", recursive=True)
+    single_offloads = len(offloads)
+
+    # Force a batch per file and the results must not move.
+    offloads.clear()
+    monkeypatch.setattr(_file_access_module, "_SCAN_BATCH_CHARS", 1)
+    split = await store.search("", "needle here", recursive=True)
+    split_offloads = len(offloads)
+
+    assert single_offloads == 1
+    assert split_offloads == 12
+    assert single == split
+    # And the numbering still addresses the editor's lines, terminator included.
+    assert all(
+        match.line_number == 2 and match.line == "needle here\r\n"
+        for result in split
+        for match in result.matching_lines
+    )

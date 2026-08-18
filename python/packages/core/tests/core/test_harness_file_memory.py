@@ -8,9 +8,12 @@ import re
 import pytest
 
 from agent_framework import (
+    AgentFileStore,
     AgentSession,
     Content,
     FileMemoryProvider,
+    FileSearchMatch,
+    FileSearchResult,
     FunctionTool,
     InMemoryAgentFileStore,
 )
@@ -478,3 +481,93 @@ async def test_memory_replace_lines() -> None:
         }
     )
     assert "Duplicate" in _text(dup)
+
+
+# region file-memory guards
+
+
+async def _memory_tools(store: AgentFileStore, **kwargs: object) -> list[object]:
+    """Prepare a FileMemoryProvider and return its registered tools."""
+    provider = FileMemoryProvider(store=store, scope="scope-1", **kwargs)  # type: ignore[arg-type]
+    session = AgentSession(session_id="session-1")
+    context = SessionContext(input_messages=[])
+    await provider.before_run(agent=None, session=session, context=context, state={})
+    return list(context.tools)
+
+
+class _MemorySkewedStore(InMemoryAgentFileStore):
+    """Reports a line number one past the truth, the way a mis-splitting store would."""
+
+    async def search(
+        self,
+        directory: str,
+        regex_pattern: str,
+        glob_pattern: str | None = None,
+        *,
+        recursive: bool = False,
+    ) -> list[FileSearchResult]:
+        del directory, glob_pattern, recursive
+        return [
+            FileSearchResult(
+                file_name="notes.md",
+                snippet="",
+                matching_lines=[FileSearchMatch(line_number=1, line=regex_pattern)],
+            )
+        ]
+
+
+async def test_file_memory_replace_lines_honours_expected_line() -> None:
+    """The write guard must work in the memory provider too, where nothing asks for approval."""
+    store = InMemoryAgentFileStore()
+    tools = await _memory_tools(store)
+    write = _tool_by_name(tools, "file_memory_write")
+    replace = _tool_by_name(tools, "file_memory_replace_lines")
+
+    await write.invoke(arguments={"file_name": "notes.md", "content": "one\ntwo\nthree\n"})
+
+    refused = _text(
+        await replace.invoke(
+            arguments={
+                "file_name": "notes.md",
+                "edits": [{"line_number": 3, "new_line": "X\n", "expected_line": "two"}],
+            }
+        )
+    )
+    assert "does not contain the expected text" in refused
+
+    await replace.invoke(
+        arguments={
+            "file_name": "notes.md",
+            "edits": [{"line_number": 2, "new_line": "TWO\n", "expected_line": "two"}],
+        }
+    )
+    assert await store.read("scope-1/notes.md") == "one\nTWO\nthree\n"
+
+
+async def test_file_memory_grep_refuses_a_skewed_store() -> None:
+    """A store whose numbers disagree must not have them handed to the model."""
+    store = _MemorySkewedStore()
+    tools = await _memory_tools(store)
+    await _tool_by_name(tools, "file_memory_write").invoke(
+        arguments={"file_name": "notes.md", "content": "alpha\nkeep me\n"}
+    )
+
+    result = _text(await _tool_by_name(tools, "file_memory_grep").invoke(arguments={"regex_pattern": "keep me"}))
+    assert "do not line up" in result
+
+
+async def test_file_memory_grep_alignment_check_can_be_disabled() -> None:
+    """``disable_search_alignment_check`` switches it off for the memory provider as well."""
+    store = _MemorySkewedStore()
+    tools = await _memory_tools(store, disable_search_alignment_check=True)
+    await _tool_by_name(tools, "file_memory_write").invoke(
+        arguments={"file_name": "notes.md", "content": "alpha\nkeep me\n"}
+    )
+
+    payload = json.loads(
+        _text(await _tool_by_name(tools, "file_memory_grep").invoke(arguments={"regex_pattern": "keep me"}))
+    )
+    assert payload[0]["matching_lines"][0]["line_number"] == 1
+
+
+# endregion
