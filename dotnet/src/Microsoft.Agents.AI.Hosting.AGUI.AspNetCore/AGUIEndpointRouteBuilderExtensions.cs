@@ -153,7 +153,7 @@ public static class AGUIEndpointRouteBuilderExtensions
                     session: session,
                     options: new ChatClientAgentRunOptions { ChatOptions = ctx.ChatOptions },
                     cancellationToken: cancellationToken)
-                .AsChatResponseUpdatesAsync()
+                .AsAGUIChatResponseUpdatesAsync()
                 .AsAGUIEventStreamAsync(ctx, cancellationToken);
 
             // Wrap the event stream to save the session after streaming completes.
