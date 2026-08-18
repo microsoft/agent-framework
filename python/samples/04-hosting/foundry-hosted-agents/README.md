@@ -22,7 +22,33 @@ This directory contains samples that demonstrate how to use hosted [Agent Framew
 | 9 | [Foundry Memory](responses/foundry_memory/) | An agent with persistent semantic memory backed by a Microsoft Foundry Memory Store, using `FoundryMemoryProvider` to remember user facts across sessions. |
 | 10 | [Monty CodeAct](responses/monty_codeact/) | An agent with a Monty-backed CodeAct context provider, exposing a single `execute_code` tool that runs Python in a [pydantic-monty](https://github.com/pydantic/monty) interpreter and invokes typed host tools (`compute`, `fetch_data`) from inside the sandbox. Uses the beta `agent-framework-monty` package. |
 | 11 | [Foundry Toolbox MCP Skills](responses/foundry_toolbox_mcp_skills/) | An agent that discovers MCP-based skills attached to a Foundry Toolbox and serves them via `SkillsProvider(MCPSkillsSource(...))`, fetching `SKILL.md` bodies and supplementary resources on demand. |
-| 12 | [Using deployed agent](responses/using_deployed_agent.py) | A sample demonstrating how to invoke an agent that has already been deployed to Foundry, showing how to interact with a hosted agent in code. |
+| 12 | [Using deployed agent](responses/using_deployed_agent.py) | Invoke an agent already deployed to Foundry using either a service-created or user-created hosted session, then delete the session after use. |
+
+## Session Identifiers
+
+Foundry hosted agents use multiple session-related values for different purposes. They are stored together on an
+Agent Framework `AgentSession`, but they are not interchangeable.
+
+| Value | Owner | Purpose | Lifecycle |
+|-------|-------|---------|-----------|
+| `AgentSession` | Agent Framework | A lightweight application-side container that keeps identifiers and mutable state together across agent runs. | Create one per logical application conversation and pass it to each `agent.run(...)` call. It can be serialized if the application needs to persist it. |
+| `AgentSession.session_id` | Agent Framework/application | Identifies the local `AgentSession`, including lookup in an Agent Framework session store. It does not identify a Foundry resource. | Generated locally by default, or supplied by the application. Deleting a Foundry session does not delete this local identifier. |
+| `AgentSession.service_session_id` | Responses API | Continues the model-side response or conversation chain. For Foundry agents, this may be a response ID sent as `previous_response_id` or a conversation ID sent as `conversation`. | Agent Framework updates and reuses it automatically. It is not the Foundry hosted-agent session ID and is not passed to `project_client.agents.delete_session(...)`. |
+| Foundry `agent_session_id` | Foundry Agent Service | Identifies the hosted-agent [runtime session](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agents#isolation-model) used by the deployed agent. Foundry can create it on the first request, or the application can create it explicitly with `project_client.agents.create_session(...)`. | Agent Framework stores it in `AgentSession.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]` and sends it as `extra_body["agent_session_id"]` on later requests. Delete it with `project_client.agents.delete_session(agent_name, agent_session_id)` when finished. |
+
+During a hosted-agent conversation, one `AgentSession` can therefore contain both remote values:
+
+```python
+session.service_session_id
+# Response or conversation continuation handle
+
+session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]
+# Foundry hosted-agent session ID
+```
+
+Keep the same `AgentSession` across turns so Agent Framework can forward both values correctly. When cleaning up,
+read the Foundry `agent_session_id` from `session.state` and pass that value to the Foundry session deletion API.
+See [Using deployed agent](responses/using_deployed_agent.py) for service-created and user-created lifecycle examples.
 
 ### Invocations API
 

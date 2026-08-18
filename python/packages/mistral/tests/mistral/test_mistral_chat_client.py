@@ -220,6 +220,50 @@ async def test_get_response_basic() -> None:
     assert server.last_request["messages"] == [{"role": "user", "content": "hi"}]
 
 
+async def test_get_response_includes_cached_input_tokens() -> None:
+    client, _ = make_client(
+        json_response(
+            make_response_payload(
+                content="hello",
+                usage={
+                    "prompt_tokens": 100,
+                    "completion_tokens": 7,
+                    "total_tokens": 107,
+                    "prompt_tokens_details": {"cached_tokens": 80},
+                },
+            )
+        )
+    )
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.usage_details is not None
+    assert response.usage_details["cache_read_input_token_count"] == 80
+
+
+@pytest.mark.parametrize("cached_tokens", ["80", 80.5, True, False])
+async def test_get_response_ignores_invalid_cached_input_tokens(cached_tokens: Any) -> None:
+    client, _ = make_client(
+        json_response(
+            make_response_payload(
+                content="hello",
+                usage={
+                    "prompt_tokens": 100,
+                    "completion_tokens": 7,
+                    "total_tokens": 107,
+                    "prompt_tokens_details": {"cached_tokens": cached_tokens},
+                },
+            )
+        )
+    )
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.usage_details is not None
+    assert "prompt/cached_tokens" not in response.usage_details
+    assert "cache_read_input_token_count" not in response.usage_details
+
+
 @pytest.mark.parametrize(
     ("status_code", "expected_exception"),
     [
@@ -684,7 +728,12 @@ async def test_streaming_response() -> None:
             make_chunk_payload(content="lo"),
             make_chunk_payload(
                 finish_reason="stop",
-                usage={"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+                usage={
+                    "prompt_tokens": 3,
+                    "completion_tokens": 2,
+                    "total_tokens": 5,
+                    "prompt_tokens_details": {"cached_tokens": 2},
+                },
             ),
         )
     )
@@ -700,6 +749,8 @@ async def test_streaming_response() -> None:
         "input_token_count": 3,
         "output_token_count": 2,
         "total_token_count": 5,
+        "prompt/cached_tokens": 2,
+        "cache_read_input_token_count": 2,
     }
     assert server.last_request["stream"] is True
 
