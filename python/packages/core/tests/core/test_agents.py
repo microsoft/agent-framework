@@ -2830,7 +2830,7 @@ async def test_chat_agent_context_provider_appends_to_structured_instructions(
     ]
     agent = Agent(
         client=chat_client_base,
-        default_options={"instructions": blocks},  # type: ignore[typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        default_options=cast(ChatOptions, {"instructions": blocks}),
         context_providers=[InstructionContextProvider()],
     )
 
