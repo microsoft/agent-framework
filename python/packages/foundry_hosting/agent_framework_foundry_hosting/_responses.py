@@ -175,6 +175,43 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     return None
 
 
+def _emit_oauth_consent_item(
+    stream: ResponseEventStream,
+    *,
+    consent_link: str,
+    server_label: str,
+    response_id: str | None = None,
+) -> Generator[ResponseStreamEvent]:
+    """Emit the added/done event pair for one OAuth consent request output item.
+
+    Shared by the two paths that can surface a consent request so the item shape and ID
+    prefix stay in sync: consent errors raised while entering the agent, and consent
+    content produced while the agent is running.
+
+    Args:
+        stream: The ResponseEventStream to emit the output item on.
+
+    Keyword Args:
+        consent_link: The URL the user must visit to complete OAuth consent.
+        server_label: The label of the tool source requiring consent.
+        response_id: The response the item belongs to, when known.
+
+    Yields:
+        ResponseStreamEvent: The added and done events for the consent output item.
+    """
+    oauth_item = OAuthConsentRequestOutputItem(
+        id=IdGenerator.new_id("oacr"),
+        type="oauth_consent_request",
+        consent_link=consent_link,
+        server_label=server_label,
+    )
+    if response_id is not None:
+        oauth_item["response_id"] = response_id
+    builder = stream.add_output_item(oauth_item["id"])
+    yield builder.emit_added(oauth_item)
+    yield builder.emit_done(oauth_item)
+
+
 # endregion Foundry Toolbox Auth integration
 
 
@@ -361,16 +398,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             for consent_error in consent_errors_to_emit:
                 logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
-                oauth_item = OAuthConsentRequestOutputItem(
-                    id=IdGenerator.new_id("oacr"),
-                    response_id=context.response_id,
-                    type="oauth_consent_request",
+                for event in _emit_oauth_consent_item(
+                    response_event_stream,
                     consent_link=consent_error.consent_url,
                     server_label=consent_error.name,
-                )
-                builder = response_event_stream.add_output_item(oauth_item["id"])
-                yield builder.emit_added(oauth_item)
-                yield builder.emit_done(oauth_item)
+                    response_id=context.response_id,
+                ):
+                    yield event
 
             yield response_event_stream.emit_incomplete(
                 reason=f"OAuth consent required for {len(consent_errors_to_emit)} tool(s)."
@@ -1737,17 +1771,14 @@ async def _to_outputs(
                 "could not be extracted from the stream event."
             )
     elif content.type == "oauth_consent_request" and content.consent_link:
-        # Mirrors the init-time consent path in `_handle_response` so consent requests raised
-        # mid-stream (e.g. OBO identity pass-through) reach the caller instead of being dropped.
-        oauth_item = OAuthConsentRequestOutputItem(
-            id=IdGenerator.new_id("oacr"),
-            type="oauth_consent_request",
+        # Consent raised while the agent runs (e.g. OBO identity pass-through) must reach the
+        # caller rather than falling through to the unsupported-content warning below.
+        for event in _emit_oauth_consent_item(
+            stream,
             consent_link=content.consent_link,
             server_label=content.additional_properties.get("server_label", "agent_framework"),
-        )
-        builder = stream.add_output_item(oauth_item["id"])
-        yield builder.emit_added(oauth_item)
-        yield builder.emit_done(oauth_item)
+        ):
+            yield event
     else:
         # Log a warning for unsupported content types instead of raising an error to avoid breaking the response stream.
         logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
