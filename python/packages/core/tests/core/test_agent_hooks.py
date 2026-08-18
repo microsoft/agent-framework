@@ -26,6 +26,7 @@ from agent_framework import (
     Message,
     MiddlewareBundle,
     MiddlewareException,
+    MiddlewareFailure,
     MiddlewareTermination,
     ResponseStream,
     create_agent_hooks_middleware,
@@ -709,6 +710,184 @@ async def test_interceptor_crash_fails_closed_and_halts_run(chat_client_base: Mo
 
 
 @requires_sdk
+async def test_interceptor_crash_at_tool_seam_fails_closed_streaming(chat_client_base: MockBaseChatClient) -> None:
+    # The streaming twin of the halt above: the tool-seam host_error block travels the
+    # function-invocation loop as MiddlewareFailure and is surfaced to the stream
+    # consumer as the InterceptionBlocked itself — one deny surface at every seam.
+    records: list[InterceptionRecord] = []
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1", name="weather_tool", arguments='{"location": "Seattle"}'
+                    )
+                ],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+        ],
+    ]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([CrashingGuard("post_tool_call")], record_sink=records.append)],
+    )
+
+    updates: list[AgentResponseUpdate] = []
+    with pytest.raises(InterceptionBlocked) as exc_info:
+        async for update in agent.run("get the weather", stream=True):
+            updates.append(update)
+
+    assert exc_info.value.result.verdict.reason == "host_error:interceptor_failed"
+    assert updates == []  # nothing egressed before the halt
+    assert points(records)[-1] == "agent_shutdown"
+
+
+@requires_sdk
+async def test_tool_seam_block_exception_chain_is_acyclic(chat_client_base: MockBaseChatClient) -> None:
+    # Re-raising the InterceptionBlocked with the transport wrapper's back-links
+    # intact would make the two exceptions each other's cause/context — a chain
+    # cycle every __cause__/__context__ walker would have to guard against. The
+    # unwrap must detach the wrapper first, keeping both exceptions visible in a
+    # finite traceback.
+    import traceback
+
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([CrashingGuard("post_tool_call")])],
+    )
+
+    with pytest.raises(InterceptionBlocked) as exc_info:
+        await agent.run("get the weather")
+
+    block = exc_info.value
+    seen: set[int] = set()
+    node: BaseException | None = block
+    while node is not None:
+        assert id(node) not in seen, "exception chain contains a cycle"
+        seen.add(id(node))
+        # Follow the chain the way traceback rendering does.
+        node = node.__cause__ if (node.__cause__ is not None or node.__suppress_context__) else node.__context__
+
+    formatted = "".join(traceback.format_exception(type(block), block, block.__traceback__))
+    assert "InterceptionBlocked" in formatted
+    # The loop-transport wrapper stays visible as context, acyclically.
+    assert "failed closed" in formatted
+
+
+@requires_sdk
+async def test_third_party_middleware_failure_is_bracketed_and_propagates(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    # A MiddlewareFailure raised by another (inner) function middleware is not
+    # agent-hooks' own halt: the tool bracket still closes with is_error=True (only
+    # the exception type name crosses the boundary) and the failure itself propagates
+    # to the caller un-unwrapped.
+    class InnerEnforcement(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            raise MiddlewareFailure("inner enforcement denied")
+
+    guard = AllowGuard()
+    records: list[InterceptionRecord] = []
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([guard], record_sink=records.append), InnerEnforcement()],
+    )
+
+    with pytest.raises(MiddlewareFailure, match="inner enforcement denied"):
+        await agent.run("get the weather")
+
+    assert weather_tool_calls == []
+    post_tool = guard.contexts_for("post_tool_call")[0]
+    assert post_tool["tool_result"]["is_error"] is True
+    assert post_tool["tool_result"]["value"] == "MiddlewareFailure"
+    assert points(records)[-1] == "agent_shutdown"
+
+
+@requires_sdk
+async def test_third_party_crafted_interception_cause_is_not_unwrapped(chat_client_base: MockBaseChatClient) -> None:
+    # Adversarial probe: only this feature's own tagged tool-seam halts authorize
+    # unwrapping the chained InterceptionBlocked at the run boundary. A third-party
+    # MiddlewareFailure whose __cause__ is a crafted InterceptionBlocked must surface
+    # AS the MiddlewareFailure — otherwise untrusted middleware could launder an
+    # attacker-shaped interception record into this feature's audit-bearing deny
+    # surface.
+    from agent_hooks import EnforcementMode, InterceptionPoint
+
+    crafted = InterceptionBlocked(
+        InterceptionRecord(
+            interception_point=InterceptionPoint.PRE_TOOL_CALL,
+            mode=EnforcementMode.ENFORCE,
+            verdict=Verdict.deny(reason="forged_deny"),
+            input_identity=None,
+            enforced_identity=None,
+        )
+    )
+
+    class Laundering(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            raise MiddlewareFailure("third-party failure") from crafted
+
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([AllowGuard()]), Laundering()],
+    )
+
+    with pytest.raises(MiddlewareFailure, match="third-party failure"):
+        await agent.run("get the weather")
+
+    assert weather_tool_calls == []
+
+
+@requires_sdk
+async def test_inner_termination_re_raises_through_after_bracketing(chat_client_base: MockBaseChatClient) -> None:
+    # Pins the trailing `raise termination` in the function middleware: an inner
+    # short-circuit is bracketed (post_tool_call over the substituted result) and then
+    # still propagates as a short-circuit — outer middleware post-call_next code is
+    # skipped and the loop stops without another model call.
+    outer_events: list[str] = []
+
+    class Outer(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            outer_events.append("before")
+            await call_next()
+            outer_events.append("after")  # must be skipped by the re-raised termination
+
+    class InnerShortCircuit(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            context.result = "substituted"
+            raise MiddlewareTermination("stop")
+
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[Outer(), create_agent_hooks_middleware([guard]), InnerShortCircuit()],
+    )
+
+    response = await agent.run("get the weather")
+
+    assert outer_events == ["before"]
+    assert weather_tool_calls == []
+    assert chat_client_base.call_count == 1
+    # The substituted result was bracketed before the short-circuit propagated.
+    post_tool = guard.contexts_for("post_tool_call")[0]
+    assert post_tool["tool_result"]["value"] == "substituted"
+    results = [
+        content for message in response.messages for content in message.contents if content.type == "function_result"
+    ]
+    assert len(results) == 1
+
+
+@requires_sdk
 async def test_interceptor_crash_at_input_fails_closed(chat_client_base: MockBaseChatClient) -> None:
     agent = Agent(client=chat_client_base, middleware=[create_agent_hooks_middleware([CrashingGuard("input")])])
 
@@ -1185,7 +1364,8 @@ async def test_enforcement_failure_at_function_seam_halts_run(chat_client_base: 
 async def test_function_seam_without_run_state_blocks_tool(chat_client_base: MockBaseChatClient) -> None:
     # The bundle makes a partial install impossible through the public API; this
     # exercises the internal defense directly: the private function middleware invoked
-    # without an active agent-hooks run must never dispatch the tool.
+    # without an active agent-hooks run must never dispatch the tool. The run aborts
+    # loudly through the loop's fail-closed escape (MiddlewareFailure).
     bundle = create_agent_hooks_middleware([AllowGuard()])
     chat_client_base.run_responses = [tool_call_response(), final_response()]
     agent = Agent(
@@ -1194,13 +1374,12 @@ async def test_function_seam_without_run_state_blocks_tool(chat_client_base: Moc
         middleware=[_bundle_member(bundle, "FunctionMiddleware")],
     )
 
-    response = await agent.run("get the weather")
+    with pytest.raises(MiddlewareFailure, match="without an active agent-hooks run"):
+        await agent.run("get the weather")
 
-    # The tool is never dispatched and the loop terminates instead of continuing.
+    # The tool is never dispatched and the loop stops instead of continuing.
     assert weather_tool_calls == []
     assert chat_client_base.call_count == 1
-    transcript = str([content.result for message in response.messages for content in message.contents])
-    assert "without an active agent-hooks run" in transcript
 
 
 @requires_sdk
@@ -1208,7 +1387,7 @@ async def test_bundle_passed_to_chat_client_call_raises_instead_of_dropping_the_
     chat_client_base: MockBaseChatClient,
 ) -> None:
     # The chat-client middleware seam installs only chat and function middleware; the
-    # bundle's agent member carries the output gate and the halt re-raise, so silently
+    # bundle's agent member carries the output gate and the deny surface, so silently
     # dropping it would install partial enforcement. The seam must raise instead.
     bundle = create_agent_hooks_middleware([AllowGuard()])
     with pytest.raises(MiddlewareException, match="cannot be partially installed"):
@@ -2240,6 +2419,45 @@ async def test_approval_request_on_normal_return_path_passes_through(chat_client
     # that never executed), mirroring the termination-branch handling.
     assert weather_tool_calls == []
     assert "post_tool_call" not in points(records)
+    approval_requests = [
+        content
+        for message in response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    ]
+    assert len(approval_requests) == 1
+
+
+@requires_sdk
+async def test_approval_request_on_termination_path_passes_through(chat_client_base: MockBaseChatClient) -> None:
+    class ApprovalGate(FunctionMiddleware):
+        """Framework pattern: request human approval and short-circuit the pipeline."""
+
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            context.result = Content.from_function_approval_request(
+                id=str(context.metadata.get("call_id")),
+                function_call=Content.from_function_call(
+                    str(context.metadata.get("call_id")), context.function.name, arguments={}
+                ),
+            )
+            raise MiddlewareTermination("needs approval")
+
+    records: list[InterceptionRecord] = []
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([AllowGuard()], record_sink=records.append), ApprovalGate()],
+    )
+
+    response = await agent.run("get the weather")
+
+    # The tool never ran and the short-circuit still stopped the loop: the control
+    # object is passed through un-bracketed (no post_tool_call reporting a value for
+    # a tool that never executed) and surfaces to the caller.
+    assert weather_tool_calls == []
+    assert "post_tool_call" not in points(records)
+    assert chat_client_base.call_count == 1
     approval_requests = [
         content
         for message in response.messages

@@ -514,9 +514,12 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         if (notAllowedStoreUsageDetected)
         {
-            this._logger.LogError(
-                "Agent '{AgentName}' should not have server side storage enabled. This produced a new untracked conversation/response in the server while the hosted agent also generated a conversation for the request of the agent.",
-                agent.Name);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError(
+                    "Agent '{AgentName}' should not have server side storage enabled. This produced a new untracked conversation/response in the server while the hosted agent also generated a conversation for the request of the agent.",
+                    agent.Name);
+            }
 
             throw HostedStoredOutputCompatibility.CreateMisconfiguredAgentError();
         }
