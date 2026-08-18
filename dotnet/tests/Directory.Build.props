@@ -28,4 +28,23 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup Condition="
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.OpenAI.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.Anthropic.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.GitHub.Copilot.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.CosmosNoSql.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.Valkey.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.Mem0.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.Purview.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.A2A.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.DevUI.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.Declarative.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.Tools.Shell.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.Hyperlight.UnitTests' Or
+      '$(MSBuildProjectName)' == 'Microsoft.Agents.AI.LocalCodeAct.UnitTests'">
+    <Compile Include="$(MSBuildThisFileDirectory)FeatureUsageAssert.cs" Link="FeatureUsageAssert.cs" />
+    <Using Include="Microsoft.Agents.AI.Testing" />
+  </ItemGroup>
+
 </Project>

@@ -56,7 +56,6 @@ public sealed class PurviewWrapperTests : IDisposable
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()))
             .ReturnsAsync((true, "user-123"));
-
         // Act
         var result = await this._wrapper.ProcessChatContentAsync(messages, null, mockChatClient.Object, CancellationToken.None);
 

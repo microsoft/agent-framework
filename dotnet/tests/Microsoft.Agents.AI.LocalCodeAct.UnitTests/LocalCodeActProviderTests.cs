@@ -31,7 +31,7 @@ public sealed class LocalCodeActProviderTests
         Assert.NotNull(context!.Tools);
         var tools = context.Tools!.ToList();
         Assert.Single(tools);
-        var function = Assert.IsAssignableFrom<AIFunction>(tools[0]);
+        var function = Assert.IsType<AIFunction>(tools[0], exactMatch: false);
         Assert.Equal("execute_code", function.Name);
         Assert.False(string.IsNullOrWhiteSpace(context.Instructions));
     }

@@ -65,6 +65,7 @@ public static class FoundryHostingExtensions
         ConfigureFoundryResponsesOptions(services, configure);
         services.TryAddSingleton<AgentSessionStore>(_ => FileSystemAgentSessionStore.CreateDefault());
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
+        MarkFeatureUsed();
         return services;
     }
 
@@ -123,6 +124,7 @@ public static class FoundryHostingExtensions
         services.TryAddSingleton(agentSessionStore);
 
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
+        MarkFeatureUsed();
         return services;
     }
 
@@ -300,7 +302,15 @@ public static class FoundryHostingExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
         endpoints.MapResponsesServer(prefix);
         MapReadinessIfMissing(endpoints);
+        MarkFeatureUsed();
         return endpoints;
+    }
+
+    private static void MarkFeatureUsed()
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.FoundryHosting);
+#pragma warning restore MAAI001
     }
 
     /// <summary>

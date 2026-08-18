@@ -27,6 +27,10 @@ public sealed class AgentInMemorySkillsSource : AgentSkillsSource
     /// <inheritdoc/>
     public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreInMemorySkillsSource);
+#pragma warning restore MAAI001
+
         return Task.FromResult<IList<AgentSkill>>(this._skills);
     }
 }

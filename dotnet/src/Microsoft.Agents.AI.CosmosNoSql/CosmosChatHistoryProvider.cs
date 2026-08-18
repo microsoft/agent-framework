@@ -224,6 +224,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        FeatureUsageMarker.MarkUsed();
         var state = this._sessionState.GetOrInitializeState(context.Session);
         var partitionKey = BuildPartitionKey(state);
 
@@ -287,6 +288,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        FeatureUsageMarker.MarkUsed();
         var state = this._sessionState.GetOrInitializeState(context.Session);
         var messageList = context.RequestMessages.Concat(context.ResponseMessages ?? []).ToList();
         if (messageList.Count == 0)
@@ -458,6 +460,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        FeatureUsageMarker.MarkUsed();
         var state = this._sessionState.GetOrInitializeState(session);
         var partitionKey = BuildPartitionKey(state);
 
@@ -492,6 +495,7 @@ public sealed class CosmosChatHistoryProvider : ChatHistoryProvider, IDisposable
         }
 #pragma warning restore CA1513
 
+        FeatureUsageMarker.MarkUsed();
         var state = this._sessionState.GetOrInitializeState(session);
         var partitionKey = BuildPartitionKey(state);
 

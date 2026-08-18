@@ -284,6 +284,7 @@ public sealed class HyperlightCodeActProvider : AIContextProvider, IDisposable
                 this._toolRegistryVersion);
         }
 
+        FeatureUsageMarker.MarkUsed();
         var approvalRequired = ComputeApprovalRequired(this._options.ApprovalMode, snapshot.Tools);
 
         var description = InstructionBuilder.BuildExecuteCodeDescription(

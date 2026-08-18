@@ -76,12 +76,10 @@ public sealed class GitHubCopilotAgentTests
     public async Task CreateSessionAsync_WithSessionId_ReturnsSessionWithSessionIdAsync()
     {
         // Arrange
-        CopilotClient copilotClient = new(new CopilotClientOptions());
-        var agent = new GitHubCopilotAgent(copilotClient, ownsClient: false, tools: null);
         const string TestSessionId = "test-session-id";
 
         // Act
-        var session = await agent.CreateSessionAsync(TestSessionId);
+        var session = await GitHubCopilotAgent.CreateSessionAsync(TestSessionId);
 
         // Assert
         Assert.NotNull(session);
@@ -141,15 +139,15 @@ public sealed class GitHubCopilotAgentTests
         Assert.Equal("gpt-4o", result.Model);
         Assert.Equal("high", result.ReasoningEffort);
         Assert.Equal(systemMessage, result.SystemMessage);
-        Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
-        Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
+        Assert.Equal(["tool1", "tool2"], result.AvailableTools);
+        Assert.Equal(["tool3"], result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
         Assert.Equal("/config", result.ConfigDirectory);
         Assert.Same(hooks, result.Hooks);
         Assert.Same(infiniteSessions, result.InfiniteSessions);
         Assert.Same(permissionHandler, result.OnPermissionRequest);
         Assert.Same(userInputHandler, result.OnUserInputRequest);
-        Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal(["skill1"], result.DisabledSkills);
         Assert.True(result.Streaming);
     }
 
@@ -191,8 +189,8 @@ public sealed class GitHubCopilotAgentTests
         Assert.Equal("high", result.ReasoningEffort);
         Assert.Same(tools, result.Tools);
         Assert.Same(systemMessage, result.SystemMessage);
-        Assert.Equal(new List<string> { "tool1", "tool2" }, result.AvailableTools);
-        Assert.Equal(new List<string> { "tool3" }, result.ExcludedTools);
+        Assert.Equal(["tool1", "tool2"], result.AvailableTools);
+        Assert.Equal(["tool3"], result.ExcludedTools);
         Assert.Equal("/workspace", result.WorkingDirectory);
         Assert.Equal("/config", result.ConfigDirectory);
         Assert.Same(hooks, result.Hooks);
@@ -200,7 +198,7 @@ public sealed class GitHubCopilotAgentTests
         Assert.Same(permissionHandler, result.OnPermissionRequest);
         Assert.Same(userInputHandler, result.OnUserInputRequest);
         Assert.Same(mcpServers, result.McpServers);
-        Assert.Equal(new List<string> { "skill1" }, result.DisabledSkills);
+        Assert.Equal(["skill1"], result.DisabledSkills);
         Assert.True(result.Streaming);
     }
 

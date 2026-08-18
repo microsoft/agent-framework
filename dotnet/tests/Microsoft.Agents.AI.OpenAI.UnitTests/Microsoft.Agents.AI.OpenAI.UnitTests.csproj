@@ -4,4 +4,8 @@
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.OpenAI" />
+  </ItemGroup>
+
 </Project>

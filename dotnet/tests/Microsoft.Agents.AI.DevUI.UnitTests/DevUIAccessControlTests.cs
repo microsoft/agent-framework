@@ -6,7 +6,6 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,7 +29,7 @@ public class DevUIAccessControlTests
 
     private static void SimulateRemoteIp(WebApplication app, IPAddress remoteIp)
     {
-        app.Use(async (HttpContext ctx, RequestDelegate next) =>
+        app.Use(async (ctx, next) =>
         {
             ctx.Connection.RemoteIpAddress = remoteIp;
             await next(ctx);

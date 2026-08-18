@@ -19,6 +19,37 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class ServiceCollectionExtensionsTests
 {
     [Fact]
+    public void AddFoundryResponses_MarksFeatureUsed()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        // Act
+        services.AddFoundryResponses();
+
+        // Assert
+        AssertFeatureUsed(53);
+    }
+
+    private static void AssertFeatureUsed(int featureIndex)
+    {
+#pragma warning disable MAAI001
+        string userAgent = FeatureUsage.ApplyToUserAgent(string.Empty);
+#pragma warning restore MAAI001
+        const string Prefix = "(feat=v1.";
+        Assert.StartsWith(Prefix, userAgent);
+        Assert.EndsWith(")", userAgent);
+
+        string hexMask = userAgent[Prefix.Length..^1];
+        int digitOffset = featureIndex / 4;
+        Assert.True(hexMask.Length > digitOffset);
+        char digit = char.ToLowerInvariant(hexMask[hexMask.Length - digitOffset - 1]);
+        int nibble = digit <= '9' ? digit - '0' : digit - 'a' + 10;
+        Assert.NotEqual(0, nibble & (1 << (featureIndex & 3)));
+    }
+
+    [Fact]
     public void AddFoundryResponses_RegistersResponseHandler()
     {
         var services = new ServiceCollection();

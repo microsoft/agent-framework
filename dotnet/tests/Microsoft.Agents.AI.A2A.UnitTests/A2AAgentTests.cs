@@ -1770,7 +1770,7 @@ public sealed class A2AAgentTests : IDisposable
         const string ContextId = "test-context-123";
 
         // Act
-        var session = await this._agent.CreateSessionAsync(ContextId);
+        var session = await A2AAgent.CreateSessionAsync(ContextId);
 
         // Assert
         Assert.NotNull(session);
@@ -1791,7 +1791,7 @@ public sealed class A2AAgentTests : IDisposable
         const string TaskId = "test-task-789";
 
         // Act
-        var session = await this._agent.CreateSessionAsync(ContextId, TaskId);
+        var session = await A2AAgent.CreateSessionAsync(ContextId, TaskId);
 
         // Assert
         Assert.NotNull(session);
@@ -1814,7 +1814,7 @@ public sealed class A2AAgentTests : IDisposable
     {
         // Act & Assert
         await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
-            await this._agent.CreateSessionAsync(contextId!));
+            await A2AAgent.CreateSessionAsync(contextId!));
     }
 
     /// <summary>
@@ -1833,7 +1833,7 @@ public sealed class A2AAgentTests : IDisposable
 
         // Act & Assert
         await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
-            await this._agent.CreateSessionAsync(contextId!, TaskId));
+            await A2AAgent.CreateSessionAsync(contextId!, TaskId));
     }
 
     /// <summary>
@@ -1852,7 +1852,7 @@ public sealed class A2AAgentTests : IDisposable
 
         // Act & Assert
         await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
-            await this._agent.CreateSessionAsync(ContextId, taskId!));
+            await A2AAgent.CreateSessionAsync(ContextId, taskId!));
     }
     #endregion
 

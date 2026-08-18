@@ -250,6 +250,8 @@ public sealed class FoundryEvals : IAgentEvaluator
                 "or set 'includePerAgent: false' so the evaluator only runs on the overall item.");
         }
 
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryEvals);
+
         // 2. Create the evaluation definition
         var createEvalPayload = new WireCreateEvalRequest
         {
@@ -450,6 +452,7 @@ public sealed class FoundryEvals : IAgentEvaluator
             ? evaluators
             : [Relevance, Coherence, TaskAdherence];
         EnsureAllSpecsValid(resolvedEvaluators, nameof(evaluators));
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryEvals);
 
         // Create the evaluation definition with the appropriate data source scenario
         object dataSourceConfig;
@@ -642,6 +645,7 @@ public sealed class FoundryEvals : IAgentEvaluator
             ? evaluators
             : [Relevance, Coherence, TaskAdherence];
         EnsureAllSpecsValid(resolvedEvaluators, nameof(evaluators));
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryEvals);
 
         var createEvalPayload = new WireCreateEvalRequest
         {
@@ -823,7 +827,7 @@ public sealed class FoundryEvals : IAgentEvaluator
                 if (root.TryGetProperty("per_testing_criteria_results", out var criteriaArray)
                     && criteriaArray.ValueKind == JsonValueKind.Array)
                 {
-                    perEvaluator = new Dictionary<string, PerEvaluatorResult>();
+                    perEvaluator = [];
                     foreach (var item in criteriaArray.EnumerateArray())
                     {
                         var name = item.TryGetProperty("testing_criteria", out var tcProp)
@@ -867,7 +871,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         var detailedItems = new List<EvalItemResult>();
         string? afterCursor = null;
 
-        while (true)
+        do
         {
             var response = await this._evaluationClient.GetEvaluationRunOutputItemsAsync(
                 evalId,
@@ -908,12 +912,8 @@ public sealed class FoundryEvals : IAgentEvaluator
                 var lastItem = data2[data2.GetArrayLength() - 1];
                 afterCursor = lastItem.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
             }
-
-            if (afterCursor is null)
-            {
-                break;
-            }
         }
+        while (afterCursor is not null);
 
         return new FetchResult(meaiResults, detailedItems);
     }

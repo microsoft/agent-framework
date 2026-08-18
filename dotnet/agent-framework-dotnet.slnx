@@ -647,6 +647,9 @@
     <Project Path="tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/Microsoft.Agents.AI.CosmosNoSql.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Declarative.UnitTests/Microsoft.Agents.AI.Declarative.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.DevUI.UnitTests/Microsoft.Agents.AI.DevUI.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.FeatureRegistry.UnitTests/Microsoft.Agents.AI.FeatureRegistry.UnitTests.csproj">
+      <Build Solution="Debug|*" Project="false" />
+    </Project>
     <Project Path="tests/Microsoft.Agents.AI.Foundry.Hosting.UnitTests/Microsoft.Agents.AI.Foundry.Hosting.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Foundry.UnitTests/Microsoft.Agents.AI.Foundry.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.GitHub.Copilot.UnitTests/Microsoft.Agents.AI.GitHub.Copilot.UnitTests.csproj" />
@@ -670,4 +673,3 @@
     <Project Path="tests/Microsoft.Agents.AI.Workflows.UnitTests/Microsoft.Agents.AI.Workflows.UnitTests.csproj" />
   </Folder>
 </Solution>
-

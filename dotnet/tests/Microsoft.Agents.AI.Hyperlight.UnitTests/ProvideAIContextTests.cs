@@ -28,7 +28,7 @@ public sealed class ProvideAIContextTests
         Assert.NotNull(context!.Tools);
         var tools = context.Tools!.ToList();
         Assert.Single(tools);
-        var function = Assert.IsAssignableFrom<AIFunction>(tools[0]);
+        var function = Assert.IsType<AIFunction>(tools[0], exactMatch: false);
         Assert.Equal("execute_code", function.Name);
         Assert.False(string.IsNullOrWhiteSpace(context.Instructions));
     }
@@ -79,7 +79,7 @@ public sealed class ProvideAIContextTests
         provider.AddTools(AIFunctionFactory.Create(() => "two", name: "second_tool"));
 
         // Assert — the returned execute_code description must reflect the first snapshot only.
-        var function = Assert.IsAssignableFrom<AIFunction>(context!.Tools!.First());
+        var function = Assert.IsType<AIFunction>(context!.Tools!.First(), exactMatch: false);
         Assert.Contains("first_tool", function.Description);
         Assert.DoesNotContain("second_tool", function.Description);
     }

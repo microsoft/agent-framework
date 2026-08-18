@@ -577,7 +577,6 @@ public sealed class Mem0ProviderTests : IDisposable
 
         var inputMsg = new ChatMessage(ChatRole.User, "What is my name?");
         var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, mockSession, [inputMsg]);
-
         // Act
         var messages = (await sut.InvokingAsync(context)).ToList();
 
