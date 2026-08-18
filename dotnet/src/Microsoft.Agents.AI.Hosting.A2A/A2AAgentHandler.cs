@@ -311,13 +311,15 @@ internal sealed class A2AAgentHandler : IAgentHandler
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Transition the task to the Canceled state using an uncanceled token.
+            await artifactWriter.CompleteAsync(CancellationToken.None).ConfigureAwait(false);
+
             await updater.CancelAsync(CancellationToken.None).ConfigureAwait(false);
             throw;
         }
         catch (Exception)
         {
-            // Transition the task to the Failed state using an uncanceled token, so the stream ends in a terminal state.
+            await artifactWriter.CompleteAsync(CancellationToken.None).ConfigureAwait(false);
+
             await updater.FailAsync(CreateFailureMessage(updater.ContextId, updater.TaskId), CancellationToken.None).ConfigureAwait(false);
             throw;
         }

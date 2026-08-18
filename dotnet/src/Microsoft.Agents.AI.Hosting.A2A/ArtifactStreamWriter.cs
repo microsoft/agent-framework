@@ -55,6 +55,11 @@ internal sealed class ArtifactStreamWriter
     private bool _shouldAppend;
 
     /// <summary>
+    /// Whether an artifact write failed.
+    /// </summary>
+    private bool _writeFailed;
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="ArtifactStreamWriter"/> class.
     /// </summary>
     /// <param name="updater">The updater the artifacts are written to.</param>
@@ -70,33 +75,57 @@ internal sealed class ArtifactStreamWriter
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     public async Task WriteAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
     {
-        // Start the first artifact, generating an ID when the update does not provide one.
-        if (this._currentArtifactId is null)
+        try
         {
-            this.StartArtifact(update.MessageId);
-        }
-        // A different message ID ends the current artifact and starts the next one.
-        else if (this.IsNewMessage(update.MessageId))
-        {
-            await this.FlushBufferedPartsIfAnyAsync(lastChunk: true, cancellationToken).ConfigureAwait(false);
-            this.StartArtifact(update.MessageId);
-        }
+            // Start the first artifact, generating an ID when the update does not provide one.
+            if (this._currentArtifactId is null)
+            {
+                this.StartArtifact(update.MessageId);
+            }
+            // A different message ID ends the current artifact and starts the next one.
+            else if (this.IsNewMessage(update.MessageId))
+            {
+                await this.FlushBufferedPartsIfAnyAsync(lastChunk: true, cancellationToken).ConfigureAwait(false);
+                this.StartArtifact(update.MessageId);
+            }
 
-        // Flush the previous parts as a non-final artifact update before buffering the next content-bearing update.
-        if (update.ToParts() is { Count: > 0 } parts)
+            // Flush the previous parts as a non-final artifact update before buffering the next content-bearing update.
+            if (update.ToParts() is { Count: > 0 } parts)
+            {
+                await this.FlushBufferedPartsIfAnyAsync(lastChunk: false, cancellationToken).ConfigureAwait(false);
+                this._bufferedParts = parts;
+            }
+        }
+        catch
         {
-            await this.FlushBufferedPartsIfAnyAsync(lastChunk: false, cancellationToken).ConfigureAwait(false);
-            this._bufferedParts = parts;
+            this._writeFailed = true;
+            throw;
         }
     }
 
     /// <summary>
     /// Completes the stream by writing the buffered parts as the final artifact update.
     /// </summary>
+    /// <remarks>
+    /// Completion is skipped after an artifact write fails to avoid retrying and potentially duplicating that update.
+    /// </remarks>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     public async Task CompleteAsync(CancellationToken cancellationToken)
     {
-        await this.FlushBufferedPartsIfAnyAsync(lastChunk: true, cancellationToken).ConfigureAwait(false);
+        if (this._writeFailed)
+        {
+            return;
+        }
+
+        try
+        {
+            await this.FlushBufferedPartsIfAnyAsync(lastChunk: true, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            this._writeFailed = true;
+            throw;
+        }
     }
 
     /// <summary>

@@ -934,7 +934,7 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
-    /// Verifies that cancellation during a streaming task emits the Canceled terminal state.
+    /// Verifies that cancellation during a streaming task flushes buffered content and emits the Canceled terminal state.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_Streaming_WhenCancellationRequested_CancelsTaskAsync()
@@ -979,10 +979,14 @@ public sealed class A2AAgentHandlerTests
             events.StatusUpdates,
             update => Assert.Equal(TaskState.Working, update.Status.State),
             update => Assert.Equal(TaskState.Canceled, update.Status.State));
+        TaskArtifactUpdateEvent artifactUpdate = Assert.Single(events.ArtifactUpdates);
+        Assert.Equal("chunk 1", Assert.Single(artifactUpdate.Artifact.Parts!).Text);
+        Assert.False(artifactUpdate.Append);
+        Assert.True(artifactUpdate.LastChunk);
     }
 
     /// <summary>
-    /// Verifies that a failure during a streaming task emits the Failed terminal state.
+    /// Verifies that a failure during a streaming task flushes buffered content and emits the Failed terminal state.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_Streaming_WhenAgentThrows_FailsTaskAsync()
@@ -1018,6 +1022,10 @@ public sealed class A2AAgentHandlerTests
                 Assert.DoesNotContain(nameof(InvalidOperationException), text, StringComparison.Ordinal);
                 Assert.Equal("The agent encountered an unexpected error and could not complete the request.", text);
             });
+        TaskArtifactUpdateEvent artifactUpdate = Assert.Single(events.ArtifactUpdates);
+        Assert.Equal("chunk 1", Assert.Single(artifactUpdate.Artifact.Parts!).Text);
+        Assert.False(artifactUpdate.Append);
+        Assert.True(artifactUpdate.LastChunk);
     }
 
     /// <summary>
@@ -1045,12 +1053,23 @@ public sealed class A2AAgentHandlerTests
             Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
         });
 
-        // Assert - m1 was finalized at the m2 boundary, before the later stream failure.
-        TaskArtifactUpdateEvent artifactUpdate = Assert.Single(events.ArtifactUpdates);
-        Assert.Equal("m1", artifactUpdate.Artifact.ArtifactId);
-        Assert.Equal("m1 chunk", Assert.Single(artifactUpdate.Artifact.Parts!).Text);
-        Assert.False(artifactUpdate.Append);
-        Assert.True(artifactUpdate.LastChunk);
+        // Assert - m1 was finalized at the m2 boundary, before m2 was flushed after the later stream failure.
+        Assert.Collection(
+            events.ArtifactUpdates,
+            update =>
+            {
+                Assert.Equal("m1", update.Artifact.ArtifactId);
+                Assert.Equal("m1 chunk", Assert.Single(update.Artifact.Parts!).Text);
+                Assert.False(update.Append);
+                Assert.True(update.LastChunk);
+            },
+            update =>
+            {
+                Assert.Equal("m2", update.Artifact.ArtifactId);
+                Assert.Equal("m2 chunk", Assert.Single(update.Artifact.Parts!).Text);
+                Assert.False(update.Append);
+                Assert.True(update.LastChunk);
+            });
     }
 
     /// <summary>
