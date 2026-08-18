@@ -368,6 +368,133 @@ async def test_tool_result_projection_preserves_canonical_values(chat_client_bas
     assert post_tool["target"] == value
 
 
+@requires_sdk
+async def test_pre_model_call_projects_per_call_effective_tools(chat_client_base: MockBaseChatClient) -> None:
+    """Every ``pre_model_call`` carries the effective tool set for that call (spec ``tools``).
+
+    Constructor-registered and run-level tools are both part of the effective set the
+    model is offered, so both must appear — a registration-time-only projection would
+    hide the run-level tools from auditors (the Python half of #7560; parity with the
+    .NET per-call ``ChatOptions.Tools`` projection).
+    """
+
+    @tool(approval_mode="never_require")
+    def run_only_tool(city: str) -> str:
+        """Look up a city."""
+        return city
+
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("Get weather for Seattle", tools=[run_only_tool])
+
+    pre_models = guard.contexts_for("pre_model_call")
+    assert len(pre_models) == 2
+    for pre_model in pre_models:
+        assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool", "run_only_tool"]
+    # Descriptions ride along ({name, description?}), so auditors see what the model saw.
+    assert pre_models[0]["tools"][0]["description"] == "Get the weather for a location."
+    # agent_startup's tools_registered is the run-start snapshot: both are known at run
+    # start here, so both appear (constructor tools were previously dropped entirely).
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool", "run_only_tool"]
+
+
+@requires_sdk
+async def test_agent_startup_projects_constructor_registered_tools(chat_client_base: MockBaseChatClient) -> None:
+    """Constructor-registered tools appear in ``tools_registered`` (#7560)."""
+    guard = AllowGuard()
+    agent = Agent(client=chat_client_base, tools=[weather_tool], middleware=[create_agent_hooks_middleware([guard])])
+
+    await agent.run("hello")
+
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool"]
+
+
+@requires_sdk
+async def test_pre_model_call_tools_include_provider_contributed_tools(chat_client_base: MockBaseChatClient) -> None:
+    """Tools registered during run preparation surface in the per-call ``tools`` projection.
+
+    Context providers contribute tools after ``agent_startup`` has been emitted, so the
+    run-start snapshot cannot know them — the per-call projection is where they become
+    visible to auditors (same contract as the .NET fix on #7564).
+    """
+    from agent_framework import ContextProvider
+
+    @tool(approval_mode="never_require")
+    def provider_tool(query: str) -> str:
+        """A tool contributed by a context provider."""
+        return query
+
+    class ToolContextProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="tool-context")
+
+        async def before_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+            context.extend_tools("tool-context", [provider_tool])
+
+    guard = AllowGuard()
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[ToolContextProvider()],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    await agent.run("hello")
+
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == []
+    pre_model = guard.contexts_for("pre_model_call")[0]
+    assert [entry["name"] for entry in pre_model["tools"]] == ["provider_tool"]
+
+
+@requires_sdk
+@pytest.mark.parametrize("max_iterations", [1], indirect=True)
+async def test_tools_disabled_final_call_still_projects_effective_tools(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """The loop's ``tool_choice="none"`` final call projects its effective options' tools.
+
+    When the iteration budget is exhausted the function-invocation loop requests one
+    final response with ``tool_choice="none"`` but the tools still in the options —
+    the projection reflects exactly those effective options (parity with the .NET
+    per-call ``ChatOptions.Tools`` projection), not a guess about tool availability.
+    """
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), tool_call_response()]
+    agent = Agent(
+        client=chat_client_base,
+        tools=[weather_tool],
+        middleware=[create_agent_hooks_middleware([guard])],
+    )
+
+    response = await agent.run("Get weather for Seattle")
+
+    assert "broke out" in response.text
+    pre_models = guard.contexts_for("pre_model_call")
+    assert len(pre_models) == 2
+    for pre_model in pre_models:
+        assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool"]
+
+
+@requires_sdk
+async def test_pre_model_call_omits_tools_when_call_has_none(chat_client_base: MockBaseChatClient) -> None:
+    """A call with no tools omits the optional ``tools`` field instead of claiming an empty set."""
+    guard = AllowGuard()
+    agent = Agent(client=chat_client_base, middleware=[create_agent_hooks_middleware([guard])])
+
+    await agent.run("hello")
+
+    pre_model = guard.contexts_for("pre_model_call")[0]
+    assert "tools" not in pre_model
+
+
 # endregion
 
 # region Deny-before-execution

@@ -862,23 +862,82 @@ def _agent_updates_from_response(response: AgentResponse[Any]) -> list[AgentResp
     return updates
 
 
-def _tool_names(context: AgentContext) -> list[str]:
-    """Project the registered tool names for ``agent_startup`` (spec ``tools_registered``)."""
-    from ._tools import _get_tool_name, normalize_tools  # type: ignore[reportPrivateUsage]
+def _normalized_tools(tools: Any, *, point: str) -> list[Any]:
+    """Normalize a tools value for projection; empty (with a warning) when it cannot be."""
+    from ._tools import normalize_tools
 
-    tools: Any = context.tools if context.tools is not None else getattr(context.agent, "tools", None)
-    if tools is None:
+    if not tools:
         return []
     try:
-        normalized = normalize_tools(tools)
+        return list(normalize_tools(tools))
     except Exception:
-        logger.warning("agent-hooks could not normalize the run's tools for the agent_startup projection.")
+        logger.warning("agent-hooks could not normalize the tools for the %s projection.", point)
         return []
-    names: list[str] = []
-    for item in normalized:
-        name = _get_tool_name(item)
-        names.append(name if name else type(item).__name__)
-    return names
+
+
+def _projected_tool_name(item: Any) -> str:
+    from ._tools import _get_tool_name  # type: ignore[reportPrivateUsage]
+
+    name = _get_tool_name(item)
+    return name if name else type(item).__name__
+
+
+def _tool_description(item: Any) -> str | None:
+    """Extract a tool description from a tool object or dict tool definition."""
+    if isinstance(item, Mapping):
+        function = cast("Mapping[str, Any]", item).get("function")
+        if isinstance(function, Mapping):
+            description = cast("Mapping[str, Any]", function).get("description")
+            return description if isinstance(description, str) else None
+        return None
+    description = getattr(item, "description", None)
+    return description if isinstance(description, str) else None
+
+
+def _tool_names(context: AgentContext) -> list[str]:
+    """Project the registered tool names for ``agent_startup`` (spec ``tools_registered``).
+
+    This is deliberately the run-start snapshot: the tools declared on the agent
+    (:class:`~agent_framework.Agent` stores them in ``default_options["tools"]``) plus
+    this invocation's run-level tools. Tools registered dynamically during the run (for
+    example by context providers during run preparation, or by MCP servers whose
+    functions expand at connect time) cannot be known at ``agent_startup`` time; they
+    surface in each ``pre_model_call`` emission's ``tools`` projection (the completed
+    per-call set) and are bracketed by ``pre_tool_call``/``post_tool_call`` like any
+    other tool when invoked.
+    """
+    agent_options = getattr(context.agent, "default_options", None)
+    agent_tools: Any = (
+        cast("Mapping[str, Any]", agent_options).get("tools")
+        if isinstance(agent_options, Mapping)
+        else getattr(context.agent, "tools", None)
+    )
+    return [
+        _projected_tool_name(item)
+        for tools in (agent_tools, context.tools)
+        for item in _normalized_tools(tools, point="agent_startup")
+    ]
+
+
+def _pre_model_call_tools(options: Mapping[str, Any]) -> list[dict[str, Any]] | None:
+    """Project the per-call effective tool set for ``pre_model_call`` (spec ``tools``).
+
+    This is the completed set for this model call — the run-start tools plus anything
+    registered during the run (context-provider tools, connected MCP-server functions,
+    progressive tool exposure) — whereas ``agent_startup``'s ``tools_registered`` is the
+    run-start snapshot. Entries carry ``{"name", "description"?}`` (description omitted
+    when the tool has none). Returns ``None`` — the spec's optional field is omitted —
+    when the call offers no tools or the set cannot be projected, so an unprojectable
+    set is never misreported as "no tools".
+    """
+    projected: list[dict[str, Any]] = []
+    for item in _normalized_tools(options.get("tools"), point="pre_model_call"):
+        entry: dict[str, Any] = {"name": _projected_tool_name(item)}
+        description = _tool_description(item)
+        if description:
+            entry["description"] = description
+        projected.append(entry)
+    return projected or None
 
 
 def _is_host_error(record: InterceptionRecord) -> bool:
@@ -1269,7 +1328,7 @@ class _AgentHooksChatMiddleware(_AgentHooksMiddlewareBase, ChatMiddleware):
         model_id = str(options.get("model") or type(context.client).__name__)
         before = _ModelRequestCodec.to_wire(context.messages)
         outcome: EmitOutcome = await state.emitter.emit(
-            state.builder.pre_model_call(model_id=model_id, messages=before)
+            state.builder.pre_model_call(model_id=model_id, messages=before, tools=_pre_model_call_tools(options))
         )
         transformed_messages = _ModelRequestCodec.write_back(context.messages, before, outcome.target)
         if transformed_messages is not None:
