@@ -2831,5 +2831,211 @@ class TestMiddlewareFailure:
 
         assert chat_client_base.call_count == 1
 
+    async def test_failure_settlement_advances_response_id_continuation(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """The persisted continuation advances to the settlement response.
+
+        For response-ID continuations (OpenAI Responses with ``store=True``, where
+        each response id is the continuation handle) the settlement response is the
+        first endpoint whose chain includes the synthetic tool outputs; leaving
+        ``session.service_session_id`` on the pre-settlement response would make the
+        next run continue from the still-unresolved turn.
+        """
+        from agent_framework import AgentSession
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        tool_turn = _tool_call_response()
+        tool_turn.conversation_id = "resp_1"
+        settlement_turn = ChatResponse(
+            messages=[Message(role="assistant", contents=["settled"])], conversation_id="resp_2"
+        )
+        chat_client_base.run_responses = [tool_turn, settlement_turn]
+        session = AgentSession()
+        agent = Agent(client=chat_client_base, middleware=[Enforcement()], tools=[sample_tool_function])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            await agent.run("get the weather", session=session)
+
+        # The stored continuation points at the settled endpoint, not the aborted turn.
+        assert session.service_session_id == "resp_2"
+        assert chat_client_base.call_count == 2
+
+    async def test_failure_during_approved_replay_settles_and_escapes(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """A fatal signal during an approved-tool replay escapes loudly and settles.
+
+        The replayed call belongs to an earlier, already-persisted model turn, so the
+        service-managed conversation must be settled from the approval-resolution
+        phase too (which runs before any model call of the resumed run).
+        """
+        from agent_framework import AgentSession
+
+        executed: list[str] = []
+
+        def tool_impl(location: str) -> str:
+            executed.append(location)
+            return "ran"
+
+        guarded_tool = FunctionTool(func=tool_impl, name="guarded_tool", approval_mode="always_require")
+
+        class FailReplay(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("replay denied")
+
+        requests: list[dict[str, Any]] = []
+
+        class Recorder(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                requests.append({
+                    "tool_choice": (context.options or {}).get("tool_choice"),
+                    "conversation_id": (context.options or {}).get("conversation_id"),
+                    "results": [
+                        content
+                        for message in context.messages
+                        for content in message.contents
+                        if content.type == "function_result"
+                    ],
+                })
+                await call_next()
+
+        tool_turn = ChatResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(call_id="call_1", name="guarded_tool", arguments='{"location": "x"}')
+                    ],
+                )
+            ],
+            conversation_id="resp_1",
+        )
+        chat_client_base.run_responses = [tool_turn]
+        session = AgentSession()
+        agent = Agent(client=chat_client_base, middleware=[FailReplay(), Recorder()], tools=[guarded_tool])
+
+        paused = await agent.run("go", session=session)
+        approvals = [
+            content
+            for message in paused.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(approvals) == 1
+        assert session.service_session_id == "resp_1"
+
+        settlement_turn = ChatResponse(
+            messages=[Message(role="assistant", contents=["settled"])], conversation_id="resp_2"
+        )
+        chat_client_base.run_responses = [settlement_turn]
+        approval_request = approvals[0]
+        assert approval_request.id is not None
+        assert approval_request.function_call is not None
+        approval_message = Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(True, approval_request.id, approval_request.function_call)
+            ],
+        )
+
+        with pytest.raises(MiddlewareFailure, match="replay denied"):
+            await agent.run([approval_message], session=session)
+
+        # The tool never ran, and the settlement request resolved the original call
+        # on the persisted conversation before the abort propagated.
+        assert executed == []
+        settlement = requests[-1]
+        assert settlement["tool_choice"] == "none"
+        assert settlement["conversation_id"] == "resp_1"
+        assert [result.call_id for result in settlement["results"]] == ["call_1"]
+        assert settlement["results"][0].exception == "MiddlewareFailure"
+        # The continuation advanced to the settled endpoint.
+        assert session.service_session_id == "resp_2"
+
+    async def test_failure_during_approved_replay_streaming(self, chat_client_base: "MockBaseChatClient") -> None:
+        """The streaming loop's approval-resolution phase settles and escapes the same way."""
+        from agent_framework import AgentSession
+
+        executed: list[str] = []
+
+        def tool_impl(location: str) -> str:
+            executed.append(location)
+            return "ran"
+
+        guarded_tool = FunctionTool(func=tool_impl, name="guarded_tool", approval_mode="always_require")
+
+        class FailReplay(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("replay denied")
+
+        requests: list[dict[str, Any]] = []
+
+        class Recorder(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                requests.append({
+                    "tool_choice": (context.options or {}).get("tool_choice"),
+                    "results": [
+                        content
+                        for message in context.messages
+                        for content in message.contents
+                        if content.type == "function_result"
+                    ],
+                })
+                await call_next()
+
+        tool_turn = ChatResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(call_id="call_1", name="guarded_tool", arguments='{"location": "x"}')
+                    ],
+                )
+            ],
+            conversation_id="resp_1",
+        )
+        chat_client_base.run_responses = [tool_turn]
+        session = AgentSession()
+        agent = Agent(client=chat_client_base, middleware=[FailReplay(), Recorder()], tools=[guarded_tool])
+
+        paused = await agent.run("go", session=session)
+        approvals = [
+            content
+            for message in paused.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(approvals) == 1
+
+        chat_client_base.run_responses = [ChatResponse(messages=[Message(role="assistant", contents=["settled"])])]
+        approval_request = approvals[0]
+        assert approval_request.id is not None
+        assert approval_request.function_call is not None
+        approval_message = Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(True, approval_request.id, approval_request.function_call)
+            ],
+        )
+
+        with pytest.raises(MiddlewareFailure, match="replay denied"):
+            async for _ in agent.run([approval_message], session=session, stream=True):
+                pass
+
+        assert executed == []
+        settlement = requests[-1]
+        assert settlement["tool_choice"] == "none"
+        assert [result.call_id for result in settlement["results"]] == ["call_1"]
+
 
 # endregion

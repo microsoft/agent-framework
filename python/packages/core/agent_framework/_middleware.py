@@ -98,8 +98,11 @@ class MiddlewareFailure(MiddlewareException):
     is discarded either way and never reaches the transcript, the model, or history.
     On a service-managed conversation (a persisted conversation id), the loop first
     settles the aborted batch by submitting one error ``function_result`` per dangling
-    call — one extra request whose response is discarded — so the hosted thread is not
-    left with unresolved tool calls that would make the session's next request fail.
+    call — one extra request — so the hosted thread is not left with unresolved tool
+    calls that would make the session's next request fail; the persisted continuation
+    advances to the settlement response (the new handle for response-ID continuations)
+    and the settlement response is otherwise discarded. This also covers a failure
+    raised while an approved tool is replayed after an approval pause.
 
     Agent and chat middleware do not need a dedicated signal — every exception they
     raise already propagates to the caller — and ``MiddlewareFailure`` behaves the same

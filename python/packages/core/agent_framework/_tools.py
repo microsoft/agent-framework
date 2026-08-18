@@ -2767,59 +2767,6 @@ def _prepare_messages_for_next_iteration(prepared_messages: list[Message], respo
     prepared_messages[:] = response.messages[-1:]
 
 
-async def _settle_dangling_service_function_calls(
-    *,
-    super_get_response: Callable[..., Any],
-    response: ChatResponse[Any],
-    prepared_messages: list[Message],
-    options: dict[str, Any],
-    request_kwargs: dict[str, Any],
-    compaction_strategy: CompactionStrategy | None,
-    tokenizer: TokenizerProtocol | None,
-) -> None:
-    """Resolve a failed batch's function calls on a service-managed conversation.
-
-    When ``MiddlewareFailure`` aborts a tool batch, the local run raises before any
-    result exists — but on a service-managed conversation the continuation state
-    (``session.service_session_id``) was already persisted when the model turn
-    completed, so the hosted thread ends with unresolved ``function_call`` items.
-    OpenAI-style continuations reject the next request over such a thread (missing
-    tool output), which would leave the session permanently stuck after a routine
-    policy abort. Settle the thread by submitting one error ``function_result`` per
-    dangling call (with ``tool_choice="none"`` so no new calls are requested); the
-    settlement response is discarded locally — the run still fails with the original
-    ``MiddlewareFailure``. Costs one extra request, only on the failure path and only
-    when a service-managed conversation is in play.
-    """
-    from ._types import Content, Message
-
-    if response.conversation_id is None and not options.get("conversation_id"):
-        return
-    error_results = [
-        Content.from_function_result(
-            call_id=function_call.call_id,
-            result="Error: Tool execution was aborted by middleware before a result was produced.",
-            exception="MiddlewareFailure",
-            additional_properties=function_call.additional_properties,
-        )
-        for function_call in _extract_function_calls(response)
-        if function_call.call_id is not None
-    ]
-    if not error_results:
-        return
-    response.messages.append(Message(role="tool", contents=error_results))
-    _prepare_messages_for_next_iteration(prepared_messages, response)
-    options["tool_choice"] = "none"
-    await super_get_response(
-        messages=prepared_messages,
-        stream=False,
-        options=options,
-        compaction_strategy=compaction_strategy,
-        tokenizer=tokenizer,
-        client_kwargs=request_kwargs,
-    )
-
-
 @dataclass
 class _FunctionProcessingResult:
     """Control data produced while resolving or executing function calls."""
@@ -2926,8 +2873,16 @@ async def _resolve_approval_responses(
     max_errors: int,
     execute_function_calls: _FunctionCallExecutor,
     invocation_session: AgentSession | None = None,
+    settle_dangling_calls: Callable[[Sequence[Content]], Awaitable[None]] | None = None,
 ) -> _FunctionProcessingResult:
-    """Resolve inbound approval responses before the next model call."""
+    """Resolve inbound approval responses before the next model call.
+
+    ``settle_dangling_calls``, when provided, is invoked with the approved batch if
+    executing it aborts with ``MiddlewareFailure``, so a service-managed conversation
+    can be settled before the abort propagates (the replay's original calls belong to
+    an earlier, already-persisted model turn).
+    """
+    from ._middleware import MiddlewareFailure
     from ._types import Message
 
     _bind_approval_responses_to_pending_requests(prepared_messages, invocation_session)
@@ -2959,10 +2914,18 @@ async def _resolve_approval_responses(
     should_terminate = False
     reached_error_limit = False
     if responses_to_execute:
-        execution = await execute_function_calls(
-            function_calls=responses_to_execute,
-            options=options,
-        )
+        try:
+            execution = await execute_function_calls(
+                function_calls=responses_to_execute,
+                options=options,
+            )
+        except MiddlewareFailure:
+            # Fail-closed abort during an approved replay: the original calls belong
+            # to an already-persisted model turn, so settle them on a service-managed
+            # conversation before propagating (best-effort inside the callback).
+            if settle_dangling_calls is not None:
+                await settle_dangling_calls(responses_to_execute)
+            raise
         execution_result_groups = execution.result_groups
         should_terminate = execution.should_terminate
         errors_in_a_row, reached_error_limit = _update_consecutive_error_count(
@@ -3111,6 +3074,83 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         ):
             session.service_session_id = conversation_id
 
+    async def _settle_dangling_service_function_calls(
+        self,
+        *,
+        super_get_response: Callable[..., Any],
+        function_calls: Sequence[Content],
+        options: dict[str, Any],
+        request_kwargs: dict[str, Any],
+        compaction_strategy: CompactionStrategy | None,
+        tokenizer: TokenizerProtocol | None,
+        invocation_session: AgentSession | None,
+        response_conversation_id: str | None = None,
+    ) -> None:
+        """Resolve an aborted batch's function calls on a service-managed conversation.
+
+        When ``MiddlewareFailure`` aborts a tool batch, the local run raises before
+        any result exists — but on a service-managed conversation the continuation
+        state (``session.service_session_id``) was already persisted, so the hosted
+        thread ends with unresolved ``function_call`` items and OpenAI-style
+        continuations reject the session's next request (missing tool output). Settle
+        the thread by submitting one error ``function_result`` per dangling call
+        (approval-response wrappers are unwrapped to their underlying calls;
+        hosted-tool approvals are left to their own provider protocol) with
+        ``tool_choice="none"`` so no new calls are requested, then advance the
+        persisted continuation to the settlement response: for response-ID
+        continuations the settlement response is the first endpoint whose chain
+        includes the synthetic outputs, so the next run must start from it (for
+        conversation-object ids the advance is a no-op). The settlement response is
+        otherwise discarded and the run still fails with the original
+        ``MiddlewareFailure``. Everything here is best-effort — a settlement failure
+        is logged and never masks the abort. Costs one extra request, only on the
+        failure path and only when a service-managed conversation is in play.
+        """
+        from ._types import ChatResponse, Content, Message
+
+        if response_conversation_id is None and not options.get("conversation_id"):
+            return
+        try:
+            error_results: list[Content] = []
+            for function_call in function_calls:
+                if _is_hosted_tool_approval(function_call):
+                    continue
+                underlying_call = _underlying_function_call(function_call)
+                if underlying_call.type != "function_call" or underlying_call.call_id is None:
+                    continue
+                error_results.append(
+                    Content.from_function_result(
+                        call_id=underlying_call.call_id,
+                        result="Error: Tool execution was aborted by middleware before a result was produced.",
+                        exception="MiddlewareFailure",
+                        additional_properties=underlying_call.additional_properties,
+                    )
+                )
+            if not error_results:
+                return
+            options["tool_choice"] = "none"
+            settlement_response = await super_get_response(
+                messages=[Message(role="tool", contents=error_results)],
+                stream=False,
+                options=options,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                client_kwargs=request_kwargs,
+            )
+            if isinstance(settlement_response, ChatResponse):
+                self._update_function_invocation_continuation_state(
+                    request_kwargs,
+                    cast("ChatResponse[Any]", settlement_response),
+                    session=invocation_session,
+                    options=options,
+                )
+        except Exception:
+            logger.warning(
+                "Failed to settle dangling function calls on the service-managed conversation; "
+                "the next request over this conversation may be rejected by the service.",
+                exc_info=True,
+            )
+
     def _get_function_middleware_pipeline(
         self,
         runtime_middleware: Sequence[FunctionMiddlewareTypes],
@@ -3154,6 +3194,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
         attempt_start = int(budget_state.get("attempt_count", 0) or 0)
 
+        async def settle_approval_replay_calls(function_calls: Sequence[Content]) -> None:
+            await self._settle_dangling_service_function_calls(
+                super_get_response=super_get_response,
+                function_calls=function_calls,
+                options=options,
+                request_kwargs=request_kwargs,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                invocation_session=invocation_session,
+            )
+
         # Phase 1: resolve inbound approvals before consuming another model iteration.
         approval_processing = await _resolve_approval_responses(
             prepared_messages=prepared_messages,
@@ -3162,6 +3213,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             max_errors=max_errors,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
+            settle_dangling_calls=settle_approval_replay_calls,
         )
         function_call_messages.extend(approval_processing.response_messages)
         errors_in_a_row = approval_processing.errors_in_a_row
@@ -3217,25 +3269,19 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 )
             except MiddlewareFailure:
                 # Fail-closed abort: before propagating, settle the batch's calls on a
-                # service-managed conversation so the persisted continuation state does
-                # not point at a thread with unresolved function calls (best-effort —
-                # a settlement failure never masks the abort).
-                try:
-                    await _settle_dangling_service_function_calls(
-                        super_get_response=super_get_response,
-                        response=response,
-                        prepared_messages=prepared_messages,
-                        options=options,
-                        request_kwargs=request_kwargs,
-                        compaction_strategy=compaction_strategy,
-                        tokenizer=tokenizer,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to settle dangling function calls on the service-managed conversation; "
-                        "the next request over this conversation may be rejected by the service.",
-                        exc_info=True,
-                    )
+                # service-managed conversation and advance the persisted continuation
+                # to the settled endpoint (best-effort — a settlement failure never
+                # masks the abort).
+                await self._settle_dangling_service_function_calls(
+                    super_get_response=super_get_response,
+                    function_calls=_extract_function_calls(response),
+                    options=options,
+                    request_kwargs=request_kwargs,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
+                    invocation_session=invocation_session,
+                    response_conversation_id=response.conversation_id,
+                )
                 raise
             total_function_calls = _record_function_calls(
                 budget_state,
@@ -3308,6 +3354,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
         attempt_start = int(budget_state.get("attempt_count", 0) or 0)
 
+        async def settle_approval_replay_calls(function_calls: Sequence[Content]) -> None:
+            await self._settle_dangling_service_function_calls(
+                super_get_response=super_get_response,
+                function_calls=function_calls,
+                options=options,
+                request_kwargs=request_kwargs,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                invocation_session=invocation_session,
+            )
+
         # Phase 1: resolve and emit inbound approval outcomes before opening another provider stream.
         approval_processing = await _resolve_approval_responses(
             prepared_messages=prepared_messages,
@@ -3316,6 +3373,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             max_errors=max_errors,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
+            settle_dangling_calls=settle_approval_replay_calls,
         )
         errors_in_a_row = approval_processing.errors_in_a_row
         total_function_calls = _record_function_calls(
@@ -3393,23 +3451,18 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 )
             except MiddlewareFailure:
                 # See the non-streaming loop: settle a service-managed conversation's
-                # dangling calls before propagating the fail-closed abort.
-                try:
-                    await _settle_dangling_service_function_calls(
-                        super_get_response=super_get_response,
-                        response=response,
-                        prepared_messages=prepared_messages,
-                        options=options,
-                        request_kwargs=request_kwargs,
-                        compaction_strategy=compaction_strategy,
-                        tokenizer=tokenizer,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to settle dangling function calls on the service-managed conversation; "
-                        "the next request over this conversation may be rejected by the service.",
-                        exc_info=True,
-                    )
+                # dangling calls and advance the persisted continuation before
+                # propagating the fail-closed abort (best-effort).
+                await self._settle_dangling_service_function_calls(
+                    super_get_response=super_get_response,
+                    function_calls=_extract_function_calls(response),
+                    options=options,
+                    request_kwargs=request_kwargs,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
+                    invocation_session=invocation_session,
+                    response_conversation_id=response.conversation_id,
+                )
                 raise
             errors_in_a_row = function_processing.errors_in_a_row
             total_function_calls = _record_function_calls(
