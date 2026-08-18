@@ -2,6 +2,7 @@
 # pyright: ignore[reportPrivateUsage]
 import asyncio
 import contextlib
+import importlib.util
 import json
 import logging
 import os
@@ -15,8 +16,8 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from mcp import types
 from mcp.client.session import ClientSession
-from mcp.shared.exceptions import McpError
-from pydantic import AnyUrl, BaseModel
+from mcp.shared.exceptions import MCPError
+from pydantic import BaseModel
 
 from agent_framework import (
     Content,
@@ -116,10 +117,10 @@ async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration
         types.Tool(
             name="search_docs",
             description="Search docs",
-            inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
+            input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
         ),
     ]
-    page.nextCursor = None
+    page.next_cursor = None
     mock_session.list_tools = AsyncMock(return_value=page)
 
     await tool.load_tools()
@@ -142,10 +143,10 @@ async def test_allowed_tools_does_not_authorize_normalized_remote_name_collision
         types.Tool(
             name="delete/file",
             description="Delete a file",
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         ),
     ]
-    page.nextCursor = None
+    page.next_cursor = None
     mock_session.list_tools = AsyncMock(return_value=page)
 
     await tool.load_tools()
@@ -167,15 +168,15 @@ async def test_load_tools_rejects_colliding_normalized_tool_names() -> None:
         types.Tool(
             name="delete/file",
             description="Unauthorized tool",
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         ),
         types.Tool(
             name="delete-file",
             description="Authorized tool",
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         ),
     ]
-    page.nextCursor = None
+    page.next_cursor = None
     mock_session.list_tools = AsyncMock(return_value=page)
 
     with pytest.raises(ToolExecutionException, match="map to the same local function name"):
@@ -195,10 +196,10 @@ async def test_allowed_tools_exact_raw_name_allows_normalized_function_name() ->
         types.Tool(
             name="delete/file",
             description="Delete a file",
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         ),
     ]
-    page.nextCursor = None
+    page.next_cursor = None
     mock_session.list_tools = AsyncMock(return_value=page)
 
     await tool.load_tools()
@@ -224,10 +225,10 @@ async def test_approval_mode_does_not_match_normalized_colliding_name() -> None:
         types.Tool(
             name="delete/file",
             description="Delete a file",
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         ),
     ]
-    page.nextCursor = None
+    page.next_cursor = None
     mock_session.list_tools = AsyncMock(return_value=page)
 
     await tool.load_tools()
@@ -252,7 +253,7 @@ async def test_load_prompts_with_tool_name_prefix() -> None:
             arguments=[types.PromptArgument(name="topic", description="Topic", required=True)],
         ),
     ]
-    page.nextCursor = None
+    page.next_cursor = None
     mock_session.list_prompts = AsyncMock(return_value=page)
 
     await tool.load_prompts()
@@ -280,19 +281,19 @@ def test_mcp_tool_str_and_parse_prompt_result_rich_content() -> None:
             types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello")),
             types.PromptMessage(
                 role="assistant",
-                content=types.ImageContent(type="image", data="eHl6", mimeType="image/png"),
+                content=types.ImageContent(type="image", data="eHl6", mime_type="image/png"),
             ),
             types.PromptMessage(
                 role="assistant",
-                content=types.AudioContent(type="audio", data="YXVkaW8=", mimeType="audio/wav"),
+                content=types.AudioContent(type="audio", data="YXVkaW8=", mime_type="audio/wav"),
             ),
             types.PromptMessage(
                 role="assistant",
                 content=types.EmbeddedResource(
                     type="resource",
                     resource=types.TextResourceContents(
-                        uri=AnyUrl("file://prompt.txt"),
-                        mimeType="text/plain",
+                        uri="file://prompt.txt",
+                        mime_type="text/plain",
                         text="Embedded prompt",
                     ),
                 ),
@@ -302,8 +303,8 @@ def test_mcp_tool_str_and_parse_prompt_result_rich_content() -> None:
                 content=types.EmbeddedResource(
                     type="resource",
                     resource=types.BlobResourceContents(
-                        uri=AnyUrl("file://prompt.bin"),
-                        mimeType="application/pdf",
+                        uri="file://prompt.bin",
+                        mime_type="application/pdf",
                         blob="ZGF0YQ==",
                     ),
                 ),
@@ -327,9 +328,9 @@ def test_parse_tool_result_from_mcp():
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
-            types.ImageContent(type="image", data="eHl6", mimeType="image/png"),
+            types.ImageContent(type="image", data="eHl6", mime_type="image/png"),
             types.TextContent(type="text", text="After image"),
-            types.ImageContent(type="image", data="YWJj", mimeType="image/webp"),
+            types.ImageContent(type="image", data="YWJj", mime_type="image/webp"),
         ]
     )
     result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
@@ -392,7 +393,7 @@ def test_parse_tool_result_from_mcp_audio_content():
     """Test conversion from MCP tool result with audio returns rich content list."""
     mcp_result = types.CallToolResult(
         content=[
-            types.AudioContent(type="audio", data="YXVkaW8=", mimeType="audio/wav"),
+            types.AudioContent(type="audio", data="YXVkaW8=", mime_type="audio/wav"),
         ]
     )
     result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
@@ -411,8 +412,8 @@ def test_parse_tool_result_from_mcp_blob_plain_base64():
             types.EmbeddedResource(
                 type="resource",
                 resource=types.BlobResourceContents(
-                    uri=AnyUrl("file://test.bin"),
-                    mimeType="application/pdf",
+                    uri="file://test.bin",
+                    mime_type="application/pdf",
                     blob="dGVzdCBkYXRh",
                 ),
             ),
@@ -433,21 +434,20 @@ def test_parse_tool_result_from_mcp_resource_link_text_resource_and_unknown():
         content=[
             types.ResourceLink(
                 type="resource_link",
-                uri=AnyUrl("https://example.com/resource"),
+                uri="https://example.com/resource",
                 name="resource",
-                mimeType="application/json",
+                mime_type="application/json",
             ),
             types.EmbeddedResource(
                 type="resource",
                 resource=types.TextResourceContents(
-                    uri=AnyUrl("file://prompt.txt"),
-                    mimeType="text/plain",
+                    uri="file://prompt.txt",
+                    mime_type="text/plain",
                     text="Embedded result",
                 ),
             ),
-        ]
+        ],
     )
-
     result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
 
     assert result[0].type == "uri"
@@ -460,7 +460,7 @@ def test_parse_tool_result_from_mcp_structured_content_only():
     """Test that structuredContent is parsed when content list is empty."""
     mcp_result = types.CallToolResult(
         content=[],
-        structuredContent={"Tables": [{"Name": "Sales", "Columns": ["Amount", "Date"]}]},
+        structured_content={"Tables": [{"Name": "Sales", "Columns": ["Amount", "Date"]}]},
     )
     result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
 
@@ -476,7 +476,7 @@ def test_parse_tool_result_from_mcp_structured_content_with_text():
     """Test that structuredContent is appended alongside regular content items."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Summary")],
-        structuredContent={"data": [1, 2, 3]},
+        structured_content={"data": [1, 2, 3]},
     )
     result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
 
@@ -494,7 +494,7 @@ def test_parse_tool_result_from_mcp_structured_content_none():
     """Test that None structuredContent does not affect results."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Hello")],
-        structuredContent=None,
+        structured_content=None,
     )
     result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
 
@@ -508,7 +508,7 @@ def test_parse_tool_result_from_mcp_structured_content_non_serializable():
     """Test that non-JSON-serializable values in structuredContent degrade gracefully."""
     mcp_result = types.CallToolResult(
         content=[],
-        structuredContent={"data": b"raw bytes", "count": 42},
+        structured_content={"data": b"raw bytes", "count": 42},
     )
     result = _HELPER_MCP_TOOL._parse_tool_result_from_mcp(mcp_result)
 
@@ -535,7 +535,7 @@ def test_mcp_content_types_to_ai_content_text():
 def test_mcp_content_types_to_ai_content_image():
     """Test conversion of MCP image content to AI content."""
     # MCP can send data as base64 string or as bytes
-    mcp_content = types.ImageContent(type="image", data="YWJj", mimeType="image/jpeg")  # base64 for b"abc"
+    mcp_content = types.ImageContent(type="image", data="YWJj", mime_type="image/jpeg")  # base64 for b"abc"
     ai_content = _HELPER_MCP_TOOL._parse_content_from_mcp(mcp_content)[0]
 
     assert ai_content.type == "data"
@@ -547,7 +547,7 @@ def test_mcp_content_types_to_ai_content_image():
 def test_mcp_content_types_to_ai_content_audio():
     """Test conversion of MCP audio content to AI content."""
     # Use properly padded base64
-    mcp_content = types.AudioContent(type="audio", data="ZGVm", mimeType="audio/wav")  # base64 for b"def"
+    mcp_content = types.AudioContent(type="audio", data="ZGVm", mime_type="audio/wav")  # base64 for b"def"
     ai_content = _HELPER_MCP_TOOL._parse_content_from_mcp(mcp_content)[0]
 
     assert ai_content.type == "data"
@@ -560,9 +560,9 @@ def test_mcp_content_types_to_ai_content_resource_link():
     """Test conversion of MCP resource link to AI content."""
     mcp_content = types.ResourceLink(
         type="resource_link",
-        uri=AnyUrl("https://example.com/resource"),
+        uri="https://example.com/resource",
         name="test_resource",
-        mimeType="application/json",
+        mime_type="application/json",
     )
     ai_content = _HELPER_MCP_TOOL._parse_content_from_mcp(mcp_content)[0]
 
@@ -575,8 +575,8 @@ def test_mcp_content_types_to_ai_content_resource_link():
 def test_mcp_content_types_to_ai_content_embedded_resource_text():
     """Test conversion of MCP embedded text resource to AI content."""
     text_resource = types.TextResourceContents(
-        uri=AnyUrl("file://test.txt"),
-        mimeType="text/plain",
+        uri="file://test.txt",
+        mime_type="text/plain",
         text="Embedded text content",
     )
     mcp_content = types.EmbeddedResource(type="resource", resource=text_resource)
@@ -591,8 +591,8 @@ def test_mcp_content_types_to_ai_content_embedded_resource_blob():
     """Test conversion of MCP embedded blob resource to AI content."""
     # Use a proper data URI in the blob field since that's what the MCP implementation expects
     blob_resource = types.BlobResourceContents(
-        uri=AnyUrl("file://test.bin"),
-        mimeType="application/octet-stream",
+        uri="file://test.bin",
+        mime_type="application/octet-stream",
         blob="data:application/octet-stream;base64,dGVzdCBkYXRh",
     )
     mcp_content = types.EmbeddedResource(type="resource", resource=blob_resource)
@@ -609,9 +609,9 @@ def test_mcp_content_types_to_ai_content_tool_use_and_tool_result():
     tool_use_content = types.ToolUseContent(type="tool_use", id="call-1", name="calculator", input={"x": 1})
     tool_result_content = types.ToolResultContent(
         type="tool_result",
-        toolUseId="call-1",
+        tool_use_id="call-1",
         content=[types.TextContent(type="text", text="done")],
-        isError=True,
+        is_error=True,
     )
 
     function_call = _HELPER_MCP_TOOL._parse_content_from_mcp(tool_use_content)[0]
@@ -645,7 +645,7 @@ def test_ai_content_to_mcp_content_types_data_image():
     assert isinstance(mcp_content, types.ImageContent)
     assert mcp_content.type == "image"
     assert mcp_content.data == "data:image/png;base64,xyz"
-    assert mcp_content.mimeType == "image/png"
+    assert mcp_content.mime_type == "image/png"
 
 
 def test_ai_content_to_mcp_content_types_data_audio():
@@ -656,7 +656,7 @@ def test_ai_content_to_mcp_content_types_data_audio():
     assert isinstance(mcp_content, types.AudioContent)
     assert mcp_content.type == "audio"
     assert mcp_content.data == "data:audio/mpeg;base64,xyz"
-    assert mcp_content.mimeType == "audio/mpeg"
+    assert mcp_content.mime_type == "audio/mpeg"
 
 
 def test_ai_content_to_mcp_content_types_data_binary():
@@ -670,7 +670,7 @@ def test_ai_content_to_mcp_content_types_data_binary():
     assert isinstance(mcp_content, types.EmbeddedResource)
     assert mcp_content.type == "resource"
     assert mcp_content.resource.blob == "data:application/octet-stream;base64,xyz"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-    assert mcp_content.resource.mimeType == "application/octet-stream"
+    assert mcp_content.resource.mime_type == "application/octet-stream"
 
 
 def test_ai_content_to_mcp_content_types_uri():
@@ -681,7 +681,7 @@ def test_ai_content_to_mcp_content_types_uri():
     assert isinstance(mcp_content, types.ResourceLink)
     assert mcp_content.type == "resource_link"
     assert str(mcp_content.uri) == "https://example.com/resource"
-    assert mcp_content.mimeType == "application/json"
+    assert mcp_content.mime_type == "application/json"
 
 
 def test_prepare_message_for_mcp():
@@ -1033,8 +1033,8 @@ def test_get_input_model_from_mcp_tool_parametrized(test_id: str, input_schema: 
     - test_id: A descriptive name for the test case
     - input_schema: The JSON schema (inputSchema dict)
     """
-    tool = types.Tool(name="test_tool", description="A test tool", inputSchema=input_schema)
-    schema = tool.inputSchema
+    tool = types.Tool(name="test_tool", description="A test tool", input_schema=input_schema)
+    schema = tool.input_schema
 
     # Verify schema is returned as-is (dict)
     assert isinstance(schema, dict), f"Expected dict, got {type(schema)}"
@@ -1115,7 +1115,7 @@ async def test_local_mcp_server_load_functions():
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                                 "required": ["param"],
@@ -1179,7 +1179,7 @@ async def test_mcp_tool_call_tool_with_meta_integration():
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                                 "required": ["param"],
@@ -1224,7 +1224,7 @@ async def test_local_mcp_server_function_execution():
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                                 "required": ["param"],
@@ -1264,7 +1264,7 @@ async def test_local_mcp_server_function_execution_with_nested_object():
                         types.Tool(
                             name="get_customer_detail",
                             description="Get customer details",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {
                                     "params": {
@@ -1317,7 +1317,7 @@ async def test_local_mcp_server_function_execution_error():
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                                 "required": ["param"],
@@ -1327,9 +1327,7 @@ async def test_local_mcp_server_function_execution_error():
                 )
             )
             # Mock a tool call that raises an MCP error
-            self.session.call_tool = AsyncMock(
-                side_effect=McpError(types.ErrorData(code=-1, message="Tool execution failed"))
-            )
+            self.session.call_tool = AsyncMock(side_effect=MCPError(code=-1, message="Tool execution failed"))
 
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
             return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
@@ -1357,9 +1355,8 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
             self.session = Mock(spec=ClientSession)
             self.sessions.append(self.session)
             if self.connect_count == 1:
-                self.session.call_tool = AsyncMock(
-                    side_effect=McpError(types.ErrorData(code=-32000, message="Session terminated"))
-                )
+                self.session.call_tool = AsyncMock(side_effect=MCPError(code=-32000, message="Session terminated"))
+
             else:
                 self.session.call_tool = AsyncMock(
                     return_value=types.CallToolResult(content=[types.TextContent(type="text", text="recovered")])
@@ -1381,7 +1378,7 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
 
 
 async def test_mcp_tool_call_tool_raises_on_is_error():
-    """Test that call_tool raises ToolExecutionException when MCP returns isError=True."""
+    """Test that call_tool raises ToolExecutionException when MCP returns is_error=True."""
 
     class TestServer(MCPTool):
         async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
@@ -1392,7 +1389,7 @@ async def test_mcp_tool_call_tool_raises_on_is_error():
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                                 "required": ["param"],
@@ -1404,7 +1401,7 @@ async def test_mcp_tool_call_tool_raises_on_is_error():
             self.session.call_tool = AsyncMock(
                 return_value=types.CallToolResult(
                     content=[types.TextContent(type="text", text="Something went wrong")],
-                    isError=True,
+                    is_error=True,
                 )
             )
 
@@ -1421,7 +1418,7 @@ async def test_mcp_tool_call_tool_raises_on_is_error():
 
 
 async def test_mcp_tool_call_tool_succeeds_when_is_error_false():
-    """Test that call_tool returns normally when MCP returns isError=False."""
+    """Test that call_tool returns normally when MCP returns is_error=False."""
 
     class TestServer(MCPTool):
         async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
@@ -1432,7 +1429,7 @@ async def test_mcp_tool_call_tool_succeeds_when_is_error_false():
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                                 "required": ["param"],
@@ -1444,7 +1441,7 @@ async def test_mcp_tool_call_tool_succeeds_when_is_error_false():
             self.session.call_tool = AsyncMock(
                 return_value=types.CallToolResult(
                     content=[types.TextContent(type="text", text="Success")],
-                    isError=False,
+                    is_error=False,
                 )
             )
 
@@ -1461,7 +1458,7 @@ async def test_mcp_tool_call_tool_succeeds_when_is_error_false():
 
 
 async def test_mcp_tool_is_error_propagates_through_function_middleware():
-    """Test that MCP isError=True propagates as ToolExecutionException through function middleware."""
+    """Test that MCP is_error=True propagates as ToolExecutionException through function middleware."""
     error_seen_in_middleware = False
 
     class ErrorCheckMiddleware(FunctionMiddleware):
@@ -1482,7 +1479,7 @@ async def test_mcp_tool_is_error_propagates_through_function_middleware():
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                                 "required": ["param"],
@@ -1494,7 +1491,7 @@ async def test_mcp_tool_is_error_propagates_through_function_middleware():
             self.session.call_tool = AsyncMock(
                 return_value=types.CallToolResult(
                     content=[types.TextContent(type="text", text="MCP error occurred")],
-                    isError=True,
+                    is_error=True,
                 )
             )
 
@@ -1597,7 +1594,7 @@ async def test_mcp_tool_approval_mode(approval_mode, expected_approvals):
                         types.Tool(
                             name="tool_one",
                             description="First tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                             },
@@ -1605,7 +1602,7 @@ async def test_mcp_tool_approval_mode(approval_mode, expected_approvals):
                         types.Tool(
                             name="tool_two",
                             description="Second tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                             },
@@ -1674,7 +1671,7 @@ async def test_mcp_tool_allowed_tools(allowed_tools, expected_count, expected_na
                         types.Tool(
                             name="tool_one",
                             description="First tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                             },
@@ -1682,7 +1679,7 @@ async def test_mcp_tool_allowed_tools(allowed_tools, expected_count, expected_na
                         types.Tool(
                             name="tool_two",
                             description="Second tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                             },
@@ -1690,7 +1687,7 @@ async def test_mcp_tool_allowed_tools(allowed_tools, expected_count, expected_na
                         types.Tool(
                             name="tool_three",
                             description="Third tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                             },
@@ -1775,7 +1772,7 @@ def _progressive_tool_list_page(*, tools: list[types.Tool] | None = None) -> typ
             types.Tool(
                 name="tool_one",
                 description="First tool",
-                inputSchema={
+                input_schema={
                     "type": "object",
                     "properties": {"param": {"type": "string"}},
                     "required": ["param"],
@@ -1784,7 +1781,7 @@ def _progressive_tool_list_page(*, tools: list[types.Tool] | None = None) -> typ
             types.Tool(
                 name="tool_two",
                 description="Second tool",
-                inputSchema={
+                input_schema={
                     "type": "object",
                     "properties": {"value": {"type": "integer"}},
                     "required": ["value"],
@@ -1793,7 +1790,7 @@ def _progressive_tool_list_page(*, tools: list[types.Tool] | None = None) -> typ
             types.Tool(
                 name="secret_tool",
                 description="Secret tool",
-                inputSchema={
+                input_schema={
                     "type": "object",
                     "properties": {"secret": {"type": "string"}},
                 },
@@ -1842,12 +1839,12 @@ async def test_mcp_progressive_disclosure_filters_always_loaded_loader_name_coll
             types.Tool(
                 name="list_mcp_tools",
                 description="Remote tool whose local name collides with the list loader.",
-                inputSchema={"type": "object", "properties": {}},
+                input_schema={"type": "object", "properties": {}},
             ),
             types.Tool(
                 name="tool_one",
                 description="First tool",
-                inputSchema={"type": "object", "properties": {}},
+                input_schema={"type": "object", "properties": {}},
             ),
         ],
     )
@@ -1895,12 +1892,12 @@ async def test_mcp_progressive_list_mcp_tools_skips_loader_name_collisions() -> 
             types.Tool(
                 name="list_mcp_tools",
                 description="Remote tool whose local name collides with the list loader.",
-                inputSchema={"type": "object", "properties": {}},
+                input_schema={"type": "object", "properties": {}},
             ),
             types.Tool(
                 name="tool_one",
                 description="First tool",
-                inputSchema={"type": "object", "properties": {}},
+                input_schema={"type": "object", "properties": {}},
             ),
         ],
     )
@@ -2209,7 +2206,7 @@ async def test_mcp_progressive_load_tool_rejects_loader_name_collision() -> None
             types.Tool(
                 name="load_tool",
                 description="Remote tool whose local name collides with the load loader.",
-                inputSchema={"type": "object", "properties": {}},
+                input_schema={"type": "object", "properties": {}},
             ),
         ],
     )
@@ -2306,7 +2303,7 @@ async def test_mcp_progressive_loaded_http_tool_preserves_runtime_kwargs_for_hea
                 types.Tool(
                     name="greet",
                     description="Says hello",
-                    inputSchema={
+                    input_schema={
                         "type": "object",
                         "properties": {"name": {"type": "string"}},
                         "required": ["name"],
@@ -2481,9 +2478,7 @@ async def test_mcp_tool_message_handler_notification():
     tool.load_prompts = AsyncMock()  # type: ignore[method-assign]
 
     # Test tools list changed notification
-    tools_notification = Mock(spec=types.ServerNotification)
-    tools_notification.root = Mock()
-    tools_notification.root.method = "notifications/tools/list_changed"
+    tools_notification = types.ToolListChangedNotification()
 
     result = await tool.message_handler(tools_notification)  # type: ignore[func-returns-value]
     assert result is None
@@ -2495,9 +2490,7 @@ async def test_mcp_tool_message_handler_notification():
     tool.load_tools.reset_mock()
 
     # Test prompts list changed notification
-    prompts_notification = Mock(spec=types.ServerNotification)
-    prompts_notification.root = Mock()
-    prompts_notification.root.method = "notifications/prompts/list_changed"
+    prompts_notification = types.PromptListChangedNotification()
 
     result = await tool.message_handler(prompts_notification)  # type: ignore[func-returns-value]
     assert result is None
@@ -2507,7 +2500,7 @@ async def test_mcp_tool_message_handler_notification():
     # Test unhandled notification
     unknown_notification = Mock(spec=types.ServerNotification)
     unknown_notification.root = Mock()
-    unknown_notification.root.method = "notifications/unknown"
+    unknown_notification.method = "notifications/unknown"
 
     result = await tool.message_handler(unknown_notification)  # type: ignore[func-returns-value]
     assert result is None
@@ -2546,9 +2539,7 @@ async def test_mcp_tool_message_handler_does_not_block_receive_loop():
 
     tool.load_tools = slow_load_tools  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
-    tools_notification = Mock(spec=types.ServerNotification)
-    tools_notification.root = Mock()
-    tools_notification.root.method = "notifications/tools/list_changed"
+    tools_notification = types.ToolListChangedNotification()
 
     # message_handler must return immediately even though load_tools blocks.
     await tool.message_handler(tools_notification)
@@ -2570,9 +2561,7 @@ async def test_mcp_tool_message_handler_reload_failure_is_logged(caplog: pytest.
     tool = MCPStdioTool(name="test_tool", command="python")
     tool.load_tools = AsyncMock(side_effect=RuntimeError("connection lost"))  # type: ignore[method-assign]
 
-    tools_notification = Mock(spec=types.ServerNotification)
-    tools_notification.root = Mock()
-    tools_notification.root.method = "notifications/tools/list_changed"
+    tools_notification = types.ToolListChangedNotification()
 
     await tool.message_handler(tools_notification)
     # Let the background task run — it should not propagate the exception.
@@ -2604,9 +2593,7 @@ async def test_mcp_tool_message_handler_cancel_and_replace():
 
     tool.load_tools = blocking_load_tools  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
-    notification = Mock(spec=types.ServerNotification)
-    notification.root = Mock()
-    notification.root.method = "notifications/tools/list_changed"
+    notification = types.ToolListChangedNotification()
 
     # First notification — starts a blocking reload task.
     await tool.message_handler(notification)
@@ -2666,7 +2653,7 @@ async def test_mcp_tool_sampling_callback_denies_by_default():
 
     params = Mock()
     params.messages = []
-    params.maxTokens = 128
+    params.max_tokens = 128
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -2685,7 +2672,7 @@ async def test_mcp_tool_sampling_callback_denied_by_callback():
 
     params = Mock()
     params.messages = []
-    params.maxTokens = 128
+    params.max_tokens = 128
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -2707,7 +2694,7 @@ async def test_mcp_tool_sampling_callback_callback_exception_denies():
 
     params = Mock()
     params.messages = []
-    params.maxTokens = 128
+    params.max_tokens = 128
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -2730,11 +2717,11 @@ async def test_mcp_tool_sampling_callback_async_approval():
     params = Mock()
     params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = None
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -2759,11 +2746,11 @@ async def test_mcp_tool_sampling_callback_clamps_max_tokens():
     params = Mock()
     params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))]
     params.temperature = None
-    params.maxTokens = 1_000_000
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 1_000_000
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = None
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -2787,11 +2774,11 @@ async def test_mcp_tool_sampling_callback_does_not_clamp_under_cap():
     params = Mock()
     params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = None
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -2816,11 +2803,11 @@ async def test_mcp_tool_sampling_callback_rate_limited():
         params = Mock()
         params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))]
         params.temperature = None
-        params.maxTokens = 100
-        params.stopSequences = None
-        params.systemPrompt = None
+        params.max_tokens = 100
+        params.stop_sequences = None
+        params.system_prompt = None
         params.tools = None
-        params.toolChoice = None
+        params.tool_choice = None
         return params
 
     first = await tool.sampling_callback(Mock(), make_params())
@@ -2858,11 +2845,11 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = None
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -2904,11 +2891,11 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = None
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -2928,11 +2915,11 @@ async def test_mcp_tool_sampling_callback_no_response_and_successful_message_cre
     params = Mock()
     params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = None
-    params.toolChoice = None
+    params.tool_choice = None
 
     tool.client.get_response.return_value = None
     no_response = await tool.sampling_callback(Mock(), params)
@@ -2989,21 +2976,21 @@ async def test_mcp_tool_sampling_callback_returns_tool_use_results():
     params = Mock()
     params.messages = [types.PromptMessage(role="user", content=types.TextContent(type="text", text="Answer"))]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = [
-        types.Tool(name="Answer", description="Return an answer", inputSchema={"type": "object"}),
-        types.Tool(name="Citations", description="Return source citations", inputSchema={"type": "object"}),
+        types.Tool(name="Answer", description="Return an answer", input_schema={"type": "object"}),
+        types.Tool(name="Citations", description="Return source citations", input_schema={"type": "object"}),
     ]
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
     assert isinstance(result, types.CreateMessageResultWithTools)
     assert result.role == "assistant"
     assert result.model == "test-model"
-    assert result.stopReason == "toolUse"
+    assert result.stop_reason == "toolUse"
     assert isinstance(result.content, list)
     tool_use_contents = [content for content in result.content if isinstance(content, types.ToolUseContent)]
     assert tool_use_contents == result.content
@@ -3043,11 +3030,11 @@ async def test_mcp_tool_sampling_callback_forwards_system_prompt():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = "You are a helpful assistant"
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = "You are a helpful assistant"
     params.tools = None
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -3074,7 +3061,7 @@ async def test_mcp_tool_sampling_callback_forwards_tools():
     mcp_tool = types.Tool(
         name="get_weather",
         description="Get weather",
-        inputSchema={"type": "object", "properties": {"city": {"type": "string"}}},
+        input_schema={"type": "object", "properties": {"city": {"type": "string"}}},
     )
 
     params = Mock()
@@ -3084,11 +3071,11 @@ async def test_mcp_tool_sampling_callback_forwards_tools():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = [mcp_tool]
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -3124,11 +3111,11 @@ async def test_mcp_tool_sampling_callback_forwards_tool_choice():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = None
-    params.toolChoice = types.ToolChoice(mode="required")
+    params.tool_choice = types.ToolChoice(mode="required")
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -3159,11 +3146,11 @@ async def test_mcp_tool_sampling_callback_forwards_empty_system_prompt():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = ""
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = ""
     params.tools = None
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -3194,11 +3181,11 @@ async def test_mcp_tool_sampling_callback_forwards_empty_tools_list():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = []
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -3229,11 +3216,11 @@ async def test_mcp_tool_sampling_callback_forwards_generation_params_in_options(
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = 0.7
-    params.maxTokens = 256
-    params.stopSequences = ["STOP"]
-    params.systemPrompt = None
+    params.max_tokens = 256
+    params.stop_sequences = ["STOP"]
+    params.system_prompt = None
     params.tools = None
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -3270,11 +3257,11 @@ async def test_mcp_tool_sampling_callback_omits_temperature_when_none():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = 100
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 100
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = None
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -3307,11 +3294,11 @@ async def test_mcp_tool_sampling_callback_always_passes_max_tokens():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = 200
-    params.stopSequences = None
-    params.systemPrompt = None
+    params.max_tokens = 200
+    params.stop_sequences = None
+    params.system_prompt = None
     params.tools = None
-    params.toolChoice = None
+    params.tool_choice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -3810,6 +3797,10 @@ def test_mcp_streamable_http_tool_get_mcp_client_all_params():
         )
 
 
+@pytest.mark.skipif(
+    not importlib.util.find_spec("mcp.client.websocket"),
+    reason="WebSocket transport not available in base mcp 2.0.0; install mcp[ws]",
+)
 def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
     """Test MCPWebsocketTool.get_mcp_client() with client kwargs."""
     tool = MCPWebsocketTool(
@@ -3824,7 +3815,7 @@ def test_mcp_websocket_tool_get_mcp_client_with_kwargs():
         tool.get_mcp_client()
 
         # Verify all kwargs were passed
-        mock_ws_client.assert_called_once_with(
+        mock_ws_client.assert_called_once_with(  # pyright: ignore[reportUndefinedVariable]
             url="wss://example.com",
             max_size=1024,
             ping_interval=30,
@@ -3908,7 +3899,7 @@ async def test_load_tools_prevents_multiple_calls():
     mock_session = AsyncMock()
     mock_tool_list = MagicMock()
     mock_tool_list.tools = []
-    mock_tool_list.nextCursor = None  # No pagination
+    mock_tool_list.next_cursor = None  # No pagination
     mock_session.list_tools = AsyncMock(return_value=mock_tool_list)
     mock_session.initialize = AsyncMock()
 
@@ -3947,7 +3938,7 @@ async def test_load_prompts_prevents_multiple_calls():
     mock_session = AsyncMock()
     mock_prompt_list = MagicMock()
     mock_prompt_list.prompts = []
-    mock_prompt_list.nextCursor = None  # No pagination
+    mock_prompt_list.next_cursor = None  # No pagination
     mock_session.list_prompts = AsyncMock(return_value=mock_prompt_list)
 
     tool.session = mock_session
@@ -4046,35 +4037,35 @@ async def test_load_tools_with_pagination():
         types.Tool(
             name="tool_1",
             description="First tool",
-            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
         ),
         types.Tool(
             name="tool_2",
             description="Second tool",
-            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
         ),
     ]
-    page1.nextCursor = "cursor_page2"
+    page1.next_cursor = "cursor_page2"
 
     page2 = MagicMock()
     page2.tools = [
         types.Tool(
             name="tool_3",
             description="Third tool",
-            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
         ),
     ]
-    page2.nextCursor = "cursor_page3"
+    page2.next_cursor = "cursor_page3"
 
     page3 = MagicMock()
     page3.tools = [
         types.Tool(
             name="tool_4",
             description="Fourth tool",
-            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
         ),
     ]
-    page3.nextCursor = None  # No more pages
+    page3.next_cursor = None  # No more pages
 
     # Mock list_tools to return different pages based on params
     async def mock_list_tools(params=None):
@@ -4101,7 +4092,7 @@ async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
     """Test that load_tools normalizes inputSchema for zero-argument MCP tools.
 
     Some MCP servers (e.g. matlab-mcp-core-server) declare zero-argument tools
-    with inputSchema={"type": "object"} and no "properties" key.  OpenAI's API
+    with input_schema={"type": "object"} and no "properties" key.  OpenAI's API
     requires "properties" to be present on object schemas, so load_tools must
     inject an empty "properties" dict when it is missing.
     """
@@ -4124,34 +4115,34 @@ async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
         types.Tool(
             name="zero_arg_tool",
             description="A tool with no parameters",
-            inputSchema=original_zero_arg_schema,
+            input_schema=original_zero_arg_schema,
         ),
         types.Tool(
             name="normal_tool",
             description="A tool with parameters",
-            inputSchema={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
+            input_schema={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
         ),
         types.Tool(
             name="string_schema_tool",
             description="A tool with a non-object schema",
-            inputSchema=original_string_schema,
+            input_schema=original_string_schema,
         ),
         types.Tool(
             name="empty_schema_tool",
             description="A tool with an empty schema",
-            inputSchema=original_empty_schema,
+            input_schema=original_empty_schema,
         ),
     ]
 
-    # Simulate a non-conforming MCP server that sends inputSchema=None.
+    # Simulate a non-conforming MCP server that sends input_schema=None.
     # types.Tool requires inputSchema to be a dict, so we use a MagicMock.
     none_schema_tool = MagicMock()
     none_schema_tool.name = "none_schema_tool"
     none_schema_tool.description = "A tool with None inputSchema"
-    none_schema_tool.inputSchema = None
+    none_schema_tool.input_schema = None
     none_schema_tool.meta = None
     page.tools.append(none_schema_tool)
-    page.nextCursor = None
+    page.next_cursor = None
 
     mock_session.list_tools = AsyncMock(return_value=page)
 
@@ -4219,7 +4210,7 @@ async def test_load_prompts_with_pagination():
             arguments=[types.PromptArgument(name="arg2", description="Arg 2", required=True)],
         ),
     ]
-    page1.nextCursor = "cursor_page2"
+    page1.next_cursor = "cursor_page2"
 
     page2 = MagicMock()
     page2.prompts = [
@@ -4229,7 +4220,7 @@ async def test_load_prompts_with_pagination():
             arguments=[types.PromptArgument(name="arg3", description="Arg 3", required=False)],
         ),
     ]
-    page2.nextCursor = None  # No more pages
+    page2.next_cursor = None  # No more pages
 
     # Mock list_prompts to return different pages based on params
     async def mock_list_prompts(params=None):
@@ -4269,30 +4260,30 @@ async def test_load_tools_pagination_with_duplicates():
         types.Tool(
             name="tool_1",
             description="First tool",
-            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
         ),
         types.Tool(
             name="tool_2",
             description="Second tool",
-            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
         ),
     ]
-    page1.nextCursor = "cursor_page2"
+    page1.next_cursor = "cursor_page2"
 
     page2 = MagicMock()
     page2.tools = [
         types.Tool(
             name="tool_1",  # Duplicate from page1
             description="Duplicate tool",
-            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
         ),
         types.Tool(
             name="tool_3",
             description="Third tool",
-            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
         ),
     ]
-    page2.nextCursor = None
+    page2.next_cursor = None
 
     # Mock list_tools to return different pages
     async def mock_list_tools(params=None):
@@ -4335,7 +4326,7 @@ async def test_load_prompts_pagination_with_duplicates():
             arguments=[types.PromptArgument(name="arg1", description="Arg 1", required=True)],
         ),
     ]
-    page1.nextCursor = "cursor_page2"
+    page1.next_cursor = "cursor_page2"
 
     page2 = MagicMock()
     page2.prompts = [
@@ -4350,7 +4341,7 @@ async def test_load_prompts_pagination_with_duplicates():
             arguments=[types.PromptArgument(name="arg3", description="Arg 3", required=True)],
         ),
     ]
-    page2.nextCursor = None
+    page2.next_cursor = None
 
     # Mock list_prompts to return different pages
     async def mock_list_prompts(params=None):
@@ -4383,11 +4374,11 @@ async def test_load_tools_concurrent_reload_does_not_duplicate_tools_and_preserv
         types.Tool(
             name="tool_1",
             description="First tool",
-            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
             _meta={"echo": "tool_1"},
         ),
     ]
-    page.nextCursor = None
+    page.next_cursor = None
 
     async def mock_list_tools(params: Any = None) -> Any:
         assert params is None
@@ -4418,7 +4409,7 @@ async def test_load_prompts_concurrent_reload_does_not_duplicate_prompts():
             arguments=[types.PromptArgument(name="arg1", description="Arg 1", required=True)],
         ),
     ]
-    page.nextCursor = None
+    page.next_cursor = None
 
     async def mock_list_prompts(params: Any = None) -> Any:
         assert params is None
@@ -4499,7 +4490,7 @@ async def test_load_tools_empty_pagination():
     # Create empty response
     page1 = MagicMock()
     page1.tools = []
-    page1.nextCursor = None
+    page1.next_cursor = None
 
     mock_session.list_tools = AsyncMock(return_value=page1)
 
@@ -4527,7 +4518,7 @@ async def test_load_prompts_empty_pagination():
     # Create empty response
     page1 = MagicMock()
     page1.prompts = []
-    page1.nextCursor = None
+    page1.next_cursor = None
 
     mock_session.list_prompts = AsyncMock(return_value=page1)
 
@@ -5303,9 +5294,7 @@ async def test_connect_sets_logging_level_when_server_advertises_logging() -> No
 async def test_ensure_connected_skips_future_pings_when_ping_is_not_available() -> None:
     tool = MCPTool(name="test_tool")  # type: ignore[abstract]
     tool.session = Mock(
-        send_ping=AsyncMock(
-            side_effect=McpError(types.ErrorData(code=-32601, message="Method 'ping' is not available."))
-        )
+        send_ping=AsyncMock(side_effect=MCPError(code=-32601, message="Method 'ping' is not available."))
     )
 
     with patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_reconnect:
@@ -5350,7 +5339,7 @@ async def test_load_tools_reconnects_on_closed_resource_when_ping_is_unavailable
 
     page = Mock()
     page.tools = []
-    page.nextCursor = None
+    page.next_cursor = None
 
     second_session = Mock()
     second_session.list_tools = AsyncMock(return_value=page)
@@ -5379,7 +5368,7 @@ async def test_load_prompts_reconnects_on_closed_resource_when_ping_is_unavailab
 
     page = Mock()
     page.prompts = []
-    page.nextCursor = None
+    page.next_cursor = None
 
     second_session = Mock()
     second_session.list_prompts = AsyncMock(return_value=page)
@@ -5413,7 +5402,7 @@ async def test_mcp_tool_filters_framework_kwargs():
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                                 "required": ["param"],
@@ -5497,7 +5486,7 @@ async def test_mcp_tool_call_tool_otel_meta(use_span, expect_traceparent, span_e
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                                 "required": ["param"],
@@ -5558,7 +5547,7 @@ async def test_mcp_tool_call_tool_forwards_tool_list_meta():
                         types.Tool(
                             name="WorkIQSharePoint.readSmallBinaryFile",
                             description="Read a binary file",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"fileId": {"type": "string"}},
                                 "required": ["fileId"],
@@ -5603,7 +5592,7 @@ async def test_mcp_tool_call_tool_user_meta_merges_with_tool_list_meta():
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+                            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
                             _meta=tool_meta,
                         )
                     ]
@@ -5646,7 +5635,7 @@ async def test_mcp_tool_function_invocation_strips_model_supplied_meta() -> None
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+                            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
                         )
                     ]
                 )
@@ -5690,7 +5679,7 @@ async def test_mcp_tool_function_invocation_preserves_trusted_meta_over_model_me
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+                            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
                         )
                     ]
                 )
@@ -5741,7 +5730,7 @@ async def test_mcp_tool_call_tool_otel_meta_overrides_user_meta_but_not_tool_lis
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={"type": "object", "properties": {"param": {"type": "string"}}},
+                            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
                             _meta=tool_meta,
                         )
                     ]
@@ -5819,7 +5808,7 @@ async def test_mcp_streamable_http_tool_header_provider_injects_headers():
                         types.Tool(
                             name="greet",
                             description="Says hello",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"name": {"type": "string"}},
                                 "required": ["name"],
@@ -5879,7 +5868,7 @@ async def test_mcp_streamable_http_tool_header_provider_sets_contextvar():
                         types.Tool(
                             name="greet",
                             description="Says hello",
-                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                            input_schema={"type": "object", "properties": {"name": {"type": "string"}}},
                         )
                     ]
                 )
@@ -5921,7 +5910,7 @@ async def test_mcp_streamable_http_tool_header_provider_contextvar_reset_after_c
                         types.Tool(
                             name="greet",
                             description="Says hello",
-                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                            input_schema={"type": "object", "properties": {"name": {"type": "string"}}},
                         )
                     ]
                 )
@@ -5961,7 +5950,7 @@ async def test_mcp_streamable_http_tool_without_header_provider():
                         types.Tool(
                             name="greet",
                             description="Says hello",
-                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                            input_schema={"type": "object", "properties": {"name": {"type": "string"}}},
                         )
                     ]
                 )
@@ -6308,7 +6297,7 @@ async def test_mcp_streamable_http_tool_header_provider_via_invoke_with_context(
                         types.Tool(
                             name="greet",
                             description="Says hello",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"name": {"type": "string"}},
                                 "required": ["name"],
@@ -6454,7 +6443,7 @@ async def test_mcp_streamable_http_tool_header_provider_snapshot_restored_after_
                         types.Tool(
                             name="greet",
                             description="Says hello",
-                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                            input_schema={"type": "object", "properties": {"name": {"type": "string"}}},
                         )
                     ]
                 )
@@ -6506,7 +6495,7 @@ async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_ca
                         types.Tool(
                             name="greet",
                             description="Says hello",
-                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                            input_schema={"type": "object", "properties": {"name": {"type": "string"}}},
                         )
                     ]
                 )
@@ -6562,37 +6551,42 @@ def _make_task_snapshot(
     status_message: str | None = None,
     poll_interval_ms: int | None = None,
 ) -> types.GetTaskResult:
-    now = _utc_now()
+    now = _utc_now().isoformat()
     return types.GetTaskResult(
-        taskId=task_id,
-        status=status,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
-        statusMessage=status_message,
-        createdAt=now,
-        lastUpdatedAt=now,
+        task_id=task_id,
+        status=status,
+        status_message=status_message,
+        created_at=now,
+        last_updated_at=now,
         ttl=None,
-        pollInterval=poll_interval_ms,
+        poll_interval=poll_interval_ms,
     )
 
 
 def _make_create_task_result(task_id: str = "task-1") -> types.CreateTaskResult:
-    now = _utc_now()
+    now = _utc_now().isoformat()
     return types.CreateTaskResult(
         task=types.Task(
-            taskId=task_id,
+            task_id=task_id,
             status="working",
-            statusMessage=None,
-            createdAt=now,
-            lastUpdatedAt=now,
+            status_message=None,
+            created_at=now,
+            last_updated_at=now,
             ttl=None,
         )
     )
 
 
 def _make_payload(text: str = "done!", is_error: bool = False) -> types.GetTaskPayloadResult:
-    return types.GetTaskPayloadResult.model_validate({
-        "content": [{"type": "text", "text": text}],
-        "isError": is_error,
-    })
+    call_tool_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text=text)],
+        is_error=is_error,
+    )
+    result_dict = call_tool_result.model_dump(by_alias=True)
+    result_dict.pop("_meta", None)
+    p = types.GetTaskPayloadResult(meta=None)
+    object.__setattr__(p, "__pydantic_extra__", result_dict)
+    return p
 
 
 def _make_task_tool(
@@ -6627,7 +6621,7 @@ def _send_request_dispatcher(*responses_by_method: tuple[str, Any]) -> Any:
         queues[method].append(response)
 
     async def _dispatch(request: Any, _result_type: Any, *_args: Any, **_kw: Any) -> Any:
-        method = getattr(request.root, "method", None) or getattr(request, "method", None)
+        method = request.method
         queue = queues.get(method)  # type: ignore[arg-type, call-overload]  # pyrefly: ignore[bad-argument-type]
         if not queue:
             raise AssertionError(f"No mocked send_request response for method '{method}'.")
@@ -6670,16 +6664,16 @@ async def test_load_tools_captures_task_support() -> None:
         types.Tool(
             name="slow_op",
             description="slow",
-            inputSchema={"type": "object", "properties": {}},
-            execution=types.ToolExecution(taskSupport="required"),
+            input_schema={"type": "object", "properties": {}},
+            execution=types.ToolExecution(task_support="required"),
         ),
         types.Tool(
             name="fast_op",
             description="fast",
-            inputSchema={"type": "object", "properties": {}},
+            input_schema={"type": "object", "properties": {}},
         ),
     ]
-    page.nextCursor = None
+    page.next_cursor = None
     tool.session.list_tools = AsyncMock(return_value=page)
 
     await tool.load_tools()
@@ -6720,7 +6714,7 @@ async def test_call_tool_as_task_default_ttl_propagates() -> None:
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         captured.append(request)
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result()
         if method == "tasks/get":
@@ -6734,9 +6728,9 @@ async def test_call_tool_as_task_default_ttl_propagates() -> None:
     await tool.call_tool("slow_op")
 
     create_req = captured[0]
-    assert create_req.root.method == "tools/call"
-    assert create_req.root.params.task is not None
-    assert create_req.root.params.task.ttl == 7 * 60 * 1000
+    assert create_req.method == "tools/call"
+    assert create_req.params.task is not None
+    assert create_req.params.task.ttl == 7 * 60 * 1000
 
 
 async def test_call_tool_as_task_sends_empty_task_metadata_when_ttl_none() -> None:
@@ -6748,7 +6742,7 @@ async def test_call_tool_as_task_sends_empty_task_metadata_when_ttl_none() -> No
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         captured.append(request)
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result()
         if method == "tasks/get":
@@ -6762,9 +6756,9 @@ async def test_call_tool_as_task_sends_empty_task_metadata_when_ttl_none() -> No
     await tool.call_tool("slow_op")
 
     create_req = captured[0]
-    assert create_req.root.method == "tools/call"
-    assert create_req.root.params.task is not None
-    assert create_req.root.params.task.ttl is None
+    assert create_req.method == "tools/call"
+    assert create_req.params.task is not None
+    assert create_req.params.task.ttl is None
 
 
 async def test_call_tool_skips_task_path_for_optional_and_forbidden() -> None:
@@ -6850,7 +6844,7 @@ async def test_call_tool_as_task_malformed_payload_raises() -> None:
 async def test_call_tool_as_task_method_not_found_falls_back() -> None:
     tool = _make_task_tool()
     tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
-        side_effect=McpError(types.ErrorData(code=types.METHOD_NOT_FOUND, message="no tasks here"))
+        side_effect=MCPError(code=types.METHOD_NOT_FOUND, message="no tasks here")
     )
     tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
         return_value=types.CallToolResult(content=[types.TextContent(type="text", text="fell back")])
@@ -6865,8 +6859,9 @@ async def test_call_tool_as_task_method_not_found_falls_back() -> None:
 async def test_call_tool_as_task_invalid_params_falls_back() -> None:
     tool = _make_task_tool()
     tool.session.send_request = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
-        side_effect=McpError(types.ErrorData(code=types.INVALID_PARAMS, message="unknown field"))
+        side_effect=MCPError(code=types.INVALID_PARAMS, message="unknown field")
     )
+
     tool.session.call_tool = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
         return_value=types.CallToolResult(content=[types.TextContent(type="text", text="plain ok")])
     )
@@ -6879,10 +6874,15 @@ async def test_call_tool_as_task_invalid_params_falls_back() -> None:
 async def test_call_tool_as_task_legacy_calltoolresult_response_used_directly() -> None:
     """Server may ignore augmentation and return CallToolResult; treat it as the result."""
     # Build a lenient Result whose extras match a CallToolResult shape.
-    legacy_payload = types.Result.model_validate({
-        "content": [{"type": "text", "text": "legacy ok"}],
-        "isError": False,
-    })
+    legacy_payload = types.Result(meta=None)
+    object.__setattr__(
+        legacy_payload,
+        "__pydantic_extra__",
+        {
+            "content": [{"type": "text", "text": "legacy ok"}],
+            "isError": False,
+        },
+    )
 
     tool = _make_task_tool()
     tool.session.send_request = AsyncMock(return_value=legacy_payload)  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
@@ -6946,7 +6946,7 @@ async def test_call_tool_as_task_local_cancellation_fires_remote_cancel(
     create_seen = asyncio.Event()
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             create_seen.set()
             return _make_create_task_result()
@@ -6993,7 +6993,7 @@ async def test_call_tool_as_task_cancellation_suppressed_when_disabled(
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             create_seen.set()
             return _make_create_task_result()
@@ -7032,12 +7032,12 @@ async def test_call_tool_as_task_reconnects_during_poll(monkeypatch: pytest.Monk
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal poll_calls
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="abc")
         if method == "tasks/get":
             poll_calls += 1
-            assert request.root.params.taskId == "abc"
+            assert request.params.task_id == "abc"
             if poll_calls == 1:
                 raise ClosedResourceError
             return _make_task_snapshot(task_id="abc", status="completed")
@@ -7064,7 +7064,7 @@ async def test_call_tool_as_task_reconnects_during_poll(monkeypatch: pytest.Monk
         sum(
             1  # type: ignore[misc]
             for c in tool.session.send_request.await_args_list  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
-            if c.args[0].root.method == "tools/call"
+            if c.args[0].method == "tools/call"
         )
         == 1
     )
@@ -7082,7 +7082,7 @@ async def test_call_tool_as_task_second_disconnect_raises_connection_lost(
     tool = _make_task_tool()
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="abc")
         if method == "tasks/get":
@@ -7139,7 +7139,7 @@ async def test_fetch_task_result_reconnects_during_fetch() -> None:
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal fetch_calls
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="r1")
         if method == "tasks/get":
@@ -7177,7 +7177,7 @@ async def test_fetch_task_result_second_disconnect_raises_task_state_unknown_and
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="r2")
         if method == "tasks/get":
@@ -7206,7 +7206,7 @@ async def test_fetch_task_result_second_disconnect_raises_task_state_unknown_and
 
 async def test_call_tool_as_task_create_unparseable_success_raises() -> None:
     """An unparseable success-shaped response must NOT silently retry tools/call."""
-    # Result with neither task.taskId nor a valid CallToolResult shape.
+    # Result with neither task.task_id nor a valid CallToolResult shape.
     unparseable = types.Result.model_validate({"foo": "bar"})
 
     tool = _make_task_tool()
@@ -7232,7 +7232,7 @@ async def test_call_tool_as_task_max_wait_exceeded_raises_and_cancels(monkeypatc
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="mw")
         if method == "tasks/get":
@@ -7273,7 +7273,7 @@ async def test_call_tool_as_task_max_wait_cancels_even_when_local_cancel_option_
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="mw2")
         if method == "tasks/get":
@@ -7310,13 +7310,13 @@ async def test_call_tool_as_task_poll_transient_request_timeout_keeps_polling(
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal poll_calls, cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="t1")
         if method == "tasks/get":
             poll_calls += 1
             if poll_calls == 1:
-                raise McpError(types.ErrorData(code=int(httpx.codes.REQUEST_TIMEOUT), message="slow poll"))
+                raise MCPError(code=int(httpx.codes.REQUEST_TIMEOUT), message="slow poll")
             return _make_task_snapshot(task_id="t1", status="completed")
         if method == "tasks/result":
             return _make_payload("recovered after transient")
@@ -7350,11 +7350,11 @@ async def test_call_tool_as_task_poll_hard_mcperror_cancels_and_raises(
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="h1")
         if method == "tasks/get":
-            raise McpError(types.ErrorData(code=types.INVALID_PARAMS, message="bad task id"))
+            raise MCPError(code=types.INVALID_PARAMS, message="bad task id")
         if method == "tasks/cancel":
             cancel_called = True
             return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
@@ -7388,7 +7388,7 @@ async def test_call_tool_as_task_malformed_tasks_get_response_cancels_and_raises
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="m1")
         if method == "tasks/get":
@@ -7421,7 +7421,7 @@ async def test_call_tool_as_task_failed_terminal_does_not_cancel(monkeypatch: py
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="f1")
         if method == "tasks/get":
@@ -7482,20 +7482,20 @@ async def test_mcp_task_options_max_task_wait_rejects_non_positive() -> None:
 
 
 async def test_fetch_task_result_hard_mcperror_raises_without_cancel() -> None:
-    """tasks/result hard McpError must wrap as ToolExecutionException without cancel (server done)."""
+    """tasks/result hard MCPError must wrap as ToolExecutionException without cancel (server done)."""
     tool = _make_task_tool()
 
     cancel_called = False
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="hf")
         if method == "tasks/get":
             return _make_task_snapshot(task_id="hf", status="completed")
         if method == "tasks/result":
-            raise McpError(types.ErrorData(code=types.INTERNAL_ERROR, message="payload vanished"))
+            raise MCPError(code=types.INTERNAL_ERROR, message="payload vanished")
         if method == "tasks/cancel":
             cancel_called = True
             return types.CancelTaskResult()  # type: ignore[call-arg]  # pyrefly: ignore[missing-argument]  # ty: ignore[missing-argument]
@@ -7506,7 +7506,7 @@ async def test_fetch_task_result_hard_mcperror_raises_without_cancel() -> None:
     with pytest.raises(ToolExecutionException, match="payload vanished"):
         await tool.call_tool("slow_op")
 
-    # No raw McpError leak and no cancel — server already reported the task as done.
+    # No raw MCPError leak and no cancel — server already reported the task as done.
     await asyncio.sleep(0.02)
     assert cancel_called is False
 
@@ -7530,7 +7530,7 @@ async def test_completion_wait_timeout_without_max_wait_is_not_translated(monkey
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="t2")
         if method == "tasks/get":
@@ -7575,7 +7575,7 @@ async def test_completion_wait_inner_timeout_with_max_wait_set_propagates(
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
         nonlocal cancel_called
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="t3")
         if method == "tasks/get":
@@ -7604,7 +7604,7 @@ async def test_max_wait_interrupts_long_poll_sleep(monkeypatch: pytest.MonkeyPat
     tool = _make_task_tool(task_options=MCPTaskOptions(max_task_wait=timedelta(milliseconds=100)))
 
     async def fake_send(request: Any, _result_type: Any, *_a: Any, **_kw: Any) -> Any:
-        method = request.root.method
+        method = request.method
         if method == "tools/call":
             return _make_create_task_result(task_id="ds")
         if method == "tasks/get":
@@ -7823,7 +7823,7 @@ async def test_call_tool_forwards_only_declared_arguments() -> None:
                         types.Tool(
                             name="test_tool",
                             description="Test tool",
-                            inputSchema={
+                            input_schema={
                                 "type": "object",
                                 "properties": {"param": {"type": "string"}},
                                 "required": ["param"],

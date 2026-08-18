@@ -49,8 +49,7 @@ from agent_framework import (
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponseContext
 from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
-from mcp import McpError
-from mcp.types import ErrorData
+from mcp.shared.exceptions import MCPError
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
@@ -3569,7 +3568,7 @@ def _make_consent_error(
         ]
     })
     message = f"tools/list failed for 1 tool source(s), succeeded for 0 tool source(s) {payload}"
-    inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message=message))
+    inner = MCPError(code=CONSENT_ERROR_CODE, message=message)
     return ToolExecutionException("MCP consent required", inner_exception=inner)
 
 
@@ -3582,7 +3581,7 @@ class TestConsentUrlFromError:
         assert consent_url_from_error(Exception("boom")) is None
 
     def test_returns_none_when_mcp_error_has_different_code(self) -> None:
-        inner = McpError(ErrorData(code=-32000, message="some other error"))
+        inner = MCPError(code=-32000, message="some other error")
         exc = Exception("wrapped", inner)
         assert consent_url_from_error(exc) is None
 
@@ -3590,13 +3589,13 @@ class TestConsentUrlFromError:
         # `args` of a bare McpError holds the message string, not an McpError
         # instance, so it does not match the wrapping pattern produced by the
         # MCP client when it bubbles consent errors up.
-        bare = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="https://x"))
+        bare = MCPError(code=CONSENT_ERROR_CODE, message="https://x")
         assert consent_url_from_error(bare) is None
 
     def test_returns_none_when_message_has_no_json(self) -> None:
         from agent_framework.exceptions import ToolExecutionException
 
-        inner = McpError(ErrorData(code=CONSENT_ERROR_CODE, message="no json here"))
+        inner = MCPError(code=CONSENT_ERROR_CODE, message="no json here")
         exc = ToolExecutionException("MCP consent required", inner_exception=inner)
         assert consent_url_from_error(exc) is None
 
