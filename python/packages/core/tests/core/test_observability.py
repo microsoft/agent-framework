@@ -35,7 +35,10 @@ from agent_framework.observability import (
     ChatTelemetryLayer,
     MessageListTimestampFilter,
     OtelAttr,
-    _capture_messages,
+    _capture_message_events_v1_36,
+    _capture_message_span_attributes_experimental,
+    _to_otel_choice_v1_36,
+    _to_otel_input_events_v1_36,
     get_function_span,
 )
 
@@ -362,6 +365,26 @@ async def test_chat_client_observability_with_instructions(
     # Verify input_messages excludes system instructions
     input_messages = json.loads(span.attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["user"]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_stable_semconv_omits_system_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that stable v1.36.0 telemetry omits the post-v1.36.0 system instructions attribute."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    client = mock_chat_client()
+
+    await client.get_response(
+        messages=[Message(role="user", contents=["Test message"])],
+        options={"model": "Test", "instructions": "You are a helpful assistant."},
+    )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert OtelAttr.SYSTEM_INSTRUCTIONS not in spans[0].attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -1878,6 +1901,22 @@ def test_semconv_multi_value_list_checks_for_gen_ai_token(monkeypatch):
     assert settings.use_latest_experimental_gen_ai_semconv is False
 
 
+def test_stable_semconv_skips_current_agent_system_instruction_checks(span_exporter: InMemorySpanExporter):
+    """Stable v1.36.0 returns before inspecting spans for the unsupported system instructions attribute."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    agent_span = Mock()
+
+    observability._capture_current_agent_system_instructions_experimental(  # pyright: ignore[reportPrivateUsage]
+        agent_span,
+        Mock(),
+        "You are a helpful assistant.",
+    )
+
+    agent_span.is_recording.assert_not_called()
+
+
 def test_enable_message_events_defaults_true(monkeypatch):
     """ENABLE_MESSAGE_EVENTS unset → defaults to True (backward-compatible with pre-versioning behavior)."""
     from agent_framework.observability import ObservabilitySettings
@@ -1937,9 +1976,9 @@ async def test_chat_client_observability_provider_name_under_stable_semconv(
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    span = spans[0]
-    assert OtelAttr.SYSTEM in span.attributes  # type: ignore[operator]
-    assert OtelAttr.PROVIDER_NAME not in span.attributes  # type: ignore[operator]
+    attributes = spans[0].attributes or {}
+    assert OtelAttr.SYSTEM in attributes
+    assert OtelAttr.PROVIDER_NAME not in attributes
 
 
 # region Test disable_instrumentation sticky behavior
@@ -2098,10 +2137,10 @@ def test_disable_instrumentation_in_all(monkeypatch):
 def test_to_otel_part_text():
     """Test _to_otel_part with text content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_experimental
 
     content = Content(type="text", text="Hello world")
-    result = _to_otel_part(content)
+    result = _to_otel_part_experimental(content)
 
     assert result == {"type": "text", "content": "Hello world"}
 
@@ -2109,10 +2148,10 @@ def test_to_otel_part_text():
 def test_to_otel_part_text_reasoning():
     """Test _to_otel_part with text_reasoning content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_experimental
 
     content = Content(type="text_reasoning", text="Thinking about this...")
-    result = _to_otel_part(content)
+    result = _to_otel_part_experimental(content)
 
     assert result == {"type": "reasoning", "content": "Thinking about this..."}
 
@@ -2120,10 +2159,10 @@ def test_to_otel_part_text_reasoning():
 def test_to_otel_part_uri():
     """Test _to_otel_part with uri content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_experimental
 
     content = Content(type="uri", uri="https://example.com/image.png", media_type="image/png")
-    result = _to_otel_part(content)
+    result = _to_otel_part_experimental(content)
 
     assert result == {
         "type": "uri",
@@ -2136,10 +2175,10 @@ def test_to_otel_part_uri():
 def test_to_otel_part_uri_no_media_type():
     """Test _to_otel_part with uri content without media_type."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_experimental
 
     content = Content(type="uri", uri="https://example.com/file")
-    result = _to_otel_part(content)
+    result = _to_otel_part_experimental(content)
 
     assert result == {
         "type": "uri",
@@ -2152,11 +2191,11 @@ def test_to_otel_part_uri_no_media_type():
 def test_to_otel_part_data():
     """Test _to_otel_part with data content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_experimental
 
     data = b"binary data"
     content = Content.from_data(data=data, media_type="application/octet-stream")
-    result = _to_otel_part(content)
+    result = _to_otel_part_experimental(content)
 
     assert result["type"] == "blob"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert result["mime_type"] == "application/octet-stream"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
@@ -2166,10 +2205,10 @@ def test_to_otel_part_data():
 def test_to_otel_part_function_call():
     """Test _to_otel_part with function_call content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_experimental
 
     content = Content(type="function_call", call_id="call_123", name="test_function", arguments='{"arg1": "value1"}')
-    result = _to_otel_part(content)
+    result = _to_otel_part_experimental(content)
 
     assert result == {
         "type": "tool_call",
@@ -2182,11 +2221,11 @@ def test_to_otel_part_function_call():
 def test_to_otel_part_function_call_reuses_prepared_arguments():
     """Test _to_otel_part does not re-serialize function-call arguments in the observability hot path."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_experimental
 
     arguments = {"payload": object()}
     content = Content(type="function_call", call_id="call_789", name="handoff", arguments=arguments)
-    result = _to_otel_part(content)
+    result = _to_otel_part_experimental(content)
 
     assert result is not None
     assert result["arguments"] is arguments
@@ -2241,13 +2280,88 @@ def test_make_json_safe_dict_with_non_string_keys():
 def test_to_otel_part_function_result():
     """Test _to_otel_part with function_result content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_experimental
 
     content = Content(type="function_result", call_id="call_123", result="Success")
-    result = _to_otel_part(content)
+    result = _to_otel_part_experimental(content)
 
     assert result["type"] == "tool_call_response"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert result["id"] == "call_123"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+
+
+# region Test stable v1.36.0 event conversion
+
+
+def test_to_otel_v1_36_user_message_body():
+    """Stable user events use content rather than the experimental parts shape."""
+    events = _to_otel_input_events_v1_36(Message(role="user", contents=["Hello", "world"]))
+
+    assert events == [(OtelAttr.USER_MESSAGE, {"content": "Hello world"})]
+
+
+def test_to_otel_v1_36_assistant_tool_call_body():
+    """Stable assistant events use the v1.36 function-call nesting."""
+    message = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="call_123", name="get_weather", arguments='{"city":"Paris"}')],
+    )
+
+    events = _to_otel_input_events_v1_36(message)
+
+    assert events == [
+        (
+            OtelAttr.ASSISTANT_MESSAGE,
+            {
+                "tool_calls": [
+                    {
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": '{"city":"Paris"}'},
+                    }
+                ]
+            },
+        )
+    ]
+
+
+def test_to_otel_v1_36_tool_results_emit_one_event_per_call():
+    """Each stable tool event has the one required tool-call id."""
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(call_id="call_1", result="first"),
+            Content.from_function_result(call_id="call_2", result={"value": 2}),
+        ],
+    )
+
+    events = _to_otel_input_events_v1_36(message)
+
+    assert events == [
+        (OtelAttr.TOOL_MESSAGE, {"id": "call_1", "content": "first"}),
+        (OtelAttr.TOOL_MESSAGE, {"id": "call_2", "content": '{"value": 2}'}),
+    ]
+
+
+def test_to_otel_v1_36_tool_message_without_call_id_is_skipped():
+    """A stable tool event is not emitted when its required call id is unavailable."""
+    events = _to_otel_input_events_v1_36(Message(role="tool", contents=["Uncorrelated result"]))
+
+    assert events == []
+
+
+def test_to_otel_v1_36_choice_body():
+    """Stable choices contain index, finish reason, and a nested message."""
+    body = _to_otel_choice_v1_36(
+        Message(role="assistant", contents=["Done"]),
+        index=1,
+        finish_reason="tool_calls",
+    )
+
+    assert body == {
+        "index": 1,
+        "finish_reason": "tool_calls",
+        "message": {"content": "Done"},
+    }
 
 
 # region Test workflow observability functions
@@ -2757,11 +2871,11 @@ def test_observability_settings_configure_already_setup(monkeypatch):
 def test_to_otel_part_generic():
     """Test _to_otel_part with unknown content type uses to_dict fallback."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_experimental
 
     # Create a content with type that falls to default case
     content = Content(type="annotations", text="some text")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
-    result = _to_otel_part(content)
+    result = _to_otel_part_experimental(content)
 
     # Should return result from to_dict
     assert result is not None
@@ -2856,11 +2970,13 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
     agent = MockAgent()
 
     span_exporter.clear()
-    response = await agent.run(messages="Hello")
+    with patch("agent_framework.observability.otel_event_logger.emit") as mock_emit:
+        response = await agent.run(messages="Hello")
 
     assert response is not None
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
+    assert mock_emit.call_count == 0
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -3069,19 +3185,22 @@ def test_capture_messages_stable_semconv_emits_events_only(span_exporter: InMemo
     span_exporter.clear()
 
     with (
-        patch("agent_framework.observability.logger.info") as mock_logger_info,
-        tracer.start_as_current_span("test_span") as span,
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+        tracer.start_as_current_span("test_span"),
     ):
-        observability._capture_messages(  # type: ignore[reportPrivateUsage]
-            span=span,
+        observability._capture_message_events_v1_36(  # type: ignore[reportPrivateUsage]
             provider_name="test_provider",
             messages=[Message(role="user", contents=["Test"])],
         )
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    assert OtelAttr.INPUT_MESSAGES not in spans[0].attributes  # type: ignore[operator]
-    assert mock_logger_info.call_count == 1
+    attributes = spans[0].attributes or {}
+    assert OtelAttr.INPUT_MESSAGES not in attributes
+    mock_emit.assert_called_once()
+    assert mock_emit.call_args.kwargs["event_name"] == "gen_ai.user.message"
+    assert mock_emit.call_args.kwargs["body"] == {"content": "Test"}
+    assert mock_emit.call_args.kwargs["attributes"] == {"gen_ai.system": "test_provider"}
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -3101,20 +3220,20 @@ def test_capture_messages_latest_experimental_emits_span_attribute_only_when_eve
     span_exporter.clear()
 
     with (
-        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
         tracer.start_as_current_span("test_span") as span,
     ):
-        observability._capture_messages(  # type: ignore[reportPrivateUsage]
+        observability._capture_message_span_attributes_experimental(  # type: ignore[reportPrivateUsage]
             span=span,
-            provider_name="test_provider",
             messages=[Message(role="user", contents=["Test"])],
         )
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]
+    attributes = spans[0].attributes or {}
+    input_messages = json.loads(cast(str, attributes[OtelAttr.INPUT_MESSAGES]))
     assert [msg.get("role") for msg in input_messages] == ["user"]
-    assert mock_logger_info.call_count == 0
+    assert mock_emit.call_count == 0
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -3130,20 +3249,128 @@ def test_capture_messages_defaults_emit_both_events_and_span_attribute(span_expo
     span_exporter.clear()
 
     with (
-        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
         tracer.start_as_current_span("test_span") as span,
     ):
-        observability._capture_messages(  # type: ignore[reportPrivateUsage]
-            span=span,
+        observability._capture_message_events_v1_36(  # type: ignore[reportPrivateUsage]
             provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+        )
+        observability._capture_message_span_attributes_experimental(  # type: ignore[reportPrivateUsage]
+            span=span,
             messages=[Message(role="user", contents=["Test"])],
         )
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]
+    attributes = spans[0].attributes or {}
+    input_messages = json.loads(cast(str, attributes[OtelAttr.INPUT_MESSAGES]))
     assert [msg.get("role") for msg in input_messages] == ["user"]
-    assert mock_logger_info.call_count == 1
+    mock_emit.assert_called_once()
+    assert mock_emit.call_args.kwargs["event_name"] == "gen_ai.user.message"
+    assert mock_emit.call_args.kwargs["body"] == {"content": "Test"}
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_stable_semconv_emits_one_event_per_choice(span_exporter: InMemorySpanExporter):
+    """Stable v1.36 emits each model choice with its required index and finish reason."""
+    from opentelemetry import trace
+
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    tracer = trace.get_tracer("test")
+
+    with (
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+        tracer.start_as_current_span("test_span"),
+    ):
+        observability._capture_message_events_v1_36(  # type: ignore[reportPrivateUsage]
+            provider_name="test_provider",
+            messages=[
+                Message(role="assistant", contents=["First"]),
+                Message(role="assistant", contents=["Second"]),
+            ],
+            output=True,
+            finish_reason=cast(Any, "tool_calls"),
+        )
+
+    assert [call.kwargs["event_name"] for call in mock_emit.call_args_list] == ["gen_ai.choice", "gen_ai.choice"]
+    assert [call.kwargs["body"] for call in mock_emit.call_args_list] == [
+        {"index": 0, "finish_reason": "tool_calls", "message": {"content": "First"}},
+        {"index": 1, "finish_reason": "tool_calls", "message": {"content": "Second"}},
+    ]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_preserves_custom_finish_reason(span_exporter: InMemorySpanExporter):
+    """Custom finish reasons remain available to stable events and experimental attributes."""
+    import json
+
+    from opentelemetry import trace
+
+    import agent_framework.observability as observability
+
+    tracer = trace.get_tracer("test")
+    with (
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+        tracer.start_as_current_span("test_span") as span,
+    ):
+        observability._capture_message_events_v1_36(  # type: ignore[reportPrivateUsage]
+            provider_name="test_provider",
+            messages=[Message(role="assistant", contents=["Done"])],
+            output=True,
+            finish_reason=cast(Any, "guardrail"),
+        )
+        observability._capture_message_span_attributes_experimental(  # type: ignore[reportPrivateUsage]
+            span=span,
+            messages=[Message(role="assistant", contents=["Done"])],
+            output=True,
+            finish_reason=cast(Any, "guardrail"),
+        )
+
+    assert mock_emit.call_args.kwargs["body"]["finish_reason"] == "guardrail"
+    spans = span_exporter.get_finished_spans()
+    attributes = spans[0].attributes or {}
+    output_messages = json.loads(cast(str, attributes[OtelAttr.OUTPUT_MESSAGES]))
+    assert output_messages[-1]["finish_reason"] == "guardrail"
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_exports_native_otel_event(span_exporter: InMemorySpanExporter, monkeypatch):
+    """The SDK receives a native body, dedicated event name, and current span context."""
+    from opentelemetry import trace
+    from opentelemetry._logs import get_logger
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
+
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    exporter = InMemoryLogRecordExporter()
+    logger_provider = LoggerProvider(shutdown_on_exit=False)
+    logger_provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
+    monkeypatch.setattr(
+        observability,
+        "otel_event_logger",
+        get_logger("agent_framework.test", logger_provider=logger_provider),
+    )
+    tracer = trace.get_tracer("test")
+
+    with tracer.start_as_current_span("test_span") as span:
+        observability._capture_message_events_v1_36(  # type: ignore[reportPrivateUsage]
+            provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+        )
+        span_context = span.get_span_context()
+
+    (readable_record,) = exporter.get_finished_logs()
+    record = readable_record.log_record
+    assert record.event_name == "gen_ai.user.message"
+    assert record.body == {"content": "Test"}
+    assert dict(record.attributes or {}) == {"gen_ai.system": "test_provider"}
+    assert record.trace_id == span_context.trace_id
+    assert record.span_id == span_context.span_id
 
 
 # region Test agent streaming exception
@@ -4171,9 +4398,8 @@ async def test_system_instructions_preserves_non_ascii_characters(span_exporter:
     span_exporter.clear()
 
     with tracer.start_as_current_span("test_span") as span:
-        _capture_messages(
+        _capture_message_span_attributes_experimental(
             span=span,
-            provider_name="test_provider",
             messages=[Message(role="user", contents=["Test"])],
             system_instructions=chinese_text,
         )
@@ -4227,7 +4453,7 @@ def test_capture_messages_with_prepared_request_info_function_call_arguments(spa
     span_exporter.clear()
     tracer = trace.get_tracer("test")
     with tracer.start_as_current_span("test_span") as span:
-        _capture_messages(span=span, provider_name="test_provider", messages=[msg])
+        _capture_message_span_attributes_experimental(span=span, messages=[msg])
 
     spans = span_exporter.get_finished_spans()
     span = spans[0]  # type: ignore[assignment]
@@ -4237,10 +4463,10 @@ def test_capture_messages_with_prepared_request_info_function_call_arguments(spa
     assert tool_part["arguments"]["data"] == {"target_agent": "helper", "reason": "overflow"}
 
 
-def test_capture_messages_keeps_framework_instructions_out_of_logs_and_span_messages(
+def test_capture_messages_emits_framework_instructions_separately_from_history(
     span_exporter: InMemorySpanExporter,
 ):
-    """Test separate framework instructions do not appear in chat-history logs or span messages."""
+    """Test separate framework instructions use their own stable event and experimental span attribute."""
     import json
 
     from opentelemetry import trace
@@ -4249,12 +4475,16 @@ def test_capture_messages_keeps_framework_instructions_out_of_logs_and_span_mess
     span_exporter.clear()
 
     with (
-        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
         tracer.start_as_current_span("test_span") as span,
     ):
-        _capture_messages(
-            span=span,
+        _capture_message_events_v1_36(
             provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+            system_instructions="Framework system instruction",
+        )
+        _capture_message_span_attributes_experimental(
+            span=span,
             messages=[Message(role="user", contents=["Test"])],
             system_instructions="Framework system instruction",
         )
@@ -4264,18 +4494,20 @@ def test_capture_messages_keeps_framework_instructions_out_of_logs_and_span_mess
     input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
-    assert mock_logger_info.call_count == 1, f"Expected 1 log call, got {mock_logger_info.call_count}"
-    (first_call,) = mock_logger_info.call_args_list
-    assert first_call.args
-    logged_message = first_call.args[0]
-    assert logged_message["role"] == "user"
-    assert logged_message["parts"][0]["content"] == "Test"
+    assert [call.kwargs["event_name"] for call in mock_emit.call_args_list] == [
+        "gen_ai.system.message",
+        "gen_ai.user.message",
+    ]
+    assert [call.kwargs["body"] for call in mock_emit.call_args_list] == [
+        {"content": "Framework system instruction"},
+        {"content": "Test"},
+    ]
 
 
-def test_capture_messages_logs_only_chat_history_when_framework_instructions_are_separate(
+def test_capture_messages_preserves_framework_instructions_and_system_history(
     span_exporter: InMemorySpanExporter,
 ):
-    """Test chat-history logging preserves original system messages without prepending framework instructions."""
+    """Test stable events preserve separate instructions and original system history."""
     import json
 
     from opentelemetry import trace
@@ -4284,12 +4516,19 @@ def test_capture_messages_logs_only_chat_history_when_framework_instructions_are
     span_exporter.clear()
 
     with (
-        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
         tracer.start_as_current_span("test_span") as span,
     ):
-        _capture_messages(
-            span=span,
+        _capture_message_events_v1_36(
             provider_name="test_provider",
+            messages=[
+                Message(role="system", contents=["Original system message"]),
+                Message(role="user", contents=["Test"]),
+            ],
+            system_instructions="Framework system instruction",
+        )
+        _capture_message_span_attributes_experimental(
+            span=span,
             messages=[
                 Message(role="system", contents=["Original system message"]),
                 Message(role="user", contents=["Test"]),
@@ -4302,11 +4541,16 @@ def test_capture_messages_logs_only_chat_history_when_framework_instructions_are
     input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["system", "user"]
 
-    assert mock_logger_info.call_count == 2, f"Expected 2 log calls, got {mock_logger_info.call_count}"
-    logged_messages = [call.args[0] for call in mock_logger_info.call_args_list]
-    assert [msg["role"] for msg in logged_messages] == ["system", "user"]
-    assert logged_messages[0]["parts"][0]["content"] == "Original system message"
-    assert logged_messages[1]["parts"][0]["content"] == "Test"
+    assert [call.kwargs["event_name"] for call in mock_emit.call_args_list] == [
+        "gen_ai.system.message",
+        "gen_ai.system.message",
+        "gen_ai.user.message",
+    ]
+    assert [call.kwargs["body"] for call in mock_emit.call_args_list] == [
+        {"content": "Framework system instruction"},
+        {"content": "Original system message"},
+        {"content": "Test"},
+    ]
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -6077,7 +6321,7 @@ async def test_agent_streaming_contextvars_safe_when_consumed_in_different_conte
 # When ``ENABLE_INSTRUMENTATION`` is on (the default) but no OpenTelemetry
 # tracer provider has been configured, the global provider is the
 # ``ProxyTracerProvider`` which returns non-recording spans. The telemetry
-# layers gate sensitive-data serialization (``_capture_messages``) on
+# layers gate sensitive-data serialization on
 # ``span.is_recording()`` so that we don't pay the JSON-serialization cost
 # when the span is going to be dropped anyway. The tests below verify that
 # behavior by patching ``get_tracer`` to return a ``NoOpTracer``.
@@ -6096,14 +6340,18 @@ async def test_chat_capture_messages_skipped_when_span_not_recording(
 
     with (
         patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
-        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_message_events_v1_36") as mock_capture_v1_36,
+        patch(
+            "agent_framework.observability._capture_message_span_attributes_experimental"
+        ) as mock_capture_experimental,
         patch("agent_framework.observability._capture_response") as mock_capture_response,
     ):
         response = await client.get_response(messages=messages, options={"model": "Test"})
 
     assert response is not None
     # Sensitive-data serialization must be skipped because span.is_recording() is False.
-    assert mock_capture_messages.call_count == 0
+    assert mock_capture_v1_36.call_count == 0
+    assert mock_capture_experimental.call_count == 0
     # _capture_response still runs so that metric histograms continue to record.
     assert mock_capture_response.call_count == 1
 
@@ -6121,7 +6369,10 @@ async def test_chat_streaming_capture_messages_skipped_when_span_not_recording(
 
     with (
         patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
-        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_message_events_v1_36") as mock_capture_v1_36,
+        patch(
+            "agent_framework.observability._capture_message_span_attributes_experimental"
+        ) as mock_capture_experimental,
         patch("agent_framework.observability._capture_response") as mock_capture_response,
     ):
         updates: list[ChatResponseUpdate] = []
@@ -6131,7 +6382,8 @@ async def test_chat_streaming_capture_messages_skipped_when_span_not_recording(
         await stream.get_final_response()
 
     assert len(updates) == 2
-    assert mock_capture_messages.call_count == 0
+    assert mock_capture_v1_36.call_count == 0
+    assert mock_capture_experimental.call_count == 0
     assert mock_capture_response.call_count == 1
 
 
@@ -6147,13 +6399,13 @@ async def test_agent_capture_messages_skipped_when_span_not_recording(
 
     with (
         patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
-        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_message_span_attributes_experimental") as mock_capture,
         patch("agent_framework.observability._capture_response") as mock_capture_response,
     ):
         response = await agent.run("Test message")
 
     assert response is not None
-    assert mock_capture_messages.call_count == 0
+    assert mock_capture.call_count == 0
     assert mock_capture_response.call_count == 1
 
 
@@ -6169,7 +6421,7 @@ async def test_agent_streaming_capture_messages_skipped_when_span_not_recording(
 
     with (
         patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
-        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_message_span_attributes_experimental") as mock_capture,
         patch("agent_framework.observability._capture_response") as mock_capture_response,
     ):
         updates: list[Any] = []
@@ -6179,7 +6431,7 @@ async def test_agent_streaming_capture_messages_skipped_when_span_not_recording(
         await stream.get_final_response()
 
     assert len(updates) == 2
-    assert mock_capture_messages.call_count == 0
+    assert mock_capture.call_count == 0
     assert mock_capture_response.call_count == 1
 
 
@@ -6193,12 +6445,16 @@ async def test_chat_capture_messages_called_when_span_recording(
     span_exporter.clear()
 
     with (
-        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_message_events_v1_36") as mock_capture_v1_36,
+        patch(
+            "agent_framework.observability._capture_message_span_attributes_experimental"
+        ) as mock_capture_experimental,
         patch("agent_framework.observability._capture_response") as mock_capture_response,
     ):
         response = await client.get_response(messages=messages, options={"model": "Test"})
 
     assert response is not None
-    # Two _capture_messages calls: one for input, one for output messages.
-    assert mock_capture_messages.call_count == 2
+    # Each representation is captured once for input and once for output messages.
+    assert mock_capture_v1_36.call_count == 2
+    assert mock_capture_experimental.call_count == 2
     assert mock_capture_response.call_count == 1

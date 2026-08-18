@@ -217,21 +217,22 @@ You can also call `enable_sensitive_telemetry()` from `agent_framework.observabi
 | Provider-identifying attribute | `gen_ai.system` | `gen_ai.provider.name` |
 | Tool call arguments/results on `execute_tool` spans | Not emitted (introduced in v1.38.0) | `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result` |
 
-`invoke_agent` spans always use `INTERNAL` span kind (the OTel default), regardless of semconv version. The v1.41.0 spec defines `CLIENT` for agents that are themselves a remote service and `INTERNAL` for agents that run in-process (no `server.address`/`server.port`/token-usage attributes, since the actual network call happens on a nested `chat` span instead). Agent Framework's own agents run in-process — `agent.run()` orchestrates a locally-running chat client, which creates its own nested `chat` span for the actual network call — so `INTERNAL` applies uniformly, without needing to classify each agent implementation across packages. What's **not yet covered** by this flag is the rest of the v1.41.0 attribute-group split: under the conventions above v1.36.0, the `invoke_agent` client span is defined to drop `gen_ai.response.id`, `gen_ai.response.model`, and `gen_ai.response.finish_reasons` and add `gen_ai.agent.version` instead. Agent Framework still emits the former three unconditionally on `invoke_agent` spans and does not emit `gen_ai.agent.version` at all under either semconv version.
+`invoke_agent` spans always use `INTERNAL` span kind (the OTel default), regardless of semconv version. The v1.41.0 spec defines `CLIENT` for agents that are themselves a remote service and `INTERNAL` for agents that run in-process (no `server.address`/`server.port`/token-usage attributes, since the actual network call happens on a nested `chat` span instead). Agent Framework's own agents run in-process — `agent.run()` orchestrates a locally-running chat client, which creates its own nested `chat` span for the actual network call — so `INTERNAL` applies uniformly, without needing to classify each agent implementation across packages. What's **not yet covered** by this flag is the rest of the v1.41.0 attribute-group split: under the conventions above v1.36.0, the `invoke_agent` client span is defined to drop `gen_ai.response.id`, `gen_ai.response.model`, and `gen_ai.response.finish_reasons` and add `gen_ai.agent.version` instead. Agent Framework **still emits** the former **three** unconditionally on `invoke_agent` spans and **does not** emit `gen_ai.agent.version` at all under either semconv version.
 
 > **`ENABLE_SENSITIVE_DATA=true` is a prerequisite for the message-representation and tool-call-attribute rows above.** Chat content (prompts, responses, tool arguments/results) is only ever captured when sensitive-data capture is enabled (see [`ENABLE_SENSITIVE_DATA`](#environment-variables) above); the provider-attribute rename applies regardless, since `gen_ai.system`/`gen_ai.provider.name` is not sensitive data. If `ENABLE_SENSITIVE_DATA` is `false` (the default), `ENABLE_MESSAGE_EVENTS` has nothing to switch and is effectively ignored, and no `gen_ai.tool.call.*` attributes are emitted under either semconv version.
 
 Agent Framework defaults to the conventions above v1.36.0 (unlike upstream OpenTelemetry, which defaults to stable-only) because most users already depend on them, and — to avoid a breaking change for anyone consuming the older message events — also keeps emitting those events by default via `ENABLE_MESSAGE_EVENTS`. `ENABLE_MESSAGE_EVENTS` is controlled independently of `OTEL_SEMCONV_STABILITY_OPT_IN`:
 
 ```bash
-# Prerequisite for both examples below: capture message content at all.
-ENABLE_SENSITIVE_DATA=true
+# Capture agent/chat client/tool input and output contents (default: false):
+export ENABLE_SENSITIVE_DATA=true
 
-# Opt into the stable v1.36.0 conventions only (events, no gen_ai.input.messages/output.messages span attributes)
-OTEL_SEMCONV_STABILITY_OPT_IN=""
+# Opt into the stable v1.36.0 conventions only (default: "gen_ai_latest_experimental"):
+export OTEL_SEMCONV_STABILITY_OPT_IN=""
 
-# Conventions above v1.36.0 only, no message events (strict spec compliance)
-ENABLE_MESSAGE_EVENTS=false
+# Agent Framework still emits the stable v1.36.0 message events even when the semconv opt-in
+# is set to experimental for compatibility reasons. To stop emitting those events (default: true):
+export ENABLE_MESSAGE_EVENTS=false
 ```
 
 ### Disabling instrumentation

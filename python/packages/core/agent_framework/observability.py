@@ -39,6 +39,7 @@ from typing import (
 
 from dotenv import load_dotenv
 from opentelemetry import metrics, trace
+from opentelemetry._logs import get_logger as get_otel_logger
 from typing_extensions import Sentinel
 
 from . import __version__ as version_info
@@ -114,6 +115,7 @@ ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
 
 logger = logging.getLogger("agent_framework")
+otel_event_logger = get_otel_logger("agent_framework", version_info)
 
 
 INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS: Final[contextvars.ContextVar[set[str] | None]] = contextvars.ContextVar(
@@ -1636,14 +1638,18 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                 system_instructions = _get_instructions_from_options(opts)
-                _capture_current_agent_system_instructions(
+                _capture_current_agent_system_instructions_experimental(
                     agent_span,
                     span,
                     system_instructions,
                 )
-                _capture_messages(
-                    span=span,
+                _capture_message_events_v1_36(
                     provider_name=provider_name,
+                    messages=messages,
+                    system_instructions=system_instructions,
+                )
+                _capture_message_span_attributes_experimental(
+                    span=span,
                     messages=messages,
                     system_instructions=system_instructions,
                 )
@@ -1721,11 +1727,16 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     ):
                         finish_reason = cast(
                             "FinishReason | None",
-                            response.finish_reason if response.finish_reason in FINISH_REASON_MAP else None,
+                            response.finish_reason,
                         )
-                        _capture_messages(
-                            span=span,
+                        _capture_message_events_v1_36(
                             provider_name=provider_name,
+                            messages=response.messages,
+                            finish_reason=finish_reason,
+                            output=True,
+                        )
+                        _capture_message_span_attributes_experimental(
+                            span=span,
                             messages=response.messages,
                             finish_reason=finish_reason,
                             output=True,
@@ -1755,14 +1766,18 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                     system_instructions = _get_instructions_from_options(opts)
-                    _capture_current_agent_system_instructions(
+                    _capture_current_agent_system_instructions_experimental(
                         agent_span,
                         span,
                         system_instructions,
                     )
-                    _capture_messages(
-                        span=span,
+                    _capture_message_events_v1_36(
                         provider_name=provider_name,
+                        messages=messages,
+                        system_instructions=system_instructions,
+                    )
+                    _capture_message_span_attributes_experimental(
+                        span=span,
                         messages=messages,
                         system_instructions=system_instructions,
                     )
@@ -1797,11 +1812,16 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages and span.is_recording():
                     finish_reason = cast(
                         "FinishReason | None",
-                        response.finish_reason if response.finish_reason in FINISH_REASON_MAP else None,
+                        response.finish_reason,
                     )
-                    _capture_messages(
-                        span=span,
+                    _capture_message_events_v1_36(
                         provider_name=provider_name,
+                        messages=response.messages,
+                        finish_reason=finish_reason,
+                        output=True,
+                    )
+                    _capture_message_span_attributes_experimental(
+                        span=span,
                         messages=response.messages,
                         finish_reason=finish_reason,
                         output=True,
@@ -1959,9 +1979,8 @@ class AgentTelemetryLayer:
             span = _start_streaming_span(attributes, OtelAttr.AGENT_NAME)
 
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
-                _capture_messages(
+                _capture_message_span_attributes_experimental(
                     span=span,
-                    provider_name=provider_name,
                     messages=messages,
                     system_instructions=_get_instructions_from_options(dict(merged_options)),
                 )
@@ -2033,9 +2052,8 @@ class AgentTelemetryLayer:
                         and response.messages
                         and span.is_recording()
                     ):
-                        _capture_messages(
+                        _capture_message_span_attributes_experimental(
                             span=span,
-                            provider_name=provider_name,
                             messages=response.messages,
                             output=True,
                         )
@@ -2101,9 +2119,8 @@ class AgentTelemetryLayer:
                 with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
                     try:
                         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
-                            _capture_messages(
+                            _capture_message_span_attributes_experimental(
                                 span=span,
-                                provider_name=provider_name,
                                 messages=messages,
                                 system_instructions=_get_instructions_from_options(dict(merged_options)),
                             )
@@ -2134,9 +2151,8 @@ class AgentTelemetryLayer:
                                 and response.messages
                                 and span.is_recording()
                             ):
-                                _capture_messages(
+                                _capture_message_span_attributes_experimental(
                                     span=span,
-                                    provider_name=provider_name,
                                     messages=response.messages,
                                     output=True,
                                 )
@@ -2739,9 +2755,9 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
     span.set_status(status=trace.StatusCode.ERROR, description=repr(exception))
 
 
-def _capture_system_instructions(span: trace.Span, system_instructions: str | list[str] | None) -> None:
+def _capture_system_instructions_experimental(span: trace.Span, system_instructions: str | list[str] | None) -> None:
     """Capture system instructions on a span."""
-    if not system_instructions:
+    if not OBSERVABILITY_SETTINGS.use_latest_experimental_gen_ai_semconv or not system_instructions:
         return
     otel_sys_instructions = [
         {"type": "text", "content": instruction} for instruction in _normalize_instructions(system_instructions)
@@ -2752,13 +2768,17 @@ def _capture_system_instructions(span: trace.Span, system_instructions: str | li
     )
 
 
-def _capture_current_agent_system_instructions(
+def _capture_current_agent_system_instructions_experimental(
     agent_span: trace.Span,
     chat_span: trace.Span,
     system_instructions: str | list[str] | None,
 ) -> None:
     """Capture final chat instructions on the current agent span when the chat span belongs to it."""
-    if not system_instructions or not agent_span.is_recording():
+    if (
+        not OBSERVABILITY_SETTINGS.use_latest_experimental_gen_ai_semconv
+        or not system_instructions
+        or not agent_span.is_recording()
+    ):
         return
 
     agent_attributes_obj = getattr(agent_span, "attributes", None)
@@ -2780,7 +2800,7 @@ def _capture_current_agent_system_instructions(
     ):
         return
 
-    _capture_system_instructions(agent_span, system_instructions)
+    _capture_system_instructions_experimental(agent_span, system_instructions)
 
 
 def _normalize_instructions(system_instructions: str | list[str]) -> list[str]:
@@ -2819,64 +2839,171 @@ def _instructions_preserve_existing_agent_instructions(
     return new_text == existing_text or new_text.startswith(f"{existing_text}\n")
 
 
-def _capture_messages(
-    span: trace.Span,
+def _capture_message_events_v1_36(
     provider_name: str,
     messages: AgentRunInputs,
+    *,
     system_instructions: str | list[str] | None = None,
     output: bool = False,
     finish_reason: FinishReason | None = None,
 ) -> None:
-    """Log messages with extra information.
+    """Emit stable v1.36.0 GenAI events for a chat request or response."""
+    if not OBSERVABILITY_SETTINGS.enable_message_events:
+        return
 
-    Message events (``gen_ai.system.message``, etc.) are the stable v1.36.0 GenAI
-    semantic-conventions representation, emitted when ``enable_message_events`` is True
-    (the default). The ``gen_ai.input.messages``/``gen_ai.output.messages`` span
-    attributes are the representation used by conventions above v1.36.0, emitted only
-    when ``use_latest_experimental_gen_ai_semconv`` is True (also the default).
-    """
     from ._types import normalize_messages
 
-    emit_events = OBSERVABILITY_SETTINGS.enable_message_events
-    emit_span_attribute = OBSERVABILITY_SETTINGS.use_latest_experimental_gen_ai_semconv
+    normalized_messages = normalize_messages(messages)
+    event_timestamp = time_ns()
+    event_index = 0
 
-    if emit_events or emit_span_attribute:
-        normalized_messages = normalize_messages(messages)
-        otel_messages: list[dict[str, Any]] = []
-        for index, message in enumerate(normalized_messages):
-            # Reuse the otel message representation for logging instead of calling to_dict()
-            # to avoid expensive Pydantic serialization overhead
-            otel_message = _to_otel_message(message)
-            if emit_events:
-                logger.info(
-                    otel_message,
-                    extra={
-                        OtelAttr.EVENT_NAME: OtelAttr.CHOICE if output else ROLE_EVENT_MAP.get(message.role),
-                        _provider_name_attr(): provider_name,
-                        MessageListTimestampFilter.INDEX_KEY: index,
-                    },
-                )
-            if emit_span_attribute:
-                otel_messages.append(otel_message)
-        if emit_span_attribute:
-            if finish_reason and otel_messages:
-                otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP[finish_reason]
-            span.set_attribute(
-                OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES,
-                json.dumps(otel_messages, ensure_ascii=False),
+    if not output and system_instructions:
+        for instruction in _normalize_instructions(system_instructions):
+            _emit_otel_event_v1_36(
+                OtelAttr.SYSTEM_MESSAGE,
+                {"content": instruction},
+                provider_name,
+                event_timestamp + event_index * 1_000,
             )
-    _capture_system_instructions(span, system_instructions)
+            event_index += 1
+
+    if output:
+        if not finish_reason:
+            return
+        for index, message in enumerate(normalized_messages):
+            _emit_otel_event_v1_36(
+                OtelAttr.CHOICE,
+                _to_otel_choice_v1_36(message, index, finish_reason),
+                provider_name,
+                event_timestamp + event_index * 1_000,
+            )
+            event_index += 1
+        return
+
+    for message in normalized_messages:
+        for event_name, body in _to_otel_input_events_v1_36(message):
+            _emit_otel_event_v1_36(
+                event_name,
+                body,
+                provider_name,
+                event_timestamp + event_index * 1_000,
+            )
+            event_index += 1
 
 
-def _to_otel_message(message: Message) -> dict[str, Any]:
-    """Create a otel representation of a message."""
+def _emit_otel_event_v1_36(
+    event_name: OtelAttr,
+    body: dict[str, Any],
+    provider_name: str,
+    timestamp: int,
+) -> None:
+    """Emit an OpenTelemetry event with a native structured body."""
+    otel_event_logger.emit(
+        timestamp=timestamp,
+        body=body,
+        attributes={OtelAttr.SYSTEM.value: provider_name},
+        event_name=event_name.value,
+    )
+
+
+def _capture_message_span_attributes_experimental(
+    span: trace.Span,
+    messages: AgentRunInputs,
+    *,
+    system_instructions: str | list[str] | None = None,
+    output: bool = False,
+    finish_reason: FinishReason | None = None,
+) -> None:
+    """Capture the latest-experimental GenAI message span attributes."""
+    if not OBSERVABILITY_SETTINGS.use_latest_experimental_gen_ai_semconv:
+        return
+
+    from ._types import normalize_messages
+
+    otel_messages = [_to_otel_message_experimental(message) for message in normalize_messages(messages)]
+    if finish_reason and otel_messages:
+        otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP.get(finish_reason, finish_reason)
+    span.set_attribute(
+        OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES,
+        json.dumps(otel_messages, ensure_ascii=False),
+    )
+    _capture_system_instructions_experimental(span, system_instructions)
+
+
+def _to_otel_input_events_v1_36(message: Message) -> list[tuple[OtelAttr, dict[str, Any]]]:
+    """Create stable v1.36.0 event names and bodies for an input message."""
+    event_name = ROLE_EVENT_MAP.get(message.role)
+    if event_name is None:
+        return []
+
+    if message.role == "tool":
+        tool_events = [
+            (
+                OtelAttr.TOOL_MESSAGE,
+                {
+                    "id": content.call_id,
+                    "content": content.result if content.result is not None else "",
+                },
+            )
+            for content in message.contents
+            if content.type == "function_result" and content.call_id
+        ]
+        if tool_events:
+            return tool_events
+        return []
+
+    body: dict[str, Any] = {}
+    if message.text:
+        body["content"] = message.text
+    if message.role == "assistant":
+        tool_calls = _to_otel_tool_calls_v1_36(message)
+        if tool_calls:
+            body["tool_calls"] = tool_calls
+    return [(event_name, body)]
+
+
+def _to_otel_choice_v1_36(message: Message, index: int, finish_reason: str) -> dict[str, Any]:
+    """Create a stable v1.36.0 choice event body."""
+    choice_message: dict[str, Any] = {}
+    if message.text:
+        choice_message["content"] = message.text
+    if message.role != "assistant":
+        choice_message["role"] = message.role
+    tool_calls = _to_otel_tool_calls_v1_36(message)
+    if tool_calls:
+        choice_message["tool_calls"] = tool_calls
     return {
-        "role": message.role,
-        "parts": [_to_otel_part(content) for content in message.contents],
+        "index": index,
+        "finish_reason": finish_reason,
+        "message": choice_message,
     }
 
 
-def _to_otel_part(content: Content) -> dict[str, Any] | None:
+def _to_otel_tool_calls_v1_36(message: Message) -> list[dict[str, Any]]:
+    """Create stable v1.36.0 function-call structures for a message."""
+    return [
+        {
+            "id": content.call_id,
+            "type": "function",
+            "function": {
+                "name": content.name,
+                "arguments": content.arguments,
+            },
+        }
+        for content in message.contents
+        if content.type == "function_call" and content.call_id and content.name
+    ]
+
+
+def _to_otel_message_experimental(message: Message) -> dict[str, Any]:
+    """Create a otel representation of a message."""
+    return {
+        "role": message.role,
+        "parts": [_to_otel_part_experimental(content) for content in message.contents],
+    }
+
+
+def _to_otel_part_experimental(content: Content) -> dict[str, Any] | None:
     """Create a otel representation of a Content."""
     from ._types import _get_data_bytes_as_str  # pyright: ignore[reportPrivateUsage]
 
