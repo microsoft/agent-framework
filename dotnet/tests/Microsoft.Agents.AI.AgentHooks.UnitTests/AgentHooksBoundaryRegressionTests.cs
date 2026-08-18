@@ -345,6 +345,65 @@ public class AgentHooksBoundaryRegressionTests
     }
 
     [Fact]
+    public async Task ContextProviderAddedToolsAreBracketedByTheToolSeamAsync()
+    {
+        // Arrange: NO agent-level tools — the only tool is registered dynamically by a
+        // context provider during run preparation, i.e. after agent_startup was emitted.
+        bool invoked = false;
+        var provider = new ToolAddingContextProvider(WeatherTool(_ => invoked = true));
+        var client = new MockChatClient()
+            .EnqueueFunctionCall("call-1", "get_weather", new() { ["location"] = "Paris" })
+            .EnqueueText("done");
+        var guard = new AllowGuard();
+        var agent = client.AsAIAgentWithAgentHooks(
+            new AgentHooksOptions(guard),
+            new ChatClientAgentOptions { AIContextProviders = [provider] });
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        var response = await agent.RunAsync(UserMessage("weather?"), session);
+
+        // Assert (enforcement): the provider-added tool still flows through the guarded
+        // pipeline and is bracketed by the tool seam like any other tool.
+        Assert.True(invoked);
+        Assert.Equal("done", response.Text);
+        Assert.Contains("pre_tool_call", guard.Points);
+        Assert.Contains("post_tool_call", guard.Points);
+
+        // Assert (audit): agent_startup's tools_registered is the run-start snapshot
+        // (empty here — the provider had not run yet), while the pre_model_call tools
+        // projection carries the completed per-call set including the provider's tool.
+        var startupTools = Assert.IsType<System.Text.Json.Nodes.JsonArray>(
+            guard.Context("agent_startup")["agent_init"]?["tools_registered"]);
+        Assert.Empty(startupTools);
+        var callTools = Assert.IsType<System.Text.Json.Nodes.JsonArray>(guard.Contexts("pre_model_call")[0]["tools"]);
+        Assert.Contains(callTools, tool => tool?["name"]?.GetValue<string>() == "get_weather");
+    }
+
+    [Fact]
+    public async Task ContextProviderAddedToolDenyBlocksInvocationAsync()
+    {
+        // Arrange: a pre_tool_call deny must block a provider-added tool exactly like a
+        // constructor-registered one.
+        bool invoked = false;
+        var provider = new ToolAddingContextProvider(WeatherTool(_ => invoked = true));
+        var client = new MockChatClient()
+            .EnqueueFunctionCall("call-1", "get_weather", new() { ["location"] = "Paris" })
+            .EnqueueText("recovered");
+        var agent = client.AsAIAgentWithAgentHooks(
+            new AgentHooksOptions(new PointGuard(InterceptionPoint.PreToolCall, Verdict.Deny("tool_blocked"))),
+            new ChatClientAgentOptions { AIContextProviders = [provider] });
+        var session = await agent.CreateSessionAsync();
+
+        // Act
+        var response = await agent.RunAsync(UserMessage("weather?"), session);
+
+        // Assert: the tool never ran and the loop continued with the tool-error payload.
+        Assert.False(invoked);
+        Assert.Equal("recovered", response.Text);
+    }
+
+    [Fact]
     public async Task PoisonedToolArgumentProjectionFailsClosedAsync()
     {
         // Arrange: an argument value whose serialization throws. The projection failure

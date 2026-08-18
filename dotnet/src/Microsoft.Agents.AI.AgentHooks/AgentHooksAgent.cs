@@ -271,6 +271,14 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
     }
 
     /// <summary>Project the registered tool names for <c>agent_startup</c> (spec <c>tools_registered</c>).</summary>
+    /// <remarks>
+    /// This is deliberately the run-start snapshot: the tools declared on the agent and
+    /// on the run options when the run begins. Tools registered dynamically during the
+    /// run (for example by context providers during run preparation) cannot be known at
+    /// <c>agent_startup</c> time; they surface in each <c>pre_model_call</c> emission's
+    /// <c>tools</c> projection (the completed per-call set) and are bracketed by
+    /// <c>pre_tool_call</c>/<c>post_tool_call</c> like any other tool when invoked.
+    /// </remarks>
     private List<string> ResolveToolNames(AgentRunOptions? options)
     {
         List<string> names = [];

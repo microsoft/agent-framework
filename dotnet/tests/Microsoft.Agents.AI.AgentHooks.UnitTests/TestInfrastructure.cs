@@ -241,6 +241,13 @@ internal sealed class RecordingContextProvider : AIContextProvider
     }
 }
 
+/// <summary>A context provider that registers an additional tool during run preparation.</summary>
+internal sealed class ToolAddingContextProvider(AITool tool) : AIContextProvider
+{
+    protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default) =>
+        new(new AIContext { Tools = [tool] });
+}
+
 internal static class TestHelpers
 {
     public static List<ChatMessage> UserMessage(string text) => [new ChatMessage(ChatRole.User, text)];

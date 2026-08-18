@@ -47,7 +47,7 @@ internal sealed class AgentHooksChatClient : DelegatingChatClient
     {
         var state = this.RequireRunState();
         string modelId = this.ResolveModelId(options);
-        var effectiveMessages = await this.EmitPreModelCallAsync(state, modelId, messages, cancellationToken).ConfigureAwait(false);
+        var effectiveMessages = await this.EmitPreModelCallAsync(state, modelId, messages, options, cancellationToken).ConfigureAwait(false);
 
         var response = await base.GetResponseAsync(effectiveMessages, options, cancellationToken).ConfigureAwait(false);
 
@@ -60,7 +60,7 @@ internal sealed class AgentHooksChatClient : DelegatingChatClient
     {
         var state = this.RequireRunState();
         string modelId = this.ResolveModelId(options);
-        var effectiveMessages = await this.EmitPreModelCallAsync(state, modelId, messages, cancellationToken).ConfigureAwait(false);
+        var effectiveMessages = await this.EmitPreModelCallAsync(state, modelId, messages, options, cancellationToken).ConfigureAwait(false);
 
         // Spec §12.1: the complete response is assembled before post_model_call is
         // emitted, and nothing (updates or tool calls) is released beforehand. A deny
@@ -101,13 +101,44 @@ internal sealed class AgentHooksChatClient : DelegatingChatClient
         return state;
     }
 
+    /// <summary>
+    /// Project the per-call effective tool set into the spec's optional
+    /// <c>pre_model_call</c> <c>tools</c> field (<c>{name, description?}</c>).
+    /// </summary>
+    /// <remarks>
+    /// This is the completed set for the call — including tools registered dynamically
+    /// by context providers during run preparation — whereas <c>agent_startup</c>'s
+    /// <c>tools_registered</c> is the run-start snapshot.
+    /// </remarks>
+    private static System.Text.Json.Nodes.JsonArray? ProjectTools(ChatOptions? options)
+    {
+        if (options?.Tools is not { Count: > 0 } tools)
+        {
+            return null;
+        }
+
+        var projected = new System.Text.Json.Nodes.JsonArray();
+        foreach (var tool in tools)
+        {
+            var entry = new System.Text.Json.Nodes.JsonObject { ["name"] = tool.Name };
+            if (!string.IsNullOrEmpty(tool.Description))
+            {
+                entry["description"] = tool.Description;
+            }
+
+            projected.Add((System.Text.Json.Nodes.JsonNode)entry);
+        }
+
+        return projected;
+    }
+
     private string ResolveModelId(ChatOptions? options) =>
         options?.ModelId
         ?? this.GetService<ChatClientMetadata>()?.DefaultModelId
         ?? this.InnerClient.GetType().Name;
 
     private async Task<List<ChatMessage>> EmitPreModelCallAsync(
-        AgentHooksRunState state, string modelId, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken)
+        AgentHooksRunState state, string modelId, IEnumerable<ChatMessage> messages, ChatOptions? options, CancellationToken cancellationToken)
     {
         List<ChatMessage> messageList = [.. messages];
         try
@@ -116,7 +147,8 @@ internal sealed class AgentHooksChatClient : DelegatingChatClient
             // an enforcement-layer failure, so this run's gated persistence is refused
             // (fail closed) before the exception fails the run.
             var before = ModelRequestCodec.ToWire(messageList);
-            var outcome = await state.Emitter.EmitAsync(state.Builder.PreModelCall(modelId, before), cancellationToken).ConfigureAwait(false);
+            var outcome = await state.Emitter.EmitAsync(
+                state.Builder.PreModelCall(modelId, before, ProjectTools(options)), cancellationToken).ConfigureAwait(false);
             return ModelRequestCodec.WriteBack(messageList, before, outcome.Target) ?? messageList;
         }
         catch (OperationCanceledException)
