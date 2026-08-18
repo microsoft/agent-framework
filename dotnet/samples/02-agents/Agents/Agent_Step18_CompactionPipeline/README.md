@@ -43,11 +43,13 @@ To use a `CompactionStrategy` for persistent in-memory history reduction, adapt 
 CompactionStrategy strategy =
     new SlidingWindowCompactionStrategy(CompactionTriggers.TurnsExceed(20));
 
-InMemoryChatHistoryProvider historyProvider = new(new()
+InMemoryChatHistoryProviderOptions historyOptions = new()
 {
     ChatReducer = strategy.AsChatReducer(),
     ReducerTriggerEvent = InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval
-});
+};
+
+InMemoryChatHistoryProvider historyProvider = new(historyOptions);
 ```
 
 To use an existing `IChatReducer` in a compaction pipeline or for in-run request compaction, adapt it to `CompactionStrategy`:
