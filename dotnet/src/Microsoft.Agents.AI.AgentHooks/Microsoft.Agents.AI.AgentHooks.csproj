@@ -15,7 +15,12 @@
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
   </PropertyGroup>
 
-  <!-- Ships as preview (the repo default version suffix; the whole surface is [Experimental]). -->
+  <PropertyGroup>
+    <!-- Ships as alpha: the package's maturity follows its ResponsibleAI.AgentHooks
+         dependency (alpha), and the whole surface is [Experimental]. -->
+    <VersionSuffix>alpha</VersionSuffix>
+  </PropertyGroup>
+
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
   <ItemGroup>
