@@ -5,7 +5,19 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="AGUI.Abstractions" />
+    <PackageReference Include="AGUI.Client" />
+    <PackageReference Include="AGUI.Server" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Hosting.AzureStorage\Microsoft.Agents.AI.Hosting.AzureStorage.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore\Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Microsoft.Agents.AI.Hosting.AzureStorage.TestUtilities\*.cs" LinkBase="TestUtilities" />
   </ItemGroup>
 
 </Project>

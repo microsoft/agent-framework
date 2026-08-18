@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using Microsoft.Agents.AI.Hosting.AzureStorage.Tests;
 
 namespace Microsoft.Agents.AI.Hosting.AzureStorage.UnitTests;
 
@@ -63,7 +64,6 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "AzureStorage")]
     public async Task SaveAndGetSessionAsync_PersistsAcrossStoreAndAgentInstancesAsync()
     {
         // Arrange
@@ -84,7 +84,6 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "AzureStorage")]
     public async Task SaveAndGetSessionAsync_SupportsDistinctLongOpaqueIdsAsync()
     {
         // Arrange
@@ -118,7 +117,6 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "AzureStorage")]
     public async Task DeleteSessionAsync_RemovesStoredSessionAndIgnoresMissingSessionAsync()
     {
         // Arrange
@@ -138,7 +136,6 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "AzureStorage")]
     public async Task SaveSessionAsync_OverwritesExistingSessionAsJsonAsync()
     {
         // Arrange
@@ -166,7 +163,6 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "AzureStorage")]
     public async Task GetSessionAsync_MissingContainerWithoutAutoCreatePropagatesErrorAsync()
     {
         // Arrange
@@ -186,7 +182,6 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "AzureStorage")]
     public async Task GetSessionAsync_ReturnsIndependentSnapshotsAsync()
     {
         // Arrange
@@ -209,7 +204,6 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    [Trait("Category", "AzureStorage")]
     public async Task SaveSessionAsync_ConcurrentFirstWritesCreateContainerSafelyAsync()
     {
         // Arrange
@@ -234,6 +228,35 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
 
         // Assert
         Assert.Equal(16, blobs.Count);
+    }
+
+    [Fact]
+    public async Task HostedAgentThroughFakeKestrel_PersistsSessionInAzuriteAsync()
+    {
+        // Arrange
+        await using FakeKestrelAgentHost host =
+            await FakeKestrelAgentHost.StartAsync(this._containerClient);
+
+        // Act
+        FakeKestrelAgentHost.FakeKestrelRunResult result = await host.RunTwoTurnsAsync();
+        List<BlobItem> blobs = [];
+        await foreach (BlobItem blob in this._containerClient.GetBlobsAsync())
+        {
+            blobs.Add(blob);
+        }
+
+        BlobItem storedBlob = Assert.Single(blobs);
+        Response<BlobDownloadResult> download = await this._containerClient
+            .GetBlobClient(storedBlob.Name)
+            .DownloadContentAsync();
+        string persistedSession = download.Value.Content.ToString();
+
+        // Assert
+        Assert.Contains("Turn 1", result.FirstResponse, StringComparison.Ordinal);
+        Assert.Contains("Turn 2", result.SecondResponse, StringComparison.Ordinal);
+        Assert.Equal("application/json", storedBlob.Properties.ContentType);
+        Assert.Contains("turnCounter", persistedSession, StringComparison.Ordinal);
+        Assert.Contains("\"count\":2", persistedSession, StringComparison.Ordinal);
     }
 
     [Fact]
