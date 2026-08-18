@@ -194,14 +194,19 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
         var configuration = this._configuration;
         if (configuration is { Emitter: not null, Builder: not null })
         {
+            // Session-scoped: the host constructed the emitter/builder pair and owns
+            // the agent-hooks session boundaries — one session (one sequence, one
+            // record trail, one approval ledger) spans multiple agent runs, so this
+            // agent emits only the per-run points and never agent_startup /
+            // agent_shutdown (the host brackets the session itself).
             return new AgentHooksRunState(configuration.Emitter, configuration.Builder, sessionScoped: true, configuration);
         }
 
         string agentId = this.Id ?? this.Name ?? "agent";
         var builder = new AgentContextBuilder(
             agentId,
-            FrameworkName,
-            Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),
+            framework: FrameworkName,
+            sessionId: Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),
             agentName: this.Name);
         var emitter = new InterceptionEmitter(configuration.Mode, configuration.Resolver, configuration.Timeout);
         if (configuration.Composition is not null)
@@ -224,6 +229,12 @@ internal sealed class AgentHooksAgent : DelegatingAIAgent
             _ = emitter.Register(interceptor, name);
         }
 
+        // Not session-scoped: the default scoping is one agent-hooks session per run.
+        // The emitter and builder created above are fresh for this run — fresh session
+        // id, sequence numbering starting at zero, and an isolated record trail — so
+        // concurrent runs on this agent cannot interleave their emissions, and
+        // agent_startup / agent_shutdown bracket the run (emitted by this agent, see
+        // EmitRunStartAsync / EmitShutdownAsync, which skip them when session-scoped).
         return new AgentHooksRunState(emitter, builder, sessionScoped: false, configuration);
     }
 
