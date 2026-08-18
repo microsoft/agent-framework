@@ -34,7 +34,9 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
   partial edits for MAF client compatibility. A `cancelled` resume completes normally without executing that
   call; resolved siblings in the same complete resume still proceed. Consecutive approval-control user messages
   for a parallel `always_require` batch keep leftover gated call ids open; they are not treated as follow-up that
-  skip remaining siblings.
+  skip remaining siblings. ID-less approval-control messages are keyed by approval
+  id, call id, decision, and function-call payload so a later reject or edit that
+  reuses those ids is not collapsed before occurrence matching.
 - Approval-time execution preserves each call's complete result group. Follow-up user-input requests remain in the
   resumed messages, while `TOOL_CALL_RESULT` events are emitted only for terminal `function_result` contents.
 - Approval responses for tools injected during `before_run` are deferred to the in-run approval middleware rather

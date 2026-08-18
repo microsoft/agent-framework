@@ -1204,14 +1204,21 @@ def test_sanitize_json_confirm_changes_response():
     assert len(result) >= 1
 
 
-def _approval_control_user_message(*, call_id: str, name: str, approved: bool) -> Message:
-    function_call = Content.from_function_call(call_id=call_id, name=name, arguments="{}")
+def _approval_control_user_message(
+    *,
+    call_id: str,
+    name: str,
+    approved: bool,
+    arguments: str = "{}",
+    approval_id: str | None = None,
+) -> Message:
+    function_call = Content.from_function_call(call_id=call_id, name=name, arguments=arguments)
     return Message(
         role="user",
         contents=[
             Content.from_function_approval_response(
                 approved=approved,
-                id=call_id,
+                id=approval_id if approval_id is not None else call_id,
                 function_call=function_call,
             )
         ],
@@ -1307,6 +1314,78 @@ def test_deduplicate_idless_approval_controls_for_distinct_calls():
         for content in (msg.contents or [])
         if content.type == "function_approval_response" and content.function_call is not None
     ] == ["c1", "c2"]
+
+
+def test_deduplicate_idless_approval_controls_keep_later_reject_for_reused_ids():
+    """A later reject reusing the same approval and call ids must not be dropped."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    first_approval = _approval_control_user_message(
+        call_id="c1",
+        name="gated_tool",
+        approved=True,
+        approval_id="approval-1",
+    )
+    later_reject = _approval_control_user_message(
+        call_id="c1",
+        name="gated_tool",
+        approved=False,
+        approval_id="approval-1",
+    )
+    first_approval.message_id = None
+    later_reject.message_id = None
+
+    result = _deduplicate_messages([first_approval, later_reject])
+
+    assert len(result) == 2
+    assert [content.approved for msg in result for content in (msg.contents or [])] == [True, False]
+
+
+def test_deduplicate_idless_approval_controls_keep_later_edit_for_reused_ids():
+    """A later edit reusing the same approval and call ids must keep the new payload."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    first_approval = _approval_control_user_message(
+        call_id="c1",
+        name="gated_tool",
+        approved=True,
+        arguments='{"target":"prod"}',
+        approval_id="approval-1",
+    )
+    later_edit = _approval_control_user_message(
+        call_id="c1",
+        name="gated_tool",
+        approved=True,
+        arguments='{"target":"staging"}',
+        approval_id="approval-1",
+    )
+    first_approval.message_id = None
+    later_edit.message_id = None
+
+    result = _deduplicate_messages([first_approval, later_edit])
+
+    assert len(result) == 2
+    assert [
+        content.function_call.arguments
+        for msg in result
+        for content in (msg.contents or [])
+        if content.type == "function_approval_response" and content.function_call is not None
+    ] == ['{"target":"prod"}', '{"target":"staging"}']
+
+
+def test_deduplicate_idless_approval_controls_collapse_identical_replays():
+    """Identical ID-less approval-control replays still collapse."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    first_approval = _approval_control_user_message(call_id="c1", name="gated_tool", approved=True)
+    replay = _approval_control_user_message(call_id="c1", name="gated_tool", approved=True)
+    first_approval.message_id = None
+    replay.message_id = None
+
+    result = _deduplicate_messages([first_approval, replay])
+
+    assert len(result) == 1
+    assert result[0] is first_approval
 
 
 def test_deduplicate_tool_results():

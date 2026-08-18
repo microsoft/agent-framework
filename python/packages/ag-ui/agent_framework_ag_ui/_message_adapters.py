@@ -8,6 +8,7 @@ import base64
 import binascii
 import json
 import logging
+from collections.abc import Mapping
 from typing import Any, cast
 
 from agent_framework import (
@@ -94,19 +95,47 @@ def _is_approval_control_user_message(msg: Message) -> bool:
     return has_approval
 
 
-def _approval_control_identity(msg: Message) -> tuple[tuple[str | None, str | None], ...] | None:
+def _function_call_payload_identity(function_call: Content | None) -> tuple[str | None, str]:
+    """Canonical name plus arguments for one approval-bound function call."""
+    if function_call is None:
+        return None, ""
+    name = function_call.name
+    arguments = function_call.arguments
+    if isinstance(arguments, Mapping):
+        payload = json.dumps(dict(arguments), sort_keys=True, default=str)
+    elif arguments is None:
+        payload = ""
+    else:
+        payload = str(arguments)
+    return (str(name) if name else None, payload)
+
+
+def _approval_control_identity(
+    msg: Message,
+) -> tuple[tuple[str | None, str | None, bool | None, str | None, str], ...] | None:
     """Stable identity for an approval-control user message.
 
     ID-less approval messages hashing only ``str(Content)`` can collapse two
-    distinct call occurrences from the same assistant batch.
+    distinct call occurrences from the same assistant batch. Dedup must also
+    keep a later reject or edit that reuses the same approval and call ids;
+    ``(content.id, call_id)`` alone would drop it before occurrence matching.
     """
     contents = msg.contents or []
     if not contents or any(content.type != "function_approval_response" for content in contents):
         return None
-    identities: list[tuple[str | None, str | None]] = []
+    identities: list[tuple[str | None, str | None, bool | None, str | None, str]] = []
     for content in contents:
         call_id = content.function_call.call_id if content.function_call is not None else None
-        identities.append((content.id, str(call_id) if call_id else None))
+        name, arguments = _function_call_payload_identity(content.function_call)
+        identities.append(
+            (
+                content.id,
+                str(call_id) if call_id else None,
+                content.approved,
+                name,
+                arguments,
+            )
+        )
     return tuple(identities)
 
 
