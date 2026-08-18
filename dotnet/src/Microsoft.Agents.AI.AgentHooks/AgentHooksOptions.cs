@@ -24,11 +24,15 @@ public sealed class AgentHooksOptions
     /// </summary>
     /// <param name="interceptors">The agent-hooks interceptors to register. At least one interceptor is required
     /// (an emitter with zero interceptors fails closed on every emission).</param>
-    public AgentHooksOptions(params IInterceptor[] interceptors)
+    /// <exception cref="ArgumentNullException"><paramref name="interceptors"/> or one of its elements is <see langword="null"/>.</exception>
+    public AgentHooksOptions(params IEnumerable<IInterceptor> interceptors)
     {
+        _ = Throw.IfNull(interceptors);
+
+        // Materialized exactly once: the sequence may be single-enumeration.
         foreach (var interceptor in interceptors)
         {
-            this.AddInterceptor(interceptor);
+            _ = this.AddInterceptor(interceptor);
         }
     }
 
