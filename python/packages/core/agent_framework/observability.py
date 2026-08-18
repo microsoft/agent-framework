@@ -769,13 +769,13 @@ class ObservabilitySettings:
             ``gen_ai.user.message``, ``gen_ai.assistant.message``, ``gen_ai.tool.message``, ``gen_ai.choice``).
             Default is True. Can be set via environment variable ENABLE_MESSAGE_EVENTS. Only takes effect
             when sensitive data capture is enabled.
-        otel_semconv_stability_opt_in: Selects which GenAI semantic-conventions release Agent Framework emits,
-            following the standard OpenTelemetry comma-separated opt-in list format. v1.36.0 is the OTel-recommended
-            stable release; every version above it is collectively "experimental". Unset (the default, unlike
-            upstream OpenTelemetry which defaults to stable-only) or a list containing
-            ``"gen_ai_latest_experimental"`` selects the conventions above v1.36.0; a list that omits that token
-            (e.g. ``""``) selects the v1.36.0 conventions instead. Can be set via environment variable
-            OTEL_SEMCONV_STABILITY_OPT_IN.
+        otel_semconv_stability_opt_in: A comma-separated list of category-specific values, following the
+            standard OpenTelemetry comma-separated opt-in list format, currently only containing a single
+            token ``"gen_ai_latest_experimental"``. v1.36.0 is the OTel-recommended stable release; every
+            version above it is collectively "experimental". The default, unlike upstream OpenTelemetry which
+            defaults to stable-only, ``"gen_ai_latest_experimental"`` selects the conventions above v1.36.0;
+            a list that omits that token (e.g. ``""``) selects the v1.36.0 conventions instead. Can be set via
+            environment variable OTEL_SEMCONV_STABILITY_OPT_IN.
         vs_code_extension_port: The port the AI Toolkit or Microsoft Foundry VS Code extensions are listening on.
             Default is None.
             Can be set via environment variable VS_CODE_EXTENSION_PORT.
@@ -1330,7 +1330,7 @@ def configure_otel_providers(
         enable_message_events: Emit the stable v1.36.0 GenAI message events (``gen_ai.system.message``, etc.).
             Overrides the environment variable ENABLE_MESSAGE_EVENTS if set. Default is None, which resolves
             to True (events enabled).
-        otel_semconv_stability_opt_in: Selects which GenAI semantic-conventions release to emit (see
+        otel_semconv_stability_opt_in: a comma-separated list of category-specific values (see
             ``ObservabilitySettings.otel_semconv_stability_opt_in`` for the full explanation). Overrides the
             environment variable OTEL_SEMCONV_STABILITY_OPT_IN if set. Default is None, which resolves to the
             conventions above the v1.36.0 stable release.
@@ -2114,8 +2114,6 @@ class AgentTelemetryLayer:
             )
             inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
             try:
-                # Agent Framework's agents run in-process (the actual network call happens on a nested
-                # chat span), so invoke_agent spans use the default INTERNAL kind.
                 with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
                     try:
                         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
@@ -2392,7 +2390,10 @@ def _get_span(
     span_name_attribute: str,
     kind: trace.SpanKind = trace.SpanKind.INTERNAL,
 ) -> Generator[trace.Span, Any, Any]:
-    """Start a span for a agent run.
+    """Start a span for an agent run.
+
+    Agent Framework's agents run in-process (the actual network call happens on a nested
+    chat span), so invoke_agent spans use the default INTERNAL kind.
 
     Note: `attributes` must contain the `span_name_attribute` key.
     """
@@ -2851,33 +2852,30 @@ def _capture_message_events_v1_36(
     if not OBSERVABILITY_SETTINGS.enable_message_events:
         return
 
-    from ._types import normalize_messages
-
-    normalized_messages = normalize_messages(messages)
-    event_timestamp = time_ns()
-    event_index = 0
-
     if not output and system_instructions:
         for instruction in _normalize_instructions(system_instructions):
             _emit_otel_event_v1_36(
                 OtelAttr.SYSTEM_MESSAGE,
                 {"content": instruction},
                 provider_name,
-                event_timestamp + event_index * 1_000,
+                time_ns(),
             )
-            event_index += 1
+
+    from ._types import normalize_messages
+
+    normalized_messages = normalize_messages(messages)
 
     if output:
         if not finish_reason:
+            # Finish reason is required for output events; if not provided, skip emitting choice events.
             return
         for index, message in enumerate(normalized_messages):
             _emit_otel_event_v1_36(
                 OtelAttr.CHOICE,
                 _to_otel_choice_v1_36(message, index, finish_reason),
                 provider_name,
-                event_timestamp + event_index * 1_000,
+                time_ns(),
             )
-            event_index += 1
         return
 
     for message in normalized_messages:
@@ -2886,9 +2884,8 @@ def _capture_message_events_v1_36(
                 event_name,
                 body,
                 provider_name,
-                event_timestamp + event_index * 1_000,
+                time_ns(),
             )
-            event_index += 1
 
 
 def _emit_otel_event_v1_36(

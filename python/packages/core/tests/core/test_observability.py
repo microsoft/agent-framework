@@ -4553,6 +4553,24 @@ def test_capture_messages_preserves_framework_instructions_and_system_history(
     ]
 
 
+def test_capture_messages_uses_actual_timestamp_for_each_event():
+    """Test each stable event captures its timestamp when it is emitted."""
+    timestamps = [1_000, 2_000]
+
+    with (
+        patch("agent_framework.observability.time_ns", side_effect=timestamps) as mock_time_ns,
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+    ):
+        _capture_message_events_v1_36(
+            provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+            system_instructions="Framework system instruction",
+        )
+
+    assert mock_time_ns.call_count == 2
+    assert [call.kwargs["timestamp"] for call in mock_emit.call_args_list] == timestamps
+
+
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_tool_arguments_preserves_non_ascii_characters(span_exporter: InMemorySpanExporter):
     """Test that non-ASCII characters are preserved in tool arguments span attribute."""

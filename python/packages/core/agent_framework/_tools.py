@@ -757,7 +757,7 @@ class FunctionTool(SerializationMixin):
         with get_function_span(attributes=attributes) as span:
             attributes[OtelAttr.MEASUREMENT_FUNCTION_TAG_NAME] = self.name
             logger.info(f"Function name: {self.name}")
-            if emit_tool_call_attrs:
+            if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                 logger.debug(f"Function arguments: {serializable_kwargs}")
             start_time_stamp = perf_counter()
             end_time_stamp: float | None = None
@@ -773,10 +773,11 @@ class FunctionTool(SerializationMixin):
             else:
                 if skip_parsing:
                     logger.info(f"Function {self.name} succeeded.")
-                    if emit_tool_call_attrs:
+                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                         result_str = str(result)
-                        span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                         logger.debug(f"Function result: {result_str}")
+                        if emit_tool_call_attrs:
+                            span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                     return result
                 try:
                     parsed = parser(result)
@@ -786,10 +787,11 @@ class FunctionTool(SerializationMixin):
                 if isinstance(parsed, str):
                     parsed = [Content.from_text(parsed)]
                 logger.info(f"Function {self.name} succeeded.")
-                if emit_tool_call_attrs:
+                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                     result_str = "\n".join(c.text or "" for c in parsed if c.type == "text") or str(parsed)
-                    span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                     logger.debug(f"Function result: {result_str}")
+                    if emit_tool_call_attrs:
+                        span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                 return parsed
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
