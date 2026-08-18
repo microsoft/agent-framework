@@ -783,9 +783,7 @@ public class BackgroundAgentsProviderTests
 
     /// <summary>
     /// Verify that StartBackgroundTask does not corrupt CurrentRunContext of the calling agent.
-    /// Because RunAsync is a non-async method that synchronously sets the static AsyncLocal
-    /// CurrentRunContext, the provider must isolate the background agent call to prevent overwriting
-    /// the outer agent's context.
+    /// The background task must preserve the outer agent's context while running with its own context.
     /// </summary>
     [Fact]
     public async Task StartBackgroundTask_DoesNotCorruptCurrentRunContextAsync()
