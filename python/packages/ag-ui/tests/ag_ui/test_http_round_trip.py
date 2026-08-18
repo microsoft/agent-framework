@@ -11,11 +11,13 @@ from __future__ import annotations
 from typing import Any
 
 from agent_framework import AgentResponseUpdate, Content, WorkflowBuilder, WorkflowContext, executor
-from conftest import StubAgent
+from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sse_helpers import parse_sse_response, parse_sse_to_event_stream
-from typing_extensions import Never
+from sse_helpers import (  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+    parse_sse_response,
+    parse_sse_to_event_stream,
+)
 
 from agent_framework_ag_ui import AgentFrameworkAgent, AgentFrameworkWorkflow, add_agent_framework_fastapi_endpoint
 
@@ -168,7 +170,7 @@ def test_workflow_sse_round_trip() -> None:
     """Workflow events survive SSE encoding/parsing."""
 
     @executor(id="greeter")
-    async def greeter(message: Any, ctx: WorkflowContext[Never, str]) -> None:
+    async def greeter(message: Any, ctx: WorkflowContext[Any, str]) -> None:
         await ctx.yield_output("Hello from workflow!")
 
     app = _build_app_with_workflow(WorkflowBuilder(start_executor=greeter))

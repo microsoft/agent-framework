@@ -1,7 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import importlib
+import sys
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Any, Generic, Optional, TypeVar, Union
+from unittest.mock import Mock
 
 import pytest
 
@@ -45,17 +49,17 @@ def test_normalize_type_to_list_union_pipe_syntax() -> None:
 
 def test_normalize_type_to_list_union_typing_syntax() -> None:
     """Test normalize_type_to_list with Union[] from typing module."""
-    result = normalize_type_to_list(Union[str, int])  # pyright: ignore[reportArgumentType]
+    result = normalize_type_to_list(Union[str, int])  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     assert set(result) == {str, int}
 
-    result = normalize_type_to_list(Union[str, int, bool])  # pyright: ignore[reportArgumentType]
+    result = normalize_type_to_list(Union[str, int, bool])  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     assert set(result) == {str, int, bool}
 
 
 def test_normalize_type_to_list_optional() -> None:
     """Test normalize_type_to_list with Optional types (Union[T, None])."""
     # Optional[str] is Union[str, None]
-    result = normalize_type_to_list(Optional[str])  # pyright: ignore[reportArgumentType]
+    result = normalize_type_to_list(Optional[str])  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     assert str in result
     assert type(None) in result
     assert len(result) == 2
@@ -125,20 +129,20 @@ def test_resolve_type_annotation_string_custom_type() -> None:
     assert result is MyCustomType
 
     result = resolve_type_annotation("MyCustomType | str", {"MyCustomType": MyCustomType, "str": str})
-    assert set(result.__args__) == {MyCustomType, str}  # type: ignore[union-attr]
+    assert set(result.__args__) == {MyCustomType, str}  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 def test_resolve_type_annotation_string_typing_union() -> None:
     """Test resolve_type_annotation resolves Union[] syntax in strings."""
     result = resolve_type_annotation("Union[str, int]", {"str": str, "int": int})
-    assert set(result.__args__) == {str, int}  # type: ignore[union-attr]
+    assert set(result.__args__) == {str, int}  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 def test_resolve_type_annotation_string_optional() -> None:
     """Test resolve_type_annotation resolves Optional[] syntax in strings."""
     result = resolve_type_annotation("Optional[str]", {"str": str})
-    assert str in result.__args__  # type: ignore[union-attr]
-    assert type(None) in result.__args__  # type: ignore[union-attr]
+    assert str in result.__args__  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    assert type(None) in result.__args__  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 def test_resolve_type_annotation_unresolvable_raises() -> None:
@@ -335,6 +339,52 @@ def test_deserialize_type_error_handling() -> None:
     # Test with non-existent type in existing module
     with pytest.raises(AttributeError):
         deserialize_type("builtins.NonExistentType")
+
+
+def test_deserialize_type_does_not_import_unknown_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unknown serialized types fail without importing payload-selected modules."""
+    imported_modules: list[str] = []
+
+    def fail_import(module_name: str) -> None:
+        imported_modules.append(module_name)
+        raise AssertionError("deserialize_type must not import payload-selected modules")
+
+    monkeypatch.setattr(importlib, "import_module", fail_import)
+
+    with pytest.raises(ModuleNotFoundError, match="No module named 'untrusted_request_info_payload'"):
+        deserialize_type("untrusted_request_info_payload.Attack")
+
+    assert imported_modules == []
+
+
+def test_deserialize_type_accepts_explicit_allowed_type() -> None:
+    """Callers can resolve an exact trusted custom type without importing its module."""
+
+    class ExplicitType:
+        pass
+
+    serialized_name = f"{ExplicitType.__module__}.{ExplicitType.__qualname__}"
+
+    assert deserialize_type(serialized_name, allowed_types={serialized_name: ExplicitType}) is ExplicitType
+
+
+def test_deserialize_type_rejects_spoofed_allowed_type() -> None:
+    """Allowed values must be actual class objects, not objects spoofing ``type``."""
+    spoofed_type = Mock(spec=type)
+
+    with pytest.raises(TypeError, match="must be a type"):
+        deserialize_type("spoofed.Type", allowed_types={"spoofed.Type": spoofed_type})  # type: ignore[dict-item]
+
+
+def test_deserialize_type_rejects_spoofed_loaded_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Loaded namespace values must be actual class objects."""
+    module_name = "_spoofed_request_info_type"
+    module = ModuleType(module_name)
+    module.__dict__["Spoofed"] = Mock(spec=type)
+    monkeypatch.setitem(sys.modules, module_name, module)
+
+    with pytest.raises(TypeError, match="does not resolve to a type"):
+        deserialize_type(f"{module_name}.Spoofed")
 
 
 def test_type_compatibility_basic() -> None:

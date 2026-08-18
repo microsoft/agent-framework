@@ -1,17 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Redis Context Provider: Thread scoping examples
+"""Redis Context Provider: Memory scoping examples
 
 This sample demonstrates how conversational memory can be scoped when using the
 Redis context provider. It covers three scenarios:
 
-1) Global thread scope
-   - Provide a fixed thread_id to share memories across operations/threads.
+1) Global memory scope
+   - Use application_id, agent_id, and user_id to share memories across
+     all operations/sessions.
 
-2) Per-operation thread scope
-   - Enable scope_to_per_operation_thread_id to bind the provider to a single
-     thread for the lifetime of that provider instance. Use the same thread
-     object for reads/writes with that provider.
+2) Hybrid vector search
+   - Use a custom OpenAI vectorizer with the provider for hybrid vector search.
+     Demonstrates combining full-text and semantic search for richer context
+     retrieval.
 
 3) Multiple agents with isolated memory
    - Use different agent_id values to keep memories separated for different
@@ -23,13 +24,14 @@ Requirements:
   - Optionally an OpenAI API key for the chat client in this demo
 
 Run:
-  python redis_threads.py
+  python redis_sessions.py
 """
 
 import asyncio
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -39,25 +41,26 @@ from redisvl.utils.vectorize import OpenAITextVectorizer
 # Load environment variables from .env file
 load_dotenv()
 
+
 # Default Redis URL for local Redis Stack.
 # Override via the REDIS_URL environment variable for remote or authenticated instances.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 
 # Please set OPENAI_API_KEY to use the OpenAI vectorizer.
-# For chat responses, also set AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
-def create_chat_client() -> AzureOpenAIResponsesClient:
-    """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
-    return AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+# For chat responses, also set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL.
+def create_chat_client() -> FoundryChatClient:
+    """Create a FoundryChatClient using a Foundry project endpoint."""
+    return FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
 
-async def example_global_thread_scope() -> None:
-    """Example 1: Global thread_id scope (memories shared across all operations)."""
-    print("1. Global Thread Scope Example:")
+async def example_global_memory_scope() -> None:
+    """Example 1: Global memory scope (memories shared across all operations)."""
+    print("1. Global Memory Scope Example:")
     print("-" * 40)
 
     client = create_chat_client()
@@ -71,7 +74,8 @@ async def example_global_thread_scope() -> None:
         user_id="threads_demo_user",
     )
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="GlobalMemoryAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "
@@ -98,13 +102,13 @@ async def example_global_thread_scope() -> None:
     await provider.redis_index.delete()
 
 
-async def example_per_operation_thread_scope() -> None:
-    """Example 2: Per-operation thread scope (memories isolated per session).
+async def example_hybrid_vector_search() -> None:
+    """Example 2: Hybrid vector search with custom vectorizer.
 
-    Note: When scope_to_per_operation_thread_id=True, the provider is bound to a single session
-    throughout its lifetime. Use the same session object for all operations with that provider.
+    Demonstrates using a custom OpenAI vectorizer for hybrid vector search,
+    combining full-text and semantic search for richer context retrieval.
     """
-    print("2. Per-Operation Thread Scope Example:")
+    print("2. Hybrid Vector Search Example:")
     print("-" * 40)
 
     client = create_chat_client()
@@ -128,37 +132,35 @@ async def example_per_operation_thread_scope() -> None:
         vector_distance_metric="cosine",
     )
 
-    agent = client.as_agent(
-        name="ScopedMemoryAssistant",
-        instructions="You are an assistant with thread-scoped memory.",
+    agent = Agent(
+        client=client,
+        name="HybridSearchAssistant",
+        instructions="You are an assistant with hybrid vector search for richer context retrieval.",
         context_providers=[provider],
     )
 
-    # Create a specific session for this scoped provider
-    dedicated_session = agent.create_session()
-
-    # Store some information in the dedicated session
+    # Store some information
     query = "Remember that for this conversation, I'm working on a Python project about data analysis."
-    print(f"User (dedicated session): {query}")
-    result = await agent.run(query, session=dedicated_session)
+    print(f"User: {query}")
+    result = await agent.run(query)
     print(f"Agent: {result}\n")
 
-    # Test memory retrieval in the same dedicated session
+    # Test memory retrieval via hybrid search
     query = "What project am I working on?"
-    print(f"User (same dedicated session): {query}")
-    result = await agent.run(query, session=dedicated_session)
+    print(f"User: {query}")
+    result = await agent.run(query)
     print(f"Agent: {result}\n")
 
-    # Store more information in the same session
+    # Store more information
     query = "Also remember that I prefer using pandas and matplotlib for this project."
-    print(f"User (same dedicated session): {query}")
-    result = await agent.run(query, session=dedicated_session)
+    print(f"User: {query}")
+    result = await agent.run(query)
     print(f"Agent: {result}\n")
 
     # Test comprehensive memory retrieval
     query = "What do you know about my current project and preferences?"
-    print(f"User (same dedicated session): {query}")
-    result = await agent.run(query, session=dedicated_session)
+    print(f"User: {query}")
+    result = await agent.run(query)
     print(f"Agent: {result}\n")
 
     # Clean up the Redis index
@@ -166,8 +168,8 @@ async def example_per_operation_thread_scope() -> None:
 
 
 async def example_multiple_agents() -> None:
-    """Example 3: Multiple agents with different thread configurations (isolated via agent_id) but within 1 index."""
-    print("3. Multiple Agents with Different Thread Configurations:")
+    """Example 3: Multiple agents with different memory configurations (isolated via agent_id) but within 1 index."""
+    print("3. Multiple Agents with Different Memory Configurations:")
     print("-" * 40)
 
     client = create_chat_client()
@@ -191,7 +193,8 @@ async def example_multiple_agents() -> None:
         vector_distance_metric="cosine",
     )
 
-    personal_agent = client.as_agent(
+    personal_agent = Agent(
+        client=client,
         name="PersonalAssistant",
         instructions="You are a personal assistant that helps with personal tasks.",
         context_providers=[personal_provider],
@@ -210,7 +213,8 @@ async def example_multiple_agents() -> None:
         vector_distance_metric="cosine",
     )
 
-    work_agent = client.as_agent(
+    work_agent = Agent(
+        client=client,
         name="WorkAssistant",
         instructions="You are a work assistant that helps with professional tasks.",
         context_providers=[work_provider],
@@ -243,9 +247,9 @@ async def example_multiple_agents() -> None:
 
 
 async def main() -> None:
-    print("=== Redis Thread Scoping Examples ===\n")
-    await example_global_thread_scope()
-    await example_per_operation_thread_scope()
+    print("=== Redis Memory Scoping Examples ===\n")
+    await example_global_memory_scope()
+    await example_hybrid_vector_search()
     await example_multiple_agents()
 
 

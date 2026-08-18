@@ -92,13 +92,25 @@ Use typing as a helper first and suppressions as a last resort:
 - **Prefer explicit typing before suppression**: Start with clearer type annotations, helper types, overloads,
   protocols, or refactoring dynamic code into typed helpers. Prioritize performance over completeness of typing, but make a good-faith effort to reduce uncertainty with typing before ignoring. Prefer to use a cast over a typeguard function since that does add overhead.
 - **Avoid redundant casts**: Do not add `cast(...)` if the type already matches; casts should be reserved for
-  unavoidable narrowing where the runtime contract is known, we will use mypy's check on redundant casts to enforce this.
+  unavoidable narrowing where the runtime contract is known.
 - **Avoid multiple assignments**: Avoid assigning multiple variables just to get typing to pass, that has performance impact while typing should not have that.
-- **Line-level pyright ignores only**: If suppression is still required, use a line-level rule-specific ignore
+- **Source vs tests/samples**: Source code (`agent_framework*`) is checked **by pyright in strict mode** — use
+  `# pyright: ignore[...]` there, never `# type: ignore` (strict pyright flags unnecessary ignores as errors). Tests
+  and samples are checked by pyright (relaxed `basic`), mypy, pyrefly, ty (and zuban on tests) in a relaxed/basic
+  profile; prefer real fixes (`isinstance`, `cast`, annotations, asserts for Optional access) over per-line ignores,
+  and keep test/sample bodies readable rather than over-annotated. When a relaxed-pyright suppression is genuinely
+  needed in tests/samples, use `# pyright: ignore[rule]`; the relaxed test/sample configs do not flag unnecessary
+  ignores, so combine with a mypy/zuban `# type: ignore[code]` on the same line only where both are required.
+- **Line-level pyright ignores only**: If suppression is still required in source, use a line-level rule-specific ignore
   (`# pyright: ignore[reportGeneralTypeIssues]`), file-level is allowed if there is a compelling reason for it, that should be documented right beneath the ignore.
-  Never change the global suppression flags for mypy and pyright unless the dev team okays it.
+  Never change the global suppression flags unless the dev team okays it.
 - **Private usage boundary**: Accessing private members across `agent_framework*` packages can be acceptable for this
-  codebase, but private member usage for non-Agent Framework dependencies should remain flagged.
+  codebase, but private member usage for non-Agent Framework dependencies should remain flagged. Do not make an
+  internal helper public merely to satisfy pyright private-usage checks inside the package; use a targeted
+  `# pyright: ignore[reportPrivateUsage]` when the internal dependency is intentional.
+- **Avoid typing-only wrappers**: Do not introduce trivial pass-through functions solely to satisfy typing or private
+  usage checks. Prefer a targeted ignore, cast, or clearer annotation over an extra one-line function that adds runtime
+  overhead without improving the design.
 
 ## Function Parameter Guidelines
 
@@ -186,13 +198,13 @@ The package follows a flat import structure:
 
 - **Components**: Import from `agent_framework.<component>`
   ```python
-  from agent_framework.observability import enable_instrumentation, configure_otel_providers
+  from agent_framework.observability import enable_sensitive_telemetry, configure_otel_providers
   ```
 
 - **Connectors**: Import from `agent_framework.<vendor/platform>`
   ```python
   from agent_framework.openai import OpenAIChatClient
-  from agent_framework.azure import AzureOpenAIChatClient
+  from agent_framework.foundry import FoundryChatClient
   ```
 
 ## Exception Hierarchy
@@ -307,7 +319,8 @@ python/
 │   │   ├── pyproject.toml      # Defines [all] extra that includes all connector packages
 │   │   ├── tests/              # Tests for core package
 │   │   └── agent_framework/
-│   │       ├── __init__.py     # Public API exports
+│   │       ├── __init__.py     # Lazy runtime public API exports
+│   │       ├── __init__.pyi    # Public API typing surface for lazy root exports
 │   │       ├── _agents.py      # Agent implementations
 │   │       ├── _clients.py     # Chat client protocols and base classes
 │   │       ├── _tools.py       # Tool definitions
@@ -325,14 +338,15 @@ python/
 │   │       ├── mem0/           # Lazy loads from agent-framework-mem0
 │   │       └── redis/          # Lazy loads from agent-framework-redis
 │   │
-│   ├── azure-ai/               # agent-framework-azure-ai
+│   ├── foundry/                # agent-framework-foundry
 │   │   ├── pyproject.toml
 │   │   ├── tests/
-│   │   └── agent_framework_azure_ai/
+│   │   └── agent_framework_foundry/
 │   │       ├── __init__.py     # Public exports
-│   │       ├── _chat_client.py # AzureAIClient implementation
-│   │       ├── _client.py      # AzureAIAgentClient implementation
-│   │       ├── _shared.py      # AzureAISettings and shared utilities
+│   │       ├── _chat_client.py # FoundryChatClient implementation
+│   │       ├── _agent.py       # FoundryAgent implementation
+│   │       ├── _embedding_client.py # FoundryEmbeddingClient implementation
+│   │       ├── _memory_provider.py # Foundry memory implementation
 │   │       └── py.typed        # PEP 561 marker
 │   ├── anthropic/              # agent-framework-anthropic
 │   ├── bedrock/                # agent-framework-bedrock
@@ -342,12 +356,23 @@ python/
 
 ### Lazy Loading Pattern
 
+The root `agent_framework` package is a lazy public API surface. When adding, removing, or moving a root export:
+
+- Add the symbol to `_LAZY_MODULE_EXPORTS` in `agent_framework/__init__.py`.
+- Keep `_LAZY_EXPORTS` derived from `_LAZY_MODULE_EXPORTS`.
+- Keep the explicit runtime `__all__` synchronized; it is required for `from agent_framework import *`.
+- Add the same public symbol to `agent_framework/__init__.pyi` so type checkers and editors see the typed surface.
+- Put runtime deprecation behavior in the owning module using that module's `__getattr__`. Do not add one-off
+  deprecated-symbol branches to root `agent_framework.__getattr__`.
+- Validate root API changes with `uv run poe syntax -P core`, `uv run poe pyright -P core`, and import smoke tests
+  for both `from agent_framework import <symbol>` and `from agent_framework import *`.
+
 Provider folders in the core package use `__getattr__` to lazy load classes from their respective connector packages. This allows users to import from a consistent location while only loading dependencies when needed:
 
 ```python
-# In agent_framework/azure/__init__.py
+# In agent_framework/foundry/__init__.py
 _IMPORTS: dict[str, tuple[str, str]] = {
-    "AzureAIAgentClient": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
+    "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     # ...
 }
 
@@ -419,7 +444,7 @@ pip install agent-framework-core[all]
 pip install agent-framework
 
 # Install specific connector (pulls in core as dependency)
-pip install agent-framework-azure-ai
+pip install agent-framework-foundry
 ```
 
 ## Documentation
@@ -428,6 +453,10 @@ Each file should have a single first line containing: # Copyright (c) Microsoft.
 
 We follow the [Google Docstring](https://github.com/google/styleguide/blob/gh-pages/pyguide.md#383-functions-and-methods) style guide for functions and methods.
 They are currently not checked for private functions (functions starting with '_').
+
+When a change adds, removes, or renames a sample-facing environment variable in repo-level samples or
+package-local sample docs for a package included by `agent-framework-core[all]`, update the consolidated
+inventory in `samples/README.md` in the same change.
 
 They should contain:
 
@@ -476,7 +505,7 @@ A more complete example with keyword arguments and code samples:
 
 ```python
 def create_client(
-    model_id: str | None = None,
+    model: str | None = None,
     *,
     timeout: float | None = None,
     env_file_path: str | None = None,
@@ -485,7 +514,7 @@ def create_client(
     """Create a new client with the specified configuration.
 
     Args:
-        model_id: The model ID to use. If not provided,
+        model: The model ID to use. If not provided,
             it will be loaded from settings.
 
     Keyword Args:
@@ -497,14 +526,14 @@ def create_client(
         A configured client instance.
 
     Raises:
-        ValueError: If the model_id is invalid.
+        ValueError: If the model is invalid.
 
     Examples:
 
         .. code-block:: python
 
             # Create a client with default settings:
-            client = create_client(model_id="gpt-4o")
+            client = create_client(model="gpt-4o")
 
             # Or load from environment:
             client = create_client(env_file_path=".env")
@@ -545,6 +574,10 @@ it should define ``__all__`` as well.
 
 Also avoid identity alias imports in ``__init__`` files. Use ``from ._module import Symbol`` instead of
 ``from ._module import Symbol as Symbol``.
+
+Exception: `.pyi` stubs that describe re-exported public APIs should use identity aliases (for example,
+`from ._agents import Agent as Agent`) so type checkers recognize the symbol as exported. This applies to the
+root `agent_framework/__init__.pyi`, which mirrors the lazy runtime exports from `agent_framework/__init__.py`.
 
 ```python
 # ✅ Preferred - explicit __all__ and named imports
@@ -654,6 +687,20 @@ otel_messages.append(_to_otel_message(message)) # this already serializes
 message_data = message.to_dict(exclude_none=True)  # and this does so again!
 logger.info(message_data, extra={...})
 ```
+
+When converting arbitrary values for telemetry, protocol, or event payloads, reuse the optimized framework
+converter instead of adding a package-local recursive serializer:
+
+```python
+from agent_framework._serialization import make_json_safe  # pyright: ignore[reportPrivateUsage]
+
+payload = make_json_safe(value)
+```
+
+Use a model's `to_dict()` directly when its type is known. Use `make_json_safe()` for heterogeneous values that may
+contain framework models, Pydantic models, dataclasses, containers, or primitives. Keep provider-specific conversion
+local when an API requires exact aliases, JSON modes, or opaque JSON strings, and avoid `json.dumps()` followed by
+`json.loads()` unless crossing such a required wire-format boundary.
 
 ## Test Organization
 

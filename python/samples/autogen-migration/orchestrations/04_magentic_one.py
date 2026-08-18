@@ -1,31 +1,23 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/orchestrations/04_magentic_one.py
-
 # Copyright (c) Microsoft. All rights reserved.
-"""AutoGen MagenticOneGroupChat vs Agent Framework MagenticBuilder.
-
-Demonstrates orchestrated multi-agent workflows with a central coordinator
-managing specialized agents for complex tasks.
-"""
 
 import asyncio
 import json
 from typing import cast
 
 from agent_framework import (
+    Agent,
     AgentResponseUpdate,
     Message,
     WorkflowEvent,
 )
-from agent_framework.orchestrations import MagenticProgressLedger
+from agent_framework.orchestrations import MagenticOrchestrator, MagenticProgressLedger
 from dotenv import load_dotenv
+
+"""AutoGen MagenticOneGroupChat vs Agent Framework MagenticBuilder.
+
+Demonstrates orchestrated multi-agent workflows with a central coordinator
+managing specialized agents for complex tasks.
+"""
 
 # Load environment variables from .env file
 load_dotenv()
@@ -33,7 +25,6 @@ load_dotenv()
 
 async def run_autogen() -> None:
     """AutoGen's MagenticOneGroupChat for orchestrated collaboration."""
-
     from autogen_agentchat.agents import AssistantAgent
     from autogen_agentchat.teams import MagenticOneGroupChat
     from autogen_agentchat.ui import Console
@@ -70,7 +61,7 @@ async def run_autogen() -> None:
     team = MagenticOneGroupChat(
         participants=[researcher, coder, reviewer],
         model_client=client,  # Coordinator uses this client
-        max_turns=20,
+        max_turns=10,
         max_stalls=3,
     )
 
@@ -84,22 +75,25 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
     from agent_framework.orchestrations import MagenticBuilder
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
+    client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create specialized agents
-    researcher = client.as_agent(
+    researcher = Agent(
+        client=client,
         name="researcher",
         instructions="You are a research analyst. Gather and analyze information.",
         description="Research analyst for data gathering",
     )
 
-    coder = client.as_agent(
+    coder = Agent(
+        client=client,
         name="coder",
         instructions="You are a programmer. Write code based on requirements.",
         description="Software developer for implementation",
     )
 
-    reviewer = client.as_agent(
+    reviewer = Agent(
+        client=client,
         name="reviewer",
         instructions="You are a code reviewer. Review code for quality and correctness.",
         description="Code reviewer for quality assurance",
@@ -108,12 +102,13 @@ async def run_agent_framework() -> None:
     # Create Magentic workflow
     workflow = MagenticBuilder(
         participants=[researcher, coder, reviewer],
-        manager_agent=client.as_agent(
+        manager_agent=Agent(
+            client=client,
             name="magentic_manager",
             instructions="You coordinate a team to complete complex tasks efficiently.",
             description="Orchestrator for team coordination",
         ),
-        max_round_count=20,
+        max_round_count=10,
         max_stall_count=3,
         max_reset_count=1,
     ).build()
@@ -123,14 +118,18 @@ async def run_agent_framework() -> None:
     output_event: WorkflowEvent | None = None
     print("[Agent Framework] Magentic conversation:")
     async for event in workflow.run("Research Python async patterns and write a simple example", stream=True):
-        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
-            message_id = event.data.message_id
-            if message_id != last_message_id:
-                if last_message_id is not None:
-                    print("\n")
-                print(f"- {event.executor_id}:", end=" ", flush=True)
-                last_message_id = message_id
-            print(event.data, end="", flush=True)
+        if event.type == "output":
+            if event.executor_id == MagenticOrchestrator.MANAGER_NAME:
+                output_event = event
+            else:
+                event_data = cast(AgentResponseUpdate, event.data)
+                message_id = event_data.message_id
+                if message_id != last_message_id:
+                    if last_message_id is not None:
+                        print("\n")
+                    print(f"- {event.executor_id}:", end=" ", flush=True)
+                    last_message_id = message_id
+                print(event_data, end="", flush=True)
 
         elif event.type == "magentic_orchestrator":
             print(f"\n[Magentic Orchestrator Event] Type: {event.data.event_type.name}")
@@ -146,19 +145,15 @@ async def run_agent_framework() -> None:
             # Please refer to `with_plan_review` for proper human interaction during planning phases.
             await asyncio.get_event_loop().run_in_executor(None, input, "Press Enter to continue...")
 
-        elif event.type == "output":
-            output_event = event
-
     if not output_event:
         raise RuntimeError("Workflow did not produce a final output event.")
+
     print("\n\nWorkflow completed!")
     print("Final Output:")
-    # The output of the Magentic workflow is a list of ChatMessages with only one final message
-    # generated by the orchestrator.
-    output_messages = cast(list[Message], output_event.data)
-    if output_messages:
-        output = output_messages[-1].text
-        print(output)
+    # The output of the Magentic workflow is an AgentResponse or AgentResponseUpdate,
+    # which contains the final message text.
+    output_message = cast(AgentResponseUpdate, output_event.data)
+    print(output_message.text)
 
 
 async def main() -> None:

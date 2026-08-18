@@ -35,13 +35,13 @@ internal abstract class AgentProvider(IConfiguration configuration)
     {
         Uri foundryEndpoint = new(this.GetSetting(TestSettings.AzureAIProjectEndpoint));
 
-        await foreach (AgentVersion agent in this.CreateAgentsAsync(foundryEndpoint))
+        await foreach (ProjectsAgentVersion agent in this.CreateAgentsAsync(foundryEndpoint))
         {
             Console.WriteLine($"Created agent: {agent.Name}:{agent.Version}");
         }
     }
 
-    protected abstract IAsyncEnumerable<AgentVersion> CreateAgentsAsync(Uri foundryEndpoint);
+    protected abstract IAsyncEnumerable<ProjectsAgentVersion> CreateAgentsAsync(Uri foundryEndpoint);
 
     protected string GetSetting(string settingName) =>
         configuration[settingName] ??

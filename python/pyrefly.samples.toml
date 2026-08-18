@@ -1,0 +1,27 @@
+# Basic-mode Pyrefly profile for samples. Samples are teaching code: we want to catch
+# real mistakes (bad imports, wrong attribute/module access) without forcing readers to
+# wade through casts and overload gymnastics just to satisfy third-party SDK stubs.
+project-includes = ["samples"]
+project-excludes = [
+    "**/autogen-migration/**",
+    "**/semantic-kernel-migration/**",
+    "**/autogen/**",
+    "**/demos/**",
+    "**/_to_delete/**",
+    "**/05-end-to-end/**",
+    "**/harness/**",
+]
+
+[errors]
+# Signature/cast/overload noise driven mostly by third-party SDK stubs -- off for samples.
+bad-argument-type = false
+no-matching-overload = false
+bad-return = false
+bad-override-mutable-attribute = false
+unexpected-keyword = false
+unsupported-operation = false
+missing-argument = false
+bad-assignment = false
+not-async = false
+# Kept on (real bugs a reader would hit): missing-import, missing-attribute,
+# missing-module-attribute, bad-index, bad-typed-dict-key, not-iterable.

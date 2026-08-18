@@ -6,14 +6,16 @@ concepts of **Agent Framework** one step at a time.
 ## Prerequisites
 
 ```bash
-pip install agent-framework --pre
+pip install agent-framework-foundry
 ```
+
+Sample 08 additionally requires `agent-framework-azurefunctions --pre`.
 
 Set the required environment variables:
 
 ```bash
-export AZURE_AI_PROJECT_ENDPOINT="https://your-project-endpoint"
-export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"   # optional, defaults to gpt-4o
+export FOUNDRY_PROJECT_ENDPOINT="https://your-project-endpoint"
+export FOUNDRY_MODEL="gpt-4o"   # optional, defaults to gpt-4o
 ```
 
 ## Samples
@@ -24,8 +26,11 @@ export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"   # optional, defaults to
 | 2 | [02_add_tools.py](02_add_tools.py) | Define a function tool with `@tool` and attach it to an agent. |
 | 3 | [03_multi_turn.py](03_multi_turn.py) | Keep conversation history across turns with `AgentSession`. |
 | 4 | [04_memory.py](04_memory.py) | Add dynamic context with a custom `ContextProvider`. |
-| 5 | [05_first_workflow.py](05_first_workflow.py) | Chain executors into a workflow with edges. |
-| 6 | [06_host_your_agent.py](06_host_your_agent.py) | Host a single agent with Azure Functions. |
+| 5 | [05_functional_workflow_with_agents.py](05_functional_workflow_with_agents.py) | Call agents inside a functional workflow. |
+| 6 | [06_functional_workflow_basics.py](06_functional_workflow_basics.py) | Write a workflow as a plain async function. |
+| 7 | [07_first_graph_workflow.py](07_first_graph_workflow.py) | Chain executors into a graph workflow with edges. |
+
+To host agents and workflows with Durable Task or Azure Functions, continue with the [Durable Agent Framework extension samples](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
 
 Run any sample with:
 

@@ -4,12 +4,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Extensions.AI;
-using Shared.Code;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
@@ -61,27 +59,6 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
         return new WorkflowEvents(workflowEvents);
     }
 
-    public static async Task<WorkflowHarness> GenerateCodeAsync<TInput>(
-        string runId,
-        string workflowProviderCode,
-        string workflowProviderName,
-        string workflowProviderNamespace,
-        DeclarativeWorkflowOptions options,
-        TInput input) where TInput : notnull
-    {
-        // Compile the code
-        Assembly assembly = Compiler.Build(workflowProviderCode, Compiler.RepoDependencies(typeof(DeclarativeWorkflowBuilder)));
-        Type? type = assembly.GetType($"{workflowProviderNamespace}.{workflowProviderName}");
-        Assert.NotNull(type);
-        MethodInfo? method = type.GetMethod("CreateWorkflow");
-        Assert.NotNull(method);
-        MethodInfo genericMethod = method.MakeGenericMethod(typeof(TInput));
-        object? workflowObject = genericMethod.Invoke(null, [options, null]);
-        Workflow workflow = Assert.IsType<Workflow>(workflowObject);
-
-        return new WorkflowHarness(workflow, runId);
-    }
-
     private CheckpointManager GetCheckpointManager(bool useJson = false)
     {
         if (useJson && this._checkpointManager is null)
@@ -125,6 +102,13 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                     if (response is null || requestInfo.Request.RequestId != response.RequestId)
                     {
                         hasRequest = true;
+                    }
+                    else
+                    {
+                        // This is a republished event for the request we're already responding to
+                        // (emitted by RepublishUnservicedRequestsAsync during checkpoint resume).
+                        // Skip yielding it so downstream code doesn't treat it as a new pending request.
+                        continue;
                     }
                     break;
 

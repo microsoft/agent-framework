@@ -50,10 +50,13 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         return runner.BeginStreamAsync(this.ExecutionMode, cancellationToken);
     }
 
-    internal ValueTask<AsyncRunHandle> ResumeRunAsync(Workflow workflow, CheckpointInfo fromCheckpoint, IEnumerable<Type> knownValidInputTypes, CancellationToken cancellationToken)
+    internal ValueTask<AsyncRunHandle> ResumeRunAsync(Workflow workflow, CheckpointInfo fromCheckpoint, IEnumerable<Type> knownValidInputTypes, CancellationToken cancellationToken = default)
+        => this.ResumeRunAsync(workflow, fromCheckpoint, knownValidInputTypes, republishPendingEvents: true, cancellationToken);
+
+    internal ValueTask<AsyncRunHandle> ResumeRunAsync(Workflow workflow, CheckpointInfo fromCheckpoint, IEnumerable<Type> knownValidInputTypes, bool republishPendingEvents, CancellationToken cancellationToken = default)
     {
         InProcessRunner runner = InProcessRunner.CreateTopLevelRunner(workflow, this.CheckpointManager, fromCheckpoint.SessionId, this.EnableConcurrentRuns, knownValidInputTypes);
-        return runner.ResumeStreamAsync(this.ExecutionMode, fromCheckpoint, cancellationToken);
+        return runner.ResumeStreamAsync(this.ExecutionMode, fromCheckpoint, republishPendingEvents, cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -99,6 +102,32 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         this.VerifyCheckpointingConfigured();
 
         AsyncRunHandle runHandle = await this.ResumeRunAsync(workflow, fromCheckpoint, [], cancellationToken)
+                                             .ConfigureAwait(false);
+
+        return new(runHandle);
+    }
+
+    /// <summary>
+    /// Resumes a streaming workflow run from a checkpoint with control over whether
+    /// pending request events are republished through the event stream.
+    /// </summary>
+    /// <param name="workflow">The workflow to resume.</param>
+    /// <param name="fromCheckpoint">The checkpoint to resume from.</param>
+    /// <param name="republishPendingEvents">
+    /// When <see langword="true"/>, any pending request events are republished through the event
+    /// stream after subscribing. When <see langword="false"/>, the caller is responsible for
+    /// handling pending requests (e.g., <see cref="WorkflowSession"/> already sends responses).
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    internal async ValueTask<StreamingRun> ResumeStreamingInternalAsync(
+        Workflow workflow,
+        CheckpointInfo fromCheckpoint,
+        bool republishPendingEvents,
+        CancellationToken cancellationToken = default)
+    {
+        this.VerifyCheckpointingConfigured();
+
+        AsyncRunHandle runHandle = await this.ResumeRunAsync(workflow, fromCheckpoint, [], republishPendingEvents, cancellationToken)
                                              .ConfigureAwait(false);
 
         return new(runHandle);
@@ -153,6 +182,9 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         AsyncRunHandle runHandle = await this.ResumeRunAsync(workflow, fromCheckpoint, [], cancellationToken)
                                              .ConfigureAwait(false);
 
-        return new(runHandle);
+        Run run = new(runHandle);
+        await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
+
+        return run;
     }
 }

@@ -5,7 +5,7 @@ from random import randrange
 from typing import TYPE_CHECKING, Annotated, Any
 
 from agent_framework import Agent, AgentResponse, Message, tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 if TYPE_CHECKING:
@@ -58,6 +58,8 @@ async def handle_approvals(query: str, agent: "SupportsAgentRun") -> AgentRespon
         new_inputs: list[Any] = [query]
 
         for user_input_needed in result.user_input_requests:
+            if user_input_needed.function_call is None:
+                continue
             print(
                 f"\nUser Input Request for function from {agent.name}:"
                 f"\n  Function: {user_input_needed.function_call.name}"
@@ -108,6 +110,8 @@ async def handle_approvals_streaming(query: str, agent: "SupportsAgentRun") -> N
             new_inputs: list[Any] = [query]
 
             for user_input_needed in user_input_requests:
+                if user_input_needed.function_call is None:
+                    continue
                 print(
                     f"\n\nUser Input Request for function from {agent.name}:"
                     f"\n  Function: {user_input_needed.function_call.name}"
@@ -134,7 +138,7 @@ async def run_weather_agent_with_approval(stream: bool) -> None:
     print(f"\n=== Weather Agent with Approval Required ({'Streaming' if stream else 'Non-Streaming'}) ===\n")
 
     async with Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         name="WeatherAgent",
         instructions=("You are a helpful weather assistant. Use the get_weather tool to provide weather information."),
         tools=[get_weather, get_weather_detail],

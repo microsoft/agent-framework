@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 
 from agent_framework import Agent, InMemoryHistoryProvider
-from agent_framework.azure import AzureOpenAIResponsesClient, FoundryMemoryProvider
+from agent_framework.foundry import FoundryChatClient, FoundryMemoryProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     MemoryStoreDefaultDefinition,
@@ -31,16 +31,16 @@ so that follow-up responses demonstrate the agent relying solely on Foundry Memo
 rather than chat history. The memory store is deleted at the end of the run.
 
 Prerequisites:
-1. Set AZURE_AI_PROJECT_ENDPOINT environment variable
-2. Set AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME for the chat/responses model
-3. Set AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME for the embedding model
+1. Set FOUNDRY_PROJECT_ENDPOINT environment variable
+2. Set FOUNDRY_MODEL for the chat/responses model
+3. Set AZURE_OPENAI_EMBEDDING_MODEL for the embedding model
 4. Deploy both a chat model (e.g. gpt-4) and an embedding model (e.g. text-embedding-3-small)
 """
 load_dotenv()
 
 
 async def main() -> None:
-    endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     async with (
         AzureCliCredential() as credential,
         AIProjectClient(endpoint=endpoint, credential=credential) as project_client,
@@ -54,8 +54,8 @@ async def main() -> None:
             user_profile_details="Avoid irrelevant or sensitive data, such as age, financials, precise location, and credentials",
         )
         memory_store_definition = MemoryStoreDefaultDefinition(
-            chat_model=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-            embedding_model=os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"],
+            chat_model=os.environ["FOUNDRY_MODEL"],
+            embedding_model=os.environ["AZURE_OPENAI_EMBEDDING_MODEL"],
             options=options,
         )
         print(f"Creating memory store '{memory_store_name}'...")
@@ -75,7 +75,7 @@ async def main() -> None:
         print("==========================================")
 
         # Create the chat client
-        client = AzureOpenAIResponsesClient(project_client=project_client)
+        client = FoundryChatClient(project_client=project_client)
         # Create the Foundry Memory context provider
         memory_provider = FoundryMemoryProvider(
             project_client=project_client,

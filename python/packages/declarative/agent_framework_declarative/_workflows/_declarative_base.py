@@ -27,15 +27,20 @@ from __future__ import annotations
 
 import locale
 import logging
+import os
+import re
 import sys
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal as _Decimal
+from enum import Enum
+from types import MappingProxyType
 from typing import Any, Literal, cast
 
 from agent_framework import (
     Executor,
+    Message,
     WorkflowContext,
 )
 from agent_framework._workflows._state import State
@@ -45,15 +50,112 @@ try:
 except (ImportError, RuntimeError):
     # ImportError: powerfx package not installed
     # RuntimeError: .NET runtime not available or misconfigured
-    Engine = None  # type: ignore[assignment, misc]
+    Engine = None
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+
+
+_ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
+
+# Allowed identifier shape for object-attribute steps in declarative state paths
+_SAFE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class DeclarativeEnvConfig:
+    """Configuration that populates the PowerFx ``Env`` symbol for a workflow.
+
+    Configuration values are always exposed under ``Env.<name>``;
+    ``os.environ`` is consulted only when ``restrict_to_configuration``
+    is ``False`` AND the YAML literally references the name in a PowerFx
+    expression (the allowlist enforced via ``referenced_names``).
+
+    Attributes:
+        values: Caller-supplied configuration resolved by name when the
+            workflow YAML references ``=Env.NAME``. Always exposed in
+            the ``Env`` symbol regardless of ``restrict_to_configuration``.
+        restrict_to_configuration: When ``True`` (default), the ``Env``
+            symbol is populated exclusively from ``values``; ``os.environ``
+            is never consulted. Set to ``False`` to additionally fall back
+            to ``os.environ`` for names absent from ``values`` that the
+            workflow YAML explicitly references.
+        referenced_names: The set of ``Env.NAME`` symbols discovered in
+            PowerFx expressions inside the workflow definition. The
+            ``os.environ`` fallback is constrained to this allowlist so
+            unrelated environment variables never enter the PowerFx scope.
+    """
+
+    values: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    restrict_to_configuration: bool = True
+    referenced_names: frozenset[str] = field(default_factory=lambda: frozenset[str]())
+
+    def __post_init__(self) -> None:
+        # Defensive snapshots so the frozen guarantee extends to the
+        # contents of ``values`` / ``referenced_names``: caller mutations
+        # to the original objects after construction cannot leak into
+        # ``resolve()``.
+        object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
+        object.__setattr__(self, "referenced_names", frozenset(self.referenced_names))
+
+    def resolve(self) -> dict[str, str]:
+        """Return the resolved ``Env`` symbol mapping for the workflow.
+
+        Configuration values are always included (stringified).
+        ``os.environ`` is consulted only when ``restrict_to_configuration``
+        is ``False`` and the name appears in ``referenced_names``, so
+        unrelated environment variables never enter the PowerFx scope.
+        Configuration values always win over the environment fallback.
+        """
+        resolved = {name: str(value) for name, value in self.values.items()}
+        if self.restrict_to_configuration:
+            return resolved
+        for name in self.referenced_names.difference(resolved):
+            env_value = os.environ.get(name)
+            if env_value is not None:
+                resolved[name] = env_value
+        return resolved
+
+
+def discover_env_references(node: Any) -> set[str]:
+    """Discover ``Env.NAME`` references in PowerFx expressions inside ``node``.
+
+    Walks any nested ``Mapping``/``list``/scalar structure and inspects every
+    string value. To avoid false positives from doc/description fields that
+    happen to mention ``Env.SOMETHING`` as plain text, the scan only inspects
+    strings that begin with ``=`` (PowerFx expression marker, matching the
+    convention enforced by :meth:`DeclarativeWorkflowState.eval`).
+
+    Args:
+        node: A parsed workflow definition (typically the dict produced by
+            ``yaml.safe_load``).
+
+    Returns:
+        The set of ``Env`` identifier names referenced in PowerFx
+        expressions inside ``node``.
+    """
+    names: set[str] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, str):
+            if value.startswith("="):
+                names.update(_ENV_REFERENCE_RE.findall(value))
+            return
+        if isinstance(value, Mapping):
+            for inner in cast(Mapping[Any, Any], value).values():
+                visit(inner)
+            return
+        if isinstance(value, list):
+            for item in cast(list[Any], value):
+                visit(item)
+
+    visit(node)
+    return names
 
 
 class ConversationData(TypedDict):
@@ -120,7 +222,20 @@ def _make_powerfx_safe(value: Any) -> Any:
     Returns:
         A PowerFx-safe representation of the value
     """
-    if value is None or isinstance(value, _POWERFX_SAFE_TYPES):
+    if value is None:
+        return value
+
+    # Enum coercion must run BEFORE the primitive type check: many MAF
+    # enums (e.g. MessageRole) are ``str``-subclass enums, so they pass
+    # ``isinstance(v, str)`` but pythonnet refuses to convert them to
+    # ``System.String`` and raises ``'MessageRole' value cannot be
+    # converted to System.<X>'`` for every PowerFx primitive type. Reduce
+    # to the underlying value (or its string form) so PowerFx sees a
+    # plain ``str``/``int``.
+    if isinstance(value, Enum):
+        return _make_powerfx_safe(value.value)
+
+    if isinstance(value, _POWERFX_SAFE_TYPES):
         return value
 
     if isinstance(value, dict):
@@ -128,7 +243,7 @@ def _make_powerfx_safe(value: Any) -> Any:
         return {str(k): _make_powerfx_safe(v) for k, v in value_dict.items()}
 
     if isinstance(value, list):
-        value_list = cast(list[Any], value)  # type: ignore[redundant-cast]
+        value_list = cast(list[Any], value)
         return [_make_powerfx_safe(item) for item in value_list]
 
     # Try to convert objects with __dict__ or dataclass-style attributes
@@ -154,13 +269,21 @@ class DeclarativeWorkflowState:
     - Conversation: Conversation history
     """
 
-    def __init__(self, state: State):
+    # Sentinel marking "no prior value" for temporary-key bookkeeping.
+    _MISSING: Any = object()
+
+    def __init__(self, state: State, env_config: DeclarativeEnvConfig | None = None):
         """Initialize with a State instance.
 
         Args:
             state: The workflow's state for persistence
+            env_config: Configuration that populates the PowerFx ``Env``
+                symbol when ``_to_powerfx_symbols`` is called. Defaults to
+                an empty configuration which results in no ``Env`` binding,
+                matching the safe default of the :class:`WorkflowFactory`.
         """
         self._state = state
+        self._env_config = env_config if env_config is not None else DeclarativeEnvConfig()
 
     def initialize(self, inputs: Mapping[str, Any] | None = None) -> None:
         """Initialize the declarative state with inputs.
@@ -197,6 +320,16 @@ class DeclarativeWorkflowState:
             result = self._state.get(DECLARATIVE_STATE_KEY)
         return cast(DeclarativeStateData, result)
 
+    def is_initialized(self) -> bool:
+        """Return True when declarative state has been initialized.
+
+        Useful for distinguishing a fresh start from a continuation: when
+        Workflow state preserves data across run() calls (multi-turn
+        scenarios), the start executor needs to avoid calling initialize()
+        and clobbering the prior turn's Conversation/Local/System data.
+        """
+        return self._state.get(DECLARATIVE_STATE_KEY) is not None
+
     def set_state_data(self, data: DeclarativeStateData) -> None:
         """Set the full state data dict in state."""
         self._state.set(DECLARATIVE_STATE_KEY, data)
@@ -204,16 +337,21 @@ class DeclarativeWorkflowState:
     def get(self, path: str, default: Any = None) -> Any:
         """Get a value from the state using a dot-notated path.
 
+        Dict-keyed segments may use arbitrary string keys (e.g. UUIDs in
+        ``System.conversations.<id>.messages``). Segments that would resolve
+        via object-attribute access must be valid declarative identifiers
+        (``[A-Za-z][A-Za-z0-9_]*``); other shapes return ``default``.
+
         Args:
             path: Dot-notated path like 'Local.results' or 'Workflow.Inputs.query'
             default: Default value if path doesn't exist
 
         Returns:
-            The value at the path, or default if not found
+            The value at the path, or default if not found or unreachable.
         """
         state_data = self.get_state_data()
         parts = path.split(".")
-        if not parts:
+        if not parts or any(not p for p in parts):
             return default
 
         namespace = parts[0]
@@ -250,10 +388,19 @@ class DeclarativeWorkflowState:
                 obj = obj.get(part, default)  # type: ignore[union-attr]
                 if obj is default:
                     return default
-            elif hasattr(obj, part):  # type: ignore[arg-type]
-                obj = getattr(obj, part)  # type: ignore[arg-type]
             else:
-                return default
+                # Attribute access is only allowed for safe declarative identifiers.
+                if not _SAFE_PATH_SEGMENT_RE.match(part):
+                    logger.warning(
+                        "DeclarativeWorkflowState.get: rejecting attribute segment %r in path %r",
+                        part,
+                        path,
+                    )
+                    return default
+                if hasattr(obj, part):  # type: ignore[arg-type]
+                    obj = getattr(obj, part)  # type: ignore[arg-type]
+                else:
+                    return default
 
         return obj  # type: ignore[return-value]
 
@@ -265,12 +412,14 @@ class DeclarativeWorkflowState:
             value: The value to set
 
         Raises:
-            ValueError: If attempting to set Workflow.Inputs (which is read-only)
+            ValueError: If ``path`` is empty or contains empty segments
+                (e.g. ``"Local."``, ``"Local..foo"``), or if attempting to set
+                ``Workflow.Inputs`` (which is read-only).
         """
         state_data = self.get_state_data()
         parts = path.split(".")
-        if not parts:
-            return
+        if not parts or any(not p for p in parts):
+            raise ValueError(f"Invalid path {path!r}: empty segments are not allowed")
 
         namespace = parts[0]
         remaining = parts[1:]
@@ -326,7 +475,16 @@ class DeclarativeWorkflowState:
         Args:
             path: Dot-notated path to a list
             value: The value to append
+
+        Raises:
+            ValueError: If ``path`` is empty or contains empty segments
+                (e.g. ``"Local."``, ``"Local..foo"``), or if the existing
+                value at ``path`` is not a list.
         """
+        parts = path.split(".")
+        if not parts or any(not p for p in parts):
+            raise ValueError(f"Invalid path {path!r}: empty segments are not allowed")
+
         existing = self.get(path)
         if existing is None:
             self.set(path, [value])
@@ -336,6 +494,15 @@ class DeclarativeWorkflowState:
             self.set(path, existing_list)
         else:
             raise ValueError(f"Cannot append to non-list at path '{path}'")
+
+    def _clear_local_path(self, name: str) -> None:
+        """Remove ``name`` from the ``Local`` namespace, if present."""
+        state_data = self.get_state_data()
+        local = state_data.get("Local")
+        if local is None or name not in local:
+            return
+        local.pop(name, None)
+        self.set_state_data(state_data)
 
     def eval(self, expression: str) -> Any:
         """Evaluate a PowerFx expression with the current state.
@@ -377,53 +544,64 @@ class DeclarativeWorkflowState:
             return result
 
         # Pre-process nested custom functions (e.g., Upper(MessageText(...)))
-        # Replace them with their evaluated results before sending to PowerFx
-        formula = self._preprocess_custom_functions(formula)
+        # and run PowerFx. The finally below restores any temporary state
+        # written during preprocessing, regardless of where execution exits.
+        temp_writes: list[tuple[str, Any]] = []
 
-        if Engine is None:
-            raise RuntimeError(
-                f"PowerFx is not available (dotnet runtime not installed). "
-                f"Expression '={formula[:80]}' cannot be evaluated. "
-                f"Install dotnet and the powerfx package for full PowerFx support."
-            )
-
-        symbols = self._to_powerfx_symbols()
-        # Use setlocale(category) query form so we can restore the exact prior value.
-        # getlocale() returns a normalized tuple and is not always a lossless
-        # round-trip for setlocale across platforms/locales.
-        original_numeric_locale = locale.setlocale(locale.LC_NUMERIC)
         try:
-            for locale_candidate in _POWERFX_NUMERIC_LOCALE_CANDIDATES:
-                try:
-                    locale.setlocale(locale.LC_NUMERIC, locale_candidate)
-                    break
-                except locale.Error:
-                    continue
+            formula = self._preprocess_custom_functions(formula, temp_writes)
 
-            engine = Engine()
-            try:
-                from System.Globalization import (  # pyright: ignore[reportMissingImports]
-                    CultureInfo,  # pyright: ignore[reportUnknownVariableType]
+            if Engine is None:
+                raise RuntimeError(
+                    f"PowerFx is not available (dotnet runtime not installed). "
+                    f"Expression '={formula[:80]}' cannot be evaluated. "
+                    f"Install dotnet and the powerfx package for full PowerFx support."
                 )
-            except ImportError:
-                return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
 
-            original_culture = cast(Any, CultureInfo.CurrentCulture)  # pyright: ignore[reportUnknownMemberType]
+            symbols = self._to_powerfx_symbols()
+            # Use setlocale(category) query form so we can restore the exact prior value.
+            # getlocale() returns a normalized tuple and is not always a lossless
+            # round-trip for setlocale across platforms/locales.
+            original_numeric_locale = locale.setlocale(locale.LC_NUMERIC)
             try:
-                CultureInfo.CurrentCulture = CultureInfo(_POWERFX_EVAL_LOCALE)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-                return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
+                for locale_candidate in _POWERFX_NUMERIC_LOCALE_CANDIDATES:
+                    try:
+                        locale.setlocale(locale.LC_NUMERIC, locale_candidate)
+                        break
+                    except locale.Error:
+                        continue
+
+                engine = Engine()
+                try:
+                    from System.Globalization import (  # pyright: ignore[reportMissingImports]
+                        CultureInfo,  # pyright: ignore[reportUnknownVariableType]
+                    )
+                except ImportError:
+                    return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
+
+                original_culture = cast(Any, CultureInfo.CurrentCulture)  # pyright: ignore[reportUnknownMemberType]
+                try:
+                    CultureInfo.CurrentCulture = CultureInfo(_POWERFX_EVAL_LOCALE)
+                    return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
+                finally:
+                    CultureInfo.CurrentCulture = original_culture
+            except ValueError as e:
+                error_msg = str(e)
+                # Handle undefined variable errors gracefully by returning None
+                # This matches the behavior of the legacy fallback parser
+                if "isn't recognized" in error_msg or "Name isn't valid" in error_msg:
+                    logger.debug(f"PowerFx: undefined variable in expression '{formula}', returning None")
+                    return None
+                raise
             finally:
-                CultureInfo.CurrentCulture = original_culture  # pyright: ignore[reportUnknownMemberType]
-        except ValueError as e:
-            error_msg = str(e)
-            # Handle undefined variable errors gracefully by returning None
-            # This matches the behavior of the legacy fallback parser
-            if "isn't recognized" in error_msg or "Name isn't valid" in error_msg:
-                logger.debug(f"PowerFx: undefined variable in expression '{formula}', returning None")
-                return None
-            raise
+                locale.setlocale(locale.LC_NUMERIC, original_numeric_locale)
         finally:
-            locale.setlocale(locale.LC_NUMERIC, original_numeric_locale)
+            # Restore each temporary key to its prior value (or remove it).
+            for path, previous in reversed(temp_writes):
+                if previous is self._MISSING:
+                    self._clear_local_path(path.removeprefix("Local."))
+                else:
+                    self.set(path, previous)
 
     def _eval_custom_function(self, formula: str) -> Any | None:
         """Handle custom functions not supported by the Python PowerFx library.
@@ -482,7 +660,7 @@ class DeclarativeWorkflowState:
 
         return None
 
-    def _preprocess_custom_functions(self, formula: str) -> str:
+    def _preprocess_custom_functions(self, formula: str, temp_writes: list[tuple[str, Any]]) -> str:
         """Pre-process custom functions nested inside other PowerFx functions.
 
         Custom functions like MessageText() are not supported by the PowerFx engine.
@@ -497,9 +675,14 @@ class DeclarativeWorkflowState:
 
         Args:
             formula: The PowerFx formula to pre-process
+            temp_writes: Caller-owned list. Each write to a temporary key
+                appends a ``(path, previous_value)`` entry where
+                ``previous_value`` is the value at ``path`` before the write
+                or :attr:`_MISSING` if none. The caller must restore every
+                entry, including when this method raises mid-write.
 
         Returns:
-            The formula with custom function calls replaced by their evaluated results
+            The rewritten formula.
         """
         import re
 
@@ -508,7 +691,6 @@ class DeclarativeWorkflowState:
         # We use 500 to leave room for the rest of the expression around the replaced value.
         MAX_INLINE_LENGTH = 500
 
-        # Counter for generating unique temp variable names
         temp_var_counter = 0
 
         # Custom functions that need pre-processing: (regex pattern, handler)
@@ -564,11 +746,14 @@ class DeclarativeWorkflowState:
                 # Replace in formula
                 if isinstance(replacement, str):
                     if len(replacement) > MAX_INLINE_LENGTH:
-                        # Store long strings in a temp variable to avoid PowerFx expression limit
+                        # Store long results in an underscore-prefixed temp key;
+                        # record the prior value so eval() can restore it.
                         temp_var_name = f"_TempMessageText{temp_var_counter}"
                         temp_var_counter += 1
-                        self.set(f"Local.{temp_var_name}", replacement)
-                        replacement_str = f"Local.{temp_var_name}"
+                        temp_var_path = f"Local.{temp_var_name}"
+                        temp_writes.append((temp_var_path, self.get(temp_var_path, default=self._MISSING)))
+                        self.set(temp_var_path, replacement)
+                        replacement_str = temp_var_path
                         logger.debug(
                             f"Stored long MessageText result ({len(replacement)} chars) "
                             f"in temp variable {temp_var_name}"
@@ -595,7 +780,7 @@ class DeclarativeWorkflowState:
         """
         messages: Any = self.eval(f"={inner_expr}")
         if isinstance(messages, list) and messages:
-            message_list = cast(list[Any], messages)  # type: ignore[redundant-cast]
+            message_list = cast(list[Any], messages)
             last_msg: Any = message_list[-1]
             if isinstance(last_msg, dict):
                 last_msg_dict = cast(dict[str, Any], last_msg)
@@ -606,7 +791,7 @@ class DeclarativeWorkflowState:
                 # Message.text concatenates text from all TextContent items
                 contents_obj = last_msg_dict.get("contents", [])
                 if isinstance(contents_obj, list):
-                    contents = cast(list[Any], contents_obj)  # type: ignore[redundant-cast]
+                    contents = cast(list[Any], contents_obj)
                     text_parts: list[str] = []
                     for content in contents:
                         if isinstance(content, dict):
@@ -689,6 +874,14 @@ class DeclarativeWorkflowState:
             # Custom namespaces
             **state_data.get("Custom", {}),
         }
+        # Resolve the ``Env`` symbol from the workflow-level
+        # :class:`DeclarativeEnvConfig`. When both ``values`` and the
+        # ``os.environ`` allowlist produce no entries the symbol is
+        # omitted so ``=Env.X`` falls back to the literal expression
+        # string (preserving the legacy "unbound identifier" behaviour).
+        env_bound = self._env_config.resolve()
+        if env_bound:
+            symbols["Env"] = env_bound
         # Debug log the Local symbols to help diagnose type issues
         if local_data:
             for key, value in local_data.items():
@@ -712,11 +905,13 @@ class DeclarativeWorkflowState:
         return value
 
     def interpolate_string(self, text: str) -> str:
-        """Interpolate {Variable.Path} references in a string.
+        """Interpolate ``{Variable.Path}`` references in a string.
 
-        This handles template-style variable substitution like:
-        - "Created ticket #{Local.TicketParameters.TicketId}"
-        - "Routing to {Local.RoutingParameters.TeamName}"
+        Captures brace-delimited tokens whose root segment is an identifier
+        (``[A-Za-z][A-Za-z0-9_]*``) followed by zero or more ``.`` separated
+        dict-key segments. Resolution is delegated to :meth:`get`; unresolved
+        tokens are replaced with the empty string. Tokens that do not look
+        like state paths (e.g. ``{foo-bar}``, ``{Ctrl+C}``) are left literal.
 
         Args:
             text: Text that may contain {Variable.Path} references
@@ -731,10 +926,11 @@ class DeclarativeWorkflowState:
             value = self.get(var_path)
             return str(value) if value is not None else ""
 
-        # Match {Variable.Path} patterns
-        pattern = r"\{([A-Za-z][A-Za-z0-9_.]*)\}"
+        # Root segment must be an identifier; follow-on segments accept any
+        # non-empty dict-key (e.g. ``_id``, ``1``, UUIDs). ``get()`` enforces
+        # per-segment safety on attribute traversal.
+        pattern = r"\{([A-Za-z][A-Za-z0-9_]*(?:\.[^{}\s.]+)*)\}"
 
-        # Replace all matches
         result = text
         for match in re.finditer(pattern, text):
             replacement = replace_var(match)
@@ -780,9 +976,9 @@ class ActionComplete:
 
 @dataclass
 class ConditionResult:
-    """Result of evaluating a condition (If/Switch).
+    """Result of evaluating a condition (If/ConditionGroup).
 
-    This message is output by ConditionEvaluatorExecutor and SwitchEvaluatorExecutor
+    This message is output by ConditionEvaluatorExecutor and ConditionGroupEvaluatorExecutor
     to indicate which branch should be taken.
     """
 
@@ -842,12 +1038,27 @@ class DeclarativeActionExecutor(Executor):
         action_id = id or action_def.get("id") or f"{action_def.get('kind', 'action')}_{hash(str(action_def)) % 10000}"
         super().__init__(id=action_id, defer_discovery=True)
         self._action_def = action_def
+        # The active :class:`DeclarativeEnvConfig` is stamped onto the
+        # executor by :class:`DeclarativeWorkflowBuilder` after construction.
+        # Defaults to an empty configuration so direct ``DeclarativeActionExecutor``
+        # construction (e.g. in unit tests) doesn't expose ``os.environ``.
+        self._declarative_env_config: DeclarativeEnvConfig = DeclarativeEnvConfig()
 
         # Manually register handlers after initialization
         self._handlers = {}
         self._handler_specs = []
         self._discover_handlers()
         self._discover_response_handlers()
+
+    def set_declarative_env_config(self, env_config: DeclarativeEnvConfig) -> None:
+        """Set the workflow-level :class:`DeclarativeEnvConfig` for this executor.
+
+        Called by :class:`DeclarativeWorkflowBuilder` after each executor is
+        created so that ``_to_powerfx_symbols`` populates the ``Env`` symbol
+        according to the caller-supplied configuration on the
+        :class:`WorkflowFactory`.
+        """
+        self._declarative_env_config = env_config
 
     @property
     def action_def(self) -> dict[str, Any]:
@@ -861,7 +1072,7 @@ class DeclarativeActionExecutor(Executor):
 
     def _get_state(self, state: State) -> DeclarativeWorkflowState:
         """Get the declarative workflow state wrapper."""
-        return DeclarativeWorkflowState(state)
+        return DeclarativeWorkflowState(state, env_config=self._declarative_env_config)
 
     async def _ensure_state_initialized(
         self,
@@ -873,6 +1084,20 @@ class DeclarativeActionExecutor(Executor):
         Follows .NET's DefaultTransform pattern - accepts any input type:
         - dict/Mapping: Used directly as workflow.inputs
         - str: Converted to {"input": value}
+        - list[Message]: Treated as the agent-facing message contract
+          (e.g. from WorkflowAgent / as_agent()). The prior conversation
+          history is stored in ``Conversation.messages``/
+          ``Conversation.history`` and mirrored to
+          ``System.conversations.{id}.messages`` so workflows that
+          reference ``=Conversation.messages`` (e.g. InvokeAzureAgent) see
+          assistant turns and other earlier messages, including non-text
+          content. At the start of a turn this history excludes the current
+          user message; that message's text is instead used as the string
+          input (``Inputs.input``) and surfaced via ``System.LastMessage*``
+          for backward compatibility with simple text-only workflows. Agent
+          executors are responsible for appending the current user message
+          to ``Conversation.messages`` immediately before invoking the
+          inner agent.
         - DeclarativeMessage: Internal message, no initialization needed
         - Any other type: Converted via str() to {"input": str(value)}
 
@@ -888,6 +1113,100 @@ class DeclarativeActionExecutor(Executor):
         if isinstance(trigger, dict):
             # Structured inputs - use directly
             state.initialize(trigger)  # type: ignore
+        elif isinstance(trigger, list) and all(isinstance(m, Message) for m in trigger):  # pyright: ignore[reportUnknownVariableType]
+            # list[Message] (e.g. from WorkflowAgent / as_agent()).
+            messages_list = cast(list[Message], trigger)
+
+            # Detect continuation: if the workflow's shared state already
+            # carries declarative data from a prior turn (because the host
+            # restored a checkpoint and dispatched this run with
+            # reset_context=False), we MUST NOT call state.initialize() -
+            # that would wipe Conversation.messages, Local.*, System.* etc.
+            # Instead, treat the trigger as the new turn's user input only:
+            # update Inputs.input, append the new user message to existing
+            # Conversation history, and refresh System.LastMessage*.
+            #
+            # Continuation = declarative state already exists in the workflow's
+            # shared state (either left over in-memory from a prior turn on
+            # the same instance, or restored from a checkpoint just before
+            # this run). In that case state.initialize() would wipe Local.*,
+            # System.*, Conversation.* etc., destroying the cross-turn
+            # context we're trying to preserve.
+            is_continuation = state.is_initialized()
+
+            # Locate the trailing user message in the trigger.
+            last_user_index = -1
+            for idx in range(len(messages_list) - 1, -1, -1):
+                if str(messages_list[idx].role).lower() == "user":
+                    last_user_index = idx
+                    break
+
+            if last_user_index >= 0:
+                last_user_msg = messages_list[last_user_index]
+                last_user_text = last_user_msg.text or ""
+                last_user_id = getattr(last_user_msg, "message_id", "") or ""
+                history_messages = messages_list[:last_user_index] + messages_list[last_user_index + 1 :]
+            else:
+                history_messages = list(messages_list)
+                tail = messages_list[-1] if messages_list else None
+                last_user_text = (tail.text or "") if tail is not None else ""
+                last_user_id = getattr(tail, "message_id", "") or "" if tail is not None else ""
+
+            if is_continuation:
+                # Continuation turn: keep prior Conversation.messages intact.
+                # Refresh inputs and surface the new user message via the
+                # System.LastMessage* fields. We deliberately do NOT append
+                # the new user message to Conversation.messages here: agent
+                # executors append the live user input themselves before
+                # invoking the inner agent (matching the first-turn
+                # contract where Conversation.messages holds prior turns
+                # only).
+                #
+                # Note: ``state.set("Inputs.input", ...)`` would route to
+                # the Custom namespace (Inputs is not a recognized top-level
+                # writable namespace - see DeclarativeWorkflowState.set).
+                # PowerFx expressions like ``=Workflow.Inputs.input`` /
+                # ``=inputs.input`` read state_data["Inputs"] directly, so
+                # we update that dict in place via get_state_data /
+                # set_state_data.
+                state_data = state.get_state_data()
+                inputs_dict = state_data.get("Inputs")
+                if not isinstance(inputs_dict, dict):
+                    inputs_dict = {}
+                    state_data["Inputs"] = inputs_dict
+                inputs_dict["input"] = last_user_text
+                state.set_state_data(state_data)
+                # Trailing non-user messages (e.g. tool results) sandwiched
+                # before the new user message in the trigger are still
+                # appended so later actions see them.
+                for msg in history_messages:
+                    state.append("Conversation.messages", msg)
+                    state.append("Conversation.history", msg)
+                conversation_id = state.get("System.ConversationId")
+                if conversation_id:
+                    conv_path = f"System.conversations.{conversation_id}.messages"
+                    for msg in history_messages:
+                        state.append(conv_path, msg)
+                state.set("System.LastMessage", {"Text": last_user_text, "Id": last_user_id})
+                state.set("System.LastMessageText", last_user_text)
+                state.set("System.LastMessageId", last_user_id)
+            else:
+                # First turn: full initialization.
+                state.initialize({"input": last_user_text})
+
+                for msg in history_messages:
+                    state.append("Conversation.messages", msg)
+                    state.append("Conversation.history", msg)
+
+                conversation_id = state.get("System.ConversationId")
+                if conversation_id:
+                    conv_path = f"System.conversations.{conversation_id}.messages"
+                    for msg in history_messages:
+                        state.append(conv_path, msg)
+
+                state.set("System.LastMessage", {"Text": last_user_text, "Id": last_user_id})
+                state.set("System.LastMessageText", last_user_text)
+                state.set("System.LastMessageId", last_user_id)
         elif isinstance(trigger, str):
             # String input - wrap in dict and populate System.LastMessage.Text
             # so YAML expressions like =System.LastMessage.Text see the user input
@@ -895,10 +1214,11 @@ class DeclarativeActionExecutor(Executor):
             state.set("System.LastMessage", {"Text": trigger, "Id": ""})
             state.set("System.LastMessageText", trigger)
         elif not isinstance(
-            trigger, (ActionTrigger, ActionComplete, ConditionResult, LoopIterationResult, LoopControl)
+            trigger,
+            (ActionTrigger, ActionComplete, ConditionResult, LoopIterationResult, LoopControl),
         ):
             # Any other type - convert to string like .NET's DefaultTransform
-            input_str = str(trigger)
+            input_str = str(cast(Any, trigger))
             state.initialize({"input": input_str})
             state.set("System.LastMessage", {"Text": input_str, "Id": ""})
             state.set("System.LastMessageText", input_str)

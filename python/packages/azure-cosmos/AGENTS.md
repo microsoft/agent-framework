@@ -9,7 +9,7 @@ Azure Cosmos DB history provider integration for Agent Framework.
 ## Usage
 
 ```python
-from agent_framework_azure_cosmos import CosmosHistoryProvider
+from agent_framework.azure import CosmosHistoryProvider
 
 provider = CosmosHistoryProvider(
     endpoint="https://<account>.documents.azure.com:443/",
@@ -24,5 +24,7 @@ Container name is configured on the provider. `session_id` is used as the partit
 ## Import Path
 
 ```python
+from agent_framework.azure import CosmosHistoryProvider
+# or directly:
 from agent_framework_azure_cosmos import CosmosHistoryProvider
 ```

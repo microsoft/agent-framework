@@ -9,14 +9,32 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+"""
+This sample demonstrates creating an agent from a declarative YAML file specification.
+
+It uses a MCP server to connect to the Microsoft Learn content and a FoundryChatClient.
+
+The yaml also has some chat options set, such as temperature and topP.
+These options do not work with newer OpenAI models, so ensure to use a compatible model such as gpt-4o-mini.
+
+Environment variables:
+- FOUNDRY_PROJECT_ENDPOINT: The endpoint URL for the Foundry project.
+- FOUNDRY_MODEL: The model ID to use for the agent, make sure it is compatible with the chat options specified in
+    the yaml, or remove the options.
+"""
+
 
 async def main():
     """Create an agent from a declarative yaml specification and run it."""
-
     # get the path
     current_path = Path(__file__).parent
-    yaml_path = current_path.parent.parent.parent.parent / "agent-samples" / "foundry" / "MicrosoftLearnAgent.yaml"
-
+    yaml_path = (
+        current_path.parent.parent.parent.parent
+        / "declarative-agents"
+        / "agent-samples"
+        / "foundry"
+        / "MicrosoftLearnAgent.yaml"
+    )
     # create the agent from the yaml
     async with (
         AzureCliCredential() as credential,

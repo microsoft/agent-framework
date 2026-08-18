@@ -148,11 +148,15 @@ public sealed class Mem0ProviderTests : IDisposable
     }
 
     [Theory]
-    [InlineData(false, false, 4)]
-    [InlineData(true, false, 4)]
-    [InlineData(false, true, 2)]
-    [InlineData(true, true, 2)]
-    public async Task InvokingAsync_LogsUserIdBasedOnEnableSensitiveTelemetryDataAsync(bool enableSensitiveTelemetryData, bool requestThrows, int expectedLogInvocations)
+    [InlineData(false, false, false, 4)]
+    [InlineData(false, false, true, 4)]
+    [InlineData(true, false, false, 4)]
+    [InlineData(true, false, true, 4)]
+    [InlineData(false, true, false, 2)]
+    [InlineData(false, true, true, 2)]
+    [InlineData(true, true, false, 2)]
+    [InlineData(true, true, true, 2)]
+    public async Task InvokingAsync_RedactsLogDataBasedOnOptionsAsync(bool enableSensitiveTelemetryData, bool requestThrows, bool useCustomRedactor, int expectedLogInvocations)
     {
         // Arrange
         if (requestThrows)
@@ -171,7 +175,11 @@ public sealed class Mem0ProviderTests : IDisposable
             ThreadId = "session",
             UserId = "user"
         };
-        var options = new Mem0ProviderOptions { EnableSensitiveTelemetryData = enableSensitiveTelemetryData };
+        var options = new Mem0ProviderOptions
+        {
+            EnableSensitiveTelemetryData = enableSensitiveTelemetryData,
+            Redactor = useCustomRedactor ? new ReplacingRedactor("***") : null
+        };
         var mockSession = new TestAgentSession();
 
         var sut = new Mem0Provider(this._httpClient, _ => new Mem0Provider.State(storageScope), options: options, loggerFactory: this._loggerFactoryMock.Object);
@@ -180,7 +188,8 @@ public sealed class Mem0ProviderTests : IDisposable
         // Act
         await sut.InvokingAsync(invokingContext, CancellationToken.None);
 
-        // Assert
+        // Assert — EnableSensitiveTelemetryData takes precedence over Redactor
+        string expectedRedaction = enableSensitiveTelemetryData ? "user" : (useCustomRedactor ? "***" : "<redacted>");
         Assert.Equal(expectedLogInvocations, this._loggerMock.Invocations.Count);
         foreach (var logInvocation in this._loggerMock.Invocations)
         {
@@ -191,18 +200,18 @@ public sealed class Mem0ProviderTests : IDisposable
 
             var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(logInvocation.Arguments[2], exactMatch: false);
             var userIdValue = state.First(kvp => kvp.Key == "UserId").Value;
-            Assert.Equal(enableSensitiveTelemetryData ? "user" : "<redacted>", userIdValue);
+            Assert.Equal(expectedRedaction, userIdValue);
 
             var inputValue = state.FirstOrDefault(kvp => kvp.Key == "Input").Value;
             if (inputValue != null)
             {
-                Assert.Equal(enableSensitiveTelemetryData ? "Who am I?" : "<redacted>", inputValue);
+                Assert.Equal(enableSensitiveTelemetryData ? "Who am I?" : expectedRedaction, inputValue);
             }
 
             var messageTextValue = state.FirstOrDefault(kvp => kvp.Key == "MessageText").Value;
             if (messageTextValue != null)
             {
-                Assert.Equal(enableSensitiveTelemetryData ? "## Memories\nConsider the following memories when answering user questions:\nName is Caoimhe" : "<redacted>", messageTextValue);
+                Assert.Equal(enableSensitiveTelemetryData ? "## Memories\nConsider the following memories when answering user questions:\nName is Caoimhe" : expectedRedaction, messageTextValue);
             }
         }
     }

@@ -53,4 +53,10 @@ internal sealed class ProcessContentRequest
     /// </summary>
     [JsonIgnore]
     internal string? ScopeIdentifier { get; set; }
+
+    /// <summary>
+    /// Indicates whether the ProcessContent request should ask the service for inline evaluation.
+    /// </summary>
+    [JsonIgnore]
+    internal bool ProcessInline { get; set; }
 }

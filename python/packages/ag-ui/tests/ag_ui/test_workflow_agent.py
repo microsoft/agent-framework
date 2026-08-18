@@ -7,7 +7,15 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
-from agent_framework import Workflow, WorkflowBuilder, WorkflowContext, executor
+from agent_framework import (
+    Executor,
+    InMemoryCheckpointStorage,
+    Workflow,
+    WorkflowBuilder,
+    WorkflowContext,
+    executor,
+    handler,
+)
 
 from agent_framework_ag_ui import AgentFrameworkWorkflow
 
@@ -16,13 +24,24 @@ async def _run(agent: AgentFrameworkWorkflow, payload: dict[str, Any]) -> list[A
     return [event async for event in agent.run(payload)]
 
 
+def _interrupts_from_finished(event: Any) -> list[dict[str, Any]]:
+    dumped = event.model_dump(by_alias=True, exclude_none=True)
+    assert "interrupt" not in dumped
+    outcome = dumped.get("outcome")
+    assert isinstance(outcome, dict)
+    assert outcome.get("type") == "interrupt"
+    interrupts = outcome.get("interrupts")
+    assert isinstance(interrupts, list)
+    return cast(list[dict[str, Any]], interrupts)
+
+
 async def test_workflow_wrapper_rejects_workflow_and_factory_at_once() -> None:
     """Workflow wrapper should reject ambiguous workflow source configuration."""
 
     @executor(id="start")
     async def start(message: Any, ctx: WorkflowContext) -> None:
         del message
-        await ctx.yield_output("ok")
+        await ctx.yield_output("ok")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     workflow = WorkflowBuilder(start_executor=start).build()
     with pytest.raises(ValueError, match="workflow_factory"):
@@ -52,9 +71,8 @@ async def test_workflow_wrapper_factory_is_thread_scoped() -> None:
             "messages": [{"role": "user", "content": "start"}],
         },
     )
-    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0].model_dump()
-    first_interrupt = first_finished.get("interrupt")
-    assert isinstance(first_interrupt, list)
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    first_interrupt = _interrupts_from_finished(first_finished)
     assert first_interrupt[0]["id"] == "choice"
     assert factory_calls["thread-a"] == 1
 
@@ -68,8 +86,10 @@ async def test_workflow_wrapper_factory_is_thread_scoped() -> None:
     )
     second_types = [event.type for event in second_events]
     assert "RUN_ERROR" not in second_types
-    second_finished = [event for event in second_events if event.type == "RUN_FINISHED"][0].model_dump()
-    assert "interrupt" not in second_finished
+    second_finished = [event for event in second_events if event.type == "RUN_FINISHED"][0].model_dump(
+        by_alias=True, exclude_none=True
+    )
+    assert "outcome" not in second_finished
     assert factory_calls["thread-a"] == 1
 
     third_events = await _run(
@@ -79,9 +99,8 @@ async def test_workflow_wrapper_factory_is_thread_scoped() -> None:
             "messages": [{"role": "user", "content": "start"}],
         },
     )
-    third_finished = [event for event in third_events if event.type == "RUN_FINISHED"][0].model_dump()
-    third_interrupt = third_finished.get("interrupt")
-    assert isinstance(third_interrupt, list)
+    third_finished = [event for event in third_events if event.type == "RUN_FINISHED"][0]
+    third_interrupt = _interrupts_from_finished(third_finished)
     assert third_interrupt[0]["id"] == "choice"
     assert factory_calls["thread-b"] == 1
 
@@ -110,3 +129,233 @@ async def test_workflow_wrapper_factory_return_type_is_validated() -> None:
 
     with pytest.raises(TypeError, match="workflow_factory must return a Workflow instance"):
         _ = [event async for event in agent.run({"thread_id": "thread-a", "messages": []})]
+
+
+# region checkpointing
+
+
+class _StartExecutor(Executor):
+    @handler
+    async def run(self, message: Any, ctx: WorkflowContext[str]) -> None:
+        del message
+        await ctx.send_message("hello", target_id="middle")
+
+
+class _MiddleExecutor(Executor):
+    @handler
+    async def process(self, message: str, ctx: WorkflowContext[str]) -> None:
+        await ctx.send_message(f"{message}-processed", target_id="finish")
+
+
+class _FinishExecutor(Executor):
+    @handler
+    async def finish(self, message: str, ctx: WorkflowContext[Any, str]) -> None:
+        await ctx.yield_output(f"{message}-done")
+
+
+def _build_multi_superstep_workflow(storage: InMemoryCheckpointStorage | None = None) -> Workflow:
+    """Build a start -> middle -> finish workflow that creates a checkpoint per superstep."""
+    start = _StartExecutor(id="start")
+    middle = _MiddleExecutor(id="middle")
+    finish = _FinishExecutor(id="finish")
+    builder = WorkflowBuilder(max_iterations=10, start_executor=start)
+    if storage is not None:
+        builder = WorkflowBuilder(max_iterations=10, start_executor=start, checkpoint_storage=storage)
+    return builder.add_edge(start, middle).add_edge(middle, finish).build()
+
+
+async def test_workflow_run_creates_checkpoints_via_constructor_storage() -> None:
+    """Configuring checkpoint_storage on the wrapper should create workflow checkpoints (parity with core)."""
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_multi_superstep_workflow()
+    agent = AgentFrameworkWorkflow(workflow=workflow, checkpoint_storage=storage)
+
+    events = await _run(
+        agent,
+        {"thread_id": "thread-cp", "messages": [{"role": "user", "content": "start"}]},
+    )
+
+    event_types = [event.type for event in events]
+    assert "RUN_STARTED" in event_types
+    assert "RUN_FINISHED" in event_types
+    assert "RUN_ERROR" not in event_types
+
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+    # One checkpoint per superstep boundary: at least the initial superstep plus follow-ups.
+    assert len(checkpoints) >= 2
+
+
+async def test_workflow_run_resumes_from_checkpoint_id() -> None:
+    """A checkpoint_id in the forwarded props should restore persisted state and finish the workflow."""
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_multi_superstep_workflow(storage)
+    agent = AgentFrameworkWorkflow(workflow=workflow, checkpoint_storage=storage)
+
+    # First run: execute to completion while checkpoints are written.
+    first_events = await _run(
+        agent,
+        {"thread_id": "thread-cp", "messages": [{"role": "user", "content": "start"}]},
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the run to create at least one checkpoint"
+    # Resume from the earliest checkpoint so middle -> finish replays and re-produces output.
+    resume_checkpoint_id = checkpoints[0].checkpoint_id
+
+    # Resume on the same thread (same underlying workflow instance) from the checkpoint.
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-cp",
+            "messages": [],
+            "forwarded_props": {"checkpoint_id": resume_checkpoint_id},
+        },
+    )
+
+    resumed_types = [event.type for event in resumed_events]
+    assert "RUN_STARTED" in resumed_types
+    assert "RUN_FINISHED" in resumed_types
+    assert "RUN_ERROR" not in resumed_types
+
+    # The resumed run should reproduce the final assistant output ("hello-processed-done").
+    resumed_text = "".join(
+        getattr(event, "delta", "") for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT"
+    )
+    assert "done" in resumed_text
+
+
+async def test_workflow_run_reads_checkpoint_id_from_camelcase_forwarded_props() -> None:
+    """A camelCase ``forwardedProps.checkpointId`` payload (wire format) should also resume."""
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_multi_superstep_workflow(storage)
+    agent = AgentFrameworkWorkflow(workflow=workflow, checkpoint_storage=storage)
+
+    first_events = await _run(
+        agent,
+        {"thread_id": "thread-cp-camel", "messages": [{"role": "user", "content": "start"}]},
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the run to create at least one checkpoint"
+
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-cp-camel",
+            "messages": [],
+            "forwardedProps": {"checkpointId": checkpoints[0].checkpoint_id},
+        },
+    )
+    resumed_types = [event.type for event in resumed_events]
+    assert "RUN_FINISHED" in resumed_types
+    assert "RUN_ERROR" not in resumed_types
+
+
+async def test_workflow_resume_without_checkpoint_storage_raises() -> None:
+    """Requesting a checkpoint resume without configured storage should fail loudly."""
+    workflow = _build_multi_superstep_workflow()
+    agent = AgentFrameworkWorkflow(workflow=workflow)
+
+    with pytest.raises(ValueError, match="requires checkpoint_storage"):
+        await _run(
+            agent,
+            {
+                "thread_id": "thread-cp-nostorage",
+                "messages": [],
+                "forwarded_props": {"checkpoint_id": "some-checkpoint"},
+            },
+        )
+
+
+async def test_workflow_run_without_checkpointing_is_unchanged() -> None:
+    """Existing run(input_data) calls keep working unchanged when no checkpoint args are given."""
+    workflow = _build_multi_superstep_workflow()
+    agent = AgentFrameworkWorkflow(workflow=workflow)
+
+    events = await _run(agent, {"thread_id": "thread-plain", "messages": [{"role": "user", "content": "start"}]})
+
+    event_types = [event.type for event in events]
+    assert "RUN_STARTED" in event_types
+    assert "RUN_FINISHED" in event_types
+    assert "RUN_ERROR" not in event_types
+
+
+async def test_workflow_checkpoint_only_resume_preserves_thread_snapshot() -> None:
+    """A checkpoint-only resume must keep the prior stored thread snapshot, not truncate it.
+
+    Regression test for a checkpoint-only resume (no new messages) silently replacing
+    the stored AG-UI Thread Snapshot with just the newly produced output, dropping the
+    earlier replayable transcript.
+    """
+    from agent_framework_ag_ui import InMemoryAGUIThreadSnapshotStore
+    from agent_framework_ag_ui._snapshots import _SNAPSHOT_SCOPE_INPUT_KEY, AGUIThreadSnapshot
+
+    storage = InMemoryCheckpointStorage()
+    workflow = _build_multi_superstep_workflow(storage)
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkWorkflow(workflow=workflow, snapshot_store=store, checkpoint_storage=storage)
+
+    # Prime the workflow so a checkpoint exists to resume from.
+    first_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-cp-snap",
+            "run_id": "run-1",
+            "messages": [{"id": "user-1", "role": "user", "content": "First question"}],
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the primed run to create at least one checkpoint"
+    # Resume from the earliest checkpoint so middle -> finish replays and re-produces output.
+    resume_checkpoint_id = checkpoints[0].checkpoint_id
+
+    # Stand in for a richer stored transcript: two prior replayable messages that a
+    # checkpoint-only resume must preserve alongside the resumed output.
+    await store.save(
+        scope="tenant-a",
+        thread_id="thread-cp-snap",
+        snapshot=AGUIThreadSnapshot(
+            messages=[
+                {"id": "user-1", "role": "user", "content": "First question"},
+                {"id": "assistant-1", "role": "assistant", "content": "Earlier reply"},
+            ],
+            state=None,
+            interrupt=None,
+        ),
+    )
+
+    # Checkpoint-only resume: no new messages, resume from the checkpoint.
+    resumed_events = await _run(
+        agent,
+        {
+            "thread_id": "thread-cp-snap",
+            "run_id": "run-2",
+            "messages": [],
+            "forwarded_props": {"checkpoint_id": resume_checkpoint_id},
+            _SNAPSHOT_SCOPE_INPUT_KEY: "tenant-a",
+        },
+    )
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+
+    snapshot = await store.get(scope="tenant-a", thread_id="thread-cp-snap")
+    assert snapshot is not None
+    contents = [message.get("content") for message in snapshot.messages]
+    # Prior transcript preserved...
+    assert "First question" in contents
+    assert "Earlier reply" in contents
+    # ...plus the newly produced output from the resumed run.
+    assert any(isinstance(content, str) and "done" in content for content in contents)

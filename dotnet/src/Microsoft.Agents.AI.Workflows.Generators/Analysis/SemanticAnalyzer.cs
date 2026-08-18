@@ -254,7 +254,7 @@ internal static class SemanticAnalyzer
 
     /// <summary>
     /// Combines ClassProtocolInfo results into an AnalysisResult for classes that only have IO attributes
-    /// (no [MessageHandler] methods). This generates only .SendsMessage/.YieldsMessage calls in the protocol
+    /// (no [MessageHandler] methods). This generates only .SendsMessage/.YieldsOutput calls in the protocol
     /// configuration.
     /// </summary>
     /// <remarks>
@@ -280,9 +280,8 @@ internal static class SemanticAnalyzer
         if (!first.DerivesFromExecutor)
         {
             allDiagnostics.Add(Diagnostic.Create(
-                DiagnosticDescriptors.NotAnExecutor,
+                DiagnosticDescriptors.ProtocolClassNotAnExecutor,
                 classLocation,
-                first.ClassName,
                 first.ClassName));
             return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
         }
@@ -290,7 +289,7 @@ internal static class SemanticAnalyzer
         if (!first.IsPartialClass)
         {
             allDiagnostics.Add(Diagnostic.Create(
-                DiagnosticDescriptors.ClassMustBePartial,
+                DiagnosticDescriptors.ProtocolClassMustBePartial,
                 classLocation,
                 first.ClassName));
             return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());

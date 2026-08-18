@@ -14,6 +14,10 @@ INTERNAL_SOURCE_PREFIX = "internal"
 # to pass kwargs from workflow.run() through to agent.run() and @tool functions.
 WORKFLOW_RUN_KWARGS_KEY = "_workflow_run_kwargs"
 
+# Sentinel key used in resolved invocation kwargs dicts to denote global kwargs
+# that apply to all executors (as opposed to per-executor keyed entries).
+GLOBAL_KWARGS_KEY = "__global__"
+
 
 def INTERNAL_SOURCE_ID(executor_id: str) -> str:
     """Generate an internal source ID for a given executor."""

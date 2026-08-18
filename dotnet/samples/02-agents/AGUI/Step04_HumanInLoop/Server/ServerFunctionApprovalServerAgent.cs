@@ -57,16 +57,10 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
             throw new InvalidOperationException("Invalid request_approval tool call");
         }
 
-        var request = toolCall.Arguments.TryGetValue("request", out var reqObj) &&
+        var request = (toolCall.Arguments.TryGetValue("request", out var reqObj) &&
             reqObj is JsonElement argsElement &&
             argsElement.Deserialize(jsonSerializerOptions.GetTypeInfo(typeof(ApprovalRequest))) is ApprovalRequest approvalRequest &&
-            approvalRequest != null ? approvalRequest : null;
-
-        if (request == null)
-        {
-            throw new InvalidOperationException("Failed to deserialize approval request from tool call");
-        }
-
+            approvalRequest != null ? approvalRequest : null) ?? throw new InvalidOperationException("Failed to deserialize approval request from tool call");
         return new ToolApprovalRequestContent(
             requestId: request.ApprovalId,
             new FunctionCallContent(
@@ -77,17 +71,11 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
 
     private static ToolApprovalResponseContent ConvertToolResultToApprovalResponse(FunctionResultContent result, ToolApprovalRequestContent approval, JsonSerializerOptions jsonSerializerOptions)
     {
-        var approvalResponse = result.Result is JsonElement je ?
+        var approvalResponse = (result.Result is JsonElement je ?
             (ApprovalResponse?)je.Deserialize(jsonSerializerOptions.GetTypeInfo(typeof(ApprovalResponse))) :
             result.Result is string str ?
                 (ApprovalResponse?)JsonSerializer.Deserialize(str, jsonSerializerOptions.GetTypeInfo(typeof(ApprovalResponse))) :
-                result.Result as ApprovalResponse;
-
-        if (approvalResponse == null)
-        {
-            throw new InvalidOperationException("Failed to deserialize approval response from tool result");
-        }
-
+                result.Result as ApprovalResponse) ?? throw new InvalidOperationException("Failed to deserialize approval response from tool result");
         return approval.CreateResponse(approvalResponse.Approved);
     }
 #pragma warning restore MEAI001
@@ -121,7 +109,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         // Track approval ID to original call ID mapping
         _ = new Dictionary<string, string>();
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-        Dictionary<string, ToolApprovalRequestContent> trackedRequestApprovalToolCalls = new(); // Remote approvals
+        Dictionary<string, ToolApprovalRequestContent> trackedRequestApprovalToolCalls = []; // Remote approvals
         for (int messageIndex = 0; messageIndex < messages.Count; messageIndex++)
         {
             var message = messages[messageIndex];
@@ -146,7 +134,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
                     });
                 }
                 else if (content is FunctionResultContent toolResult &&
-                    trackedRequestApprovalToolCalls.TryGetValue(toolResult.CallId, out var approval) == true)
+                    trackedRequestApprovalToolCalls.TryGetValue(toolResult.CallId, out var approval))
                 {
                     result ??= CopyMessagesUpToIndex(messages, messageIndex);
                     transformedContents ??= CopyContentsUpToIndex(message.Contents, j);
@@ -161,9 +149,9 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
                         AdditionalProperties = message.AdditionalProperties
                     });
                 }
-                else if (result != null)
+                else
                 {
-                    result.Add(message);
+                    result?.Add(message);
                 }
             }
         }

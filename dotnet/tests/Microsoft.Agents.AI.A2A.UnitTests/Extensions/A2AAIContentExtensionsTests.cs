@@ -42,14 +42,14 @@ public sealed class A2AAIContentExtensionsTests
         Assert.NotNull(result);
         Assert.Equal(3, result.Count);
 
-        var firstTextPart = Assert.IsType<TextPart>(result[0]);
-        Assert.Equal("First text", firstTextPart.Text);
+        Assert.Equal(PartContentCase.Text, result[0].ContentCase);
+        Assert.Equal("First text", result[0].Text);
 
-        var filePart = Assert.IsType<FilePart>(result[1]);
-        Assert.Equal("https://example.com/file1.txt", filePart.File.Uri?.ToString());
+        Assert.Equal(PartContentCase.Url, result[1].ContentCase);
+        Assert.Equal("https://example.com/file1.txt", result[1].Url);
 
-        var secondTextPart = Assert.IsType<TextPart>(result[2]);
-        Assert.Equal("Second text", secondTextPart.Text);
+        Assert.Equal(PartContentCase.Text, result[2].ContentCase);
+        Assert.Equal("Second text", result[2].Text);
     }
 
     [Fact]
@@ -72,14 +72,14 @@ public sealed class A2AAIContentExtensionsTests
         Assert.NotNull(result);
         Assert.Equal(3, result.Count);
 
-        var firstTextPart = Assert.IsType<TextPart>(result[0]);
-        Assert.Equal("First text", firstTextPart.Text);
+        Assert.Equal(PartContentCase.Text, result[0].ContentCase);
+        Assert.Equal("First text", result[0].Text);
 
-        var filePart = Assert.IsType<FilePart>(result[1]);
-        Assert.Equal("https://example.com/file.txt", filePart.File.Uri?.ToString());
+        Assert.Equal(PartContentCase.Url, result[1].ContentCase);
+        Assert.Equal("https://example.com/file.txt", result[1].Url);
 
-        var secondTextPart = Assert.IsType<TextPart>(result[2]);
-        Assert.Equal("Second text", secondTextPart.Text);
+        Assert.Equal(PartContentCase.Text, result[2].ContentCase);
+        Assert.Equal("Second text", result[2].Text);
     }
 
     // Mock class for testing unsupported scenarios

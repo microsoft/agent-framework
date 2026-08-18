@@ -105,7 +105,7 @@ public static class OpenAIResponseClientExtensions
     /// This corresponds to setting the "store" property in the JSON representation to false.
     /// </remarks>
     /// <param name="responseClient">The client.</param>
-    /// <param name="model">Optional default model ID to use for requests. Required when using a plain <see cref="ResponsesClient"/> (not via Azure OpenAI).</param>
+    /// <param name="model">Optional default model ID to use for requests.</param>
     /// <param name="includeReasoningEncryptedContent">
     /// Includes an encrypted version of reasoning tokens in reasoning item outputs.
     /// This enables reasoning items to be used in multi-turn conversations when using the Responses API statelessly
@@ -120,9 +120,24 @@ public static class OpenAIResponseClientExtensions
         return Throw.IfNull(responseClient)
             .AsIChatClient(model)
             .AsBuilder()
-            .ConfigureOptions(x => x.RawRepresentationFactory = _ => includeReasoningEncryptedContent
-                ? new CreateResponseOptions() { StoredOutputEnabled = false, IncludedProperties = { IncludedResponseProperty.ReasoningEncryptedContent } }
-                : new CreateResponseOptions() { StoredOutputEnabled = false })
+            .ConfigureOptions(x =>
+            {
+                var previousFactory = x.RawRepresentationFactory;
+                x.RawRepresentationFactory = state =>
+                {
+                    var responseOptions = previousFactory?.Invoke(state) as CreateResponseOptions ?? new CreateResponseOptions();
+
+                    responseOptions.StoredOutputEnabled = false;
+
+                    if (includeReasoningEncryptedContent &&
+                        !responseOptions.IncludedProperties.Contains(IncludedResponseProperty.ReasoningEncryptedContent))
+                    {
+                        responseOptions.IncludedProperties.Add(IncludedResponseProperty.ReasoningEncryptedContent);
+                    }
+
+                    return responseOptions;
+                };
+            })
             .Build();
     }
 }

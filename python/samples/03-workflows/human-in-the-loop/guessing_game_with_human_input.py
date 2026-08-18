@@ -4,8 +4,10 @@ import asyncio
 import os
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
+from typing import Any
 
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponseUpdate,
@@ -17,7 +19,8 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -42,8 +45,8 @@ Demonstrate:
 - Driving the loop in application code with run and responses parameter.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 """
@@ -90,7 +93,7 @@ class TurnManager(Executor):
         - Input is a simple starter token (ignored here).
         - Output is an AgentExecutorRequest that triggers the agent to produce a guess.
         """
-        user = Message("user", text="Start by making your first guess.")
+        user = Message("user", contents=["Start by making your first guess."])
         await ctx.send_message(AgentExecutorRequest(messages=[user], should_respond=True))
 
     @handler
@@ -149,7 +152,7 @@ class TurnManager(Executor):
             f"Feedback: {reply}. Your last guess was {last_guess}. "
             f"Use this feedback to adjust and make your next guess (1-10)."
         )
-        user_msg = Message("user", text=feedback_text)
+        user_msg = Message("user", contents=[feedback_text])
         await ctx.send_message(AgentExecutorRequest(messages=[user_msg], should_respond=True))
 
 
@@ -196,11 +199,12 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 async def main() -> None:
     """Run the human-in-the-loop guessing game workflow."""
     # Create agent and executor
-    guessing_agent = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    guessing_agent = Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name="GuessingAgent",
         instructions=(
             "You guess a number between 1 and 10. "
@@ -209,7 +213,7 @@ async def main() -> None:
             "No explanations or additional text."
         ),
         # response_format enforces that the model produces JSON compatible with GuessOutput.
-        default_options={"response_format": GuessOutput},
+        default_options=OpenAIChatOptions[Any](response_format=GuessOutput),
     )
     turn_manager = TurnManager(id="turn_manager")
 

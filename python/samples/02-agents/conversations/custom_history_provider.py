@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import Any
 
-from agent_framework import AgentSession, BaseHistoryProvider, Message
+from agent_framework import Agent, AgentSession, HistoryProvider, Message
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
@@ -20,7 +20,7 @@ preferred storage solution (database, file system, etc.).
 """
 
 
-class CustomHistoryProvider(BaseHistoryProvider):
+class CustomHistoryProvider(HistoryProvider):
     """Implementation of custom history provider.
     In real applications, this can be an implementation of relational database or vector store."""
 
@@ -54,7 +54,8 @@ async def main() -> None:
 
     # OpenAI Chat Client is used as an example here,
     # other chat clients can be used as well.
-    agent = OpenAIChatClient().as_agent(
+    agent = Agent(
+        client=OpenAIChatClient(),
         name="CustomBot",
         instructions="You are a helpful assistant that remembers our conversation.",
         # Use custom history provider.

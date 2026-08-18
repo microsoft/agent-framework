@@ -6,7 +6,7 @@ This sample demonstrates an agent with function tools responding to user queries
 
 The workflow showcases:
 - **Function Tools**: Agent equipped with tools to query menu data
-- **Real Azure OpenAI Agent**: Uses `AzureOpenAIResponsesClient` to create an agent with tools
+- **Real Foundry-backed agent**: Uses `FoundryChatClient` to create an agent with tools
 - **Agent Registration**: Shows how to register agents with the `WorkflowFactory`
 
 ## Tools
@@ -37,7 +37,7 @@ Drinks:
 
 ## Prerequisites
 
-- Azure OpenAI configured with required environment variables
+- Microsoft Foundry configured with required environment variables
 - Authentication via azure-identity (run `az login` before executing)
 
 ## Usage
@@ -65,16 +65,16 @@ Session Complete
 
 ## How It Works
 
-1. Create an Azure OpenAI chat client
+1. Create a Foundry chat client
 2. Create an agent with instructions and function tools
 3. Register the agent with the workflow factory
 4. Load the workflow YAML and run it with `run()` and `stream=True`
 
 ```python
 # Create the agent with tools
-client = AzureOpenAIResponsesClient(
-    project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-    deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ["FOUNDRY_MODEL"],
     credential=AzureCliCredential(),
 )
 menu_agent = client.as_agent(

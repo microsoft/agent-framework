@@ -77,7 +77,7 @@ Without this adapter, the workflow would fail because the agent cannot accept ra
 - An Azure OpenAI endpoint and deployment
 - Set the following environment variables:
   - `AZURE_OPENAI_ENDPOINT` - Your Azure OpenAI endpoint URL
-  - `AZURE_OPENAI_DEPLOYMENT_NAME` - Your chat completion deployment name (defaults to "gpt-4o-mini")
+  - `AZURE_OPENAI_DEPLOYMENT_NAME` - Your chat completion deployment name (defaults to "gpt-5.4-mini")
 
 ## Running the Sample
 

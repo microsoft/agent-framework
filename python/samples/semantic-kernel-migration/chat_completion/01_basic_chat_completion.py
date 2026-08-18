@@ -1,6 +1,8 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "agent-framework-openai",
+#     "python-dotenv",
 #     "semantic-kernel",
 # ]
 # ///
@@ -17,6 +19,7 @@ model of choice before running.
 
 import asyncio
 
+from agent_framework import Agent
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -44,7 +47,8 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
 
     # AF constructs a lightweight Agent backed by OpenAIChatClient.
-    chat_agent = OpenAIChatClient().as_agent(
+    chat_agent = Agent(
+        client=OpenAIChatClient(),
         name="Support",
         instructions="Answer in one sentence.",
     )

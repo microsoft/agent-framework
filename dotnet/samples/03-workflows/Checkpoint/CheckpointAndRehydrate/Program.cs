@@ -37,26 +37,41 @@ public static class Program
 
         await foreach (WorkflowEvent evt in checkpointedRun.WatchStreamAsync())
         {
-            if (evt is ExecutorCompletedEvent executorCompletedEvt)
+            switch (evt)
             {
-                Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
-            }
+                case ExecutorCompletedEvent executorCompletedEvt:
+                    Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
+                    break;
 
-            if (evt is SuperStepCompletedEvent superStepCompletedEvt)
-            {
-                // Checkpoints are automatically created at the end of each super step when a
-                // checkpoint manager is provided. You can store the checkpoint info for later use.
-                CheckpointInfo? checkpoint = superStepCompletedEvt.CompletionInfo!.Checkpoint;
-                if (checkpoint is not null)
+                case SuperStepCompletedEvent superStepCompletedEvt:
                 {
-                    checkpoints.Add(checkpoint);
-                    Console.WriteLine($"** Checkpoint created at step {checkpoints.Count}.");
-                }
-            }
+                    // Checkpoints are automatically created at the end of each super step when a
+                    // checkpoint manager is provided. You can store the checkpoint info for later use.
+                    CheckpointInfo? checkpoint = superStepCompletedEvt.CompletionInfo!.Checkpoint;
+                    if (checkpoint is not null)
+                    {
+                        checkpoints.Add(checkpoint);
+                        Console.WriteLine($"** Checkpoint created at step {checkpoints.Count}.");
+                    }
 
-            if (evt is WorkflowOutputEvent outputEvent)
-            {
-                Console.WriteLine($"Workflow completed with result: {outputEvent.Data}");
+                    break;
+                }
+
+                case WorkflowOutputEvent outputEvent:
+                    Console.WriteLine($"Workflow completed with result: {outputEvent.Data}");
+                    break;
+
+                case WorkflowErrorEvent workflowError:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                    Console.ResetColor();
+                    break;
+
+                case ExecutorFailedEvent executorFailed:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                    Console.ResetColor();
+                    break;
             }
         }
 
@@ -66,7 +81,12 @@ public static class Program
         }
         Console.WriteLine($"Number of checkpoints created: {checkpoints.Count}");
 
-        // Rehydrate a new workflow instance from a saved checkpoint and continue execution
+        // <rehydrate_workflow>
+        // A rehydrated workflow must preserve the topology and executor identities of the workflow that
+        // created the checkpoint. This executor-only workflow rebuilds identically because its executors
+        // use fixed ids. Agent-based workflows must recreate each local agent with the same
+        // ChatClientAgentOptions.Id (and, if set, the same Name), otherwise the executor ids no longer
+        // match the checkpoint and resume fails.
         var newWorkflow = WorkflowFactory.BuildWorkflow();
         const int CheckpointIndex = 5;
         Console.WriteLine($"\n\nHydrating a new workflow instance from the {CheckpointIndex + 1}th checkpoint.");
@@ -74,17 +94,31 @@ public static class Program
 
         await using StreamingRun newCheckpointedRun =
             await InProcessExecution.ResumeStreamingAsync(newWorkflow, savedCheckpoint, checkpointManager);
+        // </rehydrate_workflow>
 
         await foreach (WorkflowEvent evt in newCheckpointedRun.WatchStreamAsync())
         {
-            if (evt is ExecutorCompletedEvent executorCompletedEvt)
+            switch (evt)
             {
-                Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
-            }
+                case ExecutorCompletedEvent executorCompletedEvt:
+                    Console.WriteLine($"* Executor {executorCompletedEvt.ExecutorId} completed.");
+                    break;
 
-            if (evt is WorkflowOutputEvent workflowOutputEvt)
-            {
-                Console.WriteLine($"Workflow completed with result: {workflowOutputEvt.Data}");
+                case WorkflowOutputEvent workflowOutputEvt:
+                    Console.WriteLine($"Workflow completed with result: {workflowOutputEvt.Data}");
+                    break;
+
+                case WorkflowErrorEvent workflowError:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine(workflowError.Exception?.ToString() ?? "Unknown workflow error occurred.");
+                    Console.ResetColor();
+                    break;
+
+                case ExecutorFailedEvent executorFailed:
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine($"Executor '{executorFailed.ExecutorId}' failed with {(executorFailed.Data == null ? "unknown error" : $"exception {executorFailed.Data}")}.");
+                    Console.ResetColor();
+                    break;
             }
         }
     }

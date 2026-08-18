@@ -22,12 +22,11 @@ def generate_report(results: list[RunResult]) -> Report:
     Returns:
         Report object with aggregated statistics
     """
-    # Sort results: failures, timeouts, errors first, then successes
+    # Sort results: failures, missing setup first, then successes
     status_priority = {
         RunStatus.FAILURE: 0,
-        RunStatus.TIMEOUT: 1,
-        RunStatus.ERROR: 2,
-        RunStatus.SUCCESS: 3,
+        RunStatus.MISSING_SETUP: 1,
+        RunStatus.SUCCESS: 2,
     }
     sorted_results = sorted(results, key=lambda r: status_priority[r.status])
 
@@ -36,8 +35,7 @@ def generate_report(results: list[RunResult]) -> Report:
         total_samples=len(results),
         success_count=sum(1 for r in results if r.status == RunStatus.SUCCESS),
         failure_count=sum(1 for r in results if r.status == RunStatus.FAILURE),
-        timeout_count=sum(1 for r in results if r.status == RunStatus.TIMEOUT),
-        error_count=sum(1 for r in results if r.status == RunStatus.ERROR),
+        missing_setup_count=sum(1 for r in results if r.status == RunStatus.MISSING_SETUP),
         results=sorted_results,
     )
 
@@ -86,8 +84,7 @@ def print_summary(report: Report) -> None:
 
     if (
         report.failure_count == 0
-        and report.timeout_count == 0
-        and report.error_count == 0
+        and report.missing_setup_count == 0
     ):
         print("[PASS] ALL SAMPLES PASSED!")
     else:
@@ -98,8 +95,7 @@ def print_summary(report: Report) -> None:
     print("Results:")
     print(f"  [PASS] Success: {report.success_count}")
     print(f"  [FAIL] Failure: {report.failure_count}")
-    print(f"  [TIMEOUT] Timeout: {report.timeout_count}")
-    print(f"  [ERR] Errors: {report.error_count}")
+    print(f"  [MISSING_SETUP] Missing Setup: {report.missing_setup_count}")
     print("=" * 80)
 
     # Print JSON output for GitHub Actions visibility

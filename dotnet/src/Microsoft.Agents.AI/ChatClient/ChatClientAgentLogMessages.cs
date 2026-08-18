@@ -69,4 +69,32 @@ internal static partial class ChatClientAgentLogMessages
         string chatHistoryProviderName,
         string agentId,
         string agentName);
+
+    /// <summary>
+    /// Logs a warning when <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="true"/>
+    /// and <see cref="ChatClientAgentOptions.RequirePerServiceCallChatHistoryPersistence"/> is <see langword="true"/>,
+    /// but no <see cref="PerServiceCallChatHistoryPersistingChatClient"/> is found in the custom chat client stack.
+    /// </summary>
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Agent {AgentId}/{AgentName}: RequirePerServiceCallChatHistoryPersistence is enabled with a custom chat client stack (UseProvidedChatClientAsIs), but no PerServiceCallChatHistoryPersistingChatClient was found in the pipeline. Chat history will not be persisted by ChatClientAgent. Consider adding a PerServiceCallChatHistoryPersistingChatClient to the pipeline using the UsePerServiceCallChatHistoryPersistence extension method if you have not added your own persistence mechanism.")]
+    public static partial void LogAgentChatClientMissingPersistingClient(
+        this ILogger logger,
+        string agentId,
+        string agentName);
+
+    /// <summary>
+    /// Logs a warning when per-service-call persistence falls back to end-of-run persistence
+    /// because the run involves background responses (continuation token resumption or
+    /// <c>AllowBackgroundResponses</c>). Per-service-call persistence is
+    /// unreliable in these scenarios because the caller may stop consuming the stream before
+    /// the decorator's post-stream persistence code can execute.
+    /// </summary>
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Agent {AgentId}/{AgentName}: RequirePerServiceCallChatHistoryPersistence is enabled but we have to fall back to end-of-run persistence because the run involves background responses.")]
+    public static partial void LogAgentChatClientBackgroundResponseFallback(
+        this ILogger logger,
+        string agentId,
+        string agentName);
 }

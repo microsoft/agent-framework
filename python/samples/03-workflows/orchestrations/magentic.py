@@ -12,8 +12,9 @@ from agent_framework import (
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import GroupChatRequestSentEvent, MagenticBuilder, MagenticProgressLedger
+from agent_framework_orchestrations import MagenticOrchestrator
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -42,8 +43,8 @@ energy efficiency and CO2 emissions of several ML models, streams intermediate
 events, and prints the final answer. The workflow completes when idle.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
@@ -52,9 +53,9 @@ load_dotenv()
 
 
 async def main() -> None:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -88,11 +89,12 @@ async def main() -> None:
 
     print("\nBuilding Magentic Workflow...")
 
-    # intermediate_outputs=True: Enable intermediate outputs to observe the conversation as it unfolds
-    # (Intermediate outputs will be emitted as WorkflowOutputEvent events)
+    # Mark participant responses as intermediate so the stream shows the
+    # conversation as it unfolds while the manager's final answer remains the
+    # terminal workflow output.
     workflow = MagenticBuilder(
         participants=[researcher_agent, coder_agent],
-        intermediate_outputs=True,
+        intermediate_output_from=[researcher_agent, coder_agent],
         manager_agent=manager_agent,
         max_round_count=10,
         max_stall_count=3,
@@ -112,17 +114,21 @@ async def main() -> None:
     print("\nStarting workflow execution...")
 
     # Keep track of the last executor to format output nicely in streaming mode
-    last_response_id: str | None = None
+    last_message_id: str | None = None
     output_event: WorkflowEvent | None = None
     async for event in workflow.run(task, stream=True):
-        if event.type == "output" and isinstance(event.data, AgentResponseUpdate):
-            response_id = event.data.response_id
-            if response_id != last_response_id:
-                if last_response_id is not None:
-                    print("\n")
-                print(f"- {event.executor_id}:", end=" ", flush=True)
-                last_response_id = response_id
-            print(event.data, end="", flush=True)
+        if event.type in ("intermediate", "output"):
+            if event.executor_id == MagenticOrchestrator.MANAGER_NAME:
+                output_event = event
+            else:
+                event_data = cast(AgentResponseUpdate, event.data)
+                message_id = event_data.message_id
+                if message_id != last_message_id:
+                    if last_message_id is not None:
+                        print("\n")
+                    print(f"- {event.executor_id}:", end=" ", flush=True)
+                    last_message_id = message_id
+                print(event_data, end="", flush=True)
 
         elif event.type == "magentic_orchestrator":
             print(f"\n[Magentic Orchestrator Event] Type: {event.data.event_type.name}")
@@ -136,21 +142,20 @@ async def main() -> None:
             # Block to allow user to read the plan/progress before continuing
             # Note: this is for demonstration only and is not the recommended way to handle human interaction.
             # Please refer to `with_plan_review` for proper human interaction during planning phases.
-            await asyncio.get_event_loop().run_in_executor(None, input, "Press Enter to continue...")
+            # await asyncio.get_event_loop().run_in_executor(None, input, "Press Enter to continue...")
 
         elif event.type == "group_chat" and isinstance(event.data, GroupChatRequestSentEvent):
             print(f"\n[REQUEST SENT ({event.data.round_index})] to agent: {event.data.participant_name}")
 
-        elif event.type == "output":
-            output_event = event
+    if not output_event:
+        raise RuntimeError("Workflow did not produce a final output event.")
 
-    if output_event:
-        # The output of the magentic workflow is a collection of chat messages from all participants
-        outputs = cast(list[Message], output_event.data)
-        print("\n" + "=" * 80)
-        print("\nFinal Conversation Transcript:\n")
-        for message in outputs:
-            print(f"{message.author_name or message.role}: {message.text}\n")
+    print("\n\nWorkflow completed!")
+    print("Final Output:")
+    # The output of the Magentic workflow is an AgentResponse or AgentResponseUpdate,
+    # which contains the final message text.
+    output_message = cast(AgentResponseUpdate, output_event.data)
+    print(output_message.text)
 
 
 if __name__ == "__main__":

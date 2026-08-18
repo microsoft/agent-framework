@@ -39,14 +39,16 @@ internal abstract record ChatCompletionRequestMessage
     /// <exception cref="InvalidOperationException">Thrown when the content is neither text nor AI contents.</exception>
     public virtual ChatMessage ToChatMessage()
     {
+        var role = new ChatRole(this.Role);
+
         if (this.Content.IsText)
         {
-            return new(ChatRole.User, this.Content.Text);
+            return new(role, this.Content.Text);
         }
         else if (this.Content.IsContents)
         {
             var aiContents = this.Content.Contents.Select(MessageContentPartConverter.ToAIContent).Where(c => c is not null).ToList();
-            return new ChatMessage(ChatRole.User, aiContents!);
+            return new ChatMessage(role, aiContents!);
         }
 
         throw new InvalidOperationException("MessageContent has no value");
@@ -165,9 +167,11 @@ internal sealed record FunctionMessage : ChatCompletionRequestMessage
     /// <exception cref="InvalidOperationException">Thrown when the content is not text.</exception>
     public override ChatMessage ToChatMessage()
     {
+        var role = new ChatRole(this.Role);
+
         if (this.Content.IsText)
         {
-            return new(ChatRole.User, this.Content.Text);
+            return new(role, this.Content.Text);
         }
 
         throw new InvalidOperationException("FunctionMessage Content must be text");

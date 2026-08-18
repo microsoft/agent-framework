@@ -529,6 +529,18 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);
     }
 
+    protected override void Visit(HttpRequestAction item)
+    {
+        this.Trace(item);
+
+        if (this._workflowOptions.HttpRequestHandler is null)
+        {
+            throw new DeclarativeModelException("HTTP request handler not configured. Set HttpRequestHandler in DeclarativeWorkflowOptions to use HttpRequestAction actions.");
+        }
+
+        this.ContinueWith(new HttpRequestExecutor(item, this._workflowOptions.HttpRequestHandler, this._workflowOptions.AgentProvider, this._workflowState));
+    }
+
     #region Not supported
 
     protected override void Visit(AnswerQuestionWithAI item) => this.NotSupported(item);
@@ -572,8 +584,6 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
     protected override void Visit(EmitEvent item) => this.NotSupported(item);
 
     protected override void Visit(GetConversationMembers item) => this.NotSupported(item);
-
-    protected override void Visit(HttpRequestAction item) => this.NotSupported(item);
 
     protected override void Visit(RecognizeIntent item) => this.NotSupported(item);
 

@@ -1,0 +1,15 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: my_workflow
+  actions:
+
+    - kind: HttpRequestAction
+      id: http_request
+      method: GET
+      url: =Concatenate("https://api.example.test/items/", System.LastMessageText)
+      headers:
+        Accept: application/json
+      response: Local.HttpResult
+      responseHeaders: Local.HttpHeaders

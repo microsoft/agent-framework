@@ -1,16 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import os
 from typing import Any
 
-from agent_framework import AgentSession, BaseContextProvider, SessionContext
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, AgentSession, ContextProvider, SessionContext
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 """
 Agent Memory with Context Providers and Session State
@@ -18,15 +13,11 @@ Agent Memory with Context Providers and Session State
 Context providers inject dynamic context into each agent call. This sample
 shows a provider that stores the user's name in session state and personalizes
 responses — the name persists across turns via the session.
-
-Environment variables:
-  AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
-  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
 """
 
 
 # <context_provider>
-class UserMemoryProvider(BaseContextProvider):
+class UserMemoryProvider(ContextProvider):
     """A context provider that remembers user info in session state."""
 
     DEFAULT_SOURCE_ID = "user_memory"
@@ -68,19 +59,21 @@ class UserMemoryProvider(BaseContextProvider):
             text = msg.text if hasattr(msg, "text") else ""
             if isinstance(text, str) and "my name is" in text.lower():
                 state["user_name"] = text.lower().split("my name is")[-1].strip().split()[0].capitalize()
+
+
 # </context_provider>
 
 
 async def main() -> None:
     # <create_agent>
-    credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        credential=credential,
+    client = FoundryChatClient(
+        project_endpoint="https://your-project.services.ai.azure.com",
+        model="gpt-4o",
+        credential=AzureCliCredential(),
     )
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="MemoryAgent",
         instructions="You are a friendly assistant.",
         context_providers=[UserMemoryProvider()],

@@ -24,7 +24,7 @@ class _WeatherArgs(BaseModel):
 def _build_client() -> BedrockChatClient:
     fake_runtime = MagicMock()
     fake_runtime.converse.return_value = {}
-    return BedrockChatClient(model_id="test-model", client=fake_runtime)
+    return BedrockChatClient(model="test-model", client=fake_runtime)
 
 
 def _dummy_weather(location: str) -> str:  # pragma: no cover - helper
@@ -33,10 +33,10 @@ def _dummy_weather(location: str) -> str:  # pragma: no cover - helper
 
 def test_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BEDROCK_REGION", "us-west-2")
-    monkeypatch.setenv("BEDROCK_CHAT_MODEL_ID", "anthropic.claude-v2")
+    monkeypatch.setenv("BEDROCK_CHAT_MODEL", "anthropic.claude-v2")
     settings = load_settings(BedrockSettings, env_prefix="BEDROCK_")
     assert settings["region"] == "us-west-2"
-    assert settings["chat_model_id"] == "anthropic.claude-v2"
+    assert settings["chat_model"] == "anthropic.claude-v2"
 
 
 def test_build_request_includes_tool_config() -> None:
@@ -105,6 +105,12 @@ def test_process_response_parses_tool_use_and_result() -> None:
     assert contents[0].name == "get_weather"
     assert contents[1].type == "text"
     assert chat_response.finish_reason == client._map_finish_reason("tool_use")
+
+
+def test_map_finish_reason_maps_guardrail_intervention() -> None:
+    client = _build_client()
+
+    assert client._map_finish_reason("guardrail_intervened") == "content_filter"
 
 
 def test_process_response_parses_tool_result() -> None:

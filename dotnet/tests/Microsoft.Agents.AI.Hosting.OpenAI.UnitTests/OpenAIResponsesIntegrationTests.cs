@@ -5,6 +5,7 @@ using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -1247,6 +1248,52 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         Assert.Equal(ChatRole.User, mockChatClient.CallHistory[1][0].Role);
         Assert.Equal(ChatRole.Assistant, mockChatClient.CallHistory[1][1].Role);
         Assert.Equal(ChatRole.User, mockChatClient.CallHistory[1][2].Role);
+    }
+
+    /// <summary>
+    /// Verifies that creating a response against a conversation id that does not exist returns
+    /// HTTP 404 with an error body matching the OpenAI Responses API (type "invalid_request_error",
+    /// null code), rather than surfacing as a server error during execution. Covers both the
+    /// non-streaming and streaming request forms, which OpenAI both reject with a 404 before any
+    /// response is produced.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateResponse_WithNonexistentConversation_ReturnsNotFoundAsync(bool stream)
+    {
+        // Arrange
+        const string AgentName = "notfound-agent";
+        const string Instructions = "You are a helpful assistant.";
+        const string ConversationId = "conv_does_not_exist";
+
+        this._httpClient = await this.CreateTestServerWithConversationsAsync(AgentName, Instructions);
+
+        var requestBody = new
+        {
+            input = "Test",
+            agent = new { name = AgentName },
+            conversation = ConversationId,
+            stream
+        };
+        string requestJson = System.Text.Json.JsonSerializer.Serialize(requestBody);
+        using StringContent content = new(requestJson, Encoding.UTF8, "application/json");
+
+        // Act
+        HttpResponseMessage httpResponse = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative), content);
+
+        // Assert - 404 with the OpenAI-shaped error body (application/json, not an SSE stream)
+        Assert.Equal(HttpStatusCode.NotFound, httpResponse.StatusCode);
+        Assert.Equal("application/json", httpResponse.Content.Headers.ContentType?.MediaType);
+
+        string responseJson = await httpResponse.Content.ReadAsStringAsync();
+        using var doc = System.Text.Json.JsonDocument.Parse(responseJson);
+        var error = doc.RootElement.GetProperty("error");
+        Assert.Equal("invalid_request_error", error.GetProperty("type").GetString());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, error.GetProperty("code").ValueKind);
+        Assert.Contains(ConversationId, error.GetProperty("message").GetString());
+        Assert.Contains("not found", error.GetProperty("message").GetString());
     }
 
     private async Task<HttpResponseMessage> SendRawResponseAsync(

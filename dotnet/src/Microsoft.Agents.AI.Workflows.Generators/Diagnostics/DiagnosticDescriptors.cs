@@ -104,4 +104,26 @@ internal static class DiagnosticDescriptors
         category: Category,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true));
+
+    /// <summary>
+    /// MAFGENWF008: Executor with protocol attributes must be partial.
+    /// </summary>
+    public static readonly DiagnosticDescriptor ProtocolClassMustBePartial = Register(new(
+        id: "MAFGENWF008",
+        title: "Executor with protocol attributes must be partial",
+        messageFormat: "Class '{0}' uses [SendsMessage] or [YieldsOutput] but is not declared as partial",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true));
+
+    /// <summary>
+    /// MAFGENWF009: Protocol attributes on non-Executor class.
+    /// </summary>
+    public static readonly DiagnosticDescriptor ProtocolClassNotAnExecutor = Register(new(
+        id: "MAFGENWF009",
+        title: "Protocol attributes on non-Executor class",
+        messageFormat: "Class '{0}' uses [SendsMessage] or [YieldsOutput] but does not derive from Executor",
+        category: Category,
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true));
 }

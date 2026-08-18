@@ -69,4 +69,23 @@ public class RoundRobinGroupChatManager : GroupChatManager
         base.Reset();
         this._nextIndex = 0;
     }
+
+    /// <inheritdoc />
+    protected override ValueTask OnCheckpointingAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+        => context.QueueStateUpdateAsync(StateKey, new RoundRobinGroupChatManagerState(this._nextIndex), cancellationToken: cancellationToken);
+
+    /// <inheritdoc />
+    protected override async ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        RoundRobinGroupChatManagerState? state = await context.ReadStateAsync<RoundRobinGroupChatManagerState>(StateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
+        this._nextIndex = state?.NextIndex ?? 0;
+        if (this._nextIndex < 0 || this._nextIndex >= this._agents.Count)
+        {
+            this._nextIndex = 0;
+        }
+    }
+
+    private const string StateKey = "next_index";
 }
+
+internal sealed record RoundRobinGroupChatManagerState(int NextIndex);

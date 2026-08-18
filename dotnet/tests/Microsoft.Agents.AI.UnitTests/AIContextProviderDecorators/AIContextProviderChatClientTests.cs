@@ -250,6 +250,129 @@ public class AIContextProviderChatClientTests
 
     #endregion
 
+    #region Shared Options Tests
+
+    [Fact]
+    public async Task GetResponseAsync_SharedOptions_ProviderToolsDoNotAccumulateAcrossCallsAsync()
+    {
+        // Arrange: track tool count seen by the inner client on each call
+        var toolCountsSeenByInner = new List<int>();
+
+        var innerClient = CreateMockChatClient(
+            onGetResponse: (_, options, _) =>
+            {
+                toolCountsSeenByInner.Add(options?.Tools?.Count ?? 0);
+                return Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "Response")]));
+            });
+
+        var provider = new TestAIContextProvider("key1", provideTools: [new TestAITool()]);
+        var chatClient = new AIContextProviderChatClient(innerClient, [provider]);
+
+        var sharedOptions = new ChatOptions
+        {
+            Tools = new List<AITool> { new TestAITool() }
+        };
+
+        // Act: make 3 calls reusing the same ChatOptions
+        for (int i = 0; i < 3; i++)
+        {
+            await RunWithAgentContextAsync(chatClient, sharedOptions);
+        }
+
+        // Assert: each call should see exactly 2 tools (1 baseline + 1 injected)
+        Assert.Equal(3, toolCountsSeenByInner.Count);
+        Assert.All(toolCountsSeenByInner, count => Assert.Equal(2, count));
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_SharedOptions_OriginalToolsNotMutatedAsync()
+    {
+        // Arrange
+        var innerClient = CreateMockChatClient(
+            onGetResponse: (_, _, _) =>
+                Task.FromResult(new ChatResponse([new ChatMessage(ChatRole.Assistant, "Response")])));
+
+        var provider = new TestAIContextProvider("key1", provideTools: [new TestAITool()]);
+        var chatClient = new AIContextProviderChatClient(innerClient, [provider]);
+
+        var baselineTool = new TestAITool();
+        var originalTools = new List<AITool> { baselineTool };
+        var sharedOptions = new ChatOptions
+        {
+            Tools = originalTools
+        };
+
+        // Act
+        await RunWithAgentContextAsync(chatClient, sharedOptions);
+
+        // Assert: the original list should still contain only the baseline tool
+        Assert.Single(originalTools);
+        Assert.Same(baselineTool, originalTools[0]);
+        Assert.Same(originalTools, sharedOptions.Tools);
+        Assert.Same(baselineTool, originalTools[0]);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_SharedOptions_ProviderToolsDoNotAccumulateAcrossCallsAsync()
+    {
+        // Arrange
+        var toolCountsSeenByInner = new List<int>();
+
+        var innerClient = CreateMockStreamingChatClient(
+            onGetStreamingResponse: (_, options, _) =>
+            {
+                toolCountsSeenByInner.Add(options?.Tools?.Count ?? 0);
+                return ToAsyncEnumerableAsync(
+                    new ChatResponseUpdate(ChatRole.Assistant, "Response"));
+            });
+
+        var provider = new TestAIContextProvider("key1", provideTools: [new TestAITool()]);
+        var chatClient = new AIContextProviderChatClient(innerClient, [provider]);
+
+        var sharedOptions = new ChatOptions
+        {
+            Tools = new List<AITool> { new TestAITool() }
+        };
+
+        // Act: make 3 streaming calls reusing the same ChatOptions
+        for (int i = 0; i < 3; i++)
+        {
+            await RunStreamingWithAgentContextAsync(chatClient, [], sharedOptions);
+        }
+
+        // Assert: each call should see exactly 2 tools (1 baseline + 1 injected)
+        Assert.Equal(3, toolCountsSeenByInner.Count);
+        Assert.All(toolCountsSeenByInner, count => Assert.Equal(2, count));
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_SharedOptions_OriginalToolsNotMutatedAsync()
+    {
+        // Arrange
+        var innerClient = CreateMockStreamingChatClient(
+            onGetStreamingResponse: (_, _, _) => ToAsyncEnumerableAsync(
+                new ChatResponseUpdate(ChatRole.Assistant, "Response")));
+
+        var provider = new TestAIContextProvider("key1", provideTools: [new TestAITool()]);
+        var chatClient = new AIContextProviderChatClient(innerClient, [provider]);
+
+        var baselineTool = new TestAITool();
+        var originalTools = new List<AITool> { baselineTool };
+        var sharedOptions = new ChatOptions
+        {
+            Tools = originalTools
+        };
+
+        // Act
+        await RunStreamingWithAgentContextAsync(chatClient, [], sharedOptions);
+
+        // Assert: the original list should still contain only the baseline tool
+        Assert.Single(originalTools);
+        Assert.Same(baselineTool, originalTools[0]);
+    }
+
+    #endregion
+
     #region Builder Extension Tests
 
     [Fact]
@@ -330,6 +453,44 @@ public class AIContextProviderChatClientTests
             RunAsyncFunc = async (messages, session, options, ct) =>
             {
                 await foreach (var update in chatClient.GetStreamingResponseAsync(messages, cancellationToken: ct))
+                {
+                    updates.Add(update);
+                }
+
+                return new AgentResponse([new ChatMessage(ChatRole.Assistant, "done")]);
+            }
+        };
+
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hello")], s_mockSession);
+    }
+
+    /// <summary>
+    /// Runs a chat client within an agent context with the specified options.
+    /// </summary>
+    private static async Task RunWithAgentContextAsync(AIContextProviderChatClient chatClient, ChatOptions options)
+    {
+        var agent = new TestAIAgent
+        {
+            RunAsyncFunc = async (messages, session, agentOptions, ct) =>
+            {
+                var response = await chatClient.GetResponseAsync(messages, options, ct);
+                return new AgentResponse(response);
+            }
+        };
+
+        await agent.RunAsync([new ChatMessage(ChatRole.User, "Hello")], s_mockSession);
+    }
+
+    /// <summary>
+    /// Runs a streaming chat client within an agent context with the specified options.
+    /// </summary>
+    private static async Task RunStreamingWithAgentContextAsync(AIContextProviderChatClient chatClient, List<ChatResponseUpdate> updates, ChatOptions options)
+    {
+        var agent = new TestAIAgent
+        {
+            RunAsyncFunc = async (messages, session, agentOptions, ct) =>
+            {
+                await foreach (var update in chatClient.GetStreamingResponseAsync(messages, options, ct))
                 {
                     updates.Add(update);
                 }

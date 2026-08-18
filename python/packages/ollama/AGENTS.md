@@ -13,7 +13,7 @@ Integration with Ollama for local LLM inference.
 ```python
 from agent_framework.ollama import OllamaChatClient
 
-client = OllamaChatClient(model_id="llama3.2")
+client = OllamaChatClient(model="llama3.2")
 response = await client.get_response("Hello")
 ```
 
@@ -21,6 +21,7 @@ response = await client.get_response("Hello")
 
 ```python
 from agent_framework.ollama import OllamaChatClient
+
 # or directly:
 from agent_framework_ollama import OllamaChatClient
 ```

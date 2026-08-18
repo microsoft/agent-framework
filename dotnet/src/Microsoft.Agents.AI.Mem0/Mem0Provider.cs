@@ -8,6 +8,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Compliance.Redaction;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
@@ -51,7 +52,7 @@ public sealed class Mem0Provider : MessageAIContextProvider
     private readonly ProviderSessionState<State> _sessionState;
     private IReadOnlyList<string>? _stateKeys;
     private readonly string _contextPrompt;
-    private readonly bool _enableSensitiveTelemetryData;
+    private readonly Redactor _redactor;
 
     private readonly Mem0Client _client;
     private readonly ILogger<Mem0Provider>? _logger;
@@ -91,7 +92,7 @@ public sealed class Mem0Provider : MessageAIContextProvider
         this._client = new Mem0Client(httpClient);
 
         this._contextPrompt = options?.ContextPrompt ?? DefaultContextPrompt;
-        this._enableSensitiveTelemetryData = options?.EnableSensitiveTelemetryData ?? false;
+        this._redactor = options?.EnableSensitiveTelemetryData == true ? NullRedactor.Instance : (options?.Redactor ?? new ReplacingRedactor("<redacted>"));
     }
 
     /// <inheritdoc />
@@ -297,5 +298,5 @@ public sealed class Mem0Provider : MessageAIContextProvider
         public Mem0ProviderScope SearchScope { get; }
     }
 
-    private string? SanitizeLogData(string? data) => this._enableSensitiveTelemetryData ? data : "<redacted>";
+    private string SanitizeLogData(string? data) => this._redactor.Redact(data);
 }

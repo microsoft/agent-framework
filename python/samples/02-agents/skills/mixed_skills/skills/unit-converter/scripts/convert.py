@@ -20,7 +20,6 @@ def main() -> None:
     parser.add_argument("--value", type=float, required=True, help="The numeric value to convert.")
     parser.add_argument("--factor", type=float, required=True, help="The conversion factor from the table.")
     args = parser.parse_args()
-
     result = round(args.value * args.factor, 4)
     print(json.dumps({"value": args.value, "factor": args.factor, "result": result}))
 

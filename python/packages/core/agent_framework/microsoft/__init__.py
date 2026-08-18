@@ -5,7 +5,6 @@
 This module lazily re-exports objects from:
 - ``agent-framework-copilotstudio``
 - ``agent-framework-purview``
-- ``agent-framework-foundry-local``
 
 Supported classes:
 - CopilotStudioAgent
@@ -20,9 +19,6 @@ Supported classes:
 - PurviewRequestError
 - PurviewServiceError
 - CacheProvider
-- FoundryLocalChatOptions
-- FoundryLocalClient
-- FoundryLocalSettings
 
 """
 
@@ -43,9 +39,6 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "PurviewRequestError": ("agent_framework_purview", "agent-framework-purview"),
     "PurviewServiceError": ("agent_framework_purview", "agent-framework-purview"),
     "CacheProvider": ("agent_framework_purview", "agent-framework-purview"),
-    "FoundryLocalChatOptions": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
-    "FoundryLocalClient": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
-    "FoundryLocalSettings": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
 }
 
 

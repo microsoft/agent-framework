@@ -7,8 +7,9 @@ from random import randint
 from typing import TYPE_CHECKING, Annotated, Literal
 
 from agent_framework import Message, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import configure_otel_providers, get_tracer
-from agent_framework.openai import OpenAIResponsesClient
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from opentelemetry import trace
 from opentelemetry.trace.span import format_trace_id
@@ -24,8 +25,9 @@ This sample shows how you can configure observability of an application via the
 When you run this sample with an OTLP endpoint or an Application Insights connection string,
 you should see traces, logs, and metrics in the configured backend.
 
-If no OTLP endpoint or Application Insights connection string is configured, the sample will
-output traces, logs, and metrics to the console.
+Pre-requisites:
+- A Foundry project
+- A local OpenTelemetry Collector instance to receive the traces and metrics.
 """
 
 # Load environment variables from .env file
@@ -78,13 +80,18 @@ async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = Fals
         if stream:
             print("Assistant: ", end="")
             async for chunk in client.get_response(
-                [Message(role="user", text=message)], tools=get_weather, stream=True
+                [Message(role="user", contents=[message])],
+                stream=True,
+                options={"tools": [get_weather]},
             ):
                 if chunk.text:
                     print(chunk.text, end="")
             print("")
         else:
-            response = await client.get_response([Message(role="user", text=message)], tools=get_weather)
+            response = await client.get_response(
+                [Message(role="user", contents=[message])],
+                options={"tools": [get_weather]},
+            )
             print(f"Assistant: {response}")
 
 
@@ -101,7 +108,7 @@ async def run_tool() -> None:
     with get_tracer().start_as_current_span("Scenario: AI Function", kind=trace.SpanKind.CLIENT):
         print("Running scenario: AI Function")
         weather = await get_weather.invoke(location="Amsterdam")
-        print(f"Weather in Amsterdam:\n{weather}")
+        print(f"Weather in Amsterdam:\n{weather[-1]}")
 
 
 async def main(scenario: Literal["client", "client_stream", "tool", "all"] = "all"):
@@ -114,7 +121,7 @@ async def main(scenario: Literal["client", "client_stream", "tool", "all"] = "al
     with get_tracer().start_as_current_span("Sample Scenarios", kind=trace.SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
-        client = OpenAIResponsesClient()
+        client = FoundryChatClient(credential=AzureCliCredential())
 
         # Scenarios where telemetry is collected in the SDK, from the most basic to the most complex.
         if scenario == "tool" or scenario == "all":

@@ -1,9 +1,57 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from types import UnionType
+import sys
+import typing
+from collections.abc import Mapping
+from types import ModuleType, UnionType
 from typing import Any, TypeGuard, Union, cast, get_args, get_origin
 
+import typing_extensions
+
 from .._agents import Agent
+
+# Pre-compute the TypeVar types for runtime-safe detection.
+# isinstance(x, TypeVar) can fail if TypeVar is a factory/callable
+# on some Python versions, so we compare against the actual runtime type.
+_TYPEVAR_TYPES: tuple[type, ...] = (type(typing.TypeVar("_T")), type(typing_extensions.TypeVar("_T")))  # pyright: ignore[reportUnknownVariableType]
+
+
+def _is_runtime_type(value: object) -> TypeGuard[type[Any]]:
+    if not isinstance(value, type):
+        return False
+    try:
+        type.__getattribute__(value, "__module__")
+        type.__getattribute__(value, "__qualname__")
+    except TypeError:
+        return False
+    return True
+
+
+def is_typevar(x: Any) -> bool:
+    """Check if x is an unresolved TypeVar instance (from typing or typing_extensions).
+
+    Args:
+        x: The value to check.
+
+    Returns:
+        True if x is a TypeVar instance, False otherwise.
+    """
+    return isinstance(x, _TYPEVAR_TYPES)
+
+
+def contains_typevar(annotation: Any) -> bool:
+    """Check if an annotation contains an unresolved TypeVar at any nesting level.
+
+    Args:
+        annotation: The annotation to inspect.
+
+    Returns:
+        True if the annotation or any nested type argument is a TypeVar, False otherwise.
+    """
+    if is_typevar(annotation):
+        return True
+
+    return any(contains_typevar(arg) for arg in get_args(annotation))
 
 
 def is_chat_agent(agent: Any) -> TypeGuard[Agent]:
@@ -65,7 +113,7 @@ def resolve_type_annotation(
         try:
             return cast(
                 "type[Any] | UnionType",
-                eval(type_annotation, eval_globalns, localns),  # noqa: S307  # nosec B307
+                eval(type_annotation, eval_globalns, localns),  # ruff:ignore[suspicious-eval-usage]  # nosec B307
             )
         except NameError as e:
             raise NameError(
@@ -140,7 +188,7 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     if origin in [list, set]:
         return isinstance(data, origin) and (
             not args or all(any(is_instance_of(item, arg) for arg in args) for item in data)  # type: ignore[misc]
-        )  # type: ignore
+        )
 
     # Case 4: target_type is a tuple
     if origin is tuple:
@@ -239,19 +287,46 @@ def serialize_type(t: type) -> str:
     return f"{t.__module__}.{t.__qualname__}"
 
 
-def deserialize_type(serialized_type_string: str) -> type:
+def deserialize_type(
+    serialized_type_string: str,
+    *,
+    allowed_types: Mapping[str, type[Any]] | None = None,
+) -> type:
     """Deserialize a serialized type string.
+
+    Resolution is limited to exact caller-supplied types or types already present
+    in loaded module namespaces. This function never imports a module selected by
+    the serialized value.
+
+    Args:
+        serialized_type_string: Fully qualified serialized type name.
+        allowed_types: Optional exact mapping of serialized names to trusted types.
 
     For example,
 
     deserialize_type("builtins.int") => int
     """
-    import importlib
+    if allowed_types is not None and serialized_type_string in allowed_types:
+        resolved = allowed_types[serialized_type_string]
+        if not _is_runtime_type(resolved):
+            raise TypeError(f"allowed_types entry {serialized_type_string!r} must be a type.")
+        if serialize_type(resolved) != serialized_type_string:
+            raise ValueError(f"allowed_types entry {serialized_type_string!r} does not match the supplied type.")
+        return resolved
 
     module_name, _, type_name = serialized_type_string.rpartition(".")
-    module = importlib.import_module(module_name)
+    module = sys.modules.get(module_name)
+    if not isinstance(module, ModuleType):
+        raise ModuleNotFoundError(f"No module named {module_name!r}", name=module_name)
 
-    return cast(type, getattr(module, type_name))
+    namespace = ModuleType.__getattribute__(module, "__dict__")
+    if type_name not in namespace:
+        raise AttributeError(f"{module_name!r} has no attribute {type_name!r}")
+
+    resolved = namespace[type_name]
+    if not _is_runtime_type(resolved):
+        raise TypeError(f"{serialized_type_string!r} does not resolve to a type.")
+    return resolved
 
 
 def is_type_compatible(source_type: type | UnionType | Any, target_type: type | UnionType | Any) -> bool:

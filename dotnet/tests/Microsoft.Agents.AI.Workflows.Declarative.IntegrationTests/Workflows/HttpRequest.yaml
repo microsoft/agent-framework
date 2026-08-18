@@ -1,0 +1,31 @@
+#
+# This workflow tests invoking HttpRequestAction end-to-end.
+# Uses the Azure ARM tenants endpoint, which is authenticated, fully static, and
+# reachable with the credentials the integration test pipeline already provides
+# (via az login). The bearer token is supplied by the test through a custom
+# HttpClient passed to DefaultHttpRequestHandler; the YAML deliberately does not
+# carry an Authorization header.
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_http_request_test
+  actions:
+
+    # Invoke the Azure ARM tenants list API.
+    - kind: HttpRequestAction
+      id: fetch_tenants
+      conversationId: =System.ConversationId
+      method: GET
+      url: https://management.azure.com/tenants?api-version=2022-09-01
+      headers:
+        Accept: application/json
+      response: Local.TenantsResponse
+
+    # Surface the first tenant id from the parsed JSON response. Every
+    # authenticated principal belongs to at least one tenant, so this path
+    # always resolves on a successful call.
+    - kind: SendMessage
+      id: show_first_tenant
+      message: "{First(Local.TenantsResponse.value).tenantId}"

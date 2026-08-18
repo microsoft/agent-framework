@@ -26,17 +26,20 @@ import logging
 import os
 import uuid
 from pathlib import Path
+from typing import Any
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
 from agent_framework.declarative import (
     AgentExternalInputRequest,
     AgentExternalInputResponse,
     WorkflowFactory,
 )
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from ticketing_plugin import TicketingPlugin
+from ticketing_plugin import TicketingPlugin  # ty: ignore[unresolved-import]  # pyrefly: ignore[missing-import]
 
 logging.basicConfig(level=logging.ERROR)
 
@@ -168,53 +171,59 @@ async def main() -> None:
     plugin = TicketingPlugin()
 
     # Create Azure OpenAI client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         # This sample has been tested only on `gpt-5.1` and may not work as intended on other models
         # This sample is known to fail on `gpt-5-mini` reasoning input (GH issue #4059)
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
     # Create agents with structured outputs
-    self_service_agent = client.as_agent(
+    self_service_agent = Agent(
+        client=client,
         name="SelfServiceAgent",
         instructions=SELF_SERVICE_INSTRUCTIONS,
-        default_options={"response_format": SelfServiceResponse},
+        default_options=OpenAIChatOptions[Any](response_format=SelfServiceResponse),
     )
 
-    ticketing_agent = client.as_agent(
+    ticketing_agent = Agent(
+        client=client,
         name="TicketingAgent",
         instructions=TICKETING_INSTRUCTIONS,
         tools=plugin.get_functions(),
-        default_options={"response_format": TicketingResponse},
+        default_options=OpenAIChatOptions[Any](response_format=TicketingResponse),
     )
 
-    routing_agent = client.as_agent(
+    routing_agent = Agent(
+        client=client,
         name="TicketRoutingAgent",
         instructions=TICKET_ROUTING_INSTRUCTIONS,
         tools=[plugin.get_ticket],
-        default_options={"response_format": RoutingResponse},
+        default_options=OpenAIChatOptions[Any](response_format=RoutingResponse),
     )
 
-    windows_support_agent = client.as_agent(
+    windows_support_agent = Agent(
+        client=client,
         name="WindowsSupportAgent",
         instructions=WINDOWS_SUPPORT_INSTRUCTIONS,
         tools=[plugin.get_ticket],
-        default_options={"response_format": SupportResponse},
+        default_options=OpenAIChatOptions[Any](response_format=SupportResponse),
     )
 
-    resolution_agent = client.as_agent(
+    resolution_agent = Agent(
+        client=client,
         name="TicketResolutionAgent",
         instructions=RESOLUTION_INSTRUCTIONS,
         tools=[plugin.resolve_ticket],
     )
 
-    escalation_agent = client.as_agent(
+    escalation_agent = Agent(
+        client=client,
         name="TicketEscalationAgent",
         instructions=ESCALATION_INSTRUCTIONS,
         tools=[plugin.get_ticket, plugin.send_notification],
-        default_options={"response_format": EscalationResponse},
+        default_options=OpenAIChatOptions[Any](response_format=EscalationResponse),
     )
 
     # Agent registry for lookup
@@ -236,9 +245,9 @@ async def main() -> None:
 
     # Load workflow from YAML
     samples_root = Path(__file__).parent.parent.parent.parent.parent.parent.parent
-    workflow_path = samples_root / "workflow-samples" / "CustomerSupport.yaml"
+    workflow_path = samples_root / "declarative-agents" / "workflow-samples" / "CustomerSupport.yaml"
     if not workflow_path.exists():
-        # Fall back to local copy if workflow-samples doesn't exist
+        # Fall back to local copy if declarative-agents/workflow-samples doesn't exist
         workflow_path = Path(__file__).parent / "workflow.yaml"
 
     workflow = factory.create_workflow_from_yaml_path(workflow_path)

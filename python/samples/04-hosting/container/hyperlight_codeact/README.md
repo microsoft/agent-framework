@@ -1,0 +1,85 @@
+# What this sample demonstrates
+
+An [Agent Framework](https://github.com/microsoft/agent-framework) agent that
+runs Python in a [Hyperlight](https://github.com/hyperlight-dev/hyperlight)
+WebAssembly sandbox via the **CodeAct** pattern, hosted using the **Responses
+protocol**. The model is only given a single `execute_code` tool. Local Python
+tools (`compute`, `fetch_data`) are registered on `HyperlightCodeActProvider`
+and are reachable from inside the sandbox via `call_tool(...)`, never as
+direct LLM tools. All of this can be run as a container, however not under all circumstances.
+
+> **⚠️ Foundry hosted-agent runtime support is in progress.**
+> Hyperlight requires a hypervisor (`/dev/kvm` on Linux, MSHV on Windows). The
+> default Foundry hosted-agent runtime does not currently expose a hypervisor
+> to the workload container, so deploying this sample as a Foundry hosted
+> agent will fail at runtime with
+> `Failed to create sandbox: ... No Hypervisor was found for Sandbox`.
+> The sample container itself works end-to-end when run locally with
+> `docker run --device=/dev/kvm ...` (see [Hypervisor requirement](#hypervisor-requirement)
+> below). We are working with the platform team to enable a hypervisor-capable
+> hosting target.
+
+## How It Works
+
+### Model integration
+
+The agent uses `FoundryChatClient` to talk to a Foundry-hosted model deployment.
+A `HyperlightCodeActProvider` is attached as a context provider, which on every
+run injects the `execute_code` tool plus the CodeAct instructions that teach the
+model how to author Python that calls `call_tool(...)` for sandbox-only tools.
+
+See [`main.py`](main.py) for the full implementation.
+
+### Agent hosting
+
+The agent is hosted with `ResponsesHostServer` from
+`agent-framework-foundry-hosting`, which exposes a REST endpoint compatible with
+the OpenAI Responses protocol.
+
+> The Hyperlight Wasm backend is currently published only for `linux/x86_64` and
+> `win32/AMD64` with Python `<3.14`. The hosted container runs `python:3.12-slim`
+> on linux/x86_64, which is supported.
+
+### Hypervisor requirement
+
+Hyperlight executes guest WebAssembly inside a micro-VM and **requires a
+hypervisor on the host**:
+
+- **Linux:** `/dev/kvm` must be present *and* the container must have access to
+  it (`docker run --device=/dev/kvm ...`).
+- **Windows:** the Microsoft Hypervisor Platform (MSHV) must be enabled.
+
+Without a hypervisor, sandbox creation fails with:
+
+```
+Failed to create sandbox: failed to build ProtoWasmSandbox: No Hypervisor was found for Sandbox
+```
+
+This affects hosted environments that don't expose `/dev/kvm` to the workload
+container (most managed PaaS, including the default Foundry hosted-agent
+runtime). To run this sample as a hosted agent you need a hosting target with
+nested virtualization and `/dev/kvm` device passthrough — for example an Azure
+VM, AKS nodes with KVM enabled, or Azure Container Instances configured for
+nested virt.
+
+## Running the Agent Host
+
+Follow the instructions in the
+[Running the Agent Host Locally](../../foundry-hosted-agents//README.md#running-the-agent-host-locally)
+section of the README in the Foundry Hosted Agent directory.
+
+## Interacting with the agent
+
+Send a POST request to the server with a JSON body containing an `"input"`
+field. The model should respond by calling `execute_code` with Python that uses
+`call_tool(...)` to reach the sandbox-only tools:
+
+```bash
+curl -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Fetch all users, find the admins, multiply 7 by 6, and print the users, admins and multiplication result. Use execute_code with call_tool(...)."}'
+```
+
+## Deploying the Agent to Foundry
+
+Deploying this container to Foundry will not work yet, as soon as it does, we will update this sample.

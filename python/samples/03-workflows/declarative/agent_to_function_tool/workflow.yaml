@@ -27,6 +27,7 @@ trigger:
       input:
         messages: =Workflow.Inputs.input
       output:
+        autoSend: false
         response: Local.agentResponse
         responseObject: Local.orderData
 
@@ -37,6 +38,7 @@ trigger:
       arguments:
         order_data: =Local.orderData
       output:
+        autoSend: false
         result: Local.orderCalculation
 
     # Invoke another function tool to format the final confirmation
@@ -47,6 +49,7 @@ trigger:
         order_data: =Local.orderData
         order_calculation: =Local.orderCalculation
       output:
+        autoSend: false
         result: Local.confirmation
 
     # Send the final confirmation to the user

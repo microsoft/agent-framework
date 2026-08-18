@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agent_framework import AgentExecutor, AgentResponse, Agent, WorkflowBuilder, Workflow
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 
@@ -54,11 +54,11 @@ def workflow_two_agents():
         "os.environ",
         {
             "OPENAI_API_KEY": "test-key",
-            "OPENAI_CHAT_MODEL_ID": "gpt-4o",
+            "OPENAI_MODEL": "gpt-4o",
         },
     ):
-        first_chat_client = OpenAIChatClient()
-        second_chat_client = OpenAIChatClient()
+        first_chat_client = OpenAIChatCompletionClient()
+        second_chat_client = OpenAIChatCompletionClient()
 
         # Mock the OpenAI API calls
         with (

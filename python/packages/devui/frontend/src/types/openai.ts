@@ -376,6 +376,7 @@ export interface ResponseTextDeltaEvent extends ResponseStreamEvent {
   content_index: number;
   sequence_number: number;
   logprobs: Record<string, unknown>[];
+  metadata?: Record<string, unknown>;
 }
 
 // OpenAI Response for non-streaming
@@ -397,6 +398,7 @@ export interface ResponseOutputMessage {
   content: ResponseOutputText[];
   id: string;
   status: "completed" | "failed" | "in_progress";
+  metadata?: Record<string, unknown>;
 }
 
 export interface ResponseOutputText {

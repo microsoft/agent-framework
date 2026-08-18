@@ -1,0 +1,34 @@
+<Project>
+  <!--
+    Bridge GitHub.Copilot.SDK's build/ targets to transitive consumers.
+
+    GitHub.Copilot.SDK ships its CLI download / binary-copy MSBuild targets under
+    build/, which means they only auto-import for projects with a DIRECT
+    PackageReference to GitHub.Copilot.SDK. Consumers of this package
+    (Microsoft.Agents.AI.GitHub.Copilot) would otherwise get only the managed
+    adapter .dll, no copilot CLI binary in their output, and the SDK would fail
+    at runtime with:
+
+        Copilot CLI not found at 'bin/{config}/{tfm}/runtimes/{rid}/native/copilot.exe'
+
+    This file ships under buildTransitive/ so NuGet auto-imports it for every
+    transitive consumer, locates the SDK in the NuGet package cache, and imports
+    the SDK's build/ targets so the CLI binary gets downloaded and copied to the
+    consumer's output as expected.
+
+    The companion .props file is generated at this package's pack time and sets
+    $(_MicrosoftAgentsAICopilotSdkPackagedVersion) to the SDK version this
+    package was built against. The Condition below uses that as the default for
+    $(_MicrosoftAgentsAICopilotSdkVersion), so consumers may override the SDK
+    version path by setting $(_MicrosoftAgentsAICopilotSdkVersion) before this
+    file is imported. Consumers may also opt out of the binary download via the
+    SDK's own $(CopilotSkipCliDownload)=true, which the SDK targets honor.
+  -->
+  <PropertyGroup>
+    <_MicrosoftAgentsAICopilotSdkVersion Condition="'$(_MicrosoftAgentsAICopilotSdkVersion)' == ''">$(_MicrosoftAgentsAICopilotSdkPackagedVersion)</_MicrosoftAgentsAICopilotSdkVersion>
+    <_MicrosoftAgentsAICopilotSdkTargetsPath Condition="'$(_MicrosoftAgentsAICopilotSdkVersion)' != ''">$([System.IO.Path]::Combine('$(NuGetPackageRoot)', 'github.copilot.sdk', '$(_MicrosoftAgentsAICopilotSdkVersion)', 'build', 'GitHub.Copilot.SDK.targets'))</_MicrosoftAgentsAICopilotSdkTargetsPath>
+  </PropertyGroup>
+
+  <Import Project="$(_MicrosoftAgentsAICopilotSdkTargetsPath)"
+          Condition="'$(_MicrosoftAgentsAICopilotSdkTargetsPath)' != '' And Exists('$(_MicrosoftAgentsAICopilotSdkTargetsPath)')" />
+</Project>

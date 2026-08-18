@@ -1,18 +1,22 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from typing import Any
+from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from typing import Any, Literal
 
 import pytest
 
 from agent_framework import (
     Agent,
+    AgentSession,
+    ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     Message,
+    ResponseStream,
     SupportsChatGetResponse,
+    chat_middleware,
     tool,
 )
 from agent_framework._compaction import (
@@ -27,6 +31,10 @@ from agent_framework._compaction import (
 )
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 
+_EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT = (
+    "Function invocation limit reached before a final answer could be produced."
+)
+
 
 def _group_id(message: Message) -> str | None:
     annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
@@ -34,6 +42,348 @@ def _group_id(message: Message) -> str | None:
         return None
     value = annotation.get(GROUP_ID_KEY)
     return value if isinstance(value, str) else None
+
+
+def _build_approved_tool_roundtrip(
+    *,
+    call_id: str,
+    approval_id: str,
+    tool_name: str,
+) -> tuple[Content, Content, Content]:
+    function_call = Content.from_function_call(call_id=call_id, name=tool_name, arguments="{}")
+    approval_request = Content.from_function_approval_request(id=approval_id, function_call=function_call)
+    approval_response = approval_request.to_function_approval_response(approved=True)
+    return function_call, approval_request, approval_response
+
+
+def test_session_approval_binding_rebinds_consumes_and_rejects_duplicates() -> None:
+    """Session binding must use the recorded call and honor one response once."""
+    from agent_framework._tools import (
+        _bind_approval_responses_to_pending_requests,
+        _store_pending_approval_requests,
+    )
+
+    session = AgentSession(session_id="approval-binding")
+    original_call = Content.from_function_call(
+        call_id="call_original",
+        name="guarded_write",
+        arguments={"value": "approved"},
+    )
+    request = Content.from_function_approval_request(id="request_1", function_call=original_call)
+    _store_pending_approval_requests(session, [request])
+
+    substituted_call = Content.from_function_call(
+        call_id="call_substituted",
+        name="unguarded_write",
+        arguments={"value": "attacker"},
+    )
+    first = Content.from_function_approval_response(
+        approved=True,
+        id="request_1",
+        function_call=substituted_call,
+    )
+    duplicate = Content.from_function_approval_response(
+        approved=True,
+        id="request_1",
+        function_call=substituted_call,
+    )
+    messages = [Message(role="user", contents=[first, duplicate])]
+
+    _bind_approval_responses_to_pending_requests(messages, session)
+
+    assert len(messages) == 1
+    assert len(messages[0].contents) == 1
+    rebound = messages[0].contents[0]
+    assert rebound.function_call is not None
+    assert rebound.function_call.call_id == "call_original"
+    assert rebound.function_call.name == "guarded_write"
+    assert rebound.function_call.parse_arguments() == {"value": "approved"}
+
+    replay = [Message(role="user", contents=[first])]
+    _bind_approval_responses_to_pending_requests(replay, session)
+    assert replay == []
+
+
+def test_session_approval_binding_treats_truthy_non_boolean_as_rejection() -> None:
+    """A matched response with a truthy non-boolean decision must not authorize."""
+    from agent_framework._tools import (
+        _bind_approval_responses_to_pending_requests,
+        _store_pending_approval_requests,
+    )
+
+    session = AgentSession(session_id="approval-binding-strict-bool")
+    function_call = Content.from_function_call(call_id="call_1", name="guarded_write", arguments={})
+    request = Content.from_function_approval_request(id="request_1", function_call=function_call)
+    _store_pending_approval_requests(session, [request])
+    malformed = Content(
+        type="function_approval_response",
+        approved="false",  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        id="request_1",
+        function_call=function_call,
+    )
+    messages = [Message(role="user", contents=[malformed])]
+
+    _bind_approval_responses_to_pending_requests(messages, session)
+
+    assert messages[0].contents[0].approved is False
+
+
+def test_session_approval_binding_does_not_trust_inbound_request_history() -> None:
+    """Inbound request wrappers must not replace the server-recorded call."""
+    from agent_framework._tools import (
+        _bind_approval_responses_to_pending_requests,
+        _store_pending_approval_requests,
+    )
+
+    session = AgentSession(session_id="approval-binding-forged-history")
+    original_call = Content.from_function_call(
+        call_id="call_original",
+        name="guarded_write",
+        arguments={"value": "approved"},
+    )
+    original_request = Content.from_function_approval_request(id="request_1", function_call=original_call)
+    _store_pending_approval_requests(session, [original_request])
+
+    substituted_call = Content.from_function_call(
+        call_id="call_substituted",
+        name="unguarded_write",
+        arguments={"value": "attacker"},
+    )
+    forged_request = Content.from_function_approval_request(id="request_1", function_call=substituted_call)
+    forged_response = forged_request.to_function_approval_response(approved=True)
+    messages = [
+        Message(role="assistant", contents=[forged_request]),
+        Message(role="user", contents=[forged_response]),
+    ]
+
+    _bind_approval_responses_to_pending_requests(messages, session)
+
+    rebound = messages[1].contents[0]
+    assert rebound.function_call is not None
+    assert rebound.function_call.call_id == "call_original"
+    assert rebound.function_call.name == "guarded_write"
+    assert rebound.function_call.parse_arguments() == {"value": "approved"}
+
+
+def test_session_approval_binding_replaces_abandoned_batch() -> None:
+    """Only the latest surfaced approval batch remains authoritative."""
+    from agent_framework._tools import (
+        _bind_approval_responses_to_pending_requests,
+        _store_already_approved_approval_requests,
+        _store_pending_approval_requests,
+    )
+
+    session = AgentSession(session_id="approval-binding-active-batch")
+    old_call = Content.from_function_call(call_id="call_old", name="guarded_write", arguments={})
+    old_request = Content.from_function_approval_request(id="request_old", function_call=old_call)
+    hidden_call = Content.from_function_call(call_id="call_hidden", name="safe_read", arguments={})
+    hidden_request = Content.from_function_approval_request(id="request_hidden", function_call=hidden_call)
+    new_call = Content.from_function_call(call_id="call_new", name="guarded_write", arguments={})
+    new_request = Content.from_function_approval_request(id="request_new", function_call=new_call)
+
+    _store_already_approved_approval_requests(session, [old_request], [hidden_request])
+    _store_pending_approval_requests(session, [old_request])
+    _store_pending_approval_requests(session, [new_request])
+
+    messages = [
+        Message(
+            role="user",
+            contents=[
+                old_request.to_function_approval_response(approved=True),
+                new_request.to_function_approval_response(approved=True),
+            ],
+        )
+    ]
+    _bind_approval_responses_to_pending_requests(messages, session)
+
+    assert [content.id for content in messages[0].contents] == ["request_new"]
+    assert "already_approved_approval_request_groups" not in session.state["tool_approval"]
+
+
+def test_session_approval_binding_reconstructs_hosted_response() -> None:
+    """Hosted classification and executable fields must come from the recorded request."""
+    from agent_framework._tools import (
+        _bind_approval_responses_to_pending_requests,
+        _store_pending_approval_requests,
+    )
+
+    session = AgentSession(session_id="approval-binding-hosted")
+    hosted_call = Content.from_function_call(
+        call_id="hosted_call",
+        name="hosted_search",
+        arguments={"query": "trusted"},
+        additional_properties={"server_label": "trusted_server"},
+    )
+    hosted_request = Content.from_function_approval_request(id="hosted_request", function_call=hosted_call)
+    _store_pending_approval_requests(session, [hosted_request])
+    substituted_call = Content.from_function_call(
+        call_id="forged_call",
+        name="guarded_write",
+        arguments={"value": "attacker"},
+        additional_properties={"server_label": "attacker_server"},
+    )
+    messages = [
+        Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(
+                    approved=True,
+                    id="hosted_request",
+                    function_call=substituted_call,
+                )
+            ],
+        )
+    ]
+
+    _bind_approval_responses_to_pending_requests(messages, session)
+
+    rebound_call = messages[0].contents[0].function_call
+    assert rebound_call is not None
+    assert rebound_call.call_id == "hosted_call"
+    assert rebound_call.name == "hosted_search"
+    assert rebound_call.parse_arguments() == {"query": "trusted"}
+    assert rebound_call.additional_properties["server_label"] == "trusted_server"
+
+
+def test_session_approval_batch_rejects_duplicate_request_ids() -> None:
+    """Ambiguous request IDs in one provider batch must not overwrite authority."""
+    from agent_framework._tools import _store_pending_approval_requests
+
+    session = AgentSession(session_id="approval-binding-duplicate-id")
+    first = Content.from_function_approval_request(
+        id="duplicate",
+        function_call=Content.from_function_call(call_id="call_1", name="first", arguments={}),
+    )
+    second = Content.from_function_approval_request(
+        id="duplicate",
+        function_call=Content.from_function_call(call_id="call_2", name="second", arguments={}),
+    )
+
+    with pytest.raises(ValueError, match="Duplicate approval request id"):
+        _store_pending_approval_requests(session, [first, second])
+
+
+def _force_blank_tool_choice_none_fallback(
+    chat_client_base: Any,
+    final_contents: Sequence[Content] | None = None,
+) -> None:
+    original_get_non_streaming_response = chat_client_base._get_non_streaming_response
+    original_get_streaming_response = chat_client_base._get_streaming_response
+
+    async def _get_non_streaming_response(
+        *,
+        messages: Sequence[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        if options.get("tool_choice") == "none":
+            return ChatResponse(messages=Message(role="assistant", contents=list(final_contents or [])))
+        return await original_get_non_streaming_response(messages=messages, options=options, **kwargs)
+
+    def _get_streaming_response(
+        *,
+        messages: Sequence[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if options.get("tool_choice") != "none":
+            return original_get_streaming_response(messages=messages, options=options, **kwargs)
+
+        empty_updates: tuple[ChatResponseUpdate, ...] = ()
+
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            for update in empty_updates:
+                yield update
+
+        def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            return ChatResponse.from_updates(updates, output_format_type=options.get("response_format"))
+
+        return ResponseStream(_stream(), finalizer=_finalize)
+
+    chat_client_base._get_non_streaming_response = _get_non_streaming_response
+    chat_client_base._get_streaming_response = _get_streaming_response
+
+
+def _post_limit_local_tool_content(
+    content_type: Literal["function_call", "function_approval_request"],
+) -> Content:
+    function_call = Content.from_function_call(call_id="local_call_2", name="lookup", arguments='{"key": "b"}')
+    if content_type == "function_call":
+        return function_call
+    return Content.from_function_approval_request(id="local_approval_2", function_call=function_call)
+
+
+def _post_limit_informational_transcript() -> list[Content]:
+    return [
+        Content.from_function_call(
+            call_id="provider_call_2",
+            name="provider_lookup",
+            arguments='{"key": "b"}',
+            informational_only=True,
+        ),
+        Content.from_function_result(call_id="provider_call_2", result="Value for b"),
+        Content.from_text("Provider completed the lookup."),
+    ]
+
+
+def _post_limit_hosted_approval_request() -> Content:
+    function_call = Content.from_function_call(
+        call_id="hosted_call_2",
+        name="hosted_lookup",
+        arguments='{"key": "b"}',
+        additional_properties={"server_label": "hosted_server"},
+    )
+    return Content.from_function_approval_request(id="hosted_approval_2", function_call=function_call)
+
+
+def _configure_function_invocation_limit(
+    chat_client_base: Any,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+) -> None:
+    if limit_type == "max_function_calls":
+        chat_client_base.function_invocation_configuration["max_iterations"] = 10
+        chat_client_base.function_invocation_configuration["max_function_calls"] = 1
+    else:
+        chat_client_base.function_invocation_configuration["max_iterations"] = 1
+
+
+def _force_tool_content_tool_choice_none_stream(
+    chat_client_base: Any,
+    *,
+    contents: Sequence[Content],
+    additional_properties: dict[str, Any] | None = None,
+    finish_reason: Literal["stop", "length", "tool_calls", "content_filter"] | None = None,
+) -> None:
+    original_get_streaming_response = chat_client_base._get_streaming_response
+
+    def _get_streaming_response(
+        *,
+        messages: Sequence[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+        if options.get("tool_choice") != "none":
+            return original_get_streaming_response(messages=messages, options=options, **kwargs)
+
+        updates = (
+            ChatResponseUpdate(
+                contents=list(contents),
+                role="assistant",
+                additional_properties=additional_properties,
+                finish_reason=finish_reason,
+            ),
+        )
+
+        async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+            for update in updates:
+                yield update
+
+        def _finalize(stream_updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+            return ChatResponse.from_updates(stream_updates, output_format_type=options.get("response_format"))
+
+        return ResponseStream(_stream(), finalizer=_finalize)
+
+    chat_client_base._get_streaming_response = _get_streaming_response
 
 
 async def test_base_client_with_function_calling(chat_client_base: SupportsChatGetResponse):
@@ -45,7 +395,7 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -54,10 +404,10 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [ai_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [ai_func]}
     )
     assert exec_counter == 1
     assert len(response.messages) == 3
@@ -74,7 +424,7 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
     assert response.messages[2].text == "done"
 
 
-async def test_base_client_with_function_calling_tools_in_kwargs(chat_client_base: SupportsChatGetResponse):
+async def test_base_client_with_function_calling_string_input(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 
     @tool(name="test_function", approval_mode="never_require")
@@ -83,7 +433,7 @@ async def test_base_client_with_function_calling_tools_in_kwargs(chat_client_bas
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -92,10 +442,10 @@ async def test_base_client_with_function_calling_tools_in_kwargs(chat_client_bas
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
-    response = await chat_client_base.get_response("hello", tools=[ai_func])
+    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})  # type: ignore[arg-type, call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
 
     assert exec_counter == 1
     assert len(response.messages) == 3
@@ -114,7 +464,7 @@ async def test_base_client_with_function_calling_resets(chat_client_base: Suppor
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -131,10 +481,10 @@ async def test_base_client_with_function_calling_resets(chat_client_base: Suppor
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [ai_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [ai_func]}
     )
     assert exec_counter == 2
     assert len(response.messages) == 5
@@ -169,7 +519,7 @@ async def test_function_loop_applies_compaction_projection_each_model_call(chat_
             return changed
 
     captured_roles: list[list[str]] = []
-    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     async def _capture(
         *,
@@ -180,10 +530,10 @@ async def test_function_loop_applies_compaction_projection_each_model_call(chat_
         captured_roles.append([message.role for message in messages])
         return await original(messages=messages, options=options, **kwargs)
 
-    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
-    chat_client_base.compaction_strategy = _ExcludeOldestGroupAfterFirstTurn()  # type: ignore[attr-defined]
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = _ExcludeOldestGroupAfterFirstTurn()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -192,11 +542,11 @@ async def test_function_loop_applies_compaction_projection_each_model_call(chat_
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [ai_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [ai_func]}
     )
 
     assert len(captured_roles) >= 2
@@ -218,7 +568,7 @@ async def test_function_loop_token_budget_strategy_caps_tokens_each_iteration(
         return f"Processed {arg1}. " + ("result " * 120)
 
     captured_token_counts: list[int] = []
-    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     async def _capture(
         *,
@@ -230,15 +580,15 @@ async def test_function_loop_token_budget_strategy_caps_tokens_each_iteration(
         captured_token_counts.append(included_token_count(messages))
         return await original(messages=messages, options=options, **kwargs)
 
-    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
-    chat_client_base.tokenizer = tokenizer  # type: ignore[attr-defined]
-    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
-    chat_client_base.compaction_strategy = TokenBudgetComposedStrategy(  # type: ignore[attr-defined]
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined, method-assign]  # ty: ignore[unresolved-attribute]
+    chat_client_base.tokenizer = tokenizer  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = TokenBudgetComposedStrategy(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         token_budget=token_budget,
         tokenizer=tokenizer,
         strategies=[SlidingWindowStrategy(keep_last_groups=2)],
     )
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -255,11 +605,11 @@ async def test_function_loop_token_budget_strategy_caps_tokens_each_iteration(
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello " * 160)],
+        [Message(role="user", contents=["hello " * 160])],
         options={"tool_choice": "auto", "tools": [ai_func]},
     )
 
@@ -279,7 +629,7 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Sup
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1":')],
@@ -298,8 +648,10 @@ async def test_base_client_with_streaming_function_calling(chat_client_base: Sup
         ],
     ]
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [ai_func]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [ai_func]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
     assert len(updates) == 4  # two updates with the function call, the function result and the final text
@@ -321,7 +673,7 @@ async def test_base_client_executes_function_calls_across_multiple_response_mess
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=[
                 Message(
@@ -348,13 +700,13 @@ async def test_base_client_executes_function_calls_across_multiple_response_mess
             conversation_id="conv_after_first_call",
         ),
         ChatResponse(
-            messages=Message(role="assistant", text="done"),
+            messages=Message(role="assistant", contents=["done"]),
             conversation_id="conv_after_second_call",
         ),
     ]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")],
+        [Message(role="user", contents=["hello"])],
         options={"tool_choice": "auto", "tools": [ai_func], "conversation_id": "conv_initial"},
     )
 
@@ -378,7 +730,7 @@ async def test_function_invocation_inside_aiohttp_server(chat_client_base: Suppo
         exec_counter += 1
         return f"Investigated {user_query}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -391,7 +743,7 @@ async def test_function_invocation_inside_aiohttp_server(chat_client_base: Suppo
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     agent = Agent(client=chat_client_base, tools=[ai_func])
@@ -409,7 +761,7 @@ async def test_function_invocation_inside_aiohttp_server(chat_client_base: Suppo
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     try:
-        port = site._server.sockets[0].getsockname()[1]
+        port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         async with aiohttp.ClientSession() as session, session.post(f"http://127.0.0.1:{port}/run") as response:
             assert response.status == 200
             await response.text()
@@ -435,7 +787,7 @@ async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: Sup
         exec_counter += 1
         return f"Threaded {user_query}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -448,7 +800,7 @@ async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: Sup
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     agent = Agent(client=chat_client_base, tools=[ai_func])
@@ -479,7 +831,7 @@ async def test_function_invocation_in_threaded_aiohttp_app(chat_client_base: Sup
             await site.start()
             shutdown_event = asyncio.Event()
             shutdown_queue.put((loop, shutdown_event))
-            port = site._server.sockets[0].getsockname()[1]
+            port = site._server.sockets[0].getsockname()[1]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
             port_queue.put(port)
             ready_event.set()
             try:
@@ -568,13 +920,13 @@ async def test_function_invocation_scenarios(
 
         # Single function call content
         func_call = Content.from_function_call(call_id="1", name=function_name, arguments='{"arg1": "value1"}')
-        completion = Message(role="assistant", text="done")
+        completion = Message(role="assistant", contents=["done"])
 
-        chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[func_call]))] + (
+        chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=[func_call]))] + (  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             [] if approval_required else [ChatResponse(messages=completion)]
         )
 
-        chat_client_base.streaming_responses = [
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             [
                 ChatResponseUpdate(
                     contents=[Content.from_function_call(call_id="1", name=function_name, arguments='{"arg1":')],
@@ -600,9 +952,9 @@ async def test_function_invocation_scenarios(
             Content.from_function_call(call_id="2", name="approval_func", arguments='{"arg1": "value2"}'),
         ]
 
-        chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=func_calls))]
+        chat_client_base.run_responses = [ChatResponse(messages=Message(role="assistant", contents=func_calls))]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
-        chat_client_base.streaming_responses = [
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             [
                 ChatResponseUpdate(contents=[func_calls[0]], role="assistant"),
                 ChatResponseUpdate(contents=[func_calls[1]], role="assistant"),
@@ -610,19 +962,21 @@ async def test_function_invocation_scenarios(
         ]
 
     # Execute the test
-    options: dict[str, Any] = {"tool_choice": "auto", "tools": tools}
+    options: ChatOptions = {"tool_choice": "auto", "tools": tools}
     if thread_type == "service":
         # For service threads, we need to pass conversation_id via options
+        assert conversation_id is not None
         options["store"] = True
         options["conversation_id"] = conversation_id
 
+    messages: list[Any]
     if not streaming:
-        response = await chat_client_base.get_response([Message(role="user", text="hello")], options=options)
+        response = await chat_client_base.get_response([Message(role="user", contents=["hello"])], options=options)  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]
         messages = response.messages
     else:
         updates = []
-        async for update in chat_client_base.get_response(
-            [Message(role="user", text="hello")], options=options, stream=True
+        async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]
+            [Message(role="user", contents=["hello"])], options=options, stream=True
         ):
             updates.append(update)
         messages = updates
@@ -646,7 +1000,9 @@ async def test_function_invocation_scenarios(
                 assert len(messages[0].contents) == 2
                 assert messages[0].contents[0].type == "function_call"
                 assert messages[0].contents[1].type == "function_approval_request"
-                assert messages[0].contents[1].function_call.name == "approval_func"
+                function_call = messages[0].contents[1].function_call
+                assert function_call is not None
+                assert function_call.name == "approval_func"
                 assert exec_counter == 0  # Function not executed yet
             else:
                 # Streaming: 2 function call chunks + 1 approval request update (same assistant message)
@@ -654,7 +1010,9 @@ async def test_function_invocation_scenarios(
                 assert messages[0].contents[0].type == "function_call"
                 assert messages[1].contents[0].type == "function_call"
                 assert messages[2].contents[0].type == "function_approval_request"
-                assert messages[2].contents[0].function_call.name == "approval_func"
+                function_call = messages[2].contents[0].function_call
+                assert function_call is not None
+                assert function_call.name == "approval_func"
                 assert exec_counter == 0  # Function not executed yet
         else:
             # Single function without approval: call + result + final
@@ -699,6 +1057,122 @@ async def test_function_invocation_scenarios(
             assert exec_counter == 0  # Neither function executed yet
 
 
+async def test_informational_only_function_call_is_not_invoked(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="no_approval_func", approval_mode="never_require")
+    def func_no_approval(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    informational_call = Content.from_function_call(
+        call_id="1",
+        name="no_approval_func",
+        arguments='{"arg1": "value1"}',
+        informational_only=True,
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[informational_call]))
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [func_no_approval]},
+    )
+
+    assert exec_counter == 0
+    assert len(response.messages) == 1
+    assert response.messages[0].contents == [informational_call]
+
+
+async def test_only_actionable_function_calls_are_invoked(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="no_approval_func", approval_mode="never_require")
+    def func_no_approval(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    informational_call = Content.from_function_call(
+        call_id="1",
+        name="no_approval_func",
+        arguments='{"arg1": "value1"}',
+        informational_only=True,
+    )
+    text_content = Content.from_text("Provider transcript text")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[informational_call, text_content]))
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [func_no_approval]},
+    )
+
+    assert exec_counter == 0
+    assert len(response.messages) == 1
+    assert response.messages[0].contents == [informational_call, text_content]
+
+
+async def test_informational_only_function_call_does_not_request_approval(chat_client_base: SupportsChatGetResponse):
+    @tool(name="approval_func", approval_mode="always_require")
+    def func_with_approval(arg1: str) -> str:
+        return f"Approved {arg1}"
+
+    informational_call = Content.from_function_call(
+        call_id="1",
+        name="approval_func",
+        arguments='{"arg1": "value1"}',
+        informational_only=True,
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[informational_call]))
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [func_with_approval]},
+    )
+
+    assert response.messages[0].contents == [informational_call]
+    assert not any(content.type == "function_approval_request" for content in response.messages[0].contents)
+
+
+async def test_streaming_informational_only_function_call_is_not_invoked(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="no_approval_func", approval_mode="never_require")
+    def func_no_approval(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    informational_call = Content.from_function_call(
+        call_id="1",
+        name="no_approval_func",
+        arguments='{"arg1": "value1"}',
+        informational_only=True,
+    )
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [ChatResponseUpdate(contents=[informational_call], role="assistant")]
+    ]
+
+    updates = [
+        update
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["hello"])],
+            options={"tool_choice": "auto", "tools": [func_no_approval]},
+            stream=True,
+        )
+    ]
+
+    assert exec_counter == 0
+    assert len(updates) == 1
+    assert updates[0].contents == [informational_call]
+
+
 async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):
     """Test that rejecting an approval alongside an approved one is handled correctly."""
 
@@ -718,7 +1192,7 @@ async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):
         return f"Rejected {arg1}"
 
     # Setup: two function calls that require approval
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -728,12 +1202,13 @@ async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Get the response with approval requests
-    response = await chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [func_approved, func_rejected]}
+    response = await chat_client_base.get_response(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [func_approved, func_rejected]},  # type: ignore[arg-type]
     )
     # Approval requests are now added to the assistant message, not a separate message
     assert len(response.messages) == 1
@@ -747,13 +1222,13 @@ async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):
     approval_req_2 = approval_requests[1]
 
     approved_response = Content.from_function_approval_response(
-        id=approval_req_1.id,
-        function_call=approval_req_1.function_call,
+        id=approval_req_1.id,  # type: ignore[arg-type]
+        function_call=approval_req_1.function_call,  # type: ignore[arg-type]
         approved=True,
     )
     rejected_response = Content.from_function_approval_response(
-        id=approval_req_2.id,
-        function_call=approval_req_2.function_call,
+        id=approval_req_2.id,  # type: ignore[arg-type]
+        function_call=approval_req_2.function_call,  # type: ignore[arg-type]
         approved=False,
     )
 
@@ -761,15 +1236,23 @@ async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):
     all_messages = response.messages + [Message(role="user", contents=[approved_response, rejected_response])]
 
     # Call get_response which will process the approvals
-    await chat_client_base.get_response(
+    resumed_response = await chat_client_base.get_response(
         all_messages, options={"tool_choice": "auto", "tools": [func_approved, func_rejected]}
     )
+    assert [[content.type for content in message.contents] for message in resumed_response.messages] == [
+        ["function_result", "function_result"],
+        ["text"],
+    ]
+    assert all_messages[-1].role == "user"
+    assert [content.type for content in all_messages[-1].contents] == [
+        "function_approval_response",
+        "function_approval_response",
+    ]
 
     # Verify the approval/rejection was processed correctly
-    # Find the results in the input messages (modified in-place)
     approved_result = None
     rejected_result = None
-    for msg in all_messages:
+    for msg in resumed_response.messages:
         for content in msg.contents:
             if content.type == "function_result":
                 if content.call_id == "1":
@@ -789,7 +1272,7 @@ async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):
 
     # Verify that messages with FunctionResultContent have role="tool"
     # This ensures the message format is correct for OpenAI's API
-    for msg in all_messages:
+    for msg in resumed_response.messages:
         for content in msg.contents:
             if content.type == "function_result":
                 assert msg.role == "tool", f"Message with FunctionResultContent must have role='tool', got '{msg.role}'"
@@ -805,7 +1288,7 @@ async def test_approval_requests_in_assistant_message(chat_client_base: Supports
         exec_counter += 1
         return f"Result {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -816,8 +1299,9 @@ async def test_approval_requests_in_assistant_message(chat_client_base: Supports
         ),
     ]
 
-    response = await chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [func_with_approval]}
+    response = await chat_client_base.get_response(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [func_with_approval]},  # type: ignore[arg-type]
     )
 
     # Should have one assistant message containing both the call and approval request
@@ -840,7 +1324,7 @@ async def test_persisted_approval_messages_replay_correctly(chat_client_base: Su
         exec_counter += 1
         return f"Result {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -849,25 +1333,26 @@ async def test_persisted_approval_messages_replay_correctly(chat_client_base: Su
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Get approval request
-    response1 = await chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [func_with_approval]}
+    response1 = await chat_client_base.get_response(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [func_with_approval]},  # type: ignore[arg-type]
     )
 
     # Store messages (like a thread would)
     persisted_messages = [
-        Message(role="user", text="hello"),
+        Message(role="user", contents=["hello"]),
         *response1.messages,
     ]
 
     # Send approval
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
     approval_response = Content.from_function_approval_response(
-        id=approval_req.id,
-        function_call=approval_req.function_call,
+        id=approval_req.id,  # type: ignore[arg-type]
+        function_call=approval_req.function_call,  # type: ignore[arg-type]
         approved=True,
     )
     persisted_messages.append(Message(role="user", contents=[approval_response]))
@@ -882,6 +1367,70 @@ async def test_persisted_approval_messages_replay_correctly(chat_client_base: Su
     assert exec_counter == 1
 
 
+async def test_resolved_approval_response_is_inert_on_later_stateless_turn(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A terminal result must consume approval authority in an explicitly replayed transcript."""
+    exec_counter = 0
+
+    @tool(name="guarded_stateless_tool", approval_mode="always_require")
+    def guarded_stateless_tool() -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return "approved result"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_guarded_stateless",
+                        name="guarded_stateless_tool",
+                        arguments="{}",
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+        ChatResponse(messages=Message(role="assistant", contents=["later"])),
+    ]
+
+    first_response = await chat_client_base.get_response(
+        [Message(role="user", contents=["run guarded"])],
+        options={"tools": [guarded_stateless_tool]},
+    )
+    approval_request = next(
+        content
+        for message in first_response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    )
+    approval_message = Message(
+        role="user",
+        contents=[approval_request.to_function_approval_response(approved=True)],
+    )
+    second_response = await chat_client_base.get_response(
+        [Message(role="user", contents=["run guarded"]), *first_response.messages, approval_message],
+        options={"tools": [guarded_stateless_tool]},
+    )
+    assert exec_counter == 1
+
+    later_response = await chat_client_base.get_response(
+        [
+            Message(role="user", contents=["run guarded"]),
+            *first_response.messages,
+            approval_message,
+            *second_response.messages,
+            Message(role="user", contents=["unrelated later turn"]),
+        ],
+        options={"tools": [guarded_stateless_tool]},
+    )
+
+    assert later_response.text == "later"
+    assert exec_counter == 1
+
+
 async def test_no_duplicate_function_calls_after_approval_processing(chat_client_base: SupportsChatGetResponse):
     """Processing approval should not create duplicate function calls in messages."""
 
@@ -889,7 +1438,7 @@ async def test_no_duplicate_function_calls_after_approval_processing(chat_client
     def func_with_approval(arg1: str) -> str:
         return f"Result {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -898,17 +1447,18 @@ async def test_no_duplicate_function_calls_after_approval_processing(chat_client
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
-    response1 = await chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [func_with_approval]}
+    response1 = await chat_client_base.get_response(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [func_with_approval]},  # type: ignore[arg-type]
     )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
     approval_response = Content.from_function_approval_response(
-        id=approval_req.id,
-        function_call=approval_req.function_call,
+        id=approval_req.id,  # type: ignore[arg-type]
+        function_call=approval_req.function_call,  # type: ignore[arg-type]
         approved=True,
     )
 
@@ -933,7 +1483,7 @@ async def test_rejection_result_uses_function_call_id(chat_client_base: Supports
     def func_with_approval(arg1: str) -> str:
         return f"Result {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -942,26 +1492,30 @@ async def test_rejection_result_uses_function_call_id(chat_client_base: Supports
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
-    response1 = await chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [func_with_approval]}
+    response1 = await chat_client_base.get_response(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [func_with_approval]},  # type: ignore[arg-type]
     )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
     rejection_response = Content.from_function_approval_response(
-        id=approval_req.id,
-        function_call=approval_req.function_call,
+        id=approval_req.id,  # type: ignore[arg-type]
+        function_call=approval_req.function_call,  # type: ignore[arg-type]
         approved=False,
     )
 
     all_messages = response1.messages + [Message(role="user", contents=[rejection_response])]
-    await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [func_with_approval]})
+    resumed_response = await chat_client_base.get_response(
+        all_messages,
+        options={"tool_choice": "auto", "tools": [func_with_approval]},
+    )
 
     # Find the rejection result
     rejection_result = next(
-        (content for msg in all_messages for content in msg.contents if content.type == "function_result"),
+        (content for msg in resumed_response.messages for content in msg.contents if content.type == "function_result"),
         None,
     )
 
@@ -981,7 +1535,7 @@ async def test_max_iterations_limit(chat_client_base: SupportsChatGetResponse):
         return f"Processed {arg1}"
 
     # Set up multiple function call responses to create a loop
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -999,14 +1553,14 @@ async def test_max_iterations_limit(chat_client_base: SupportsChatGetResponse):
             )
         ),
         # Failsafe response when tool_choice is set to "none"
-        ChatResponse(messages=Message(role="assistant", text="giving up on tools")),
+        ChatResponse(messages=Message(role="assistant", contents=["giving up on tools"])),
     ]
 
     # Set max_iterations to 1 in additional_properties
-    chat_client_base.function_invocation_configuration["max_iterations"] = 1
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [ai_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [ai_func]}
     )
 
     # With max_iterations=1, we should:
@@ -1030,7 +1584,7 @@ async def test_max_iterations_no_orphaned_function_calls(chat_client_base: Suppo
         return f"Processed {arg1}"
 
     # Model keeps requesting tool calls on every iteration
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1057,10 +1611,10 @@ async def test_max_iterations_no_orphaned_function_calls(chat_client_base: Suppo
         ),
     ]
 
-    chat_client_base.function_invocation_configuration["max_iterations"] = 2
+    chat_client_base.function_invocation_configuration["max_iterations"] = 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")],
+        [Message(role="user", contents=["hello"])],
         options={"tool_choice": "auto", "tools": [ai_func]},
     )
 
@@ -1092,7 +1646,7 @@ async def test_max_iterations_makes_final_toolchoice_none_call(chat_client_base:
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1110,13 +1664,13 @@ async def test_max_iterations_makes_final_toolchoice_none_call(chat_client_base:
             )
         ),
         # This response should be reached via failsafe (tool_choice="none")
-        ChatResponse(messages=Message(role="assistant", text="Final answer after giving up on tools.")),
+        ChatResponse(messages=Message(role="assistant", contents=["Final answer after giving up on tools."])),
     ]
 
-    chat_client_base.function_invocation_configuration["max_iterations"] = 1
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")],
+        [Message(role="user", contents=["hello"])],
         options={"tool_choice": "auto", "tools": [ai_func]},
     )
 
@@ -1139,6 +1693,78 @@ async def test_max_iterations_makes_final_toolchoice_none_call(chat_client_base:
     )
 
 
+async def test_max_iterations_blank_final_fallback_synthesizes_message(chat_client_base: SupportsChatGetResponse):
+    """Blank provider responses after max_iterations should not produce an empty final response."""
+    _force_blank_tool_choice_none_fallback(chat_client_base)
+    exec_counter = 0
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1": "v1"}')
+                ],
+            )
+        ),
+    ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+    )
+
+    assert exec_counter == 1
+    last_msg = response.messages[-1]
+    assert last_msg.role == "assistant"
+    assert last_msg.text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+    assert not any(content.type == "function_call" for content in last_msg.contents)
+
+
+async def test_max_iterations_reasoning_only_final_fallback_synthesizes_message(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Reasoning-only provider responses after max_iterations should not suppress the fallback."""
+    _force_blank_tool_choice_none_fallback(
+        chat_client_base,
+        final_contents=[Content.from_text_reasoning(text="thinking")],
+    )
+    exec_counter = 0
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1": "v1"}')
+                ],
+            )
+        ),
+    ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+    )
+
+    assert exec_counter == 1
+    assert response.messages[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
 async def test_max_iterations_preserves_all_fcc_messages(chat_client_base: SupportsChatGetResponse):
     """When max_iterations is reached and a final response is produced, all
     intermediate function call/result messages should be included.
@@ -1152,7 +1778,7 @@ async def test_max_iterations_preserves_all_fcc_messages(chat_client_base: Suppo
         return f"Result {exec_counter}"
 
     # Two iterations of function calls, then failsafe
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1169,13 +1795,13 @@ async def test_max_iterations_preserves_all_fcc_messages(chat_client_base: Suppo
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="Done")),
+        ChatResponse(messages=Message(role="assistant", contents=["Done"])),
     ]
 
-    chat_client_base.function_invocation_configuration["max_iterations"] = 2
+    chat_client_base.function_invocation_configuration["max_iterations"] = 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")],
+        [Message(role="user", contents=["hello"])],
         options={"tool_choice": "auto", "tools": [ai_func]},
     )
 
@@ -1213,7 +1839,7 @@ async def test_max_iterations_thread_integrity_with_agent(chat_client_base: Supp
     # The failsafe call (with tool_choice="none") after the loop is handled
     # automatically by the mock client, which returns a hardcoded text response
     # when tool_choice="none" (see conftest.py ChatClientBase.get_response).
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1236,7 +1862,7 @@ async def test_max_iterations_thread_integrity_with_agent(chat_client_base: Supp
         ),
     ]
 
-    chat_client_base.function_invocation_configuration["max_iterations"] = 2
+    chat_client_base.function_invocation_configuration["max_iterations"] = 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     agent = Agent(
         client=chat_client_base,
@@ -1277,7 +1903,7 @@ async def test_max_function_calls_limits_parallel_invocations(chat_client_base: 
         return f"Result for {query}"
 
     # Each iteration returns 3 parallel tool calls
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1300,14 +1926,14 @@ async def test_max_function_calls_limits_parallel_invocations(chat_client_base: 
             )
         ),
         # Final response after tool_choice="none" is forced
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Allow many iterations but cap total function calls at 5
-    chat_client_base.function_invocation_configuration["max_function_calls"] = 5
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 5  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="search")], options={"tool_choice": "auto", "tools": [search_func]}
+        [Message(role="user", contents=["search"])], options={"tool_choice": "auto", "tools": [search_func]}
     )
 
     # First iteration executes 3 calls (total=3, under limit).
@@ -1328,7 +1954,7 @@ async def test_max_function_calls_single_calls_per_iteration(chat_client_base: S
         exec_counter += 1
         return f"Value for {key}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1354,18 +1980,55 @@ async def test_max_function_calls_single_calls_per_iteration(chat_client_base: S
             )
         ),
         # After limit is reached
-        ChatResponse(messages=Message(role="assistant", text="all done")),
+        ChatResponse(messages=Message(role="assistant", contents=["all done"])),
     ]
 
-    chat_client_base.function_invocation_configuration["max_function_calls"] = 2
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="look up keys")], options={"tool_choice": "auto", "tools": [lookup_func]}
+        [Message(role="user", contents=["look up keys"])], options={"tool_choice": "auto", "tools": [lookup_func]}
     )
 
     # 2 single calls executed, then limit reached, tool_choice="none" forced
     assert exec_counter == 2
     assert "broke out" in response.messages[-1].text
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_max_function_calls_blank_final_fallback_synthesizes_message(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Blank provider responses after max_function_calls should not produce an empty final response."""
+    _force_blank_tool_choice_none_fallback(chat_client_base)
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}'),
+                ],
+            )
+        ),
+    ]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["look up key"])], options={"tool_choice": "auto", "tools": [lookup_func]}
+    )
+
+    assert exec_counter == 1
+    last_msg = response.messages[-1]
+    assert last_msg.role == "assistant"
+    assert last_msg.text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+    assert not any(content.type == "function_call" for content in last_msg.contents)
 
 
 @pytest.mark.parametrize("max_iterations", [10])
@@ -1379,7 +2042,7 @@ async def test_max_function_calls_none_means_unlimited(chat_client_base: Support
         exec_counter += 1
         return f"Done {arg}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1389,13 +2052,13 @@ async def test_max_function_calls_none_means_unlimited(chat_client_base: Support
             )
         )
         for i in range(5)
-    ] + [ChatResponse(messages=Message(role="assistant", text="finished"))]
+    ] + [ChatResponse(messages=Message(role="assistant", contents=["finished"]))]
 
     # Explicitly set to None (default) — should not limit
-    chat_client_base.function_invocation_configuration["max_function_calls"] = None
+    chat_client_base.function_invocation_configuration["max_function_calls"] = None  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="do things")], options={"tool_choice": "auto", "tools": [do_thing_func]}
+        [Message(role="user", contents=["do things"])], options={"tool_choice": "auto", "tools": [do_thing_func]}
     )
 
     assert exec_counter == 5
@@ -1412,21 +2075,51 @@ async def test_function_invocation_config_enabled_false(chat_client_base: Suppor
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.run_responses = [
-        ChatResponse(messages=Message(role="assistant", text="response without function calling")),
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["response without function calling"])),
     ]
 
     # Disable function invocation
-    chat_client_base.function_invocation_configuration["enabled"] = False
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [ai_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [ai_func]}
     )
 
     # Function should not be executed - when enabled=False, the loop doesn't run
     assert exec_counter == 0
     # The response should be from the mock client
     assert len(response.messages) > 0
+
+
+async def test_function_invocation_config_enabled_false_preserves_invocation_kwargs(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Test disabled function invocation still forwards invocation kwargs downstream."""
+    captured_kwargs: dict[str, Any] = {}
+
+    @tool(name="test_function")
+    def ai_func(arg1: str) -> str:
+        return f"Processed {arg1}"
+
+    @chat_middleware
+    async def capture_middleware(context, call_next):
+        captured_kwargs.update(context.function_invocation_kwargs or {})
+        await call_next()
+
+    chat_client_base.chat_middleware = [capture_middleware]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["response without function calling"])),
+    ]
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+        function_invocation_kwargs={"tool_request_id": "tool-123"},
+    )
+
+    assert captured_kwargs == {"tool_request_id": "tool-123"}
 
 
 @pytest.mark.skip(reason="Error handling and failsafe behavior needs investigation in unified API")
@@ -1438,7 +2131,7 @@ async def test_function_invocation_config_max_consecutive_errors(chat_client_bas
         raise ValueError("Function error")
 
     # Set up multiple function call responses that will all error
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1471,14 +2164,14 @@ async def test_function_invocation_config_max_consecutive_errors(chat_client_bas
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="final response")),
+        ChatResponse(messages=Message(role="assistant", contents=["final response"])),
     ]
 
     # Set max_consecutive_errors to 2
-    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 2
+    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [error_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [error_func]}
     )
 
     # Should stop after 2 consecutive errors and force a non-tool response
@@ -1506,7 +2199,7 @@ async def test_function_invocation_stop_clears_conversation_id_non_stream(chat_c
     def error_func(arg1: str) -> str:
         raise ValueError("Function error")
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1517,13 +2210,13 @@ async def test_function_invocation_stop_clears_conversation_id_non_stream(chat_c
             conversation_id="resp_1",
         )
     ]
-    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 1
+    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     session_stub = type("SessionStub", (), {"service_session_id": "resp_seed"})()
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")],
+        [Message(role="user", contents=["hello"])],
         options={"tool_choice": "auto", "tools": [error_func]},
-        session=session_stub,
+        client_kwargs={"session": session_stub},
     )
 
     assert response.conversation_id is None
@@ -1539,7 +2232,7 @@ async def test_function_invocation_config_terminate_on_unknown_calls_false(chat_
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1548,14 +2241,14 @@ async def test_function_invocation_config_terminate_on_unknown_calls_false(chat_
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Set terminate_on_unknown_calls to False (default)
-    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = False
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [known_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [known_func]}
     )
 
     # Should have a result message indicating the tool wasn't found
@@ -1576,7 +2269,7 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1588,12 +2281,12 @@ async def test_function_invocation_config_terminate_on_unknown_calls_true(chat_c
     ]
 
     # Set terminate_on_unknown_calls to True
-    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     # Should raise an exception when encountering an unknown function
     with pytest.raises(KeyError, match='Error: Requested function "unknown_function" not found'):
         await chat_client_base.get_response(
-            [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [known_func]}
+            [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [known_func]}
         )
 
     assert exec_counter == 0
@@ -1616,7 +2309,7 @@ async def test_function_invocation_config_additional_tools(chat_client_base: Sup
         exec_counter_hidden += 1
         return f"Hidden {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1625,15 +2318,15 @@ async def test_function_invocation_config_additional_tools(chat_client_base: Sup
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Add hidden_func to additional_tools
-    chat_client_base.function_invocation_configuration["additional_tools"] = [hidden_func]
+    chat_client_base.function_invocation_configuration["additional_tools"] = [hidden_func]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     # Only pass visible_func in the tools parameter
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [visible_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [visible_func]}
     )
 
     # Additional tools are treated as declaration_only, so not executed
@@ -1657,7 +2350,7 @@ async def test_function_invocation_config_include_detailed_errors_false(chat_cli
     def error_func(arg1: str) -> str:
         raise ValueError("Specific error message that should not appear")
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1666,14 +2359,14 @@ async def test_function_invocation_config_include_detailed_errors_false(chat_cli
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Set include_detailed_errors to False (default)
-    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [error_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [error_func]}
     )
 
     # Should have a generic error message
@@ -1693,7 +2386,7 @@ async def test_function_invocation_config_include_detailed_errors_true(chat_clie
     def error_func(arg1: str) -> str:
         raise ValueError("Specific error message that should appear")
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1702,14 +2395,14 @@ async def test_function_invocation_config_include_detailed_errors_true(chat_clie
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Set include_detailed_errors to True
-    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [error_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [error_func]}
     )
 
     # Should have detailed error message
@@ -1792,7 +2485,7 @@ async def test_argument_validation_error_with_detailed_errors(chat_client_base: 
     def typed_func(arg1: int) -> str:  # Expects int, not str
         return f"Got {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1801,14 +2494,14 @@ async def test_argument_validation_error_with_detailed_errors(chat_client_base: 
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Set include_detailed_errors to True
-    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [typed_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [typed_func]}
     )
 
     # Should have detailed validation error
@@ -1828,7 +2521,7 @@ async def test_argument_validation_error_without_detailed_errors(chat_client_bas
     def typed_func(arg1: int) -> str:  # Expects int, not str
         return f"Got {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -1837,14 +2530,14 @@ async def test_argument_validation_error_without_detailed_errors(chat_client_bas
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Set include_detailed_errors to False (default)
-    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [typed_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [typed_func]}
     )
 
     # Should have generic validation error
@@ -1874,15 +2567,14 @@ async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetRe
         approved=True,
     )
 
-    chat_client_base.run_responses = [
-        ChatResponse(messages=Message(role="assistant", text="done")),
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Send the approval response
     response = await chat_client_base.get_response(
         [Message(role="user", contents=[approval_response])],
-        tool_choice="auto",
-        tools=[local_func],
+        options={"tool_choice": "auto", "tools": [local_func]},
     )
 
     # The hosted tool approval should be returned as-is (not executed)
@@ -1916,22 +2608,21 @@ async def test_hosted_mcp_approval_response_passthrough(chat_client_base: Suppor
     mcp_approval_response = mcp_approval_request.to_function_approval_response(approved=True)
 
     # The second call (after approval) should return a final response
-    chat_client_base.run_responses = [
-        ChatResponse(messages=Message(role="assistant", text="Here are the docs results.")),
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=["Here are the docs results."])),
     ]
 
     # Build message list mimicking handle_approvals_without_session:
     # [original query, assistant with approval_request, user with approval_response]
     messages = [
-        Message(role="user", text="Search docs for azure storage"),
+        Message(role="user", contents=["Search docs for azure storage"]),
         Message(role="assistant", contents=[mcp_approval_request]),
         Message(role="user", contents=[mcp_approval_response]),
     ]
 
     response = await chat_client_base.get_response(
         messages,
-        tool_choice="auto",
-        tools=[local_func],
+        options={"tool_choice": "auto", "tools": [local_func]},
     )
 
     # The response should succeed without errors
@@ -1979,6 +2670,496 @@ def test_is_hosted_tool_approval_without_server_label():
     assert _is_hosted_tool_approval("not a content") is False
 
 
+def test_collect_approval_responses_consumes_matching_follow_up_request_occurrence() -> None:
+    """A follow-up user-input request resolves only the preceding approval occurrence for a reused call id."""
+    from agent_framework._tools import _collect_approval_responses
+
+    _, _, first_response = _build_approved_tool_roundtrip(
+        call_id="call_reused",
+        approval_id="approval_1",
+        tool_name="guarded_tool",
+    )
+    _, _, second_response = _build_approved_tool_roundtrip(
+        call_id="call_reused",
+        approval_id="approval_2",
+        tool_name="guarded_tool",
+    )
+    follow_up_request = Content.from_oauth_consent_request(consent_link="https://example.com/consent")
+    follow_up_request.call_id = "call_reused"
+    messages = [
+        Message(role="user", contents=[first_response]),
+        Message(role="assistant", contents=[follow_up_request]),
+        Message(role="user", contents=[second_response]),
+    ]
+
+    pending_responses = _collect_approval_responses(messages)
+
+    assert pending_responses == {"approval_2": second_response}
+
+
+def test_pending_approval_batch_filter_keeps_resolved_sibling_pair() -> None:
+    from agent_framework._tools import _remove_unanswered_approval_batches_from_model_input
+
+    local_call = Content.from_function_call(call_id="call_local", name="local_tool", arguments="{}")
+    hosted_call = Content.from_function_call(
+        call_id="call_hosted",
+        name="hosted_tool",
+        arguments="{}",
+        additional_properties={"server_label": "hosted_server"},
+    )
+    hosted_request = Content.from_function_approval_request(id="approval_hosted", function_call=hosted_call)
+    local_result = Content.from_function_result(call_id="call_local", result="local result")
+    unrelated_content = Content.from_text("unrelated turn")
+    messages = [
+        Message(role="assistant", contents=[local_call, hosted_call, hosted_request]),
+        Message(role="tool", contents=[local_result]),
+        Message(role="user", contents=[unrelated_content]),
+    ]
+
+    _remove_unanswered_approval_batches_from_model_input(messages)
+
+    assert [(message.role, message.contents) for message in messages] == [
+        ("assistant", [local_call]),
+        ("tool", [local_result]),
+        ("user", [unrelated_content]),
+    ]
+
+
+def test_replace_approval_contents_with_results_uses_result_call_ids_without_placeholders() -> None:
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    call_one, request_one, response_one = _build_approved_tool_roundtrip(
+        call_id="call_1", approval_id="approval_1", tool_name="first_tool"
+    )
+    call_two, request_two, response_two = _build_approved_tool_roundtrip(
+        call_id="call_2", approval_id="approval_2", tool_name="second_tool"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[call_one, request_one, call_two, request_two]),
+        Message(role="user", contents=[response_one, response_two]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [
+            [Content.from_function_result(call_id="call_2", result="second result")],
+            [Content.from_function_result(call_id="call_1", result="first result")],
+        ],
+    )
+
+    assert len(messages) == 2
+    assert messages[0].contents == [call_one, call_two]
+    assert messages[1].role == "tool"
+    assert [(content.call_id, content.result) for content in messages[1].contents] == [
+        ("call_1", "first result"),
+        ("call_2", "second result"),
+    ]
+
+
+def test_replace_approval_contents_with_results_allows_reused_call_id_after_completion() -> None:
+    """A completed call must not suppress a later approval request that reuses its id.
+
+    Re-approving the same ``(call_id, function)`` is supported behaviour. If the dedupe
+    matched every occurrence of the id, the fresh request would be dropped and its result
+    attached to the already-answered call, leaving one call with two results.
+    """
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    completed_call = Content.from_function_call(call_id="call_reused", name="run_skill_script", arguments="{}")
+    completed_result = Content.from_function_result(call_id="call_reused", result="first output")
+    _, request, response = _build_approved_tool_roundtrip(
+        call_id="call_reused", approval_id="approval_2", tool_name="run_skill_script"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[completed_call]),
+        Message(role="tool", contents=[completed_result]),
+        Message(role="assistant", contents=[request]),
+        Message(role="user", contents=[response]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [[Content.from_function_result(call_id="call_reused", result="second output")]],
+    )
+
+    function_calls = [c for m in messages for c in m.contents if c.type == "function_call"]
+    assert [c.call_id for c in function_calls] == ["call_reused", "call_reused"]
+    results = [c for m in messages for c in m.contents if c.type == "function_result"]
+    assert [(c.call_id, c.result) for c in results] == [
+        ("call_reused", "first output"),
+        ("call_reused", "second output"),
+    ]
+
+
+def test_replace_approval_contents_with_results_deduplicates_replayed_approval_request() -> None:
+    """A replayed wrapper must not restore another copy of an already-present function call."""
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    function_call, request, response = _build_approved_tool_roundtrip(
+        call_id="call_1",
+        approval_id="approval_1",
+        tool_name="guarded_tool",
+    )
+    replayed_request = Content.from_dict(request.to_dict())
+    messages = [
+        Message(role="assistant", contents=[function_call]),
+        Message(role="assistant", contents=[request]),
+        Message(role="assistant", contents=[replayed_request]),
+        Message(role="user", contents=[response]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [[Content.from_function_result(call_id="call_1", result="done")]],
+    )
+
+    calls = [content for message in messages for content in message.contents if content.type == "function_call"]
+    results = [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert [content.call_id for content in calls] == ["call_1"]
+    assert [(content.call_id, content.result) for content in results] == [("call_1", "done")]
+
+
+def test_replace_approval_contents_with_results_ignores_already_resolved_response() -> None:
+    """Historical approval responses with terminal results must not become rejection results."""
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    old_call, old_request, old_response = _build_approved_tool_roundtrip(
+        call_id="call_reused",
+        approval_id="approval_old",
+        tool_name="guarded_tool",
+    )
+    new_call, new_request, new_response = _build_approved_tool_roundtrip(
+        call_id="call_reused",
+        approval_id="approval_new",
+        tool_name="guarded_tool",
+    )
+    messages = [
+        Message(role="assistant", contents=[old_call, old_request]),
+        Message(role="user", contents=[old_response]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="call_reused", result="old result")]),
+        Message(role="assistant", contents=[new_call, new_request]),
+        Message(role="user", contents=[new_response]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [[Content.from_function_result(call_id="call_reused", result="new result")]],
+    )
+
+    assert not [
+        content
+        for message in messages
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    results = [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert [(content.call_id, content.result) for content in results] == [
+        ("call_reused", "old result"),
+        ("call_reused", "new result"),
+    ]
+
+
+def test_replace_approval_contents_with_results_correlates_reused_call_id_occurrences() -> None:
+    """Each approval round must retain its own call and terminal result when call ids are reused."""
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    completed_call = Content.from_function_call(call_id="call_reused", name="run_skill_script", arguments="{}")
+    completed_result = Content.from_function_result(call_id="call_reused", result="first output")
+    replayed_call, approved_request, approved_response = _build_approved_tool_roundtrip(
+        call_id="call_reused", approval_id="approval_2", tool_name="run_skill_script"
+    )
+    rejected_call, rejected_request, rejected_response = _build_approved_tool_roundtrip(
+        call_id="call_reused", approval_id="approval_3", tool_name="run_skill_script"
+    )
+    rejected_response.approved = False
+
+    messages = [
+        Message(role="assistant", contents=[completed_call]),
+        Message(role="tool", contents=[completed_result]),
+        Message(role="assistant", contents=[replayed_call]),
+        Message(role="assistant", contents=[approved_request]),
+        Message(role="user", contents=[approved_response]),
+        Message(role="assistant", contents=[rejected_call]),
+        Message(role="assistant", contents=[rejected_request]),
+        Message(role="user", contents=[rejected_response]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [[Content.from_function_result(call_id="call_reused", result="second output")]],
+    )
+
+    calls = [content for message in messages for content in message.contents if content.type == "function_call"]
+    results = [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert [content.call_id for content in calls] == ["call_reused", "call_reused", "call_reused"]
+    assert [(content.call_id, content.result) for content in results] == [
+        ("call_reused", "first output"),
+        ("call_reused", "second output"),
+        ("call_reused", "Error: Tool call invocation was rejected by user."),
+    ]
+
+
+def test_replace_approval_contents_with_results_keeps_multi_content_group_with_reused_call_id() -> None:
+    """All contents from one execution stay with its approval occurrence when call ids are reused."""
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    first_call, first_request, first_response = _build_approved_tool_roundtrip(
+        call_id="call_reused",
+        approval_id="approval_1",
+        tool_name="run_skill_script",
+    )
+    second_call, second_request, second_response = _build_approved_tool_roundtrip(
+        call_id="call_reused",
+        approval_id="approval_2",
+        tool_name="run_skill_script",
+    )
+    first_user_requests = [
+        Content.from_oauth_consent_request(consent_link="https://example.com/consent-1"),
+        Content.from_oauth_consent_request(consent_link="https://example.com/consent-2"),
+    ]
+    for request in first_user_requests:
+        request.call_id = "call_reused"
+    second_result = Content.from_function_result(call_id="call_reused", result="second output")
+    messages = [
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="user", contents=[first_response]),
+        Message(role="assistant", contents=[second_call, second_request]),
+        Message(role="user", contents=[second_response]),
+    ]
+
+    resolved_contents = _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [first_user_requests, [second_result]],
+    )
+
+    user_requests = [content for message in messages for content in message.contents if content.user_input_request]
+    results = [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert [request.consent_link for request in user_requests] == [
+        "https://example.com/consent-1",
+        "https://example.com/consent-2",
+    ]
+    assert results == [second_result]
+    assert resolved_contents == [*first_user_requests, second_result]
+
+
+def test_replace_approval_contents_with_results_correlates_reused_call_id_placeholders() -> None:
+    """Placeholder replacement must consume approved results by approval occurrence, not call id."""
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    completed_call = Content.from_function_call(call_id="call_reused", name="run_skill_script", arguments="{}")
+    completed_result = Content.from_function_result(call_id="call_reused", result="first output")
+    second_call, second_request, second_response = _build_approved_tool_roundtrip(
+        call_id="call_reused", approval_id="approval_2", tool_name="run_skill_script"
+    )
+    third_call, third_request, third_response = _build_approved_tool_roundtrip(
+        call_id="call_reused", approval_id="approval_3", tool_name="run_skill_script"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[completed_call]),
+        Message(role="tool", contents=[completed_result]),
+        Message(role="assistant", contents=[second_call, second_request]),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_reused", result="[APPROVAL_PENDING] second")],
+        ),
+        Message(role="user", contents=[second_response]),
+        Message(role="assistant", contents=[third_call, third_request]),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_reused", result="[APPROVAL_PENDING] third")],
+        ),
+        Message(role="user", contents=[third_response]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [
+            [Content.from_function_result(call_id="call_reused", result="second output")],
+            [Content.from_function_result(call_id="call_reused", result="third output")],
+        ],
+    )
+
+    calls = [content for message in messages for content in message.contents if content.type == "function_call"]
+    results = [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert [content.call_id for content in calls] == ["call_reused", "call_reused", "call_reused"]
+    assert [(content.call_id, content.result) for content in results] == [
+        ("call_reused", "first output"),
+        ("call_reused", "second output"),
+        ("call_reused", "third output"),
+    ]
+
+
+def test_replace_approval_contents_with_results_replaces_rejected_placeholder() -> None:
+    """A rejected call should replace its pending placeholder instead of adding a second result."""
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    function_call, request, _ = _build_approved_tool_roundtrip(
+        call_id="call_rejected",
+        approval_id="approval_rejected",
+        tool_name="guarded_tool",
+    )
+    rejection = request.to_function_approval_response(approved=False)
+    messages = [
+        Message(role="assistant", contents=[function_call, request]),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(
+                    call_id="call_rejected",
+                    result="[APPROVAL_PENDING] guarded_tool",
+                )
+            ],
+        ),
+        Message(role="user", contents=[rejection]),
+    ]
+
+    resolved_contents = _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [],
+    )
+
+    results = [content for message in messages for content in message.contents if content.type == "function_result"]
+    assert len(results) == 1
+    assert results[0].result == "Error: Tool call invocation was rejected by user."
+    assert resolved_contents == results
+
+
+def test_replace_approval_contents_with_results_uses_result_call_ids_for_placeholders() -> None:
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    call_one, request_one, response_one = _build_approved_tool_roundtrip(
+        call_id="call_1", approval_id="approval_1", tool_name="first_tool"
+    )
+    call_two, request_two, response_two = _build_approved_tool_roundtrip(
+        call_id="call_2", approval_id="approval_2", tool_name="second_tool"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[call_one, request_one, call_two, request_two]),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="call_1", result="[APPROVAL_PENDING] first placeholder"),
+                Content.from_function_result(call_id="call_2", result="[APPROVAL_PENDING] second placeholder"),
+            ],
+        ),
+        Message(role="user", contents=[response_one, response_two]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [
+            [Content.from_function_result(call_id="call_2", result="second result")],
+            [Content.from_function_result(call_id="call_1", result="first result")],
+        ],
+    )
+
+    assert len(messages) == 2
+    assert messages[0].contents == [call_one, call_two]
+    assert [(content.call_id, content.result) for content in messages[1].contents] == [
+        ("call_1", "first result"),
+        ("call_2", "second result"),
+    ]
+
+
+def test_replace_approval_contents_with_results_skips_results_without_call_id() -> None:
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    call_one, request_one, response_one = _build_approved_tool_roundtrip(
+        call_id="call_1", approval_id="approval_1", tool_name="first_tool"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[call_one, request_one]),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_1", result="[APPROVAL_PENDING] placeholder")],
+        ),
+        Message(role="user", contents=[response_one]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [
+            [
+                Content.from_function_result(call_id=None, result="ignored result")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+            ],
+            [Content.from_function_result(call_id="call_1", result="first result")],
+        ],
+    )
+
+    assert len(messages) == 2
+    assert messages[0].contents == [call_one]
+    assert [(content.call_id, content.result) for content in messages[1].contents] == [("call_1", "first result")]
+
+
+def test_replace_approval_contents_with_results_prunes_emptied_messages() -> None:
+    """Messages whose contents are fully consumed during the first pass should be removed.
+
+    When approval responses are paired with placeholder results, the responses are marked
+    for removal in the first pass. If a message contained only such responses, it ends up
+    with an empty `contents` list and the second pass should drop it from `messages`.
+    """
+    from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
+
+    call_one, request_one, response_one = _build_approved_tool_roundtrip(
+        call_id="call_1", approval_id="approval_1", tool_name="first_tool"
+    )
+    call_two, request_two, response_two = _build_approved_tool_roundtrip(
+        call_id="call_2", approval_id="approval_2", tool_name="second_tool"
+    )
+
+    messages = [
+        Message(role="assistant", contents=[call_one, request_one, call_two, request_two]),
+        Message(
+            role="tool",
+            contents=[
+                Content.from_function_result(call_id="call_1", result="[APPROVAL_PENDING] first placeholder"),
+                Content.from_function_result(call_id="call_2", result="[APPROVAL_PENDING] second placeholder"),
+            ],
+        ),
+        # This user message holds only approval_responses whose placeholders are replaced
+        # in the tool message above, so every content here is marked for removal and the
+        # message itself becomes empty -> it must be pruned by the second pass.
+        Message(role="user", contents=[response_one, response_two]),
+    ]
+
+    _replace_approval_contents_with_results(
+        messages,
+        _collect_approval_responses(messages),
+        [
+            [Content.from_function_result(call_id="call_1", result="first result")],
+            [Content.from_function_result(call_id="call_2", result="second result")],
+        ],
+    )
+
+    # The now-empty user message should have been pruned, leaving just the assistant
+    # message and the tool message with the resolved results.
+    assert len(messages) == 2
+    assert messages[0].role == "assistant"
+    assert messages[0].contents == [call_one, call_two]
+    assert messages[1].role == "tool"
+    assert [(content.call_id, content.result) for content in messages[1].contents] == [
+        ("call_1", "first result"),
+        ("call_2", "second result"),
+    ]
+    # Sanity-check: no leftover empty messages.
+    assert all(msg.contents for msg in messages)
+
+
 async def test_mixed_local_and_hosted_approval_flow(chat_client_base: SupportsChatGetResponse):
     """Test that mixed local + hosted MCP approvals are handled correctly.
 
@@ -2002,10 +3183,10 @@ async def test_mixed_local_and_hosted_approval_flow(chat_client_base: SupportsCh
     mcp_approval_request = Content.from_function_approval_request(id="mcpr_hosted", function_call=mcp_fc)
 
     # First response: LLM returns a local function call that needs approval
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(messages=Message(role="assistant", contents=[local_fc])),
         # After local approval + hosted approval, the final response
-        ChatResponse(messages=Message(role="assistant", text="Done with both tools.")),
+        ChatResponse(messages=Message(role="assistant", contents=["Done with both tools."])),
     ]
 
     # User approves the local function call
@@ -2016,7 +3197,7 @@ async def test_mixed_local_and_hosted_approval_flow(chat_client_base: SupportsCh
     mcp_approval_response = mcp_approval_request.to_function_approval_response(approved=True)
 
     messages = [
-        Message(role="user", text="Search docs and run local"),
+        Message(role="user", contents=["Search docs and run local"]),
         Message(role="assistant", contents=[local_fc, mcp_approval_request]),
         Message(role="user", contents=[local_approval_response]),
         Message(role="user", contents=[mcp_approval_response]),
@@ -2024,8 +3205,7 @@ async def test_mixed_local_and_hosted_approval_flow(chat_client_base: SupportsCh
 
     response = await chat_client_base.get_response(
         messages,
-        tool_choice="auto",
-        tools=[local_func],
+        options={"tool_choice": "auto", "tools": [local_func]},
     )
 
     assert response is not None
@@ -2043,7 +3223,7 @@ async def test_unapproved_tool_execution_raises_exception(chat_client_base: Supp
     def test_func(arg1: str) -> str:
         return f"Result {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -2052,20 +3232,20 @@ async def test_unapproved_tool_execution_raises_exception(chat_client_base: Supp
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Get approval request
     response1 = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [test_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [test_func]}
     )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
 
     # Create a rejection response (approved=False)
     rejection_response = Content.from_function_approval_response(
-        id=approval_req.id,
-        function_call=approval_req.function_call,
+        id=approval_req.id,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        function_call=approval_req.function_call,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         approved=False,
     )
 
@@ -2073,13 +3253,16 @@ async def test_unapproved_tool_execution_raises_exception(chat_client_base: Supp
     all_messages = response1.messages + [Message(role="user", contents=[rejection_response])]
 
     # This should handle the rejection gracefully (not raise ToolException to user)
-    await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [test_func]})
+    resumed_response = await chat_client_base.get_response(
+        all_messages,
+        options={"tool_choice": "auto", "tools": [test_func]},
+    )
 
     # Should have a rejection result
     rejection_result = next(
         (
             content
-            for msg in all_messages
+            for msg in resumed_response.messages
             for content in msg.contents
             if content.type == "function_result" and "rejected" in (content.result or content.exception or "").lower()
         ),
@@ -2102,37 +3285,40 @@ async def test_approved_function_call_with_error_without_detailed_errors(chat_cl
         exec_counter += 1
         raise ValueError("Specific error from approved function")
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
                 contents=[Content.from_function_call(call_id="1", name="error_func", arguments='{"arg1": "value1"}')],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Set include_detailed_errors to False (default)
-    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     # Get approval request
     response1 = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [error_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [error_func]}
     )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
 
     # Approve the function
     approval_response = Content.from_function_approval_response(
-        id=approval_req.id,
-        function_call=approval_req.function_call,
+        id=approval_req.id,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        function_call=approval_req.function_call,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         approved=True,
     )
 
     all_messages = response1.messages + [Message(role="user", contents=[approval_response])]
 
     # Execute the approved function (which will error)
-    await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [error_func]})
+    resumed_response = await chat_client_base.get_response(
+        all_messages,
+        options={"tool_choice": "auto", "tools": [error_func]},
+    )
 
     # Should have executed the function
     assert exec_counter == 1
@@ -2141,7 +3327,7 @@ async def test_approved_function_call_with_error_without_detailed_errors(chat_cl
     error_result = next(
         (
             content
-            for msg in all_messages
+            for msg in resumed_response.messages
             for content in msg.contents
             if content.type == "function_result" and content.exception is not None
         ),
@@ -2167,37 +3353,40 @@ async def test_approved_function_call_with_error_with_detailed_errors(chat_clien
         exec_counter += 1
         raise ValueError("Specific error from approved function")
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
                 contents=[Content.from_function_call(call_id="1", name="error_func", arguments='{"arg1": "value1"}')],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Set include_detailed_errors to True
-    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     # Get approval request
     response1 = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [error_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [error_func]}
     )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
 
     # Approve the function
     approval_response = Content.from_function_approval_response(
-        id=approval_req.id,
-        function_call=approval_req.function_call,
+        id=approval_req.id,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        function_call=approval_req.function_call,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         approved=True,
     )
 
     all_messages = response1.messages + [Message(role="user", contents=[approval_response])]
 
     # Execute the approved function (which will error)
-    await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [error_func]})
+    resumed_response = await chat_client_base.get_response(
+        all_messages,
+        options={"tool_choice": "auto", "tools": [error_func]},
+    )
 
     # Should have executed the function
     assert exec_counter == 1
@@ -2206,7 +3395,7 @@ async def test_approved_function_call_with_error_with_detailed_errors(chat_clien
     error_result = next(
         (
             content
-            for msg in all_messages
+            for msg in resumed_response.messages
             for content in msg.contents
             if content.type == "function_result" and content.exception is not None
         ),
@@ -2230,7 +3419,7 @@ async def test_approved_function_call_with_validation_error(chat_client_base: Su
         exec_counter += 1
         return f"Got {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -2239,30 +3428,33 @@ async def test_approved_function_call_with_validation_error(chat_client_base: Su
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Set include_detailed_errors to True to see validation details
-    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     # Get approval request
     response1 = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [typed_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [typed_func]}
     )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
 
     # Approve the function (even though it will fail validation)
     approval_response = Content.from_function_approval_response(
-        id=approval_req.id,
-        function_call=approval_req.function_call,
+        id=approval_req.id,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        function_call=approval_req.function_call,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         approved=True,
     )
 
     all_messages = response1.messages + [Message(role="user", contents=[approval_response])]
 
     # Execute the approved function (which will fail validation)
-    await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [typed_func]})
+    resumed_response = await chat_client_base.get_response(
+        all_messages,
+        options={"tool_choice": "auto", "tools": [typed_func]},
+    )
 
     # Should NOT have executed the function (validation failed before execution)
     assert exec_counter == 0
@@ -2271,7 +3463,7 @@ async def test_approved_function_call_with_validation_error(chat_client_base: Su
     error_result = next(
         (
             content
-            for msg in all_messages
+            for msg in resumed_response.messages
             for content in msg.contents
             if content.type == "function_result" and content.exception is not None
         ),
@@ -2293,34 +3485,37 @@ async def test_approved_function_call_successful_execution(chat_client_base: Sup
         exec_counter += 1
         return f"Success {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
                 contents=[Content.from_function_call(call_id="1", name="success_func", arguments='{"arg1": "value1"}')],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Get approval request
     response1 = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [success_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [success_func]}
     )
 
     approval_req = [c for c in response1.messages[0].contents if c.type == "function_approval_request"][0]
 
     # Approve the function
     approval_response = Content.from_function_approval_response(
-        id=approval_req.id,
-        function_call=approval_req.function_call,
+        id=approval_req.id,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        function_call=approval_req.function_call,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         approved=True,
     )
 
     all_messages = response1.messages + [Message(role="user", contents=[approval_response])]
 
     # Execute the approved function
-    await chat_client_base.get_response(all_messages, options={"tool_choice": "auto", "tools": [success_func]})
+    resumed_response = await chat_client_base.get_response(
+        all_messages,
+        options={"tool_choice": "auto", "tools": [success_func]},
+    )
 
     # Should have executed successfully
     assert exec_counter == 1
@@ -2329,7 +3524,7 @@ async def test_approved_function_call_successful_execution(chat_client_base: Sup
     success_result = next(
         (
             content
-            for msg in all_messages
+            for msg in resumed_response.messages
             for content in msg.contents
             if content.type == "function_result" and content.exception is None
         ),
@@ -2354,7 +3549,7 @@ async def test_declaration_only_tool(chat_client_base: SupportsChatGetResponse):
     # Verify it's marked as declaration_only
     assert declaration_func.declaration_only is True
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -2363,11 +3558,12 @@ async def test_declaration_only_tool(chat_client_base: SupportsChatGetResponse):
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
-    response = await chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [declaration_func]}
+    response = await chat_client_base.get_response(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [declaration_func]},  # type: ignore[arg-type]
     )
 
     # Should have the function call in messages but not a result
@@ -2389,11 +3585,73 @@ async def test_declaration_only_tool(chat_client_base: SupportsChatGetResponse):
     assert len(function_results) == 0
 
 
+@pytest.mark.parametrize(
+    "argument_chunks",
+    [
+        ['{"location":', '"Seattle"}'],
+        ['{"location":"Seattle"}'],
+    ],
+    ids=["split-arguments", "single-chunk"],
+)
+async def test_streaming_declaration_only_tool_preserves_metadata_without_duplicate_arguments(
+    chat_client_base: SupportsChatGetResponse,
+    argument_chunks: list[str],
+) -> None:
+    """Declaration-only streaming emits metadata once without replaying already-streamed arguments."""
+    from agent_framework import FunctionTool
+
+    declaration_tool = FunctionTool(
+        name="get_weather",
+        func=None,
+        description="Get the weather",
+        input_model={"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]},
+    )
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_weather",
+                        name="get_weather",
+                        arguments=arguments,
+                    )
+                ],
+                role="assistant",
+            )
+            for arguments in argument_chunks
+        ]
+    ]
+
+    stream = chat_client_base.get_response(
+        [Message(role="user", contents=["What's the weather in Seattle?"])],
+        options={"tool_choice": "auto", "tools": [declaration_tool]},
+        stream=True,
+    )
+    metadata_updates: list[tuple[Any, str | None]] = []
+    async for update in stream:
+        for content in update.contents:
+            if content.type == "function_call" and content.call_id == "call_weather" and content.user_input_request:
+                metadata_updates.append((content.arguments, content.id))
+    final_response = await stream.get_final_response()
+    function_calls = [
+        content
+        for message in final_response.messages
+        for content in message.contents
+        if content.type == "function_call" and content.call_id == "call_weather"
+    ]
+
+    assert metadata_updates == [(None, "call_weather")]
+    assert len(function_calls) == 1
+    assert function_calls[0].arguments == '{"location":"Seattle"}'
+    assert function_calls[0].user_input_request is True
+    assert function_calls[0].id == "call_weather"
+
+
 async def test_multiple_function_calls_parallel_execution(chat_client_base: SupportsChatGetResponse):
     """Test that multiple function calls are executed in parallel."""
     import asyncio
 
-    exec_order = []
+    exec_order = []  # type: ignore[var-annotated]
 
     @tool(name="func1", approval_mode="never_require")
     async def func1(arg1: str) -> str:
@@ -2409,7 +3667,7 @@ async def test_multiple_function_calls_parallel_execution(chat_client_base: Supp
         exec_order.append("func2_end")
         return f"Result2 {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -2419,11 +3677,11 @@ async def test_multiple_function_calls_parallel_execution(chat_client_base: Supp
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [func1, func2]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [func1, func2]}
     )
 
     # Both functions should have been executed
@@ -2448,7 +3706,7 @@ async def test_callable_function_converted_to_tool(chat_client_base: SupportsCha
         exec_counter += 1
         return f"Plain {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -2457,12 +3715,12 @@ async def test_callable_function_converted_to_tool(chat_client_base: SupportsCha
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     # Pass plain function (will be auto-converted)
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [plain_function]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [plain_function]}
     )
 
     # Function should be executed
@@ -2479,7 +3737,7 @@ async def test_conversation_id_handling(chat_client_base: SupportsChatGetRespons
         return f"Result {arg1}"
 
     # Return a response with a conversation_id
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -2490,13 +3748,13 @@ async def test_conversation_id_handling(chat_client_base: SupportsChatGetRespons
             conversation_id="conv_123",  # Simulate service-side thread
         ),
         ChatResponse(
-            messages=Message(role="assistant", text="done"),
+            messages=Message(role="assistant", contents=["done"]),
             conversation_id="conv_123",
         ),
     ]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [test_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [test_func]}
     )
 
     # Should have executed the function
@@ -2512,7 +3770,7 @@ async def test_function_result_appended_to_existing_assistant_message(chat_clien
     def test_func(arg1: str) -> str:
         return f"Result {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -2521,11 +3779,11 @@ async def test_function_result_appended_to_existing_assistant_message(chat_clien
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [test_func]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [test_func]}
     )
 
     # Should have messages with both function call and function result
@@ -2551,7 +3809,7 @@ async def test_error_recovery_resets_counter(chat_client_base: SupportsChatGetRe
             raise ValueError("First call fails")
         return f"Success {arg1}"
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -2568,11 +3826,11 @@ async def test_error_recovery_resets_counter(chat_client_base: SupportsChatGetRe
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [sometimes_fails]}
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [sometimes_fails]}
     )
 
     # Should have both an error and a success
@@ -2608,7 +3866,7 @@ async def test_streaming_approval_request_generated(chat_client_base: SupportsCh
         return f"Result {arg1}"
 
     # Setup: function call that requires approval, streamed
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_function_call(call_id="1", name="test_func", arguments='{"arg1": "value1"}')],
@@ -2619,8 +3877,10 @@ async def test_streaming_approval_request_generated(chat_client_base: SupportsCh
 
     # Get the streaming response with approval request
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [func_with_approval]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [func_with_approval]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -2629,7 +3889,7 @@ async def test_streaming_approval_request_generated(chat_client_base: SupportsCh
         content for update in updates for content in update.contents if content.type == "function_approval_request"
     ]
     assert len(approval_requests) == 1
-    assert approval_requests[0].function_call.name == "test_func"
+    assert approval_requests[0].function_call.name == "test_func"  # type: ignore[union-attr]
     assert exec_counter == 0  # Function not executed yet due to approval requirement
 
 
@@ -2644,7 +3904,7 @@ async def test_streaming_max_iterations_limit(chat_client_base: SupportsChatGetR
         return f"Processed {arg1}"
 
     # Set up multiple function call responses to create a loop
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1":')],
@@ -2670,11 +3930,13 @@ async def test_streaming_max_iterations_limit(chat_client_base: SupportsChatGetR
     ]
 
     # Set max_iterations to 1 in additional_properties
-    chat_client_base.function_invocation_configuration["max_iterations"] = 1
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [ai_func]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [ai_func]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -2683,6 +3945,490 @@ async def test_streaming_max_iterations_limit(chat_client_base: SupportsChatGetR
     # Should have the failsafe message
     last_text = "".join(u.text or "" for u in updates if u.text)
     assert "I broke out of the function invocation loop..." in last_text
+
+
+async def test_streaming_max_iterations_blank_final_fallback_synthesizes_update(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Blank streaming provider responses after max_iterations should emit a final text update."""
+    _force_blank_tool_choice_none_fallback(chat_client_base)
+    exec_counter = 0
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="test_function", arguments='{"arg1":')],
+                role="assistant",
+            ),
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="test_function", arguments='"v1"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    updates = []
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]
+        [Message(role="user", contents=["hello"])],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+        stream=True,
+    ):
+        updates.append(update)
+
+    assert exec_counter == 1
+    assert updates[-1].role == "assistant"
+    assert updates[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_streaming_max_function_calls_blank_final_fallback_synthesizes_update(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Blank streaming provider responses after max_function_calls should emit a final text update."""
+    _force_blank_tool_choice_none_fallback(chat_client_base)
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    updates = []
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]
+        [Message(role="user", contents=["look up key"])],
+        options={"tool_choice": "auto", "tools": [lookup_func]},
+        stream=True,
+    ):
+        updates.append(update)
+
+    assert exec_counter == 1
+    assert updates[-1].role == "assistant"
+    assert updates[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
+@pytest.mark.parametrize("limit_type", ["max_function_calls", "max_iterations"])
+@pytest.mark.parametrize("content_type", ["function_call", "function_approval_request"])
+async def test_function_invocation_limit_drops_unexecutable_tool_content(
+    chat_client_base: SupportsChatGetResponse,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+    content_type: Literal["function_call", "function_approval_request"],
+) -> None:
+    """Tool content returned after the active limit is not exposed without a terminal result."""
+    _force_blank_tool_choice_none_fallback(
+        chat_client_base,
+        final_contents=[_post_limit_local_tool_content(content_type)],
+    )
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+            )
+        )
+    ]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["look up key"])],
+        options={"tool_choice": "auto", "tools": [lookup_func]},
+    )
+
+    function_call_ids = {
+        content.call_id
+        for message in response.messages
+        for content in message.contents
+        if content.type == "function_call"
+    }
+    approval_request_ids = {
+        content.id
+        for message in response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    }
+    assert exec_counter == 1
+    assert function_call_ids == {"call_1"}
+    assert not approval_request_ids
+    assert response.messages[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
+@pytest.mark.parametrize("limit_type", ["max_function_calls", "max_iterations"])
+@pytest.mark.parametrize("content_type", ["function_call", "function_approval_request"])
+async def test_streaming_function_invocation_limit_drops_unexecutable_tool_content(
+    chat_client_base: SupportsChatGetResponse,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+    content_type: Literal["function_call", "function_approval_request"],
+) -> None:
+    """Tool content returned after the active limit is not exposed without a terminal result."""
+    _force_tool_content_tool_choice_none_stream(
+        chat_client_base,
+        contents=[_post_limit_local_tool_content(content_type)],
+    )
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
+
+    updates = [
+        update
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["look up key"])],
+            options={"tool_choice": "auto", "tools": [lookup_func]},
+            stream=True,
+        )
+    ]
+
+    function_call_ids = {
+        content.call_id for update in updates for content in update.contents if content.type == "function_call"
+    }
+    function_result_ids = {
+        content.call_id for update in updates for content in update.contents if content.type == "function_result"
+    }
+    approval_request_ids = {
+        content.id for update in updates for content in update.contents if content.type == "function_approval_request"
+    }
+    assert exec_counter == 1
+    assert function_call_ids == {"call_1"}
+    assert function_result_ids == {"call_1"}
+    assert not approval_request_ids
+    assert updates[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
+@pytest.mark.parametrize("limit_type", ["max_function_calls", "max_iterations"])
+@pytest.mark.parametrize("content_type", ["function_call", "function_approval_request"])
+async def test_streaming_function_invocation_limit_preserves_metadata_after_tool_content_is_dropped(
+    chat_client_base: SupportsChatGetResponse,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+    content_type: Literal["function_call", "function_approval_request"],
+) -> None:
+    """Metadata-only chunks survive when their unexecutable function call content is removed."""
+    _force_tool_content_tool_choice_none_stream(
+        chat_client_base,
+        contents=[_post_limit_local_tool_content(content_type)],
+        additional_properties={"provider_metadata": "keep"},
+        finish_reason="stop",
+    )
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
+
+    updates = [
+        update
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["look up key"])],
+            options={"tool_choice": "auto", "tools": [lookup_func]},
+            stream=True,
+        )
+    ]
+    metadata_updates = [
+        update
+        for update in updates
+        if update.additional_properties == {"provider_metadata": "keep"} and update.finish_reason == "stop"
+    ]
+    assert len(metadata_updates) == 1
+    assert metadata_updates[0].contents == []
+
+
+@pytest.mark.parametrize("limit_type", ["max_function_calls", "max_iterations"])
+async def test_function_invocation_limit_preserves_provider_executed_tool_pair(
+    chat_client_base: SupportsChatGetResponse,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+) -> None:
+    """Provider-executed tool transcripts remain complete after the local invocation limit."""
+    provider_transcript = _post_limit_informational_transcript()
+    final_contents = [_post_limit_local_tool_content("function_call"), *provider_transcript]
+    _force_blank_tool_choice_none_fallback(chat_client_base, final_contents=final_contents)
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+            )
+        )
+    ]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["look up key"])],
+        options={"tool_choice": "auto", "tools": [lookup_func]},
+    )
+
+    assert exec_counter == 1
+    assert response.messages[-1].contents == provider_transcript
+    assert response.messages[-1].text == "Provider completed the lookup."
+
+
+@pytest.mark.parametrize("limit_type", ["max_function_calls", "max_iterations"])
+async def test_streaming_function_invocation_limit_preserves_provider_executed_tool_pair(
+    chat_client_base: SupportsChatGetResponse,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+) -> None:
+    """Streaming preserves provider-executed calls with their paired results after the local limit."""
+    provider_transcript = _post_limit_informational_transcript()
+    final_contents = [_post_limit_local_tool_content("function_call"), *provider_transcript]
+    _force_tool_content_tool_choice_none_stream(chat_client_base, contents=final_contents)
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
+
+    updates = [
+        update
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["look up key"])],
+            options={"tool_choice": "auto", "tools": [lookup_func]},
+            stream=True,
+        )
+    ]
+    provider_contents = [
+        content for update in updates for content in update.contents if content.call_id == "provider_call_2"
+    ]
+
+    assert exec_counter == 1
+    assert [content.type for content in provider_contents] == ["function_call", "function_result"]
+    assert not any(content.call_id == "local_call_2" for update in updates for content in update.contents)
+    assert any(update.text == "Provider completed the lookup." for update in updates)
+    assert not any(update.text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT for update in updates)
+
+
+async def test_function_invocation_limit_appends_fallback_after_provider_executed_tool_pair(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Fallback text is added without replacing a provider-owned call/result pair."""
+    provider_transcript = _post_limit_informational_transcript()[:2]
+    final_contents = [_post_limit_local_tool_content("function_call"), *provider_transcript]
+    _force_blank_tool_choice_none_fallback(chat_client_base, final_contents=final_contents)
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        return f"Value for {key}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+            )
+        )
+    ]
+    _configure_function_invocation_limit(chat_client_base, "max_function_calls")
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["look up key"])],
+        options={"tool_choice": "auto", "tools": [lookup_func]},
+    )
+
+    assert response.messages[-2].contents == provider_transcript
+    assert response.messages[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
+async def test_streaming_function_invocation_limit_appends_fallback_after_provider_executed_tool_pair(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Streaming emits fallback text after preserving a provider-owned call/result pair."""
+    provider_transcript = _post_limit_informational_transcript()[:2]
+    final_contents = [_post_limit_local_tool_content("function_call"), *provider_transcript]
+    _force_tool_content_tool_choice_none_stream(chat_client_base, contents=final_contents)
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    _configure_function_invocation_limit(chat_client_base, "max_function_calls")
+
+    updates = [
+        update
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["look up key"])],
+            options={"tool_choice": "auto", "tools": [lookup_func]},
+            stream=True,
+        )
+    ]
+    provider_contents = [
+        content for update in updates for content in update.contents if content.call_id == "provider_call_2"
+    ]
+
+    assert [content.type for content in provider_contents] == ["function_call", "function_result"]
+    assert not any(content.call_id == "local_call_2" for update in updates for content in update.contents)
+    assert updates[-1].text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+
+
+@pytest.mark.parametrize("limit_type", ["max_function_calls", "max_iterations"])
+async def test_function_invocation_limit_preserves_hosted_approval_request(
+    chat_client_base: SupportsChatGetResponse,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+) -> None:
+    """Hosted approvals remain available to the caller after the local invocation limit."""
+    hosted_approval = _post_limit_hosted_approval_request()
+    final_contents = [_post_limit_local_tool_content("function_approval_request"), hosted_approval]
+    _force_blank_tool_choice_none_fallback(chat_client_base, final_contents=final_contents)
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+            )
+        )
+    ]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["look up key"])],
+        options={"tool_choice": "auto", "tools": [lookup_func]},
+    )
+
+    assert exec_counter == 1
+    assert any(
+        content.type == "function_approval_request" and content.id == "hosted_approval_2"
+        for message in response.messages
+        for content in message.contents
+    )
+    assert not any(
+        content.type == "function_approval_request" and content.id == "local_approval_2"
+        for message in response.messages
+        for content in message.contents
+    )
+    assert not any(
+        content.text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT
+        for message in response.messages
+        for content in message.contents
+    )
+
+
+@pytest.mark.parametrize("limit_type", ["max_function_calls", "max_iterations"])
+async def test_streaming_function_invocation_limit_preserves_hosted_approval_request(
+    chat_client_base: SupportsChatGetResponse,
+    limit_type: Literal["max_function_calls", "max_iterations"],
+) -> None:
+    """Streaming keeps hosted approvals actionable after the local invocation limit."""
+    hosted_approval = _post_limit_hosted_approval_request()
+    final_contents = [_post_limit_local_tool_content("function_approval_request"), hosted_approval]
+    _force_tool_content_tool_choice_none_stream(chat_client_base, contents=final_contents)
+    exec_counter = 0
+
+    @tool(name="lookup", approval_mode="never_require")
+    def lookup_func(key: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Value for {key}"
+
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="call_1", name="lookup", arguments='{"key": "a"}')],
+                role="assistant",
+            ),
+        ],
+    ]
+    _configure_function_invocation_limit(chat_client_base, limit_type)
+
+    updates = [
+        update
+        async for update in chat_client_base.get_response(
+            [Message(role="user", contents=["look up key"])],
+            options={"tool_choice": "auto", "tools": [lookup_func]},
+            stream=True,
+        )
+    ]
+
+    assert exec_counter == 1
+    assert any(
+        content.type == "function_approval_request" and content.id == "hosted_approval_2"
+        for update in updates
+        for content in update.contents
+    )
+    assert not any(
+        content.type == "function_approval_request" and content.id == "local_approval_2"
+        for update in updates
+        for content in update.contents
+    )
+    assert not any(update.text == _EXPECTED_FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT for update in updates)
 
 
 async def test_streaming_function_invocation_config_enabled_false(chat_client_base: SupportsChatGetResponse):
@@ -2695,16 +4441,18 @@ async def test_streaming_function_invocation_config_enabled_false(chat_client_ba
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [ChatResponseUpdate(contents=[Content.from_text(text="response without function calling")], role="assistant")],
     ]
 
     # Disable function invocation
-    chat_client_base.function_invocation_configuration["enabled"] = False
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [ai_func]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [ai_func]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -2722,7 +4470,7 @@ async def test_streaming_function_invocation_config_max_consecutive_errors(chat_
         raise ValueError("Function error")
 
     # Set up multiple function call responses that will all error
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -2751,11 +4499,13 @@ async def test_streaming_function_invocation_config_max_consecutive_errors(chat_
     ]
 
     # Set max_consecutive_errors to 2
-    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 2
+    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [error_func]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [error_func]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -2781,7 +4531,7 @@ async def test_streaming_function_invocation_stop_clears_conversation_id(chat_cl
     def error_func(arg1: str) -> str:
         raise ValueError("Function error")
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -2792,14 +4542,14 @@ async def test_streaming_function_invocation_stop_clears_conversation_id(chat_cl
             )
         ]
     ]
-    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 1
+    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     session_stub = type("SessionStub", (), {"service_session_id": "resp_seed"})()
 
-    stream = chat_client_base.get_response(
-        "hello",
+    stream = chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
         options={"tool_choice": "auto", "tools": [error_func]},
         stream=True,
-        session=session_stub,
+        client_kwargs={"session": session_stub},
     )
     async for _ in stream:
         pass
@@ -2823,7 +4573,7 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_f
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -2836,11 +4586,13 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_f
     ]
 
     # Set terminate_on_unknown_calls to False (default)
-    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = False
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [known_func]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [known_func]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -2867,7 +4619,7 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_t
         exec_counter += 1
         return f"Processed {arg1}"
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -2879,12 +4631,12 @@ async def test_streaming_function_invocation_config_terminate_on_unknown_calls_t
     ]
 
     # Set terminate_on_unknown_calls to True
-    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True
+    chat_client_base.function_invocation_configuration["terminate_on_unknown_calls"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     # Should raise an exception when encountering an unknown function
     with pytest.raises(KeyError, match='Error: Requested function "unknown_function" not found'):
-        async for _ in chat_client_base.get_response(
-            [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [known_func]}
+        async for _ in chat_client_base.get_response(  # type: ignore[attr-defined]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
+            [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [known_func]}
         ):
             pass
 
@@ -2900,7 +4652,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_true
     def error_func(arg1: str) -> str:
         raise ValueError("Specific error message that should appear")
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -2913,11 +4665,13 @@ async def test_streaming_function_invocation_config_include_detailed_errors_true
     ]
 
     # Set include_detailed_errors to True
-    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [error_func]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [error_func]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -2940,7 +4694,7 @@ async def test_streaming_function_invocation_config_include_detailed_errors_fals
     def error_func(arg1: str) -> str:
         raise ValueError("Specific error message that should not appear")
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -2953,11 +4707,13 @@ async def test_streaming_function_invocation_config_include_detailed_errors_fals
     ]
 
     # Set include_detailed_errors to False (default)
-    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [error_func]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [error_func]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -2978,7 +4734,7 @@ async def test_streaming_argument_validation_error_with_detailed_errors(chat_cli
     def typed_func(arg1: int) -> str:  # Expects int, not str
         return f"Got {arg1}"
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -2991,11 +4747,13 @@ async def test_streaming_argument_validation_error_with_detailed_errors(chat_cli
     ]
 
     # Set include_detailed_errors to True
-    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [typed_func]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [typed_func]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -3016,7 +4774,7 @@ async def test_streaming_argument_validation_error_without_detailed_errors(chat_
     def typed_func(arg1: int) -> str:  # Expects int, not str
         return f"Got {arg1}"
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -3029,11 +4787,13 @@ async def test_streaming_argument_validation_error_without_detailed_errors(chat_
     ]
 
     # Set include_detailed_errors to False (default)
-    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [typed_func]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [typed_func]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -3050,7 +4810,7 @@ async def test_streaming_argument_validation_error_without_detailed_errors(chat_
 async def test_streaming_multiple_function_calls_parallel_execution(chat_client_base: SupportsChatGetResponse):
     """Test that multiple function calls are executed in parallel in streaming mode."""
 
-    exec_order = []
+    exec_order = []  # type: ignore[var-annotated]
 
     @tool(name="func1", approval_mode="never_require")
     async def func1(arg1: str) -> str:
@@ -3066,7 +4826,7 @@ async def test_streaming_multiple_function_calls_parallel_execution(chat_client_
         exec_order.append("func2_end")
         return f"Result2 {arg1}"
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[Content.from_function_call(call_id="1", name="func1", arguments='{"arg1": "value1"}')],
@@ -3081,8 +4841,10 @@ async def test_streaming_multiple_function_calls_parallel_execution(chat_client_
     ]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [func1, func2]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [func1, func2]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -3107,7 +4869,7 @@ async def test_streaming_approval_requests_in_assistant_message(chat_client_base
         exec_counter += 1
         return f"Result {arg1}"
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -3119,8 +4881,10 @@ async def test_streaming_approval_requests_in_assistant_message(chat_client_base
     ]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [func_with_approval]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [func_with_approval]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -3145,7 +4909,7 @@ async def test_streaming_error_recovery_resets_counter(chat_client_base: Support
             raise ValueError("First call fails")
         return f"Success {arg1}"
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -3166,8 +4930,10 @@ async def test_streaming_error_recovery_resets_counter(chat_client_base: Support
     ]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello", options={"tool_choice": "auto", "tools": [sometimes_fails]}, stream=True
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [sometimes_fails]},
+        stream=True,  # type: ignore[arg-type]
     ):
         updates.append(update)
 
@@ -3193,10 +4959,408 @@ async def test_streaming_error_recovery_resets_counter(chat_client_base: Support
 class TerminateLoopMiddleware(FunctionMiddleware):
     """Middleware that raises MiddlewareTermination to exit the function calling loop."""
 
-    async def process(self, context: FunctionInvocationContext, next_handler: Callable[[], Awaitable[None]]) -> None:
+    async def process(self, context: FunctionInvocationContext, next_handler: Callable[[], Awaitable[None]]) -> None:  # pyrefly: ignore[bad-override-param-name]  # ty: ignore[invalid-method-override]
         # Set result to a simple value - the framework will wrap it in FunctionResultContent
         context.result = "terminated by middleware"
         raise MiddlewareTermination
+
+
+@pytest.mark.parametrize("approved", [True, False], ids=["approved", "rejected"])
+async def test_streaming_approval_resume_yields_terminal_result_before_model_text(
+    chat_client_base: SupportsChatGetResponse,
+    approved: bool,
+) -> None:
+    """The streaming invocation layer emits one terminal result before continuing to model text."""
+    calls = 0
+
+    @tool(name="guarded_stream_tool", approval_mode="always_require")
+    def guarded_stream_tool() -> str:
+        nonlocal calls
+        calls += 1
+        return "approved output"
+
+    function_call = Content.from_function_call(
+        call_id="call_stream_approval",
+        name="guarded_stream_tool",
+        arguments="{}",
+    )
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [ChatResponseUpdate(role="assistant", contents=[function_call])],
+        [ChatResponseUpdate(role="assistant", contents=[Content.from_text("done")])],
+    ]
+    first_stream = chat_client_base.get_response(
+        [Message(role="user", contents=["run guarded"])],
+        stream=True,
+        options={"tools": [guarded_stream_tool]},
+    )
+    first_updates = [update async for update in first_stream]
+    approval_request = next(
+        content
+        for update in first_updates
+        for content in update.contents
+        if content.type == "function_approval_request"
+    )
+
+    resumed_stream = chat_client_base.get_response(
+        [Message(role="user", contents=[approval_request.to_function_approval_response(approved=approved)])],
+        stream=True,
+        options={"tools": [guarded_stream_tool]},
+    )
+    resumed_updates = [update async for update in resumed_stream]
+    resumed_response = await resumed_stream.get_final_response()
+
+    assert [[content.type for content in update.contents] for update in resumed_updates] == [
+        ["function_result"],
+        ["text"],
+    ]
+    terminal_result = resumed_updates[0].contents[0]
+    assert terminal_result.call_id == "call_stream_approval"
+    assert terminal_result.result == (
+        "approved output" if approved else "Error: Tool call invocation was rejected by user."
+    )
+    assert [[content.type for content in message.contents] for message in resumed_response.messages] == [
+        ["function_result"],
+        ["text"],
+    ]
+    assert calls == int(approved)
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_approval_resume_honors_middleware_termination(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Approval-time termination should return its result without another model call."""
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+
+    @tool(name="guarded_termination_tool", approval_mode="always_require")
+    def guarded_termination_tool() -> str:
+        return "should not execute"
+
+    function_call = Content.from_function_call(
+        call_id="call_termination",
+        name="guarded_termination_tool",
+        arguments="{}",
+    )
+    budget_state: dict[str, int] = {}
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("unexpected model call")])],
+        ]
+        first_stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run guarded"])],
+            stream=True,
+            options={"tools": [guarded_termination_tool]},
+        )
+        first_updates = [update async for update in first_stream]
+        approval_request = next(
+            content
+            for update in first_updates
+            for content in update.contents
+            if content.type == "function_approval_request"
+        )
+        resumed_stream = chat_client_base.get_response(
+            [Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])],
+            stream=True,
+            options={"tools": [guarded_termination_tool]},
+            client_kwargs={
+                "middleware": [TerminateLoopMiddleware()],
+                _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+            },
+        )
+        resumed_updates = [update async for update in resumed_stream]
+        resumed_response = await resumed_stream.get_final_response()
+        assert [[content.type for content in update.contents] for update in resumed_updates] == [["function_result"]]
+        assert len(chat_client_base.streaming_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["unexpected model call"])),
+        ]
+        first_response = await chat_client_base.get_response(
+            [Message(role="user", contents=["run guarded"])],
+            options={"tools": [guarded_termination_tool]},
+        )
+        approval_request = next(
+            content
+            for message in first_response.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        )
+        resumed_response = await chat_client_base.get_response(
+            [Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])],
+            options={"tools": [guarded_termination_tool]},
+            client_kwargs={
+                "middleware": [TerminateLoopMiddleware()],
+                _FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state,
+            },
+        )
+        assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    assert [[content.type for content in message.contents] for message in resumed_response.messages] == [
+        ["function_result"]
+    ]
+    assert resumed_response.messages[0].contents[0].result == "terminated by middleware"
+    assert budget_state["total_function_calls"] == 1
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_approval_resume_user_input_counts_toward_function_call_budget(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """An approved execution that pauses for user input still consumes one function-call budget unit."""
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
+    from agent_framework.exceptions import UserInputRequiredException
+
+    calls = 0
+
+    @tool(name="guarded_input_tool", approval_mode="always_require")
+    def guarded_input_tool() -> str:
+        nonlocal calls
+        calls += 1
+        raise UserInputRequiredException(
+            contents=[
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent-1"),
+                Content.from_oauth_consent_request(consent_link="https://example.com/consent-2"),
+            ]
+        )
+
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    function_call = Content.from_function_call(
+        call_id="call_user_input_budget",
+        name="guarded_input_tool",
+        arguments="{}",
+    )
+    budget_state: dict[str, int] = {}
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("unexpected model call")])],
+        ]
+        first_stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run guarded"])],
+            stream=True,
+            options={"tools": [guarded_input_tool]},
+        )
+        first_updates = [update async for update in first_stream]
+        approval_request = next(
+            content
+            for update in first_updates
+            for content in update.contents
+            if content.type == "function_approval_request"
+        )
+        resumed_stream = chat_client_base.get_response(
+            [Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])],
+            stream=True,
+            options={"tools": [guarded_input_tool]},
+            client_kwargs={_FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state},
+        )
+        resumed_updates = [update async for update in resumed_stream]
+        resumed_response = await resumed_stream.get_final_response()
+        assert [[content.type for content in update.contents] for update in resumed_updates] == [
+            ["oauth_consent_request", "oauth_consent_request"]
+        ]
+        assert len(chat_client_base.streaming_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["unexpected model call"])),
+        ]
+        first_response = await chat_client_base.get_response(
+            [Message(role="user", contents=["run guarded"])],
+            options={"tools": [guarded_input_tool]},
+        )
+        approval_request = next(
+            content
+            for message in first_response.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        )
+        resumed_response = await chat_client_base.get_response(
+            [Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])],
+            options={"tools": [guarded_input_tool]},
+            client_kwargs={_FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state},
+        )
+        assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    assert calls == 1
+    assert budget_state["total_function_calls"] == 1
+    user_input_requests = [
+        content for message in resumed_response.messages for content in message.contents if content.user_input_request
+    ]
+    assert [content.consent_link for content in user_input_requests] == [
+        "https://example.com/consent-1",
+        "https://example.com/consent-2",
+    ]
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_approval_resume_separates_terminal_results_from_follow_up_requests(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """A successful sibling stays tool-role when another approved call pauses for user input."""
+    from agent_framework.exceptions import UserInputRequiredException
+
+    completed_calls = 0
+    paused_calls = 0
+
+    @tool(name="completed_tool", approval_mode="always_require")
+    def completed_tool() -> str:
+        nonlocal completed_calls
+        completed_calls += 1
+        return "completed"
+
+    @tool(name="paused_tool", approval_mode="always_require")
+    def paused_tool() -> str:
+        nonlocal paused_calls
+        paused_calls += 1
+        raise UserInputRequiredException(
+            contents=[Content.from_oauth_consent_request(consent_link="https://example.com/consent")]
+        )
+
+    function_calls = [
+        Content.from_function_call(call_id="call_completed", name="completed_tool", arguments="{}"),
+        Content.from_function_call(call_id="call_paused", name="paused_tool", arguments="{}"),
+    ]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=function_calls)],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("unexpected model call")])],
+        ]
+        first_stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run both"])],
+            stream=True,
+            options={"tools": [completed_tool, paused_tool]},
+        )
+        _ = [update async for update in first_stream]
+        first_response = await first_stream.get_final_response()
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=function_calls)),
+            ChatResponse(messages=Message(role="assistant", contents=["unexpected model call"])),
+        ]
+        first_response = await chat_client_base.get_response(
+            [Message(role="user", contents=["run both"])],
+            options={"tools": [completed_tool, paused_tool]},
+        )
+
+    approval_responses = [
+        request.to_function_approval_response(approved=True)
+        for message in first_response.messages
+        for request in message.contents
+        if request.type == "function_approval_request"
+    ]
+    if streaming:
+        resumed_stream = chat_client_base.get_response(
+            [Message(role="user", contents=approval_responses)],
+            stream=True,
+            options={"tools": [completed_tool, paused_tool]},
+        )
+        resumed_updates = [update async for update in resumed_stream]
+        resumed_response = await resumed_stream.get_final_response()
+        assert [(update.role, [content.type for content in update.contents]) for update in resumed_updates] == [
+            ("tool", ["function_result"]),
+            ("assistant", ["oauth_consent_request"]),
+        ]
+        assert len(chat_client_base.streaming_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    else:
+        resumed_response = await chat_client_base.get_response(
+            [Message(role="user", contents=approval_responses)],
+            options={"tools": [completed_tool, paused_tool]},
+        )
+        assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    assert [
+        (message.role, [content.type for content in message.contents]) for message in resumed_response.messages
+    ] == [
+        ("tool", ["function_result"]),
+        ("assistant", ["oauth_consent_request"]),
+    ]
+    assert resumed_response.messages[0].contents[0].call_id == "call_completed"
+    assert resumed_response.messages[1].contents[0].call_id == "call_paused"
+    assert completed_calls == 1
+    assert paused_calls == 1
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_approval_resume_error_limit_forces_final_no_tool_response(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+) -> None:
+    """Approval-time errors should submit the result once, then request a final no-tool answer."""
+    calls = 0
+
+    @tool(name="guarded_error_tool", approval_mode="always_require")
+    def guarded_error_tool() -> str:
+        nonlocal calls
+        calls += 1
+        raise ValueError("approval failure")
+
+    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    function_call = Content.from_function_call(
+        call_id="call_error",
+        name="guarded_error_tool",
+        arguments="{}",
+    )
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            [ChatResponseUpdate(role="assistant", contents=[function_call])],
+            [ChatResponseUpdate(role="assistant", contents=[Content.from_text("unused")])],
+        ]
+        first_stream = chat_client_base.get_response(
+            [Message(role="user", contents=["run guarded"])],
+            stream=True,
+            options={"tools": [guarded_error_tool]},
+        )
+        first_updates = [update async for update in first_stream]
+        approval_request = next(
+            content
+            for update in first_updates
+            for content in update.contents
+            if content.type == "function_approval_request"
+        )
+        resumed_stream = chat_client_base.get_response(
+            [Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])],
+            stream=True,
+            options={"tools": [guarded_error_tool]},
+        )
+        resumed_updates = [update async for update in resumed_stream]
+        resumed_response = await resumed_stream.get_final_response()
+        assert [[content.type for content in update.contents] for update in resumed_updates] == [
+            ["function_result"],
+            ["text"],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+            ChatResponse(messages=Message(role="assistant", contents=["unused"])),
+        ]
+        first_response = await chat_client_base.get_response(
+            [Message(role="user", contents=["run guarded"])],
+            options={"tools": [guarded_error_tool]},
+        )
+        approval_request = next(
+            content
+            for message in first_response.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        )
+        resumed_response = await chat_client_base.get_response(
+            [Message(role="user", contents=[approval_request.to_function_approval_response(approved=True)])],
+            options={"tools": [guarded_error_tool]},
+        )
+
+    assert calls == 1
+    assert chat_client_base.call_count == 2  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert [[content.type for content in message.contents] for message in resumed_response.messages] == [
+        ["function_result"],
+        ["text"],
+    ]
+    assert resumed_response.messages[0].contents[0].exception == "approval failure"
+    assert resumed_response.text == "I broke out of the function invocation loop..."
 
 
 async def test_terminate_loop_single_function_call(chat_client_base: SupportsChatGetResponse):
@@ -3211,7 +5375,7 @@ async def test_terminate_loop_single_function_call(chat_client_base: SupportsCha
 
     # Queue up two responses: function call, then final text
     # If terminate_loop works, only the first response should be consumed
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -3220,11 +5384,11 @@ async def test_terminate_loop_single_function_call(chat_client_base: SupportsCha
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
-    response = await chat_client_base.get_response(
-        "hello",
+    response = await chat_client_base.get_response(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
         options={"tool_choice": "auto", "tools": [ai_func]},
         client_kwargs={"middleware": [TerminateLoopMiddleware()]},
     )
@@ -3240,15 +5404,16 @@ async def test_terminate_loop_single_function_call(chat_client_base: SupportsCha
     assert response.messages[1].role == "tool"
     assert response.messages[1].contents[0].type == "function_result"
     assert response.messages[1].contents[0].result == "terminated by middleware"
+    assert response.messages[1].contents[0].additional_properties == {}
 
     # Verify the second response is still in the queue (wasn't consumed)
-    assert len(chat_client_base.run_responses) == 1
+    assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 class SelectiveTerminateMiddleware(FunctionMiddleware):
     """Only terminates for terminating_function."""
 
-    async def process(self, context: FunctionInvocationContext, next_handler: Callable[[], Awaitable[None]]) -> None:
+    async def process(self, context: FunctionInvocationContext, next_handler: Callable[[], Awaitable[None]]) -> None:  # pyrefly: ignore[bad-override-param-name]  # ty: ignore[invalid-method-override]
         if context.function.name == "terminating_function":
             # Set result to a simple value - the framework will wrap it in FunctionResultContent
             context.result = "terminated by middleware"
@@ -3274,7 +5439,7 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
         return f"Terminating {arg1}"
 
     # Queue up two responses: parallel function calls, then final text
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -3286,11 +5451,11 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
-    response = await chat_client_base.get_response(
-        "hello",
+    response = await chat_client_base.get_response(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
         options={"tool_choice": "auto", "tools": [normal_func, terminating_func]},
         client_kwargs={"middleware": [SelectiveTerminateMiddleware()]},
     )
@@ -3308,9 +5473,14 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
     assert response.messages[1].role == "tool"
     # Both function results should be present
     assert len(response.messages[1].contents) == 2
+    assert [result.result for result in response.messages[1].contents] == [
+        "Normal value1",
+        "terminated by middleware",
+    ]
+    assert all(result.additional_properties == {} for result in response.messages[1].contents)
 
     # Verify the second response is still in the queue (wasn't consumed)
-    assert len(chat_client_base.run_responses) == 1
+    assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_terminate_loop_streaming_single_function_call(chat_client_base: SupportsChatGetResponse):
@@ -3324,7 +5494,7 @@ async def test_terminate_loop_streaming_single_function_call(chat_client_base: S
         return f"Processed {arg1}"
 
     # Queue up two streaming responses
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             ChatResponseUpdate(
                 contents=[
@@ -3342,8 +5512,8 @@ async def test_terminate_loop_streaming_single_function_call(chat_client_base: S
     ]
 
     updates = []
-    async for update in chat_client_base.get_response(
-        "hello",
+    async for update in chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
         options={"tool_choice": "auto", "tools": [ai_func]},
         client_kwargs={"middleware": [TerminateLoopMiddleware()]},
         stream=True,
@@ -3356,9 +5526,15 @@ async def test_terminate_loop_streaming_single_function_call(chat_client_base: S
     # Should have function call update and function result update
     # The loop should NOT have continued to call the LLM again
     assert len(updates) == 2
+    function_results = [
+        content for update in updates for content in update.contents if content.type == "function_result"
+    ]
+    assert len(function_results) == 1
+    assert function_results[0].result == "terminated by middleware"
+    assert function_results[0].additional_properties == {}
 
     # Verify the second streaming response is still in the queue (wasn't consumed)
-    assert len(chat_client_base.streaming_responses) == 1
+    assert len(chat_client_base.streaming_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 async def test_conversation_id_updated_in_options_between_tool_iterations():
@@ -3399,12 +5575,12 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
             self.streaming_responses: list[list[ChatResponseUpdate]] = []
             self.call_count: int = 0
 
-        def _inner_get_response(
+        def _inner_get_response(  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
             self,
             *,
-            messages: MutableSequence[Message],
+            messages: MutableSequence[Message],  # type: ignore[override]
             stream: bool,
-            options: dict[str, Any],
+            options: dict[str, Any],  # type: ignore[override]
             **kwargs: Any,
         ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
             # Track what conversation_id was passed
@@ -3416,7 +5592,7 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
             async def _get() -> ChatResponse:
                 self.call_count += 1
                 if not self.run_responses:
-                    return ChatResponse(messages=Message(role="assistant", text="done"))
+                    return ChatResponse(messages=Message(role="assistant", contents=["done"]))
                 return self.run_responses.pop(0)
 
             return _get()
@@ -3463,14 +5639,14 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
             conversation_id="conv_after_first_call",
         ),
         ChatResponse(
-            messages=Message(role="assistant", text="done"),
+            messages=Message(role="assistant", contents=["done"]),
             conversation_id="conv_after_second_call",
         ),
     ]
 
     # Start with initial conversation_id
-    await client.get_response(
-        "hello",
+    await client.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
         options={"tool_choice": "auto", "tools": [test_func], "conversation_id": "conv_initial"},
     )
 
@@ -3501,8 +5677,8 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
         ],
     ]
 
-    response_stream = streaming_client.get_response(
-        "hello",
+    response_stream = streaming_client.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "hello",  # type: ignore[arg-type]
         stream=True,
         options={"tool_choice": "auto", "tools": [test_func], "conversation_id": "stream_conv_initial"},
     )
@@ -3534,7 +5710,7 @@ async def test_streaming_function_calling_response_includes_reasoning_and_tool_r
     def search_func(query: str) -> str:
         return f"Found results for {query}"
 
-    chat_client_base.streaming_responses = [
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         [
             # First response: reasoning + function_call
             ChatResponseUpdate(
@@ -3568,8 +5744,10 @@ async def test_streaming_function_calling_response_includes_reasoning_and_tool_r
         ],
     ]
 
-    stream = chat_client_base.get_response(
-        "search for test", options={"tool_choice": "auto", "tools": [search_func]}, stream=True
+    stream = chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "search for test",  # type: ignore[arg-type]
+        options={"tool_choice": "auto", "tools": [search_func]},
+        stream=True,  # type: ignore[arg-type]
     )
 
     updates = []
@@ -3666,7 +5844,7 @@ async def test_user_input_request_propagates_through_as_tool(chat_client_base: S
             ]
         )
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -3678,7 +5856,7 @@ async def test_user_input_request_propagates_through_as_tool(chat_client_base: S
     ]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="delegate this")],
+        [Message(role="user", contents=["delegate this"])],
         options={"tool_choice": "auto", "tools": [delegate_tool]},
     )
 
@@ -3696,6 +5874,7 @@ async def test_user_input_request_propagates_through_as_tool(chat_client_base: S
 
 async def test_user_input_request_multiple_contents_propagate(chat_client_base: SupportsChatGetResponse):
     """Test that multiple user_input_request items in a single exception all propagate to the parent response."""
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
     from agent_framework.exceptions import UserInputRequiredException
 
     @tool(name="multi_request_tool", approval_mode="never_require")
@@ -3715,7 +5894,7 @@ async def test_user_input_request_multiple_contents_propagate(chat_client_base: 
             ]
         )
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -3725,10 +5904,13 @@ async def test_user_input_request_multiple_contents_propagate(chat_client_base: 
             )
         )
     ]
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    budget_state: dict[str, int] = {}
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="do something")],
+        [Message(role="user", contents=["do something"])],
         options={"tool_choice": "auto", "tools": [multi_request]},
+        client_kwargs={_FUNCTION_INVOCATION_BUDGET_STATE_KEY: budget_state},
     )
 
     user_requests = [
@@ -3744,6 +5926,7 @@ async def test_user_input_request_multiple_contents_propagate(chat_client_base: 
         "https://example.com/consent2",
         "https://example.com/consent3",
     }
+    assert budget_state["total_function_calls"] == 1
 
 
 async def test_user_input_request_empty_contents_returns_fallback(chat_client_base: SupportsChatGetResponse):
@@ -3755,7 +5938,7 @@ async def test_user_input_request_empty_contents_returns_fallback(chat_client_ba
         del task
         raise UserInputRequiredException(contents=[])
 
-    chat_client_base.run_responses = [
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         ChatResponse(
             messages=Message(
                 role="assistant",
@@ -3764,11 +5947,11 @@ async def test_user_input_request_empty_contents_returns_fallback(chat_client_ba
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="handled")),
+        ChatResponse(messages=Message(role="assistant", contents=["handled"])),
     ]
 
     response = await chat_client_base.get_response(
-        [Message(role="user", text="do something")],
+        [Message(role="user", contents=["do something"])],
         options={"tool_choice": "auto", "tools": [empty_request]},
     )
 
@@ -3779,3 +5962,425 @@ async def test_user_input_request_empty_contents_returns_fallback(chat_client_ba
     ]
     assert len(function_results) >= 1
     assert any("user input" in (fr.result or "").lower() for fr in function_results)
+
+
+# region Progressive tool exposure (FunctionInvocationContext.add_tools / remove_tools)
+
+
+def _pte_function_call_response(call_id: str, name: str, arguments: str = "{}") -> ChatResponse:
+    return ChatResponse(
+        messages=Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id=call_id, name=name, arguments=arguments)],
+        )
+    )
+
+
+def _pte_text_response(text: str = "done") -> ChatResponse:
+    return ChatResponse(messages=Message(role="assistant", contents=[text]))
+
+
+@tool(name="factorial", approval_mode="never_require")
+def _pte_factorial(n: int) -> int:
+    """Compute the factorial of n."""
+    result = 1
+    for value in range(2, n + 1):
+        result *= value
+    return result
+
+
+async def test_context_exposes_live_tools(chat_client_base: SupportsChatGetResponse):
+    from agent_framework import FunctionTool
+
+    seen_names: list[str] = []
+
+    @tool(name="inspect_tools", approval_mode="never_require")
+    def inspect_tools(ctx: FunctionInvocationContext) -> str:
+        assert ctx.tools is not None
+        seen_names.extend(t.name for t in ctx.tools if isinstance(t, FunctionTool))
+        return "inspected"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _pte_function_call_response("1", "inspect_tools"),
+        _pte_text_response(),
+    ]
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["hi"])],
+        options={"tool_choice": "auto", "tools": [inspect_tools]},
+    )
+    assert "inspect_tools" in seen_names
+
+
+async def test_add_tools_available_next_iteration(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="factorial", approval_mode="never_require")
+    def factorial(n: int) -> int:
+        nonlocal exec_counter
+        exec_counter += 1
+        return 120
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(factorial)
+        return "math tools loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _pte_function_call_response("1", "load_math"),
+        _pte_function_call_response("2", "factorial", '{"n": 5}'),
+        _pte_text_response(),
+    ]
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["compute 5!"])],
+        options={"tool_choice": "auto", "tools": [load_math]},
+    )
+    assert exec_counter == 1
+    assert response.messages[-1].text == "done"
+
+
+async def test_add_tools_model_sees_added_tools_in_options(chat_client_base: SupportsChatGetResponse):
+    from agent_framework import FunctionTool
+
+    recorded: list[list[str]] = []
+    client_cls = type(chat_client_base)
+    original = client_cls._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    async def recording(self: Any, *, messages: Any, options: dict[str, Any], **kwargs: Any) -> ChatResponse:
+        tools = options.get("tools") or []  # type: ignore[var-annotated]
+        recorded.append([t.name for t in tools if isinstance(t, FunctionTool)])
+        return await original(self, messages=messages, options=options, **kwargs)
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(_pte_factorial)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _pte_function_call_response("1", "load_math"),
+        _pte_function_call_response("2", "factorial", '{"n": 5}'),
+        _pte_text_response(),
+    ]
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(client_cls, "_get_non_streaming_response", recording)
+    try:
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["compute 5!"])],
+            options={"tool_choice": "auto", "tools": [load_math]},
+        )
+    finally:
+        monkey.undo()
+
+    assert recorded[0] == ["load_math"]
+    assert "factorial" in recorded[1]
+
+
+async def test_remove_tools_next_iteration(chat_client_base: SupportsChatGetResponse):
+    from agent_framework import FunctionTool
+
+    recorded: list[list[str]] = []
+    client_cls = type(chat_client_base)
+    original = client_cls._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    async def recording(self: Any, *, messages: Any, options: dict[str, Any], **kwargs: Any) -> ChatResponse:
+        tools = options.get("tools") or []  # type: ignore[var-annotated]
+        recorded.append([t.name for t in tools if isinstance(t, FunctionTool)])
+        return await original(self, messages=messages, options=options, **kwargs)
+
+    @tool(name="get_weather", approval_mode="never_require")
+    def get_weather(location: str) -> str:
+        return "sunny"
+
+    @tool(name="drop_weather", approval_mode="never_require")
+    def drop_weather(ctx: FunctionInvocationContext) -> str:
+        ctx.remove_tools("get_weather")
+        return "removed"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _pte_function_call_response("1", "drop_weather"),
+        _pte_text_response(),
+    ]
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(client_cls, "_get_non_streaming_response", recording)
+    try:
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["hi"])],
+            options={"tool_choice": "auto", "tools": [get_weather, drop_weather]},
+        )
+    finally:
+        monkey.undo()
+
+    assert set(recorded[0]) == {"get_weather", "drop_weather"}
+    assert "get_weather" not in recorded[1]
+
+
+async def test_add_tools_does_not_mutate_caller_tools_list(chat_client_base: SupportsChatGetResponse):
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(_pte_factorial)
+        return "loaded"
+
+    original_tools: list[Any] = [load_math]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _pte_function_call_response("1", "load_math"),
+        _pte_text_response(),
+    ]
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["hi"])],
+        options={"tool_choice": "auto", "tools": original_tools},
+    )
+    assert original_tools == [load_math]
+
+
+async def test_add_tools_persists_across_iterations(chat_client_base: SupportsChatGetResponse):
+    from agent_framework import FunctionTool
+
+    recorded: list[list[str]] = []
+    client_cls = type(chat_client_base)
+    original = client_cls._get_non_streaming_response  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    async def recording(self: Any, *, messages: Any, options: dict[str, Any], **kwargs: Any) -> ChatResponse:
+        tools = options.get("tools") or []  # type: ignore[var-annotated]
+        recorded.append([t.name for t in tools if isinstance(t, FunctionTool)])
+        return await original(self, messages=messages, options=options, **kwargs)
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(_pte_factorial)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 4  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _pte_function_call_response("1", "load_math"),
+        _pte_function_call_response("2", "factorial", '{"n": 5}'),
+        _pte_function_call_response("3", "factorial", '{"n": 3}'),
+        _pte_text_response(),
+    ]
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(client_cls, "_get_non_streaming_response", recording)
+    try:
+        await chat_client_base.get_response(
+            [Message(role="user", contents=["hi"])],
+            options={"tool_choice": "auto", "tools": [load_math]},
+        )
+    finally:
+        monkey.undo()
+
+    assert "factorial" in recorded[1]
+    assert "factorial" in recorded[2]
+
+
+async def test_add_tools_through_function_middleware(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    class PassthroughMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Any) -> None:
+            await call_next()
+
+    @tool(name="factorial", approval_mode="never_require")
+    def factorial(n: int) -> int:
+        nonlocal exec_counter
+        exec_counter += 1
+        return 120
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(factorial)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _pte_function_call_response("1", "load_math"),
+        _pte_function_call_response("2", "factorial", '{"n": 5}'),
+        _pte_text_response(),
+    ]
+    await chat_client_base.get_response(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        [Message(role="user", contents=["hi"])],
+        options={"tool_choice": "auto", "tools": [load_math]},
+        middleware=[PassthroughMiddleware()],
+    )
+    assert exec_counter == 1
+
+
+async def test_add_tools_with_approval_required_tool(chat_client_base: SupportsChatGetResponse):
+    @tool(name="secure_tool", approval_mode="always_require")
+    def secure_tool(value: str) -> str:
+        return f"secure: {value}"
+
+    @tool(name="load_secure", approval_mode="never_require")
+    def load_secure(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(secure_tool)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _pte_function_call_response("1", "load_secure"),
+        _pte_function_call_response("2", "secure_tool", '{"value": "x"}'),
+        _pte_text_response(),
+    ]
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hi"])],
+        options={"tool_choice": "auto", "tools": [load_secure]},
+    )
+    assert any(item.type == "function_approval_request" for msg in response.messages for item in msg.contents)
+
+
+async def test_add_tools_accepts_plain_callable(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    def plain_factorial(n: int) -> int:
+        """Compute factorial."""
+        nonlocal exec_counter
+        exec_counter += 1
+        return 120
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(plain_factorial)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        _pte_function_call_response("1", "load_math"),
+        _pte_function_call_response("2", "plain_factorial", '{"n": 5}'),
+        _pte_text_response(),
+    ]
+    await chat_client_base.get_response(
+        [Message(role="user", contents=["hi"])],
+        options={"tool_choice": "auto", "tools": [load_math]},
+    )
+    assert exec_counter == 1
+
+
+async def test_add_tools_streaming(chat_client_base: SupportsChatGetResponse):
+    exec_counter = 0
+
+    @tool(name="factorial", approval_mode="never_require")
+    def factorial(n: int) -> int:
+        nonlocal exec_counter
+        exec_counter += 1
+        return 120
+
+    @tool(name="load_math", approval_mode="never_require")
+    def load_math(ctx: FunctionInvocationContext) -> str:
+        ctx.add_tools(factorial)
+        return "loaded"
+
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="1", name="load_math", arguments="{}")],
+                role="assistant",
+            )
+        ],
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="2", name="factorial", arguments='{"n": 5}')],
+                role="assistant",
+            )
+        ],
+        [ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant", finish_reason="stop")],
+    ]
+    async for _ in chat_client_base.get_response(
+        [Message(role="user", contents=["hi"])],
+        stream=True,
+        options={"tool_choice": "auto", "tools": [load_math]},
+    ):
+        pass
+    assert exec_counter == 1
+
+
+def test_add_tools_duplicate_same_object_is_noop():
+    @tool(name="dup", approval_mode="never_require")
+    def dup(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=dup, arguments={}, tools=[dup])
+    ctx.add_tools(dup)
+    assert ctx.tools is not None
+    assert len(ctx.tools) == 1
+
+
+def test_add_tools_duplicate_name_different_object_raises():
+    @tool(name="dup", approval_mode="never_require")
+    def dup_a(x: int) -> int:
+        return x
+
+    @tool(name="dup", approval_mode="never_require")
+    def dup_b(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=dup_a, arguments={}, tools=[dup_a])
+    with pytest.raises(ValueError):
+        ctx.add_tools(dup_b)
+
+
+def test_add_tools_batch_with_duplicate_is_atomic():
+    """A duplicate-name clash partway through a batch must leave the live list unchanged."""
+
+    @tool(name="existing", approval_mode="never_require")
+    def existing(x: int) -> int:
+        return x
+
+    @tool(name="fresh", approval_mode="never_require")
+    def fresh(x: int) -> int:
+        return x
+
+    @tool(name="existing", approval_mode="never_require")
+    def clashing(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=existing, arguments={}, tools=[existing])
+    with pytest.raises(ValueError):
+        ctx.add_tools([fresh, clashing])
+    assert ctx.tools is not None
+    # The valid "fresh" tool must not have been committed before the clash raised.
+    assert ctx.tools == [existing]
+
+
+def test_remove_tools_by_name_and_object():
+    @tool(name="a", approval_mode="never_require")
+    def a(x: int) -> int:
+        return x
+
+    @tool(name="b", approval_mode="never_require")
+    def b(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=a, arguments={}, tools=[a, b])
+    ctx.remove_tools("a")
+    assert ctx.tools is not None
+    assert [t.name for t in ctx.tools] == ["b"]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+    ctx.remove_tools(b)
+    assert ctx.tools == []
+
+
+def test_remove_tools_unknown_name_is_noop():
+    @tool(name="a", approval_mode="never_require")
+    def a(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=a, arguments={}, tools=[a])
+    ctx.remove_tools("nonexistent")
+    assert ctx.tools is not None
+    assert [t.name for t in ctx.tools] == ["a"]  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+
+
+def test_progressive_tools_helpers_raise_without_live_tools():
+    @tool(name="a", approval_mode="never_require")
+    def a(x: int) -> int:
+        return x
+
+    ctx = FunctionInvocationContext(function=a, arguments={})
+    assert ctx.tools is None
+    with pytest.raises(RuntimeError):
+        ctx.add_tools(a)
+    with pytest.raises(RuntimeError):
+        ctx.remove_tools("a")
+
+
+# endregion

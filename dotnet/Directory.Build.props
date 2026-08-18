@@ -17,6 +17,7 @@
 
   <PropertyGroup>
     <IsReleaseCandidate>false</IsReleaseCandidate>
+    <IsReleased>false</IsReleased>
   </PropertyGroup>
   
   <PropertyGroup>

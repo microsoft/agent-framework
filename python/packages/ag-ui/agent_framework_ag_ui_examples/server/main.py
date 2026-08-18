@@ -12,7 +12,7 @@ import uvicorn
 from agent_framework import ChatOptions
 from agent_framework._clients import SupportsChatGetResponse
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -24,6 +24,7 @@ from ..agents.subgraphs_agent import subgraphs_agent
 from ..agents.task_steps_agent import task_steps_agent_wrapped
 from ..agents.ui_generator_agent import ui_generator_agent
 from ..agents.weather_agent import weather_agent
+from ..agents.weather_state_agent import weather_state_agent
 
 AnthropicClient: type[Any] | None
 try:
@@ -80,7 +81,7 @@ client: SupportsChatGetResponse[ChatOptions] = cast(
     SupportsChatGetResponse[ChatOptions],
     AnthropicClient()
     if AnthropicClient is not None and os.getenv("CHAT_CLIENT", "").lower() == "anthropic"
-    else AzureOpenAIChatClient(),
+    else OpenAIChatCompletionClient(),
 )
 
 # Agentic Chat - basic chat agent
@@ -123,7 +124,7 @@ add_agent_framework_fastapi_endpoint(
 # Agentic Generative UI - task steps agent with streaming state updates
 add_agent_framework_fastapi_endpoint(
     app=app,
-    agent=task_steps_agent_wrapped(client),  # type: ignore[arg-type]
+    agent=task_steps_agent_wrapped(client),
     path="/agentic_generative_ui",
 )
 
@@ -139,6 +140,14 @@ add_agent_framework_fastapi_endpoint(
     app=app,
     agent=subgraphs_agent(),
     path="/subgraphs",
+)
+
+# Deterministic Tool-Driven State - tool returns state_update() to push snapshot
+# from actual tool output (see issue #3167).
+add_agent_framework_fastapi_endpoint(
+    app=app,
+    agent=weather_state_agent(client),
+    path="/deterministic_state",
 )
 
 

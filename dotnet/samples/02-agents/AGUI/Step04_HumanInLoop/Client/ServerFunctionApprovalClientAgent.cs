@@ -131,9 +131,9 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
                     transformedContents ??= CopyContentsUpToIndex(message.Contents, contentIndex);
                     approvalCalls.Remove(functionResult.CallId);
                 }
-                else if (transformedContents != null)
+                else
                 {
-                    transformedContents.Add(content);
+                    transformedContents?.Add(content);
                 }
             }
 
@@ -155,10 +155,10 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
                 result ??= CopyMessagesUpToIndex(messages, messageIndex);
                 result.Add(newMessage);
             }
-            else if (result != null)
+            else
             {
                 // We're already copying messages, so copy this unchanged message too
-                result.Add(message);
+                result?.Add(message);
             }
             // If result is null, we haven't made any changes yet, so keep processing
         }

@@ -4,8 +4,8 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from agent_framework import FunctionInvocationContext, tool
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework import Agent, FunctionInvocationContext, tool
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -66,7 +66,8 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="DataAgent",
             instructions="You are a helpful data assistant. Use the data service tool to fetch information for users.",
             tools=unstable_data_service,

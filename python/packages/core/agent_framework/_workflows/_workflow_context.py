@@ -21,6 +21,7 @@ from ._events import (
 )
 from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
+from ._typing_utils import contains_typevar
 
 if TYPE_CHECKING:
     from ._executor import Executor
@@ -176,6 +177,15 @@ def validate_workflow_context_annotation(
             if type_arg is Any:
                 continue
 
+            # Check for unresolved TypeVar early with an actionable error message
+            if contains_typevar(type_arg):
+                raise ValueError(
+                    f"{context_description} {parameter_name} {param_description} "
+                    f"contains an unresolved TypeVar in '{type_arg}'. "
+                    f"Use @handler(input=ConcreteType, output=ConcreteType) with concrete types "
+                    f"for parameterized executors."
+                )
+
             # Check if it's a union type and validate each member
             union_origin = get_origin(type_arg)
             if union_origin in (Union, UnionType):
@@ -201,6 +211,7 @@ def validate_workflow_context_annotation(
 
 # Event types reserved for framework lifecycle (not allowed from user code)
 _FRAMEWORK_LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset({"started", "status", "failed"})
+_OUTPUT_SELECTION_EVENT_TYPES: frozenset[str] = frozenset({"output", "intermediate"})
 
 
 class WorkflowContext(Generic[OutT, W_OutT]):
@@ -327,7 +338,7 @@ class WorkflowContext(Generic[OutT, W_OutT]):
             self._sent_messages.append(message)
 
             # Inject current trace context if tracing enabled
-            if OBSERVABILITY_SETTINGS.ENABLED and span and span.is_recording():  # type: ignore[name-defined]
+            if OBSERVABILITY_SETTINGS.ENABLED and span and span.is_recording():
                 trace_context: dict[str, str] = {}
                 inject(trace_context)  # Inject current trace context for message propagation
 
@@ -337,7 +348,20 @@ class WorkflowContext(Generic[OutT, W_OutT]):
             await self._runner_context.send_message(msg)
 
     async def yield_output(self, output: W_OutT) -> None:
-        """Set the output of the workflow.
+        """Yield an output from this executor.
+
+        The framework labels the resulting workflow event based on the workflow's explicit
+        output designation:
+
+        - Omitted-selection compatibility behavior: every yield produces ``type='output'``.
+        - Explicit mode: output-designated executors produce ``type='output'``,
+          intermediate-designated executors produce ``type='intermediate'``, and
+          unlisted executor yields are hidden from caller-facing events.
+
+        Whether a given executor produces ``output`` or ``intermediate`` events is fixed at
+        workflow-build time via ``output_from`` / ``intermediate_output_from`` on
+        :class:`WorkflowBuilder`; an executor cannot vary the label per yield. To change an
+        executor's role, list it under a different designation when building the workflow.
 
         Args:
             output: The output to yield. This must conform to the workflow output type(s)
@@ -347,12 +371,24 @@ class WorkflowContext(Generic[OutT, W_OutT]):
         # (deepcopy to capture state at yield time)
         self._yielded_outputs.append(copy.deepcopy(output))
 
+        event_type = self._runner_context.classify_yielded_output(self._executor_id)
+        if event_type is None:
+            return
+
         with _framework_event_origin():
-            event = WorkflowEvent.output(self._executor_id, output)
+            event = WorkflowEvent(event_type, executor_id=self._executor_id, data=output)
         await self._runner_context.add_event(event)
 
     async def add_event(self, event: WorkflowEvent[Any]) -> None:
         """Add an event to the workflow context."""
+        if event.origin == WorkflowEventSource.EXECUTOR and event.type in _OUTPUT_SELECTION_EVENT_TYPES:
+            warning_msg = (
+                f"Executor '{self._executor_id}' attempted to emit a '{event.type}' event directly, "
+                "which is reserved for ctx.yield_output(). The event was ignored."
+            )
+            logger.warning(warning_msg)
+            await self._runner_context.add_event(WorkflowEvent.warning(warning_msg))
+            return
         if event.origin == WorkflowEventSource.EXECUTOR and event.type in _FRAMEWORK_LIFECYCLE_EVENT_TYPES:
             warning_msg = (
                 f"Executor '{self._executor_id}' attempted to emit a '{event.type}' event, "

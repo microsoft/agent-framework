@@ -2,6 +2,13 @@
 
 from unittest.mock import patch
 
+import pytest
+
+try:
+    from litellm import completion as _litellm_completion  # noqa: F401
+except Exception:
+    pytest.skip("LiteLLM import surface required by tau2 is unavailable.", allow_module_level=True)
+
 from agent_framework._types import Content, Message
 from agent_framework_lab_tau2._message_utils import flip_messages, log_messages
 
@@ -149,7 +156,7 @@ def test_flip_messages_mixed_conversation():
 
 def test_flip_messages_empty_list():
     """Test flipping empty message list."""
-    messages = []
+    messages: list[Message] = []
     flipped = flip_messages(messages)
     assert len(flipped) == 0
 

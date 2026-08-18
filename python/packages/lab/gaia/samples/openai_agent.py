@@ -7,7 +7,7 @@ configured for GAIA benchmark tasks using the OpenAI Responses API.
 
 Required Environment Variables:
     OPENAI_API_KEY: Your OpenAI API key
-    OPENAI_RESPONSES_MODEL_ID: Model to use with Responses API (e.g., gpt-4o, gpt-4o-mini)
+    OPENAI_CHAT_MODEL: Model to use with Responses API (e.g., gpt-4o, gpt-4o-mini)
 
 Optional Environment Variables:
     OPENAI_BASE_URL: Custom API base URL if using a proxy or compatible service
@@ -19,14 +19,14 @@ Authentication:
 
 Example:
     export OPENAI_API_KEY="sk-..."
-    export OPENAI_RESPONSES_MODEL_ID="gpt-4o"
+    export OPENAI_CHAT_MODEL="gpt-4o"
 """
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 
 
 @asynccontextmanager
@@ -47,15 +47,15 @@ async def create_gaia_agent() -> AsyncIterator[Agent]:
             result = await agent.run("What is the capital of France?")
             print(result.text)
     """
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
 
     async with client.as_agent(
         name="GaiaAgent",
         instructions="Solve tasks to your best ability. Use Web Search to find "
         "information and Code Interpreter to perform calculations and data analysis.",
         tools=[
-            OpenAIResponsesClient.get_web_search_tool(),
-            OpenAIResponsesClient.get_code_interpreter_tool(),
+            OpenAIChatClient.get_web_search_tool(),
+            OpenAIChatClient.get_code_interpreter_tool(),
         ],
     ) as agent:
         yield agent

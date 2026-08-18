@@ -33,7 +33,7 @@ public class WorkflowBuilder
     private readonly HashSet<string> _unboundExecutors = [];
     private readonly HashSet<EdgeConnection> _conditionlessConnections = [];
     private readonly Dictionary<string, RequestPort> _requestPorts = [];
-    private readonly HashSet<string> _outputExecutors = [];
+    private readonly Dictionary<string, HashSet<OutputTag>> _outputExecutors = new(StringComparer.Ordinal);
 
     private readonly string _startExecutorId;
     private string? _name;
@@ -97,20 +97,87 @@ public class WorkflowBuilder
     }
 
     /// <summary>
-    /// Register executors as an output source. Executors can use <see cref="IWorkflowContext.YieldOutputAsync"/> to yield output values.
-    /// By default, message handlers with a non-void return type will also be yielded, unless <see cref="ExecutorOptions.AutoYieldOutputHandlerResultObject"/>
-    /// is set to <see langword="false"/>.
+    /// Register executors as a source of terminal workflow outputs. Executors can use
+    /// <see cref="IWorkflowContext.YieldOutputAsync"/> to yield output values; yielded values from
+    /// registered executors are surfaced as <see cref="WorkflowOutputEvent"/> (or one of its
+    /// subclasses) with an empty <see cref="WorkflowOutputEvent.Tags"/> set.
+    /// By default, message handlers with a non-void return type will also be yielded, unless
+    /// <see cref="ExecutorOptions.AutoYieldOutputHandlerResultObject"/> is set to <see langword="false"/>.
     /// </summary>
-    /// <param name="executors"></param>
-    /// <returns></returns>
+    /// <remarks>
+    /// AIAgent payloads (<see cref="AgentResponse"/> / <see cref="AgentResponseUpdate"/>) only
+    /// participate in this designation when
+    /// <see cref="Futures.EnableAgentResponseOutputTaggingAndFiltering"/> is
+    /// <see langword="true"/>; otherwise they are emitted unconditionally and untagged.
+    /// </remarks>
+    /// <param name="executors">The executors to register as output sources.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
     public WorkflowBuilder WithOutputFrom(params ExecutorBinding[] executors)
     {
         foreach (ExecutorBinding executor in executors)
         {
-            this._outputExecutors.Add(this.Track(executor).Id);
+            this.EnsureOutputExecutor(this.Track(executor).Id);
         }
 
         return this;
+    }
+
+    /// <summary>
+    /// Register executors as a source of workflow outputs carrying the given <paramref name="tag"/>.
+    /// Tags accumulate across repeated calls; the registered id always exists with the union of all
+    /// tags applied across all calls (and an empty set if only the untagged
+    /// <see cref="WithOutputFrom(ExecutorBinding[])"/> overload was used).
+    /// </summary>
+    /// <remarks>
+    /// Forward-looking surface for when the <see cref="OutputTag"/> constructor opens to
+    /// user-defined tags. Today, prefer
+    /// <see cref="WorkflowBuilderExtensions.WithIntermediateOutputFrom(WorkflowBuilder, IEnumerable{ExecutorBinding})"/>
+    /// for the <see cref="OutputTag.Intermediate"/> case.
+    /// </remarks>
+    /// <param name="executors">The executors to register.</param>
+    /// <param name="tag">The tag to apply to events yielded by the listed executors.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    public WorkflowBuilder WithOutputFrom(IEnumerable<ExecutorBinding> executors, OutputTag tag)
+    {
+        Throw.IfNull(executors);
+
+        foreach (ExecutorBinding executor in executors)
+        {
+            this.EnsureOutputExecutor(this.Track(executor).Id).Add(tag);
+        }
+
+        return this;
+    }
+
+    /// <summary>
+    /// Register a single executor as a source of workflow outputs carrying the given <paramref name="tag"/>.
+    /// Convenience overload for the single-executor case; equivalent to passing a one-element sequence
+    /// to <see cref="WithOutputFrom(IEnumerable{ExecutorBinding}, OutputTag)"/>.
+    /// </summary>
+    /// <param name="executor">The executor to register.</param>
+    /// <param name="tag">The tag to apply to events yielded by the executor.</param>
+    /// <returns>The current <see cref="WorkflowBuilder"/> instance, enabling fluent configuration.</returns>
+    public WorkflowBuilder WithOutputFrom(ExecutorBinding executor, OutputTag tag)
+    {
+        Throw.IfNull(executor);
+
+        this.EnsureOutputExecutor(this.Track(executor).Id).Add(tag);
+
+        return this;
+    }
+
+    /// <summary>
+    /// Ensures the executor id is present in <see cref="_outputExecutors"/>; if newly added,
+    /// initializes with an empty tag set. Returns the tag set for the id (mutable).
+    /// </summary>
+    private HashSet<OutputTag> EnsureOutputExecutor(string executorId)
+    {
+        if (!this._outputExecutors.TryGetValue(executorId, out HashSet<OutputTag>? tags))
+        {
+            tags = [];
+            this._outputExecutors[executorId] = tags;
+        }
+        return tags;
     }
 
     /// <summary>

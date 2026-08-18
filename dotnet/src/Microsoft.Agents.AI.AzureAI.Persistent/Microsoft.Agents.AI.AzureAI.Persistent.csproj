@@ -20,8 +20,7 @@
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework AzureAI Persistent Agents</Title>
     <Description>Provides Microsoft Agent Framework support for Azure AI Persistent Agents.</Description>
-    <!-- Disabled until Azure.AI.Agents.Persistent targets ME.AI 10.4.0+ (https://github.com/microsoft/agent-framework/issues/4769) -->
-    <IsPackable>false</IsPackable>
+
   </PropertyGroup>
 
 </Project>

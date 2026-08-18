@@ -4,11 +4,12 @@ import asyncio
 import datetime
 
 from agent_framework import (
+    Agent,
     agent_middleware,
     function_middleware,
     tool,
 )
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -79,7 +80,8 @@ async def main() -> None:
     # authentication option.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="TimeAgent",
             instructions="You are a helpful time assistant. Call get_current_time when asked about time.",
             tools=get_current_time,

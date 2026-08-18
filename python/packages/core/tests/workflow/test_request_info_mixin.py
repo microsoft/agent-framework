@@ -47,9 +47,9 @@ class TestRequestInfoMixin:
 
         # Check the spec attributes
         spec = test_handler._response_handler_spec  # type: ignore[reportAttributeAccessIssue]
-        assert spec["name"] == "test_handler"
-        assert spec["response_type"] is int
-        assert spec["request_type"] is str
+        assert spec["name"] == "test_handler"  # ty: ignore[not-subscriptable]
+        assert spec["response_type"] is int  # ty: ignore[not-subscriptable]
+        assert spec["request_type"] is str  # ty: ignore[not-subscriptable]
 
     def test_response_handler_with_workflow_context_types(self):
         """Test response handler with different WorkflowContext type parameters."""
@@ -60,7 +60,7 @@ class TestRequestInfoMixin:
         ) -> None:
             pass
 
-        spec = handler_with_output_types._response_handler_spec  # type: ignore[reportAttributeAccessIssue]
+        spec = handler_with_output_types._response_handler_spec  # type: ignore[attr-defined, reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
         assert "output_types" in spec
         assert "workflow_output_types" in spec
 
@@ -173,8 +173,8 @@ class TestRequestInfoMixin:
 
             @response_handler
             async def handle_response(self, original_request: str, response: int, ctx: WorkflowContext[str]) -> None:
-                self.handled_request = original_request
-                self.handled_response = response
+                self.handled_request = original_request  # type: ignore[assignment]
+                self.handled_response = response  # type: ignore[assignment]
 
         executor = TestExecutor()
 
@@ -182,7 +182,7 @@ class TestRequestInfoMixin:
         response_handler_func = executor._response_handlers[(str, int)]  # type: ignore[reportAttributeAccessIssue]
 
         # Create a mock context - we'll just use None since the handler doesn't use it
-        await response_handler_func("test_request", 42, None)  # type: ignore[reportArgumentType]
+        await response_handler_func("test_request", 42, None)  # type: ignore[arg-type, reportArgumentType]  # ty: ignore[invalid-argument-type]
 
         assert executor.handled_request == "test_request"
         assert executor.handled_response == 42
@@ -542,13 +542,13 @@ class TestRequestInfoMixin:
         executor = TestExecutor()
 
         # Test that wrong combinations don't match
-        assert executor._find_response_handler("test", 3.14) is None  # pyright: ignore[reportPrivateUsage] # str request, float response - no handler
-        assert executor._find_response_handler(["test"], 42) is None  # pyright: ignore[reportPrivateUsage] # list request, int response - no handler
-        assert executor._find_response_handler(42, "test") is None  # pyright: ignore[reportPrivateUsage] # int request, str response - no handler
+        assert executor._find_response_handler("test", 3.14) is None  # pyright: ignore[reportPrivateUsage]  # str request, float response - no handler
+        assert executor._find_response_handler(["test"], 42) is None  # pyright: ignore[reportPrivateUsage]  # list request, int response - no handler
+        assert executor._find_response_handler(42, "test") is None  # pyright: ignore[reportPrivateUsage]  # int request, str response - no handler
 
         # Test that correct combinations do match
-        assert executor._find_response_handler("test", 42) is not None  # pyright: ignore[reportPrivateUsage] # str request, int response - has handler
-        assert executor._find_response_handler(["test"], 3.14) is not None  # pyright: ignore[reportPrivateUsage] # list request, float response - has handler
+        assert executor._find_response_handler("test", 42) is not None  # pyright: ignore[reportPrivateUsage]  # str request, int response - has handler
+        assert executor._find_response_handler(["test"], 3.14) is not None  # pyright: ignore[reportPrivateUsage]  # list request, float response - has handler
 
     def test_is_request_supported_with_exact_matches(self):
         """Test is_request_supported with exact type matches."""
@@ -797,7 +797,7 @@ class TestResponseHandlerExplicitTypes:
         async def test_handler(self: Any, original_request: Any, response: Any, ctx: WorkflowContext) -> None:
             pass
 
-        spec = test_handler._response_handler_spec  # type: ignore[reportAttributeAccessIssue]
+        spec = test_handler._response_handler_spec  # type: ignore[attr-defined, reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
         assert spec["name"] == "test_handler"
         assert spec["request_type"] is str
         assert spec["response_type"] is int
@@ -809,7 +809,7 @@ class TestResponseHandlerExplicitTypes:
         async def test_handler(self: Any, original_request: Any, response: Any, ctx: WorkflowContext) -> None:
             pass
 
-        spec = test_handler._response_handler_spec  # type: ignore[reportAttributeAccessIssue]
+        spec = test_handler._response_handler_spec  # type: ignore[attr-defined, reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
         assert spec["request_type"] is str
         assert spec["response_type"] is int
         assert bool in spec["output_types"]
@@ -822,7 +822,7 @@ class TestResponseHandlerExplicitTypes:
         async def test_handler(self: Any, original_request: Any, response: Any, ctx: WorkflowContext) -> None:
             pass
 
-        spec = test_handler._response_handler_spec  # type: ignore[reportAttributeAccessIssue]
+        spec = test_handler._response_handler_spec  # type: ignore[attr-defined, reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
         assert spec["request_type"] == str | int
         assert spec["response_type"] == bool | float
 
@@ -833,7 +833,7 @@ class TestResponseHandlerExplicitTypes:
         async def test_handler(self: Any, original_request: Any, response: Any, ctx: WorkflowContext) -> None:
             pass
 
-        spec = test_handler._response_handler_spec  # type: ignore[reportAttributeAccessIssue]
+        spec = test_handler._response_handler_spec  # type: ignore[attr-defined, reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
         assert spec["request_type"] is str
         assert spec["response_type"] is int
 
@@ -917,7 +917,7 @@ class TestResponseHandlerExplicitTypes:
         response_handler_func = executor._response_handlers[(str, int)]  # type: ignore[reportAttributeAccessIssue]
 
         # Call the handler
-        asyncio.run(response_handler_func("test_request", 42, None))  # type: ignore[reportArgumentType]
+        asyncio.run(response_handler_func("test_request", 42, None))  # type: ignore[arg-type, reportArgumentType]  # ty: ignore[invalid-argument-type]
 
         assert executor.handled_request == "test_request"
         assert executor.handled_response == 42

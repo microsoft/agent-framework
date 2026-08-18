@@ -4,7 +4,7 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.amazon import BedrockChatClient
+from agent_framework.amazon import BedrockChatClient, BedrockChatOptions
 from dotenv import load_dotenv
 from pydantic import Field
 
@@ -17,7 +17,7 @@ Bedrock Chat Client Example
 This sample demonstrates using `BedrockChatClient` with an agent and a simple tool.
 
 Environment variables used:
-- `BEDROCK_CHAT_MODEL_ID`
+- `BEDROCK_CHAT_MODEL`
 - `BEDROCK_REGION` (defaults to `us-east-1` if unset)
 - AWS credentials via standard variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
   optional `AWS_SESSION_TOKEN`)
@@ -43,8 +43,8 @@ async def main() -> None:
         client=BedrockChatClient(),
         instructions="You are a concise travel assistant.",
         name="BedrockWeatherAgent",
-        tool_choice="auto",
         tools=[get_weather],
+        default_options=BedrockChatOptions(tool_choice="auto"),
     )
 
     # 2. Run a query that uses the weather tool.

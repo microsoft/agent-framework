@@ -8,6 +8,26 @@ namespace Microsoft.Agents.AI.Hosting.A2A.Converters;
 
 internal static class MessageConverter
 {
+    public static List<Part> ToParts(this AgentResponseUpdate update)
+    {
+        if (update is null || update.Contents is not { Count: > 0 })
+        {
+            return [];
+        }
+
+        var parts = new List<Part>();
+        foreach (var content in update.Contents)
+        {
+            var part = content.ToPart();
+            if (part is not null)
+            {
+                parts.Add(part);
+            }
+        }
+
+        return parts;
+    }
+
     public static List<Part> ToParts(this IList<ChatMessage> chatMessages)
     {
         if (chatMessages is null || chatMessages.Count == 0)
@@ -31,21 +51,21 @@ internal static class MessageConverter
         return parts;
     }
     /// <summary>
-    /// Converts A2A MessageSendParams to a collection of Microsoft.Extensions.AI ChatMessage objects.
+    /// Converts A2A SendMessageRequest to a collection of Microsoft.Extensions.AI ChatMessage objects.
     /// </summary>
-    /// <param name="messageSendParams">The A2A message send parameters to convert.</param>
+    /// <param name="sendMessageRequest">The A2A send message request to convert.</param>
     /// <returns>A read-only collection of ChatMessage objects.</returns>
-    public static List<ChatMessage> ToChatMessages(this MessageSendParams messageSendParams)
+    public static List<ChatMessage> ToChatMessages(this SendMessageRequest sendMessageRequest)
     {
-        if (messageSendParams is null)
+        if (sendMessageRequest is null)
         {
             return [];
         }
 
         var result = new List<ChatMessage>();
-        if (messageSendParams.Message?.Parts is not null)
+        if (sendMessageRequest.Message?.Parts is not null)
         {
-            result.Add(messageSendParams.Message.ToChatMessage());
+            result.Add(sendMessageRequest.Message.ToChatMessage());
         }
 
         return result;

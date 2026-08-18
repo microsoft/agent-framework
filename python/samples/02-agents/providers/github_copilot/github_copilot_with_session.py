@@ -13,7 +13,8 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework.github import GitHubCopilotAgent
+from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
+from copilot.session import PermissionHandler
 from pydantic import Field
 
 
@@ -33,9 +34,10 @@ async def example_with_automatic_session_creation() -> None:
     """Each run() without thread creates a new session."""
     print("=== Automatic Session Creation Example ===")
 
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options=GitHubCopilotOptions(on_permission_request=PermissionHandler.approve_all),
     )
 
     async with agent:
@@ -50,16 +52,17 @@ async def example_with_automatic_session_creation() -> None:
         print(f"\nUser: {query2}")
         result2 = await agent.run(query2)
         print(f"Agent: {result2}")
-        print("Note: Each call creates a separate session, so the agent doesn't remember previous context.\n")
+        print("Note: Each call creates a separate session, so the agent may not remember previous context.\n")
 
 
 async def example_with_session_persistence() -> None:
     """Reuse session via thread object for multi-turn conversations."""
     print("=== Session Persistence Example ===")
 
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options=GitHubCopilotOptions(on_permission_request=PermissionHandler.approve_all),
     )
 
     async with agent:
@@ -96,6 +99,7 @@ async def example_with_existing_session_id() -> None:
     agent1 = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options=GitHubCopilotOptions(on_permission_request=PermissionHandler.approve_all),
     )
 
     async with agent1:
@@ -117,6 +121,7 @@ async def example_with_existing_session_id() -> None:
         agent2 = GitHubCopilotAgent(
             instructions="You are a helpful weather agent.",
             tools=[get_weather],
+            default_options=GitHubCopilotOptions(on_permission_request=PermissionHandler.approve_all),
         )
 
         async with agent2:

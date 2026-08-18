@@ -5,11 +5,12 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     AgentContext,
     InMemoryHistoryProvider,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -81,7 +82,8 @@ async def main() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    agent = Agent(
+        client=FoundryChatClient(credential=AzureCliCredential()),
         name="WeatherAgent",
         instructions="You are a helpful weather assistant.",
         tools=get_weather,

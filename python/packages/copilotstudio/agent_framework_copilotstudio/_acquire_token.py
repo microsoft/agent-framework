@@ -62,7 +62,7 @@ def acquire_token(
             logger.debug("Attempting silent token acquisition")
             response = pca.acquire_token_silent(scopes=target_scopes, account=accounts[0])
             if response and "access_token" in response:
-                token = str(response["access_token"])  # type: ignore[assignment]
+                token = str(response["access_token"])
                 logger.debug("Successfully acquired token silently")
             elif response and "error" in response:
                 logger.warning(
@@ -77,7 +77,7 @@ def acquire_token(
             logger.debug("Attempting interactive token acquisition")
             response = pca.acquire_token_interactive(scopes=target_scopes)
             if response and "access_token" in response:
-                token = str(response["access_token"])  # type: ignore[assignment]
+                token = str(response["access_token"])
                 logger.debug("Successfully acquired token interactively")
             elif response and "error" in response:
                 logger.error(

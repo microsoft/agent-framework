@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Compliance.Redaction;
 
 namespace Microsoft.Agents.AI;
 
@@ -46,7 +47,21 @@ public sealed class ChatHistoryMemoryProviderOptions
     /// Gets or sets a value indicating whether sensitive data such as user ids and user messages may appear in logs.
     /// </summary>
     /// <value>Defaults to <see langword="false"/>.</value>
+    /// <remarks>
+    /// When set to <see langword="true"/>, sensitive data is passed through to logs unchanged and any
+    /// configured <see cref="Redactor"/> is ignored. This property takes precedence over <see cref="Redactor"/>.
+    /// </remarks>
     public bool EnableSensitiveTelemetryData { get; set; }
+
+    /// <summary>
+    /// Gets or sets a custom <see cref="Redactor"/> used to redact sensitive data in log output.
+    /// </summary>
+    /// <value>
+    /// When <see langword="null"/> (the default), sensitive data is replaced with a placeholder.
+    /// When set, this redactor is used to transform sensitive values before they are logged.
+    /// Ignored when <see cref="EnableSensitiveTelemetryData"/> is <see langword="true"/>.
+    /// </value>
+    public Redactor? Redactor { get; set; }
 
     /// <summary>
     /// Gets or sets the key used to store provider state in the <see cref="AgentSession.StateBag"/>.

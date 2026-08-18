@@ -1,3 +1,0 @@
-agent-framework-azurefunctions
-agent-framework
-azure-identity
