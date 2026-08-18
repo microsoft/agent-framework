@@ -143,12 +143,24 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         var options = CreateRunOptions(context);
 
+        // Decide whether to run in background based on user preferences and agent capabilities
+        var decisionContext = new A2ARunDecisionContext(context);
+        var returnTask = await this._runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
+
+        var updates = this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken);
+
         try
         {
-            await foreach (var update in this._hostAgent.RunStreamingAsync(chatMessages, session, options, cancellationToken).ConfigureAwait(false))
+            if (returnTask)
             {
-                var message = CreateMessageFromUpdate(contextId, update);
-                await eventQueue.EnqueueMessageAsync(message, cancellationToken).ConfigureAwait(false);
+                // Stream progress and output through the A2A task lifecycle.
+                var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, contextId);
+                await StreamTaskUpdatesAsync(updates, taskUpdater, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                // A2A permits only one message in a message-only stream, so aggregate all updates.
+                await StreamMessageUpdatesAsync(contextId, updates, eventQueue, cancellationToken).ConfigureAwait(false);
             }
         }
         finally
@@ -259,16 +271,6 @@ internal sealed class A2AAgentHandler : IAgentHandler
             Metadata = response.AdditionalProperties?.ToA2AMetadata()
         };
 
-    private static Message CreateMessageFromUpdate(string contextId, AgentResponseUpdate update) =>
-        new()
-        {
-            MessageId = update.ResponseId ?? Guid.NewGuid().ToString("N"),
-            ContextId = contextId,
-            Role = Role.Agent,
-            Parts = update.ToParts(),
-            Metadata = update.AdditionalProperties?.ToA2AMetadata()
-        };
-
     private static List<ChatMessage> ExtractChatMessagesFromTaskHistory(AgentTask? agentTask)
     {
         if (agentTask?.History is not { Count: > 0 })
@@ -284,4 +286,71 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
         return chatMessages;
     }
+
+    private static async Task StreamTaskUpdatesAsync(IAsyncEnumerable<AgentResponseUpdate> updates, TaskUpdater updater, CancellationToken cancellationToken)
+    {
+        var artifactWriter = new ArtifactStreamWriter(updater);
+
+        // Emit the task in the Submitted state.
+        await updater.SubmitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            // Transition the task to the Working state.
+            await updater.StartWorkAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            await foreach (var update in updates.ConfigureAwait(false))
+            {
+                await artifactWriter.WriteAsync(update, cancellationToken).ConfigureAwait(false);
+            }
+
+            await artifactWriter.CompleteAsync(cancellationToken).ConfigureAwait(false);
+
+            // Transition the task to the Completed state.
+            await updater.CompleteAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Transition the task to the Canceled state using an uncanceled token.
+            await updater.CancelAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception)
+        {
+            // Transition the task to the Failed state using an uncanceled token, so the stream ends in a terminal state.
+            await updater.FailAsync(CreateFailureMessage(updater.ContextId, updater.TaskId), CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task StreamMessageUpdatesAsync(string contextId, IAsyncEnumerable<AgentResponseUpdate> responseUpdates, AgentEventQueue eventQueue, CancellationToken cancellationToken)
+    {
+        // A2A allows exactly one message per stream, so the updates are collected and
+        // aggregated into a single message once the stream completes.
+        var updates = new List<AgentResponseUpdate>();
+
+        await foreach (var update in responseUpdates.ConfigureAwait(false))
+        {
+            updates.Add(update);
+        }
+
+        if (updates.Count == 0)
+        {
+            return;
+        }
+
+        var message = CreateMessageFromResponse(contextId, updates.ToAgentResponse());
+        await eventQueue.EnqueueMessageAsync(message, cancellationToken).ConfigureAwait(false);
+    }
+
+    // The text is intentionally generic so that exception details are never exposed to the client.
+    private static Message CreateFailureMessage(string contextId, string taskId) =>
+        new()
+        {
+            MessageId = Guid.NewGuid().ToString("N"),
+            ContextId = contextId,
+            TaskId = taskId,
+            Role = Role.Agent,
+            Parts = [new Part { Text = "The agent encountered an unexpected error and could not complete the request." }]
+        };
 }
