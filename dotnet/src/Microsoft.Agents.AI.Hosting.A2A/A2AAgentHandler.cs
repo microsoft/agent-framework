@@ -333,8 +333,9 @@ internal sealed class A2AAgentHandler : IAgentHandler
         {
             return;
         }
+
         var message = CreateMessageFromResponse(contextId, response);
-        var message = CreateMessageFromResponse(contextId, response);
+
         await eventQueue.EnqueueMessageAsync(message, cancellationToken).ConfigureAwait(false);
     }
 
