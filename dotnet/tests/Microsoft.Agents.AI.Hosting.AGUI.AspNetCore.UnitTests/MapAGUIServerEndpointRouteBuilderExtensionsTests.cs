@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
 /// <summary>
 /// Unit tests for the agent-name-derived <c>MapAGUIServer</c> overloads.
 /// </summary>
-public sealed class MapAGUIEndpointRouteBuilderExtensionsTests
+public sealed class MapAGUIServerEndpointRouteBuilderExtensionsTests
 {
     [Fact]
     public void MapAGUIServer_WithAgentBuilder_MapsNameDerivedRoute()
@@ -167,7 +167,7 @@ public sealed class MapAGUIEndpointRouteBuilderExtensionsTests
     }
 
     private static IEnumerable<string?> GetRoutePatterns(WebApplication app) =>
-        app.DataSources
+        ((IEndpointRouteBuilder)app).DataSources
             .SelectMany(dataSource => dataSource.Endpoints)
             .OfType<RouteEndpoint>()
             .Select(endpoint => endpoint.RoutePattern.RawText);
