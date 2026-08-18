@@ -134,7 +134,7 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
         #   "errors" : [
         #       {
         #           "name": "Name of the MCP tool that requires consent",
-        #           "type" : "mcp",
+        #           "type" : "mcp" | "a2a_preview",
         #           "error": {
         #               "code": "CONSENT_REQUIRED",
         #               "message": consent_url,
@@ -157,7 +157,7 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
             for error in consent_details["errors"]:
                 if (
                     isinstance(error, dict)
-                    and error.get("type") == "mcp"  # type: ignore
+                    and error.get("type") in ("mcp", "a2a_preview")  # type: ignore
                     and "error" in error
                     and isinstance(error["error"], dict)
                     and error["error"].get("code") == "CONSENT_REQUIRED"  # type: ignore
@@ -657,6 +657,7 @@ class _OutputItemTracker:
         self._reasoning_encrypted_content: str | None = None
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
+        self._outstanding_function_calls: dict[str, str | None] = {}
         self.needs_async = False
 
     def handle(self, content: Content) -> Generator[ResponseStreamEvent]:
@@ -685,6 +686,15 @@ class _OutputItemTracker:
                     yield self._summary_part.emit_text_delta(content.text)
 
         elif content.type == "function_call" and content.call_id is not None:
+            # Declaration-only calls replay request metadata after the streamed call. Scope suppression to the
+            # outstanding occurrence because a call_id may be reused after its terminal result.
+            if (
+                content.user_input_request
+                and content.arguments is None
+                and content.call_id in self._outstanding_function_calls
+                and self._outstanding_function_calls[content.call_id] == content.name
+            ):
+                return
             if self._active_type != "function_call" or self._active_id != content.call_id:
                 yield from self._close()
                 yield from self._open_function_call(content)
@@ -692,6 +702,12 @@ class _OutputItemTracker:
             self._accumulated.append(args_str)
             if self._fc_builder is not None:
                 yield self._fc_builder.emit_arguments_delta(args_str)
+
+        elif content.type == "function_result":
+            yield from self._close()
+            if content.call_id is not None:
+                self._outstanding_function_calls.pop(content.call_id, None)
+            self.needs_async = True
 
         elif content.type == "mcp_server_tool_call" and content.tool_name:
             key = content.call_id or f"{content.server_name or 'default'}::{content.tool_name}"
@@ -770,6 +786,7 @@ class _OutputItemTracker:
         )
         self._active_type = "function_call"
         self._active_id = content.call_id
+        self._outstanding_function_calls[content.call_id or ""] = content.name
         yield self._fc_builder.emit_added()
 
     def _open_mcp_call(self, content: Content) -> Generator[ResponseStreamEvent]:
