@@ -266,6 +266,36 @@ class AgentContext:
         # gate binds to that run's identity and never to middleware-initiated runs.
         self._run_persistence_gate: _RunPersistenceGate | None = None
 
+    def _resolve_run_start_tools(self) -> list[ToolTypes]:
+        """Resolve the run-start tool list for this invocation, normalized.
+
+        This is the framework's one statement of the run-start tool policy, kept next
+        to the run-option rules it mirrors so they evolve together (middleware such as
+        agent-hooks reads it instead of re-deriving the precedence): the agent's
+        declared tools (:class:`~agent_framework.Agent` keeps them in
+        ``default_options["tools"]``; other agent implementations may expose a
+        ``tools`` attribute) followed by this invocation's run-level tools, where the
+        named ``tools`` parameter takes precedence over a ``tools`` entry in the
+        options mapping — matching the run's own resolution in
+        ``Agent._prepare_run_context``. Tools registered later in the run (context
+        providers during run preparation, MCP servers expanding at connect time,
+        progressive tool exposure) are deliberately not part of the run-start view.
+
+        Normalization errors propagate; callers that must not fail should guard.
+        """
+        from ._tools import normalize_tools
+
+        declared_options = getattr(self.agent, "default_options", None)
+        declared: Any = (
+            cast("Mapping[str, Any]", declared_options).get("tools") if isinstance(declared_options, Mapping) else None
+        )
+        if declared is None:
+            declared = getattr(self.agent, "tools", None)
+        run_level: Any = self.tools
+        if run_level is None and self.options is not None:
+            run_level = self.options.get("tools")
+        return [*normalize_tools(declared), *normalize_tools(run_level)]
+
 
 class FunctionInvocationContext:
     """Context object for function middleware invocations.
@@ -1586,6 +1616,17 @@ class AgentMiddlewareLayer:
                 function_invocation_kwargs=effective_function_invocation_kwargs,
                 client_kwargs=effective_client_kwargs,
             )
+
+        # Run-level tool containers may be one-shot iterables (normalize_tools flattens
+        # any iterable collection). Materialize them exactly once here, so the context
+        # the middleware observes and the run executed beneath it share the same list —
+        # a middleware reading the tools must never consume the run's tool source.
+        from ._tools import normalize_tools
+
+        if tools is not None:
+            tools = normalize_tools(tools)
+        if options is not None and (options_tools := options.get("tools")) is not None:
+            options = cast("ChatOptions[Any]", {**options, "tools": normalize_tools(options_tools)})
 
         context = AgentContext(
             agent=self,  # type: ignore[arg-type]

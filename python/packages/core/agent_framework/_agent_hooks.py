@@ -914,38 +914,26 @@ def _tool_description(item: Any) -> str | None:
 
 
 def _tool_names(context: AgentContext) -> list[str]:
-    """Project the registered tool names for ``agent_startup`` (spec ``tools_registered``).
+    """Project the run-start tool names for ``agent_startup`` (spec ``tools_registered``).
 
-    This is deliberately the run-start snapshot: the tools declared on the agent
-    (:class:`~agent_framework.Agent` stores them in ``default_options["tools"]``) plus
-    this invocation's run-level tools — whichever supported form they arrive in (the
-    ``tools=`` keyword, or a ``tools`` entry in the run's options dict; the run gives
-    the named parameter precedence). Tools registered dynamically during the run (for
-    example by context providers during run preparation, or by MCP servers whose
-    functions expand at connect time) cannot be known at ``agent_startup`` time; they
-    surface in each ``pre_model_call`` emission's ``tools`` projection (the completed
-    per-call set) and are bracketed by ``pre_tool_call``/``post_tool_call`` like any
-    other tool when invoked.
+    The framework owns the run-start resolution — ``AgentContext._resolve_run_start_tools``
+    returns the agent-declared tools plus this invocation's run-level tools (the named
+    ``tools`` parameter takes precedence over a ``tools`` entry in the options mapping),
+    already normalized — so this helper is projection only. This is deliberately the
+    run-start snapshot: tools registered dynamically during the run (for example by
+    context providers during run preparation, or by MCP servers whose functions expand
+    at connect time) cannot be known at ``agent_startup`` time; they surface in each
+    ``pre_model_call`` emission's ``tools`` projection (the completed per-call set) and
+    are bracketed by ``pre_tool_call``/``post_tool_call`` like any other tool when
+    invoked. An unresolvable set degrades to a warning and an empty snapshot rather
+    than aborting the emission.
     """
-    agent_options = getattr(context.agent, "default_options", None)
-    agent_tools: Any = (
-        cast("Mapping[str, Any]", agent_options).get("tools") if isinstance(agent_options, Mapping) else None
-    )
-    if agent_tools is None:
-        # Custom agent implementations (no default_options mapping, or one without a
-        # tools entry) keep exposing their declared tools through the legacy attribute.
-        agent_tools = getattr(context.agent, "tools", None)
-    run_tools: Any = context.tools
-    if run_tools is None and isinstance(context.options, Mapping):
-        # Run-level tools may also arrive inside the run's options dict; mirror the
-        # run's own precedence (`tools_ = tools if tools is not None else
-        # opts.pop("tools", None)`), where the named parameter wins.
-        run_tools = context.options.get("tools")
-    return [
-        _projected_tool_name(item)
-        for tools in (agent_tools, run_tools)
-        for item in _normalized_tools(tools, point="agent_startup")
-    ]
+    try:
+        resolved = context._resolve_run_start_tools()  # pyright: ignore[reportPrivateUsage]
+    except Exception:
+        logger.warning("agent-hooks could not resolve the run-start tools for the agent_startup projection.")
+        return []
+    return [_projected_tool_name(item) for item in resolved]
 
 
 def _pre_model_call_tools(options: Mapping[str, Any]) -> list[dict[str, Any]] | None:

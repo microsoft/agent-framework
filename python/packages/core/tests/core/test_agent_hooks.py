@@ -544,6 +544,17 @@ def test_tools_projection_survives_hostile_tools_container(caplog: pytest.LogCap
         assert _pre_model_call_tools({"tools": HostileTools()}) is None
     assert "could not normalize the tools" in caplog.text
 
+    # The startup snapshot degrades the same way when the run-start resolution raises.
+    from agent_framework._agent_hooks import _tool_names
+
+    class HostileAgent:
+        tools = HostileTools()
+
+    context = AgentContext(agent=cast("Any", HostileAgent()), messages=[])
+    with caplog.at_level("WARNING", logger="agent_framework._agent_hooks"):
+        assert _tool_names(context) == []
+    assert "could not resolve the run-start tools" in caplog.text
+
 
 @requires_sdk
 def test_startup_snapshot_falls_back_to_legacy_tools_attribute() -> None:
@@ -578,6 +589,38 @@ async def test_options_route_run_tools_appear_on_both_projections(chat_client_ba
     assert startup["agent_init"]["tools_registered"] == ["weather_tool", "options_route_tool"]
     pre_model = guard.contexts_for("pre_model_call")[0]
     assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool", "options_route_tool"]
+
+
+@requires_sdk
+@pytest.mark.parametrize("route", ["tools_kwarg", "options_dict"])
+async def test_one_shot_iterable_run_tools_survive_the_snapshot(
+    chat_client_base: MockBaseChatClient, route: str
+) -> None:
+    """Observing the tools never consumes them: one-shot iterables stay usable by the run.
+
+    ``normalize_tools`` flattens any iterable tool collection, so a generator is a
+    supported run-level container. The framework materializes it exactly once when it
+    builds the middleware context; snapshot, per-call projection, and the run itself
+    all see the same tools. (Previously the startup projection exhausted the iterable
+    and enabling agent-hooks silently removed every run-level tool it contained.)
+    """
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(client=chat_client_base, middleware=[create_agent_hooks_middleware([guard])])
+
+    one_shot = (item for item in [weather_tool])
+    if route == "tools_kwarg":
+        response = await agent.run("Get weather for Seattle", tools=one_shot)
+    else:
+        response = await agent.run("Get weather for Seattle", options={"tools": one_shot})
+
+    # The run kept its tools: the tool call resolved and the loop completed.
+    assert response.text == "Final response"
+    assert weather_tool_calls == ["Seattle"]
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool"]
+    for pre_model in guard.contexts_for("pre_model_call"):
+        assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool"]
 
 
 # endregion
