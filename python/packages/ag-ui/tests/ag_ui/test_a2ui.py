@@ -1319,8 +1319,9 @@ def test_generate_only_planner_honors_max_iterations():
 
 
 def test_mixed_batch_skips_server_tool_when_invocation_disabled():
-    # With function invocation disabled, the core loop runs no tools; the mixed-batch
-    # path must not fabricate a result either.
+    # With function invocation disabled, the core loop runs no tools at all — so neither
+    # the server tool runs nor a surface is generated (generate_a2ui charges the same
+    # budget), and nothing is fabricated. Matches the core loop's disabled behavior.
     from agent_framework import FunctionTool
 
     ran: list[int] = []
@@ -1333,7 +1334,8 @@ def test_mixed_batch_skips_server_tool_when_invocation_disabled():
     inner = _RepeatSearchGenerateInner(_FIConfigClient({"enabled": False}))
     kinds = asyncio.run(_drive(A2UIAgent(inner, _RenderSub()), tools=[search_tool]))
     assert ran == []  # invocation disabled -> server tool not executed
-    assert _generate_envelope(kinds) is not None  # surface still rendered
+    assert _generate_envelope(kinds) is None  # and no surface generated (invocation off)
+    assert not any(k[0] == "result" for k in kinds)  # nothing fabricated
 
 
 def test_mixed_batch_surfaces_approval_request_and_stops():
@@ -1413,3 +1415,20 @@ def test_final_narration_turn_forces_tools_off():
     asyncio.run(_drive(A2UIAgent(inner, _RenderSub())))
     assert inner.calls >= 2  # planner round(s) + a final narration turn
     assert (seen_options[-1] or {}).get("tool_choice") == "none"  # final turn: tools off
+
+
+def test_function_call_budget_core_primitive():
+    # The core-owned budget owns the accounting A2UI used to reimplement.
+    from agent_framework._tools import FunctionCallBudget
+
+    b = FunctionCallBudget.from_config({"max_function_calls": 3, "max_iterations": 2})
+    assert b.enabled is True
+    assert b.rounds_remaining(8) == 2  # capped by max_iterations
+    b.start_round()
+    assert b.rounds_remaining(8) == 1
+    assert b.take(2) == 2 and b.calls_used == 2  # reserves what fits
+    assert b.take(5) == 1 and b.exhausted is True  # only the last one fits, then spent
+    assert b.final_response_options({"metadata": {"x": 1}}) == {"metadata": {"x": 1}, "tool_choice": "none"}
+
+    disabled = FunctionCallBudget.from_config({"enabled": False})
+    assert disabled.take(3) == 0  # nothing runs when invocation is disabled

@@ -497,26 +497,20 @@ class A2UIAgent:
         server_calls: list[Any],
         tools: list[Any],
         session: Any,
-        config: Any,
+        budget: Any,
         run_kwargs: dict[str, Any],
-    ) -> tuple[list[Any], list[Any], bool]:
-        """Execute server tools called alongside generate_a2ui via the core primitive.
+    ) -> tuple[list[Any], list[Any], bool, list[Any]]:
+        """Execute server tools called alongside generate_a2ui via the core executor.
 
-        Reuses the shared function-invocation machinery with the run's invocation
-        ``session``, the full function-middleware pipeline (static client middleware plus
-        any runtime ``middleware``), and the run's ``config`` — the same execution owner
-        the AG-UI approval resume uses — so authorization/audit/policy middleware, the
-        invocation session, and approval controls all apply. A direct ``tool.invoke()``
-        would bypass them.
-
-        Delegates to the core ``execute_function_call_batch`` so the middleware pipeline
-        (static client + runtime, with bare objects and bundles normalized), the
-        invocation ``session``, ``config``, and the result/control/termination split are
-        owned by one core executor rather than reproduced here — the class stays focused on
-        render-specific streaming. Returns ``(results, control, should_terminate)`` where
-        ``control`` are non-result contents (e.g. a ``function_approval_request``) that must
-        reach the client. Execution failures surface as error results rather than aborting
-        the surface generation.
+        Delegates to the core ``execute_function_call_batch``, handing it the run's
+        ``session``, the client's static + runtime middleware, and the shared ``budget`` so
+        the executor owns the middleware pipeline, session threading, per-request call
+        accounting, and the result/control/termination/deferred split — the same execution
+        owner AG-UI approval resume uses. This class does not reproduce any of it. Returns
+        ``(results, control, should_terminate, deferred)``; ``control`` are non-result
+        contents (e.g. a ``function_approval_request``) that must reach the client, and
+        ``deferred`` are calls the budget did not run. Execution failures surface as error
+        results rather than aborting the surface generation.
         """
         from agent_framework._tools import execute_function_call_batch
 
@@ -526,7 +520,7 @@ class A2UIAgent:
                 server_calls,
                 tools,
                 session=session,
-                config=config,
+                budget=budget,
                 static_function_middleware=getattr(client, "function_middleware", None) or (),
                 runtime_middleware=run_kwargs.get("middleware"),
                 custom_args={k: v for k, v in run_kwargs.items() if k not in ("options", "middleware")},
@@ -539,8 +533,8 @@ class A2UIAgent:
                 )
                 for c in server_calls
             ]
-            return errors, [], False
-        return outcome.results, outcome.control, outcome.should_terminate
+            return errors, [], False, []
+        return outcome.results, outcome.control, outcome.should_terminate, outcome.deferred
 
     async def _invoke_render_subagent(self, prompt: str, conversation: list[Any]) -> dict[str, Any] | None:
         """Run the render sub-agent (forced render_a2ui) and return its args, or None."""
@@ -557,7 +551,7 @@ class A2UIAgent:
         self, messages: Any = None, context_slice: dict[str, Any] | None = None, **kwargs: Any
     ) -> Any:
         from agent_framework import AgentResponseUpdate
-        from agent_framework._tools import normalize_function_invocation_configuration
+        from agent_framework._tools import FunctionCallBudget
 
         history = _sanitize_unanswered_tool_calls(normalize_messages(messages))
         session = kwargs.pop("session", None)
@@ -572,25 +566,18 @@ class A2UIAgent:
             input_model=_generate_tool_schema(),
         )
 
-        # The inner agent's function-invocation controls, so the A2UI planner loop honors
-        # the same invocation toggle, iteration cap, and per-request call budget the core
-        # loop enforces. generate_a2ui and server tools BOTH charge the call budget, and
-        # the planner rounds are capped by max_iterations, so a generate-only planner
-        # cannot run more render/tool calls than the configured limits (tracked
-        # cumulatively across rounds).
-        _client = getattr(self.inner_agent, "client", None)
-        fi_config = normalize_function_invocation_configuration(
-            getattr(_client, "function_invocation_configuration", None)
+        # A core-owned budget owns the accounting the core loop enforces — the invocation
+        # toggle, the iteration cap, the cumulative call budget, and the tools-off final
+        # response — so this class does not reimplement it. generate_a2ui and server tools
+        # both charge it, and planner rounds are capped by max_iterations.
+        budget = FunctionCallBudget.from_config(
+            getattr(getattr(self.inner_agent, "client", None), "function_invocation_configuration", None)
         )
-        fi_enabled = fi_config.get("enabled", True)
-        max_calls = fi_config.get("max_function_calls")
-        max_iters = fi_config.get("max_iterations")
-        max_rounds = MAX_PLANNER_ROUNDS if max_iters is None else min(MAX_PLANNER_ROUNDS, max_iters)
-        calls_used = 0
 
         pending: list[Any] = history
         pending_session = session
-        for _round in range(1, max_rounds + 1):
+        while budget.rounds_remaining(MAX_PLANNER_ROUNDS) > 0:
+            budget.start_round()
             text_contents: list[Content] = []
             # Coalesce every streamed function_call fragment by call id — generate_a2ui
             # AND any ordinary tool the planner calls in the same turn. A single call is
@@ -697,34 +684,23 @@ class A2UIAgent:
                 # and looped; nothing more to do here.
                 return
 
-            # Execute server tools batched with generate_a2ui through the core primitive,
-            # honoring the invocation toggle + the shared per-request call budget. Calls we
-            # must not run (invocation disabled, or over budget) are deferred (left
-            # unexecuted) and force the run to stop below rather than be fabricated.
-            server_results: list[Content] = []
-            server_control: list[Content] = []
-            server_terminated = False
-            deferred_calls: list[Content] = []
-            if server_calls:
-                runnable = server_calls if fi_enabled else []
-                if max_calls is not None:
-                    runnable = runnable[: max(0, max_calls - calls_used)]
-                deferred_calls = server_calls[len(runnable) :]
-                if runnable:
-                    server_results, server_control, server_terminated = await self._execute_server_tools(
-                        runnable, executable_tools, session, fi_config, kwargs
-                    )
-                    calls_used += len(runnable)
+            # Execute server tools batched with generate_a2ui through the core executor,
+            # passing the shared budget so it owns the invocation toggle + per-request call
+            # accounting. Calls it could not run (disabled or over budget) come back as
+            # deferred (left unexecuted) and force the run to stop below rather than be
+            # fabricated.
+            server_results, server_control, server_terminated, deferred_calls = (
+                await self._execute_server_tools(server_calls, executable_tools, session, budget, kwargs)
+                if server_calls
+                else ([], [], False, [])
+            )
 
             # generate_a2ui also charges the call budget — each is a render-subagent
             # invocation — so a generate-only planner cannot exceed max_function_calls
             # across rounds. Surfaces over budget are deferred (not rendered) and stop the run.
-            deferred_generate: list[Content] = []
-            if max_calls is not None:
-                allowed = max(0, max_calls - calls_used)
-                deferred_generate = generate_calls[allowed:]
-                generate_calls = generate_calls[:allowed]
-            calls_used += len(generate_calls)
+            allowed = budget.take(len(generate_calls))
+            deferred_generate = generate_calls[allowed:]
+            generate_calls = generate_calls[:allowed]
 
             generate_results: list[Content] = []
             for call in generate_calls:
@@ -746,14 +722,13 @@ class A2UIAgent:
             # termination request, or an exhausted call budget. Re-entering would replay an
             # unbalanced assistant tool_call (which the provider rejects before the frontend
             # or a follow-up run resumes it) or exceed the budget.
-            budget_exhausted = max_calls is not None and calls_used >= max_calls
             if (
                 client_calls
                 or deferred_calls
                 or deferred_generate
                 or server_control
                 or server_terminated
-                or budget_exhausted
+                or budget.exhausted
             ):
                 return
 
@@ -767,15 +742,13 @@ class A2UIAgent:
             pending_session = None
 
         # Rounds/budget are spent. Give the planner one final turn to consume the last
-        # result and narrate, with tools forced off via tool_choice="none" — matching the
-        # core loop's budget-exhausted final response. Withholding only generate_a2ui is
-        # not enough: a fresh inner_agent.run() would otherwise start a new invocation
-        # budget and could execute another full batch of server/default tools past the
-        # configured max_function_calls / max_iterations.
+        # result and narrate, with tools forced off via the budget's tools-off options —
+        # matching the core loop's budget-exhausted final response. Withholding only
+        # generate_a2ui is not enough: a fresh inner_agent.run() would otherwise start a new
+        # invocation budget and could execute another full batch of server/default tools
+        # past the configured max_function_calls / max_iterations.
         final_kwargs = dict(kwargs)
-        final_options = dict(final_kwargs.get("options") or {})
-        final_options["tool_choice"] = "none"
-        final_kwargs["options"] = final_options
+        final_kwargs["options"] = budget.final_response_options(final_kwargs.get("options"))
         async for update in self.inner_agent.run(
             history,
             stream=True,
