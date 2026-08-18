@@ -87,6 +87,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     private readonly ProviderSessionState<FileMemoryState> _sessionState;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly string _instructions;
+    private readonly bool _disableSearchAlignmentCheck;
     private IReadOnlyList<string>? _stateKeys;
     private AITool[]? _tools;
 
@@ -107,6 +108,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
 
         this._fileStore = fileStore;
         this._instructions = options?.Instructions ?? DefaultInstructions;
+        this._disableSearchAlignmentCheck = options?.DisableSearchAlignmentCheck ?? false;
         this._sessionState = new ProviderSessionState<FileMemoryState>(
             stateInitializer ?? (_ => new FileMemoryState()),
             this.GetType().Name,
@@ -400,6 +402,11 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
         FileMemoryState state = this._sessionState.GetOrInitializeState(AIAgent.CurrentRunContext?.Session);
         string? pattern = string.IsNullOrWhiteSpace(globPattern) ? null : globPattern;
         IReadOnlyList<FileSearchResult> results = await this._fileStore.SearchAsync(state.WorkingFolder, regexPattern, pattern, recursive: false, cancellationToken).ConfigureAwait(false);
+
+        if (!this._disableSearchAlignmentCheck)
+        {
+            await SearchAlignment.ThrowIfMisalignedAsync(this._fileStore, state.WorkingFolder, results, regexPattern, cancellationToken).ConfigureAwait(false);
+        }
 
         // Filter out internal files (description sidecars and memory index) so they stay hidden.
         var filtered = new List<FileSearchResult>(results.Count);

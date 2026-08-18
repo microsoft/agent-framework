@@ -147,6 +147,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     private readonly bool _disableWriteTools;
     private readonly bool _disableReadOnlyToolApproval;
     private readonly bool _disableWriteToolApproval;
+    private readonly bool _disableSearchAlignmentCheck;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private AITool[]? _tools;
 
@@ -168,6 +169,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
         this._disableWriteTools = options?.DisableWriteTools ?? false;
         this._disableReadOnlyToolApproval = options?.DisableReadOnlyToolApproval ?? false;
         this._disableWriteToolApproval = options?.DisableWriteToolApproval ?? false;
+        this._disableSearchAlignmentCheck = options?.DisableSearchAlignmentCheck ?? false;
     }
 
     /// <summary>
@@ -478,6 +480,11 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
         string? pattern = string.IsNullOrWhiteSpace(globPattern) ? null : globPattern;
         string target = StorePaths.NormalizeRelativePath(directory ?? string.Empty, isDirectory: true);
         IReadOnlyList<FileSearchResult> results = await this._fileStore.SearchAsync(target, regexPattern, pattern, recursive: true, cancellationToken).ConfigureAwait(false);
+
+        if (!this._disableSearchAlignmentCheck)
+        {
+            await SearchAlignment.ThrowIfMisalignedAsync(this._fileStore, target, results, regexPattern, cancellationToken).ConfigureAwait(false);
+        }
 
         // store.SearchAsync returns FileName relative to the searched directory; re-root each result to the
         // store root so the names compose directly with file_access_read/replace/delete.

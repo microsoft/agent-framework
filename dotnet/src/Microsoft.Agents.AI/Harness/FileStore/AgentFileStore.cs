@@ -1,11 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.FileSystemGlobbing;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -92,7 +95,198 @@ public abstract class AgentFileStore
     /// A list of search results. Each result's <see cref="FileSearchResult.FileName"/> is the matching file's
     /// path relative to <paramref name="directory"/>.
     /// </returns>
-    public abstract Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default);
+    public virtual async Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
+    {
+        // Compile with a match timeout to guard against catastrophic backtracking (ReDoS).
+        var regex = new Regex(regexPattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
+        IReadOnlyList<string> names = await this.FindMatchingFilesAsync(directory, regexPattern, globPattern, recursive, cancellationToken).ConfigureAwait(false);
+        Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
+        var results = new List<FileSearchResult>();
+
+        foreach (string name in names)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Re-apply the caller's scope: FindMatchingFilesAsync is explicitly allowed to
+            // over-return, and must not be able to widen what the caller asked for.
+            if (!StorePaths.MatchesGlob(name, matcher) ||
+                (!recursive && name.IndexOf("/", StringComparison.Ordinal) >= 0))
+            {
+                continue;
+            }
+
+            string path = string.IsNullOrEmpty(directory) ? name : $"{directory.TrimEnd('/')}/{name}";
+            string? content = await this.ReadAsync(path, cancellationToken).ConfigureAwait(false);
+            if (content is null)
+            {
+                continue; // Deleted between enumeration and read.
+            }
+
+            FileSearchResult? result = ScanContent(name, content, regex);
+            if (result is not null)
+            {
+                results.Add(result);
+            }
+        }
+
+        // Tagged so the file-access tools can tell the base implementation numbered these results,
+        // without reflecting over the store's type (not trim-safe). Per call rather than per
+        // instance: a store that defers to base.SearchAsync only sometimes must not buy permanent
+        // trust for the results it numbers itself.
+        return new BaseSearchResults(results);
+    }
+
+    /// <summary>
+    /// Gets the names of the files that <em>may</em> contain a match for <paramref name="regexPattern"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the hook a store uses to narrow the search to the files worth reading. Semantics are
+    /// deliberately a <b>superset</b>: returning a file that turns out not to match is harmless,
+    /// because <see cref="SearchAsync"/> re-scans every candidate, while omitting one loses the match.
+    /// A backend with a native search index should override this and push
+    /// <paramref name="regexPattern"/> down to it, accepting that a dialect mismatch costs recall
+    /// and nothing else.
+    /// </para>
+    /// <para>
+    /// The default implementation has no index to narrow with, so it walks
+    /// <see cref="ListChildrenAsync"/> and returns every file in scope. Overriding
+    /// <see cref="SearchAsync"/> instead is also supported, but then line numbering is the store's
+    /// responsibility (see <see cref="SplitLines"/>) and the file-access tools verify it.
+    /// </para>
+    /// </remarks>
+    /// <param name="directory">The relative directory being searched. Use an empty string for the root.</param>
+    /// <param name="regexPattern">The pattern <see cref="SearchAsync"/> was called with, as a hint.</param>
+    /// <param name="globPattern">The optional glob, matched against each file's path relative to <paramref name="directory"/>.</param>
+    /// <param name="recursive">When <see langword="false"/> only direct children are in scope.</param>
+    /// <param name="cancellationToken">A token to cancel the operation.</param>
+    /// <returns>File paths relative to <paramref name="directory"/>, using forward slashes.</returns>
+    protected virtual async Task<IReadOnlyList<string>> FindMatchingFilesAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
+    {
+        _ = regexPattern; // No index to narrow with here; a backend with one overrides this.
+        var names = new List<string>();
+        var pending = new Stack<string>();
+        pending.Push(string.Empty);
+
+        while (pending.Count > 0)
+        {
+            string relativeDir = pending.Pop();
+            string target = string.IsNullOrEmpty(relativeDir)
+                ? directory
+                : (string.IsNullOrEmpty(directory) ? relativeDir : $"{directory.TrimEnd('/')}/{relativeDir}");
+
+            foreach (FileStoreEntry entry in await this.ListChildrenAsync(target, cancellationToken).ConfigureAwait(false))
+            {
+                string child = string.IsNullOrEmpty(relativeDir) ? entry.Name : $"{relativeDir}/{entry.Name}";
+                if (entry.Type == FileStoreEntry.Directory)
+                {
+                    if (recursive)
+                    {
+                        pending.Push(child);
+                    }
+                }
+                else
+                {
+                    names.Add(child);
+                }
+            }
+        }
+
+        return names;
+    }
+
+    /// <summary>
+    /// Splits <paramref name="content"/> into the lines this SDK's line numbers address.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the published definition of a line for the whole file-access surface: the
+    /// <c>read_lines</c> and <c>replace_lines</c> tools, and every <see cref="FileSearchMatch.LineNumber"/>
+    /// reported by <see cref="SearchAsync"/>, are coordinates in this list. Each line keeps its
+    /// terminator (<c>\r\n</c>, <c>\n</c>, or a lone <c>\r</c>), and the final line has none when the
+    /// content does not end with a newline.
+    /// </para>
+    /// <para>
+    /// A store that overrides <see cref="SearchAsync"/> must number its matches by this split,
+    /// otherwise grep and the line editor disagree and an edit lands on the wrong line. The rule is
+    /// per-SDK: it is not required to match the Python implementation, only to be consistent within
+    /// this one, because a line number never crosses runtimes.
+    /// </para>
+    /// </remarks>
+    /// <param name="content">The full text to split.</param>
+    /// <returns>The lines, each with its terminator attached.</returns>
+    public static IReadOnlyList<string> SplitLines(string content) => FileEditor.SplitLinesKeepEnds(Throw.IfNull(content));
+
+    /// <summary>
+    /// Finds every line of <paramref name="content"/> matching <paramref name="regex"/>, numbered by
+    /// <see cref="SplitLines"/>.
+    /// </summary>
+    /// <remarks>
+    /// This is the numbering primitive <see cref="SearchAsync"/> uses, published so a store that
+    /// supplies its own <see cref="SearchAsync"/> can produce aligned results rather than re-deriving
+    /// them. Lines are reported verbatim, terminator included; the pattern is matched against the
+    /// line without its terminator, so an end-anchored pattern behaves the same on CRLF content.
+    /// </remarks>
+    /// <param name="fileName">The name recorded on the result, relative to the searched directory.</param>
+    /// <param name="content">The file's full text.</param>
+    /// <param name="regex">A compiled pattern, normally from the same source string passed to <see cref="SearchAsync"/>.</param>
+    /// <returns>The match metadata, or <see langword="null"/> when no line matches.</returns>
+    public static FileSearchResult? ScanContent(string fileName, string content, Regex regex)
+    {
+        _ = Throw.IfNull(content);
+        _ = Throw.IfNull(regex);
+
+        IReadOnlyList<string> lines = SplitLines(content);
+        var matchingLines = new List<FileSearchMatch>();
+        string? firstSnippet = null;
+        int lineStartOffset = 0;
+
+        for (int i = 0; i < lines.Count; i++)
+        {
+            // Match over the line's text only, without copying it out of the line.
+            Match match = regex.Match(lines[i], 0, FileEditor.LineContentLength(lines[i]));
+            if (match.Success)
+            {
+                matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i] });
+
+                // Build a context snippet around the first match (+/-50 chars).
+                if (firstSnippet is null)
+                {
+                    int charIndex = lineStartOffset + match.Index;
+                    int snippetStart = Math.Max(0, charIndex - 50);
+                    int snippetEnd = Math.Min(content.Length, charIndex + match.Value.Length + 50);
+                    firstSnippet = content.Substring(snippetStart, snippetEnd - snippetStart);
+                }
+            }
+
+            // Advance past this line; its terminator is already part of its length.
+            lineStartOffset += lines[i].Length;
+        }
+
+        return matchingLines.Count == 0
+            ? null
+            : new FileSearchResult { FileName = fileName, Snippet = firstSnippet!, MatchingLines = matchingLines };
+    }
+
+    /// <summary>
+    /// Gets a value indicating whether this store guarantees its <see cref="FileSearchMatch.LineNumber"/>
+    /// values are coordinates in <see cref="SplitLines"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Set by a store that overrides <see cref="SearchAsync"/> and numbers lines correctly — normally
+    /// because it reports through <see cref="ScanContent"/>. Declaring it opts the store out of the
+    /// alignment check the file-access tools otherwise run on every grep, which costs one extra read
+    /// per <em>matched</em> file. A store that does not override <see cref="SearchAsync"/> need not
+    /// set it: the base implementation is aligned by construction and is never checked.
+    /// </para>
+    /// <para>
+    /// This is a promise, not a hint. Declaring it while numbering lines differently reinstates
+    /// exactly the failure the check exists to catch — <c>replace_lines</c> silently editing the
+    /// wrong line — so only set it if a test pins the alignment.
+    /// </para>
+    /// </remarks>
+    public virtual bool ReportsAlignedLineNumbers => false;
 
     /// <summary>
     /// Ensures a directory exists, creating it if necessary.

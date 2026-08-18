@@ -104,6 +104,13 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// This store reports through <see cref="AgentFileStore.ScanContent"/>, so its line numbers are
+    /// coordinates in <see cref="AgentFileStore.SplitLines"/> by construction.
+    /// </remarks>
+    public override bool ReportsAlignedLineNumbers => true;
+
+    /// <inheritdoc />
     public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
     {
         // Normalize the directory prefix for path matching.
@@ -141,45 +148,12 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
                 continue;
             }
 
-            // Search each line for regex matches, tracking line numbers and building a snippet.
-            // Lines keep their terminators, so these line numbers address the same lines that
-            // replace_lines edits and each reported line can be reused as a literal new_line.
-            string fileContent = kvp.Value;
-            List<string> lines = FileEditor.SplitLinesKeepEnds(fileContent);
-            var matchingLines = new List<FileSearchMatch>();
-            string? firstSnippet = null;
-            int lineStartOffset = 0;
-
-            for (int i = 0; i < lines.Count; i++)
+            // Number the lines through the base class's published primitive, so this store
+            // and the line editor cannot drift apart.
+            FileSearchResult? result = ScanContent(relativeName, kvp.Value, regex);
+            if (result is not null)
             {
-                // Match over the line's text only, without copying it out of the line.
-                Match match = regex.Match(lines[i], 0, FileEditor.LineContentLength(lines[i]));
-                if (match.Success)
-                {
-                    matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i] });
-
-                    // Build a context snippet around the first match (±50 chars).
-                    if (firstSnippet is null)
-                    {
-                        int charIndex = lineStartOffset + match.Index;
-                        int snippetStart = Math.Max(0, charIndex - 50);
-                        int snippetEnd = Math.Min(fileContent.Length, charIndex + match.Value.Length + 50);
-                        firstSnippet = fileContent.Substring(snippetStart, snippetEnd - snippetStart);
-                    }
-                }
-
-                // Advance the offset past this line; its terminator is already part of its length.
-                lineStartOffset += lines[i].Length;
-            }
-
-            if (matchingLines.Count > 0)
-            {
-                results.Add(new FileSearchResult
-                {
-                    FileName = relativeName,
-                    Snippet = firstSnippet!,
-                    MatchingLines = matchingLines,
-                });
+                results.Add(result);
             }
         }
 

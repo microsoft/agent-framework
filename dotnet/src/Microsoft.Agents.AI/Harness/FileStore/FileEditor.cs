@@ -81,6 +81,21 @@ internal static class FileEditor
                 throw new ArgumentException(
                     $"line_number {edit.LineNumber} is out of range (file has {lines.Count} lines).");
             }
+
+            // When the caller says what it expects to be there, a mismatch means the number is
+            // stale or was never right. Refusing turns a silent overwrite of the wrong line into
+            // an error, and is the one check that also covers the file changing under us.
+            if (edit.ExpectedLine is not null)
+            {
+                string actual = TrimLineTerminator(lines[edit.LineNumber - 1]);
+                if (!string.Equals(actual, TrimLineTerminator(edit.ExpectedLine), StringComparison.Ordinal))
+                {
+                    throw new ArgumentException(
+                        $"line_number {edit.LineNumber} does not contain the expected text " +
+                        $"(expected '{TrimLineTerminator(edit.ExpectedLine)}', found '{actual}'). " +
+                        "Re-read the file to get current line numbers.");
+                }
+            }
         }
 
         foreach (FileLineEdit edit in edits)
@@ -133,6 +148,11 @@ internal static class FileEditor
         int lastLine = endLine is null ? total : Math.Min(endLine.Value, total);
         return lines.GetRange(startLine - 1, lastLine - startLine + 1);
     }
+
+    /// <summary>
+    /// Returns <paramref name="line"/> without its trailing <c>\r\n</c>, <c>\n</c> or lone <c>\r</c>.
+    /// </summary>
+    internal static string TrimLineTerminator(string line) => line.Substring(0, LineContentLength(line));
 
     /// <summary>
     /// Returns the length of <paramref name="line"/> up to but excluding the <c>\r\n</c>, <c>\n</c>, or
