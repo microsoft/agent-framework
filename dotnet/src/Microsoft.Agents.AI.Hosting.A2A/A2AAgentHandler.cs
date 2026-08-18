@@ -327,21 +327,14 @@ internal sealed class A2AAgentHandler : IAgentHandler
 
     private static async Task StreamMessageUpdatesAsync(string contextId, IAsyncEnumerable<AgentResponseUpdate> responseUpdates, AgentEventQueue eventQueue, CancellationToken cancellationToken)
     {
-        // A2A allows exactly one message per stream, so the updates are collected and
-        // aggregated into a single message once the stream completes.
-        var updates = new List<AgentResponseUpdate>();
+        AgentResponse response = await responseUpdates.ToAgentResponseAsync(cancellationToken).ConfigureAwait(false);
 
-        await foreach (var update in responseUpdates.ConfigureAwait(false))
-        {
-            updates.Add(update);
-        }
-
-        if (updates.Count == 0)
+        if (response.Messages.Count == 0)
         {
             return;
         }
-
-        var message = CreateMessageFromResponse(contextId, updates.ToAgentResponse());
+        var message = CreateMessageFromResponse(contextId, response);
+        var message = CreateMessageFromResponse(contextId, response);
         await eventQueue.EnqueueMessageAsync(message, cancellationToken).ConfigureAwait(false);
     }
 
