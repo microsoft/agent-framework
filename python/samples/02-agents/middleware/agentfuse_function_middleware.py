@@ -2,6 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "agent-framework-core",
+#     # Pin the public-beta version whose middleware contract this sample verifies.
 #     "dhms-agentfuse==3.7.3",
 # ]
 # ///

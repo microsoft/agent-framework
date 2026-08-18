@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import importlib.util
 from pathlib import Path
 
@@ -52,3 +53,68 @@ async def test_agentfuse_sample_fails_closed_without_host_identity() -> None:
         "handler_invoked": False,
     }
     assert counter["count"] == 0
+
+
+async def test_agentfuse_sample_leaves_allowed_handler_failure_to_the_host() -> None:
+    counter = {"count": 0}
+    middleware = _SAMPLE.AgentFuseFunctionMiddleware(_SAMPLE.RuntimeGuard(allow_tools={"failing_tool"}))
+
+    @_SAMPLE.tool(name="failing_tool", approval_mode="never_require")
+    def protected_tool() -> str:
+        counter["count"] += 1
+        raise RuntimeError("simulated handler failure")
+
+    context = _SAMPLE.FunctionInvocationContext(
+        function=protected_tool,
+        arguments={},
+        metadata={"call_id": "call-handler-failure-1"},
+    )
+
+    async def call_next() -> None:
+        context.result = await protected_tool.invoke(
+            arguments={},
+            context=context,
+            tool_call_id="call-handler-failure-1",
+            skip_parsing=True,
+        )
+
+    with pytest.raises(RuntimeError, match="simulated handler failure"):
+        await middleware.process(context, call_next)
+
+    assert counter["count"] == 1
+    assert context.metadata["agentfuse_decision"].action == "allow"
+
+
+async def test_agentfuse_sample_preserves_task_cancellation_before_dispatch() -> None:
+    counter = {"count": 0}
+
+    class CancellingRuntimeGuard(_SAMPLE.RuntimeGuard):
+        async def aevaluate(self, _tool_call: object) -> object:
+            raise asyncio.CancelledError
+
+    middleware = _SAMPLE.AgentFuseFunctionMiddleware(CancellingRuntimeGuard())
+
+    @_SAMPLE.tool(name="safe_read", approval_mode="never_require")
+    def protected_tool() -> str:
+        counter["count"] += 1
+        return "handled"
+
+    context = _SAMPLE.FunctionInvocationContext(
+        function=protected_tool,
+        arguments={},
+        metadata={"call_id": "call-cancelled-1"},
+    )
+
+    async def call_next() -> None:
+        context.result = await protected_tool.invoke(
+            arguments={},
+            context=context,
+            tool_call_id="call-cancelled-1",
+            skip_parsing=True,
+        )
+
+    with pytest.raises(asyncio.CancelledError):
+        await middleware.process(context, call_next)
+
+    assert counter["count"] == 0
+    assert "agentfuse_decision" not in context.metadata
