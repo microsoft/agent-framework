@@ -804,6 +804,24 @@ class _UnparsedRawResponse:
         return self._parsed
 
 
+class _BareEventStream:
+    """An object that is already the event stream: no ``parse``, nothing to unwrap."""
+
+    def __init__(self, items: Sequence[object]) -> None:
+        self._items = list(items)
+        self._iterator: Iterator[object] = iter(())
+
+    def __aiter__(self) -> "_BareEventStream":
+        self._iterator = iter(self._items)
+        return self
+
+    async def __anext__(self) -> object:
+        try:
+            return next(self._iterator)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+
 class _FakeTelemetryStreamWrapper:
     """The wrapper a telemetry instrumentor substitutes for the raw-response wrapper.
 
@@ -821,15 +839,15 @@ class _FakeTelemetryStreamWrapper:
     inner raw response is parsed and handed back.
     """
 
-    def __init__(self, stream_async_iter: object) -> None:
-        self.stream_async_iter = stream_async_iter
+    def __init__(self, stream_async_iter: Any) -> None:
+        self.stream_async_iter: Any = stream_async_iter
 
     def __aiter__(self) -> "_FakeTelemetryStreamWrapper":
-        self.stream_async_iter = self.stream_async_iter.__aiter__()  # type: ignore[attr-defined]
+        self.stream_async_iter = self.stream_async_iter.__aiter__()
         return self
 
     async def __anext__(self) -> object:
-        return await self.stream_async_iter.__anext__()  # type: ignore[attr-defined]
+        return await self.stream_async_iter.__anext__()
 
 
 async def test_streaming_survives_telemetry_wrapped_raw_response() -> None:
@@ -907,21 +925,6 @@ async def test_streaming_accepts_raw_response_that_is_already_an_event_stream() 
             delta="Hello",
         ),
     ]
-
-    class _BareEventStream:
-        def __init__(self, items: Sequence[object]) -> None:
-            self._items = list(items)
-            self._iterator: Iterator[object] = iter(())
-
-        def __aiter__(self) -> "_BareEventStream":
-            self._iterator = iter(self._items)
-            return self
-
-        async def __anext__(self) -> object:
-            try:
-                return next(self._iterator)
-            except StopIteration as exc:
-                raise StopAsyncIteration from exc
 
     bare = _BareEventStream(events)
     assert not hasattr(bare, "parse")
