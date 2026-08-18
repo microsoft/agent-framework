@@ -331,14 +331,15 @@ public abstract partial class AIAgent
     /// System-role messages must be developer-controlled and should never contain end-user input.
     /// </para>
     /// </remarks>
-    public Task<AgentResponse> RunAsync(
+    public async Task<AgentResponse> RunAsync(
         IEnumerable<ChatMessage> messages,
         AgentSession? session = null,
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         CurrentRunContext = new(this, session, messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList(), options);
-        return this.RunCoreAsync(messages, session, options, cancellationToken);
+        // NOTE: This method must be async/await in order to restore the previous run context at the end of the method run.
+        return await this.RunCoreAsync(messages, session, options, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
