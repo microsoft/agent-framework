@@ -64,7 +64,7 @@ public sealed class FeatureUsageActivationTests : IDisposable
 
     private static void ResetFeatureUsage()
         => typeof(FeatureUsage)
-            .GetMethod("ResetForTests", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetMethod("ResetStateForTests", BindingFlags.NonPublic | BindingFlags.Static)!
             .Invoke(null, null);
 }
 

@@ -14,7 +14,7 @@ internal static class FeatureUsageAssert
     public static void Reset()
     {
         MethodInfo? reset = typeof(FeatureUsage).GetMethod(
-            "ResetForTests",
+            "ResetStateForTests",
             BindingFlags.Static | BindingFlags.NonPublic);
         Assert.NotNull(reset);
         reset.Invoke(obj: null, parameters: null);

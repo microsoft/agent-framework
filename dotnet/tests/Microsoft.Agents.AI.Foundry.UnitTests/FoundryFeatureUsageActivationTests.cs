@@ -226,7 +226,7 @@ public sealed class FoundryFeatureUsageActivationTests : IDisposable
     }
 
     private static void ResetFeatureUsage()
-        => GetFeatureUsageMethod("ResetForTests").Invoke(null, null);
+        => GetFeatureUsageMethod("ResetStateForTests").Invoke(null, null);
 
     private static MethodInfo GetFeatureUsageMethod(string name)
         => typeof(FeatureUsage).GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic)

@@ -302,7 +302,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
 
     private static void ResetFeatureUsage()
         => typeof(FeatureUsage)
-            .GetMethod("ResetForTests", BindingFlags.Static | BindingFlags.NonPublic)!
+            .GetMethod("ResetStateForTests", BindingFlags.Static | BindingFlags.NonPublic)!
             .Invoke(null, null);
 
     private static Mock<ResponseAgentProvider> CreateMockProvider()

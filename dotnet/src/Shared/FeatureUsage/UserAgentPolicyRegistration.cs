@@ -1,16 +1,19 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable IDE0005 // Required in projects with implicit usings disabled.
+
+using System;
 using System.ClientModel.Primitives;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using ApprovedOriginPredicate = System.Func<System.Uri?, bool>;
-using ArgumentNullException = System.ArgumentNullException;
 using PipelinePolicyList = System.Collections.Generic.IReadOnlyList<System.ClientModel.Primitives.PipelinePolicy>;
-using StringComparison = System.StringComparison;
-using Uri = System.Uri;
 using UserAgentTransformer = System.Func<string, bool, string>;
-using ValueTask = System.Threading.Tasks.ValueTask;
+
+#pragma warning restore IDE0005
 
 namespace Microsoft.Agents.AI.Internal;
 
@@ -155,6 +158,7 @@ internal sealed class FeatureUsageUserAgentPolicy : PipelinePolicy
 
 internal sealed class AgentFrameworkUserAgentPolicyRegistration
 {
+    // Linked-source consumers intentionally maintain independent registration state for their own wrapper pipelines.
     private readonly string[] _approvedHostSuffixes;
     private readonly ConditionalWeakTable<OpenAIRequestPolicies, RegistrationMarker> _registrations = new();
     private readonly object _registrationLock = new();

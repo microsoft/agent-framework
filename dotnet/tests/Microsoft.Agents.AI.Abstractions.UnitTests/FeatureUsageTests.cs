@@ -23,7 +23,7 @@ public sealed partial class FeatureUsageTests : IDisposable
     {
         this._originalDisabledValue = Environment.GetEnvironmentVariable(FeatureMaskDisabledEnvironmentVariable);
         Environment.SetEnvironmentVariable(FeatureMaskDisabledEnvironmentVariable, null);
-        FeatureUsage.ResetForTests();
+        FeatureUsage.ResetStateForTests();
     }
 
     [Theory]
@@ -103,13 +103,13 @@ public sealed partial class FeatureUsageTests : IDisposable
     {
         // Arrange
         Environment.SetEnvironmentVariable(FeatureMaskDisabledEnvironmentVariable, disabledValue);
-        FeatureUsage.ResetForTests();
+        FeatureUsage.ResetStateForTests();
 
         // Act
         FeatureUsage.MarkUsed(0);
         FeatureUsage.MarkUsed(127);
         Environment.SetEnvironmentVariable(FeatureMaskDisabledEnvironmentVariable, null);
-        FeatureUsage.RefreshConfigurationForTests();
+        FeatureUsage.ReloadDisabledStateForTests();
 
         // Assert
         Assert.Null(FeatureUsage.GetToken());
@@ -120,7 +120,7 @@ public sealed partial class FeatureUsageTests : IDisposable
     {
         // Arrange
         Environment.SetEnvironmentVariable(FeatureMaskDisabledEnvironmentVariable, "true");
-        FeatureUsage.ResetForTests();
+        FeatureUsage.ResetStateForTests();
 
         // Act
         Exception? exception = Record.Exception(() => FeatureUsage.MarkUsed(128));
@@ -151,7 +151,7 @@ public sealed partial class FeatureUsageTests : IDisposable
     {
         // Arrange
         Environment.SetEnvironmentVariable(FeatureMaskDisabledEnvironmentVariable, null);
-        FeatureUsage.ResetForTests();
+        FeatureUsage.ResetStateForTests();
         Environment.SetEnvironmentVariable(FeatureMaskDisabledEnvironmentVariable, "true");
 
         // Act
@@ -319,7 +319,7 @@ public sealed partial class FeatureUsageTests : IDisposable
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(FeatureMaskDisabledEnvironmentVariable, this._originalDisabledValue);
-        FeatureUsage.ResetForTests();
+        FeatureUsage.ResetStateForTests();
     }
 
     [CollectionDefinition(nameof(FeatureUsageTestGroup), DisableParallelization = true)]

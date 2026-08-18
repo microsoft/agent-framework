@@ -127,7 +127,13 @@ public static class FeatureUsage
         return token;
     }
 
-    internal static void ResetForTests()
+    /// <summary>
+    /// Resets the process-global feature-usage state to isolate tests.
+    /// </summary>
+    /// <remarks>
+    /// This test-only hook must not be used by production paths; production feature state is monotonic and never resets.
+    /// </remarks>
+    internal static void ResetStateForTests()
     {
         _ = Interlocked.Exchange(ref s_low, 0);
         _ = Interlocked.Exchange(ref s_high, 0);
@@ -135,7 +141,14 @@ public static class FeatureUsage
         Volatile.Write(ref s_isDisabled, ReadDisabledState());
     }
 
-    internal static void RefreshConfigurationForTests()
+    /// <summary>
+    /// Reloads the cached mask-disabled environment setting without resetting the feature mask.
+    /// </summary>
+    /// <remarks>
+    /// This test-only hook verifies startup-cached configuration behavior without clearing observed feature state.
+    /// Production paths read the setting once when this type initializes.
+    /// </remarks>
+    internal static void ReloadDisabledStateForTests()
         => Volatile.Write(ref s_isDisabled, ReadDisabledState());
 
     private static void AtomicOr(ref long location, long value)

@@ -184,6 +184,7 @@ jobs:
               .
               .github
               dotnet
+              docs/specs
               python
               declarative-agents
 
