@@ -1960,6 +1960,25 @@ def test_get_span_attributes_uses_system_under_stable_semconv(span_exporter: InM
     assert OtelAttr.PROVIDER_NAME not in attributes
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+def test_get_span_attributes_omits_post_v1_36_attributes_under_stable_semconv(
+    span_exporter: InMemorySpanExporter,
+):
+    """Stable v1.36.0 omits attributes introduced by later GenAI conventions."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    attributes = observability._get_span_attributes(  # pyright: ignore[reportPrivateUsage]
+        provider_name="test_provider",
+        tools=[{"type": "web_search", "name": "web_search"}],
+    )
+
+    assert attributes == {
+        OtelAttr.CHOICE_COUNT: 1,
+        OtelAttr.SYSTEM: "test_provider",
+    }
+
+
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_chat_client_observability_provider_name_under_stable_semconv(
     mock_chat_client, span_exporter: InMemorySpanExporter
@@ -2712,6 +2731,35 @@ def test_get_response_attributes_with_additional_usage():
     assert result[OtelAttr.CACHE_CREATION_INPUT_TOKENS] == 10
     assert result[OtelAttr.CACHE_READ_INPUT_TOKENS] == 0
     assert result[OtelAttr.REASONING_OUTPUT_TOKENS] == 30
+
+
+def test_get_response_attributes_omits_post_v1_36_usage_under_stable_semconv(monkeypatch: pytest.MonkeyPatch):
+    """Stable v1.36.0 keeps total usage while omitting newer token breakdowns."""
+    from unittest.mock import Mock
+
+    import agent_framework.observability as observability
+
+    monkeypatch.setattr(observability.OBSERVABILITY_SETTINGS, "otel_semconv_stability_opt_in", "")
+    response = Mock(
+        response_id=None,
+        finish_reason=None,
+        raw_representation=None,
+        model=None,
+        usage_details={
+            "input_token_count": 100,
+            "output_token_count": 50,
+            "cache_creation_input_token_count": 10,
+            "cache_read_input_token_count": 20,
+            "reasoning_output_token_count": 30,
+        },
+    )
+
+    result = observability._get_response_attributes({}, response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == {
+        OtelAttr.INPUT_TOKENS: 100,
+        OtelAttr.OUTPUT_TOKENS: 50,
+    }
 
 
 def test_get_response_attributes_maps_legacy_usage_keys():

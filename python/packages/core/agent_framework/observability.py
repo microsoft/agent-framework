@@ -388,6 +388,13 @@ USAGE_DETAIL_TO_OTEL_ATTR: Final[tuple[tuple[str, OtelAttr], ...]] = (
     ("reasoning_tokens", OtelAttr.REASONING_OUTPUT_TOKENS),
 )
 
+LATEST_EXPERIMENTAL_GEN_AI_ATTRIBUTES: Final[frozenset[OtelAttr]] = frozenset({
+    OtelAttr.CACHE_CREATION_INPUT_TOKENS,
+    OtelAttr.CACHE_READ_INPUT_TOKENS,
+    OtelAttr.REASONING_OUTPUT_TOKENS,
+    OtelAttr.TOOL_DEFINITIONS,
+})
+
 
 # region Telemetry utils
 
@@ -2719,6 +2726,12 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
         check_options,
         default_value,
     ) in OTEL_ATTR_MAP.items():
+        if (
+            otel_key in LATEST_EXPERIMENTAL_GEN_AI_ATTRIBUTES
+            and not OBSERVABILITY_SETTINGS.use_latest_experimental_gen_ai_semconv
+        ):
+            continue
+
         # Normalize to tuple of keys
         keys = (source_keys,) if isinstance(source_keys, str) else source_keys
 
@@ -3074,6 +3087,11 @@ def _apply_accumulated_usage(attributes: dict[str, Any], captured_fields: set[st
 def _apply_usage_attributes(attributes: dict[str, Any], usage: Mapping[str, Any]) -> None:
     """Apply known usage details as standard OTel GenAI attributes."""
     for usage_key, otel_attr in USAGE_DETAIL_TO_OTEL_ATTR:
+        if (
+            otel_attr in LATEST_EXPERIMENTAL_GEN_AI_ATTRIBUTES
+            and not OBSERVABILITY_SETTINGS.use_latest_experimental_gen_ai_semconv
+        ):
+            continue
         value = usage.get(usage_key)
         if value is None or isinstance(value, bool) or not isinstance(value, int):
             continue
