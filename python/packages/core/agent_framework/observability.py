@@ -714,7 +714,8 @@ def create_resource(
     service_version: str | None = None,
     env_file_path: str | None = None,
     env_file_encoding: str | None = None,
-    **attributes: Any,
+    attributes: dict[str, Any] | None = None,
+    **kwargs: Any,
 ) -> Resource:
     """Create an OpenTelemetry Resource from environment variables and parameters.
 
@@ -726,6 +727,11 @@ def create_resource(
     - OTEL_SERVICE_VERSION: The version of the service (defaults to package version)
     - OTEL_RESOURCE_ATTRIBUTES: Additional resource attributes as key=value pairs
 
+    Explicit parameters always take precedence over OTEL_RESOURCE_ATTRIBUTES: the
+    environment variable is applied first as a base, then overlaid with `attributes`/`**kwargs`,
+    and finally with `service_name`/`service_version`, so a caller-supplied value is never
+    silently replaced by the environment.
+
     Args:
         service_name: Override the service name. If not provided, reads from
             OTEL_SERVICE_NAME environment variable or defaults to "agent_framework".
@@ -735,8 +741,15 @@ def create_resource(
             Default is None, which does not load a .env file.
         env_file_encoding: Encoding to use when reading the .env file.
             Default is None, which uses the system default encoding.
-        **attributes: Additional resource attributes to include. These will be merged
-            with attributes from OTEL_RESOURCE_ATTRIBUTES environment variable.
+        attributes: Additional resource attributes to include, as a dictionary. Prefer this
+            over `**kwargs` when the attribute keys come from caller-controlled data (e.g. a
+            dict that might happen to contain a key like "service_name" or "env_file_path"),
+            since `**kwargs` keys share the keyword namespace with this function's own
+            parameters and would raise `TypeError` on a collision. Merged with (and taking
+            precedence over) attributes from the OTEL_RESOURCE_ATTRIBUTES environment variable.
+        **kwargs: Additional resource attributes to include, as keyword arguments. Merged
+            with (and taking precedence over) attributes from the OTEL_RESOURCE_ATTRIBUTES
+            environment variable and `attributes`.
 
     Returns:
         A configured OpenTelemetry Resource instance.
@@ -757,6 +770,9 @@ def create_resource(
                 service_name="my_service", service_version="1.0.0", deployment_environment="production"
             )
 
+            # Add custom attributes from a dict whose keys are not known ahead of time
+            resource = create_resource(service_name="my_service", attributes={"deployment_environment": "production"})
+
             # Load from custom .env file
             resource = create_resource(env_file_path="config/.env")
     """
@@ -771,7 +787,16 @@ def create_resource(
     if env_file_path is not None:
         load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
-    resource_attributes: dict[str, Any] = dict(attributes)
+    # Apply OTEL_RESOURCE_ATTRIBUTES first, as a base — everything applied after this
+    # (attributes/kwargs, then service_name/service_version) takes precedence over it, so an
+    # explicit value is never silently replaced by the environment.
+    resource_attributes: dict[str, Any] = {}
+    if resource_attrs_env := os.getenv("OTEL_RESOURCE_ATTRIBUTES"):
+        resource_attributes.update(_parse_headers(resource_attrs_env))
+
+    if attributes:
+        resource_attributes.update(attributes)
+    resource_attributes.update(kwargs)
 
     if service_name is None:
         service_name = os.getenv("OTEL_SERVICE_NAME", "agent_framework")
@@ -781,8 +806,6 @@ def create_resource(
         service_version = os.getenv("OTEL_SERVICE_VERSION", version_info)
     resource_attributes[OtelAttr.SERVICE_VERSION] = service_version
 
-    if resource_attrs_env := os.getenv("OTEL_RESOURCE_ATTRIBUTES"):
-        resource_attributes.update(_parse_headers(resource_attrs_env))
     return Resource.create(resource_attributes)
 
 
@@ -1116,7 +1139,7 @@ class ObservabilitySettings:
             service_version=self.service_version,
             env_file_path=self.env_file_path,
             env_file_encoding=self.env_file_encoding,
-            **(self.resource_attributes or {}),
+            attributes=self.resource_attributes,
         )
         for exp in exporters:
             if isinstance(exp, SpanExporter):
@@ -1565,22 +1588,6 @@ def configure_otel_providers(
             settings_kwargs["enable_console_exporters"] = enable_console_exporters
         if vs_code_extension_port is not None:
             settings_kwargs["vs_code_extension_port"] = vs_code_extension_port
-        if service_name is not None:
-            settings_kwargs["service_name"] = service_name
-        if service_version is not None:
-            settings_kwargs["service_version"] = service_version
-        if resource_attributes is not None:
-            settings_kwargs["resource_attributes"] = resource_attributes
-        if otlp_endpoint is not None:
-            settings_kwargs["otlp_endpoint"] = otlp_endpoint
-        if otlp_protocol is not None:
-            settings_kwargs["otlp_protocol"] = otlp_protocol
-        if otlp_headers is not None:
-            settings_kwargs["otlp_headers"] = otlp_headers
-        if otlp_timeout is not None:
-            settings_kwargs["otlp_timeout"] = otlp_timeout
-        if otlp_compression is not None:
-            settings_kwargs["otlp_compression"] = otlp_compression
 
         updated_settings = ObservabilitySettings(**settings_kwargs)
         OBSERVABILITY_SETTINGS.enable_instrumentation = updated_settings.enable_instrumentation
@@ -1589,14 +1596,6 @@ def configure_otel_providers(
         OBSERVABILITY_SETTINGS.vs_code_extension_port = updated_settings.vs_code_extension_port
         OBSERVABILITY_SETTINGS.env_file_path = updated_settings.env_file_path
         OBSERVABILITY_SETTINGS.env_file_encoding = updated_settings.env_file_encoding
-        OBSERVABILITY_SETTINGS.service_name = updated_settings.service_name
-        OBSERVABILITY_SETTINGS.service_version = updated_settings.service_version
-        OBSERVABILITY_SETTINGS.resource_attributes = updated_settings.resource_attributes
-        OBSERVABILITY_SETTINGS.otlp_endpoint = updated_settings.otlp_endpoint
-        OBSERVABILITY_SETTINGS.otlp_protocol = updated_settings.otlp_protocol
-        OBSERVABILITY_SETTINGS.otlp_headers = updated_settings.otlp_headers
-        OBSERVABILITY_SETTINGS.otlp_timeout = updated_settings.otlp_timeout
-        OBSERVABILITY_SETTINGS.otlp_compression = updated_settings.otlp_compression
         OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
     else:
         # Re-read settings from current environment in case env vars were set
@@ -1613,17 +1612,21 @@ def configure_otel_providers(
         OBSERVABILITY_SETTINGS.vs_code_extension_port = (
             vs_code_extension_port if vs_code_extension_port is not None else _read_int_env("VS_CODE_EXTENSION_PORT")
         )
-        # These have no generic env-var fallback here (the OTel exporter/resource
-        # construction code itself resolves the standard OTEL_* env vars when left as None).
-        OBSERVABILITY_SETTINGS.service_name = service_name
-        OBSERVABILITY_SETTINGS.service_version = service_version
-        OBSERVABILITY_SETTINGS.resource_attributes = resource_attributes
-        OBSERVABILITY_SETTINGS.otlp_endpoint = otlp_endpoint
-        OBSERVABILITY_SETTINGS.otlp_protocol = otlp_protocol
-        OBSERVABILITY_SETTINGS.otlp_headers = otlp_headers
-        OBSERVABILITY_SETTINGS.otlp_timeout = otlp_timeout
-        OBSERVABILITY_SETTINGS.otlp_compression = otlp_compression
         OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
+
+    # These options have no generic env-var fallback of their own in ObservabilitySettings —
+    # the OTel exporter/resource construction code itself resolves the standard OTEL_* env
+    # vars when left as None — so, unlike the fields above, they don't need the env-file
+    # loading that ObservabilitySettings(**settings_kwargs) provides and can be assigned
+    # directly from the function parameters in a single shared block for both code paths.
+    OBSERVABILITY_SETTINGS.service_name = service_name
+    OBSERVABILITY_SETTINGS.service_version = service_version
+    OBSERVABILITY_SETTINGS.resource_attributes = resource_attributes
+    OBSERVABILITY_SETTINGS.otlp_endpoint = otlp_endpoint
+    OBSERVABILITY_SETTINGS.otlp_protocol = otlp_protocol
+    OBSERVABILITY_SETTINGS.otlp_headers = otlp_headers
+    OBSERVABILITY_SETTINGS.otlp_timeout = otlp_timeout
+    OBSERVABILITY_SETTINGS.otlp_compression = otlp_compression
 
     OBSERVABILITY_SETTINGS._configure(  # type: ignore[reportPrivateUsage]
         additional_exporters=exporters,

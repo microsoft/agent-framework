@@ -1261,6 +1261,66 @@ def test_create_resource_with_custom_attributes(monkeypatch):
     assert resource.attributes["another_attr"] == 123
 
 
+def test_create_resource_explicit_values_win_over_resource_attributes_env(monkeypatch):
+    """OTEL_RESOURCE_ATTRIBUTES must not silently override explicit service_name/service_version/attributes.
+
+    Regression test for a PR review comment: applying OTEL_RESOURCE_ATTRIBUTES *after* the
+    explicit values let the env var overwrite a caller-supplied service.name (or any other
+    caller-supplied attribute) if it happened to redefine that key, contradicting the documented
+    "explicit parameters take precedence" behavior.
+    """
+    from agent_framework.observability import create_resource
+
+    monkeypatch.setenv(
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "service.name=env-service,service.version=0.0.1,deployment.environment=staging",
+    )
+
+    resource = create_resource(
+        service_name="checkout",
+        service_version="2.0.0",
+        attributes={"deployment.environment": "production"},
+    )
+
+    assert resource.attributes["service.name"] == "checkout"
+    assert resource.attributes["service.version"] == "2.0.0"
+    assert resource.attributes["deployment.environment"] == "production"
+
+
+def test_create_resource_env_attributes_still_apply_when_not_overridden(monkeypatch):
+    """OTEL_RESOURCE_ATTRIBUTES entries with no explicit override should still come through."""
+    from agent_framework.observability import create_resource
+
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "host.name=server1")
+
+    resource = create_resource(service_name="checkout")
+
+    assert resource.attributes["service.name"] == "checkout"
+    assert resource.attributes["host.name"] == "server1"
+
+
+def test_create_resource_attributes_param_avoids_keyword_collision(monkeypatch):
+    """The `attributes=` dict param must accept keys that collide with create_resource's own
+    parameter names (e.g. "service_name"), which is not possible via **kwargs.
+
+    Regression test for a PR review comment: `_configure_providers()` used to call
+    `create_resource(service_name=..., **resource_attributes)`, which raised `TypeError:
+    got multiple values for argument 'service_name'` if a caller's `resource_attributes` dict
+    happened to contain a key like "service_name" or "env_file_path".
+    """
+    from agent_framework.observability import create_resource
+
+    # Would raise TypeError if passed as **kwargs alongside the explicit service_name= below.
+    colliding_attributes = {"service_name": "from-dict", "env_file_path": "from-dict"}
+
+    resource = create_resource(service_name="checkout", attributes=colliding_attributes)
+
+    # The explicit service_name= parameter wins over the same-named dict entry.
+    assert resource.attributes["service.name"] == "checkout"
+    # The non-colliding key still makes it into the resource, under its literal name.
+    assert resource.attributes["env_file_path"] == "from-dict"
+
+
 # region Test _create_otlp_exporters
 
 
@@ -2739,7 +2799,7 @@ def test_observability_settings_service_name_overrides_env(monkeypatch):
 
     assert create_resource.call_args.kwargs["service_name"] == "param-service"
     assert create_resource.call_args.kwargs["service_version"] == "3.2.1"
-    assert create_resource.call_args.kwargs["deployment_environment"] == "test"
+    assert create_resource.call_args.kwargs["attributes"] == {"deployment_environment": "test"}
 
 
 def test_configure_otel_providers_service_name_param(monkeypatch):
@@ -2760,7 +2820,7 @@ def test_configure_otel_providers_service_name_param(monkeypatch):
 
     assert create_resource.call_args.kwargs["service_name"] == "my-service"
     assert create_resource.call_args.kwargs["service_version"] == "1.2.3"
-    assert create_resource.call_args.kwargs["deployment_environment"] == "prod"
+    assert create_resource.call_args.kwargs["attributes"] == {"deployment_environment": "prod"}
 
 
 # region Test _to_otel_part edge cases
