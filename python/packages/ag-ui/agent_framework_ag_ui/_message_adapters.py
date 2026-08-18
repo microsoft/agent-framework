@@ -360,9 +360,10 @@ def _extract_multimodal_source_fields(
 ) -> tuple[str | None, str | None, str | None, str | None]:
     """Extract ``(url, data, binary_id, mime_type)`` from an AG-UI multimodal part.
 
-    Handles both the current AG-UI spec (``source.value`` for base64 payloads) and the
-    legacy ``source.data`` field for backward compatibility. Returned values are the
-    raw extracted strings (or ``None`` when absent); callers apply their own defaults.
+    Handles both the current AG-UI spec (``source.value`` for both URL and base64
+    payloads) and the legacy ``source.url``/``source.data`` fields for backward
+    compatibility. Returned values are the raw extracted strings (or ``None`` when
+    absent); callers apply their own defaults.
     """
     mime_type = cast(str | None, part.get("mimeType") or part.get("mime_type"))
     url = cast(str | None, part.get("url") or part.get("uri"))
@@ -378,7 +379,7 @@ def _extract_multimodal_source_fields(
             mime_type = source_mime
 
         if source_type in {"url", "uri"}:
-            url = cast(str | None, source_dict.get("url") or source_dict.get("uri"))
+            url = cast(str | None, source_dict.get("value") or source_dict.get("url") or source_dict.get("uri"))
         elif source_type in {"base64", "data", "binary"}:
             data = cast(str | None, source_dict.get("value") or source_dict.get("data"))
         elif source_type in {"id", "file"}:
