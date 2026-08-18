@@ -1379,3 +1379,37 @@ def test_mixed_batch_surfaces_approval_request_and_stops():
     assert not any(k[0] == "result" and k[1] == "w1" for k in kinds)
     # ...and the planner is not re-entered (run stopped after surfacing the approval).
     assert inner.calls == 1
+
+
+def test_final_narration_turn_forces_tools_off():
+    # After the planner rounds/budget are spent, the final narration turn must force tools
+    # off (tool_choice="none") so a fresh inner run cannot execute another tool batch past
+    # the configured limits — matching the core loop's budget-exhausted final response.
+    seen_options: list = []
+
+    class _RecordInner:
+        client = _FIConfigClient({"max_iterations": 1})
+
+        def __init__(self):
+            self.calls = 0
+
+        def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
+            self.calls += 1
+            seen_options.append(kwargs.get("options"))
+
+            async def gen():
+                yield AgentResponseUpdate(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="g1", name="generate_a2ui", arguments=json.dumps({"intent": "create"})
+                        )
+                    ],
+                )
+
+            return gen()
+
+    inner = _RecordInner()
+    asyncio.run(_drive(A2UIAgent(inner, _RenderSub())))
+    assert inner.calls >= 2  # planner round(s) + a final narration turn
+    assert (seen_options[-1] or {}).get("tool_choice") == "none"  # final turn: tools off

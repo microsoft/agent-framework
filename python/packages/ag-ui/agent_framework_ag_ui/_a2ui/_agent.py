@@ -766,16 +766,22 @@ class A2UIAgent:
             pending = history
             pending_session = None
 
-        # Planner kept requesting generations to the cap. Give it one final turn to
-        # consume the last result and narrate, with the generate tool withheld so it
-        # cannot request another surface (otherwise the run ends on an unanswered
-        # tool result with no closing assistant message).
+        # Rounds/budget are spent. Give the planner one final turn to consume the last
+        # result and narrate, with tools forced off via tool_choice="none" — matching the
+        # core loop's budget-exhausted final response. Withholding only generate_a2ui is
+        # not enough: a fresh inner_agent.run() would otherwise start a new invocation
+        # budget and could execute another full batch of server/default tools past the
+        # configured max_function_calls / max_iterations.
+        final_kwargs = dict(kwargs)
+        final_options = dict(final_kwargs.get("options") or {})
+        final_options["tool_choice"] = "none"
+        final_kwargs["options"] = final_options
         async for update in self.inner_agent.run(
             history,
             stream=True,
             session=None,
             tools=incoming_tools,
-            **kwargs,
+            **final_kwargs,
         ):
             yield update
 
