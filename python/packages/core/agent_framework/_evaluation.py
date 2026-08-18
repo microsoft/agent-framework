@@ -796,9 +796,8 @@ class AgentEvalConverter:
                     "type": "tool_call",
                     "tool_call_id": c.call_id or "",
                     "name": c.name or "",
+                    "arguments": args if args is not None else {},
                 }
-                if args:
-                    tc["arguments"] = args
                 content_items.append(tc)
             elif c.type == "function_result":
                 result_val = c.result

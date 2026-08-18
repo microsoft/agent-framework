@@ -153,6 +153,26 @@ class TestConvertMessage:
         assert tc["name"] == "get_weather"
         assert tc["arguments"] == {"location": "Seattle"}
 
+    def test_assistant_with_zero_argument_tool_call(self) -> None:
+        msg = Message(
+            "assistant",
+            [Content.from_function_call(call_id="call_1", name="get_site_summary", arguments=None)],
+        )
+
+        result = AgentEvalConverter.convert_message(msg)
+
+        assert result[0]["content"][0]["arguments"] == {}
+
+    def test_assistant_with_empty_argument_object_tool_call(self) -> None:
+        msg = Message(
+            "assistant",
+            [Content.from_function_call(call_id="call_1", name="get_site_summary", arguments={})],
+        )
+
+        result = AgentEvalConverter.convert_message(msg)
+
+        assert result[0]["content"][0]["arguments"] == {}
+
     def test_assistant_text_and_tool_call(self) -> None:
         msg = Message(
             "assistant",
