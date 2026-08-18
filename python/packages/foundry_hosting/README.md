@@ -2,67 +2,48 @@
 
 This package provides the integration of Agent Framework agents and workflows with the Foundry Agent Server, which can be hosted on Foundry infrastructure.
 
-`ResponsesHostServer` persists the Agent Framework `AgentSession` used by regular
-agents in addition to the Responses provider's message history. By default it
-uses the experimental `FoundrySessionStore` under `/.sessions` when hosted and
-an in-memory `SessionStore` locally. Hosted snapshots are partitioned by the
-Agent Server request context's platform user ID. Snapshot filenames use the
-Responses `conversation_id` or `response_id`, depending on the continuation
-mode.
+## State store
 
-Foundry's session file API exposes the hosted `$HOME` directory as `/`, so the
-API path `/.sessions` is stored on disk at `$HOME/.sessions`.
+### Local persistence
 
-Workflow agents continue to use their existing checkpoint storage layout.
+Outside the Foundry hosting environment, state is persisted as JSON files under
+`~/.agentserver/state_stores` by default. Set `AGENTSERVER_STATE_ROOT` to use a
+different root directory; the files will be written to its `state_stores`
+subdirectory instead.
 
-## Foundry session isolation
+Each logical store is saved as one JSON file whose name is a URL-safe Base64
+encoding of the store name. For example:
 
-`FoundrySessionStore` currently subclasses core's `FileSessionStore`. It reads
-the active request through `azure.ai.agentserver.core.get_request_context()` and
-validates the platform `user_id` (the same `x-agent-user-id` value exposed as
-`ResponseContext.platform_context.user_id_key`) before selecting its on-disk
-directory.
+- Agent sessions: `YWdlbnRfc2Vzc2lvbnM.json`
+- Function approvals: `ZnVuY3Rpb25fYXBwcm92YWxz.json`
+- Workflow checkpoints: one file per context, encoded from `checkpoints/<context_id>`
 
-Regular-agent session snapshots use the platform user ID and a Responses key:
+> Read more about the Foundry durable state store in the [developer guide](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/agentserver/azure-ai-agentserver-core/docs/state-store-guide.md).
 
-```text
-/.sessions/<user-id>/<conversation-id-or-response-id>.json
-```
+### User isolation
 
-A Foundry session controls hosted compute and filesystem lifetime and may host
-multiple users and Responses conversations. The Foundry session ID is not used
-as the MAF session identifier.
+When hosted on Foundry, the default state stores automatically isolate data by the
+platform user ID supplied with each request. Sessions, workflow checkpoints, and
+function approvals written for one user cannot be read or modified by another user.
+No additional partitioning configuration is required when using the default stores.
 
-When `conversation_id` is used, the host reads and writes the same snapshot
-under that ID. When `previous_response_id` is used, the host reads that response
-snapshot, runs the loaded MAF session, and writes the updated snapshot under the
-current response's `response_id`. Multiple responses can therefore branch from
-one prior response without overwriting its snapshot.
+### Agent Sessions
 
-Foundry does not infer the hosted `agent_session_id` from
-`previous_response_id`. Callers using response chains must also reuse the
-`agent_session_id` returned by the previous response so the request reaches the
-same sandbox and `$HOME/.sessions` filesystem. Conversation objects bind to a
-stable hosted session automatically.
+`ResponsesHostServer` persists the Agent Framework `AgentSession` durably. By default it
+uses the `FoundryAgentSessionStore`, backed by Foundry storage when hosted and file-based
+storage locally. Stored sessions are scoped under `agent_sessions`.
 
-Workflow checkpoints and function approvals preserve the existing Foundry
-Hosting layout. Hosted paths insert the validated raw platform user ID:
+See the [custom storage provider sample](../../samples/04-hosting/foundry-hosted-agents/responses/custom_storage/)
+for an example that uses an in-memory session store locally and Azure Cosmos DB when hosted.
 
-```text
-/.checkpoints/<user-id>/<context-id>/
-/.function_approvals/<user-id>/approval_requests.json
-```
+### Workflow checkpoints
 
-Local workflow checkpoints use `{cwd}/.checkpoints/<context-id>/`, and local
-function approvals remain in memory.
+`ResponsesHostServer` persists workflow checkpoints durably. By default, it uses the
+`FoundryCheckpointStore`, backed by Foundry storage when hosted and file-based storage
+locally. Stored checkpoints are scoped under `checkpoints`.
 
-Hosted requests require container protocol `2.0.0`. The v2-only request
-`call_id` is checked before session, checkpoint, or approval storage is used,
-and a missing platform user ID fails closed. Regular agents also require the
-normal Responses continuation ID for restoration. Local requests may remain
-unscoped.
+### Function approvals
 
-The Foundry-specific store type intentionally hides the current filesystem
-implementation from `ResponsesHostServer` setup. A future version may move
-`FoundrySessionStore` to a Foundry storage API without changing the host's
-default configuration.
+`ResponsesHostServer` persists function approvals durably. By default, it uses the
+`FoundryFunctionApprovalStore`, backed by Foundry storage when hosted and file-based
+storage locally. Stored approvals are scoped under `function_approvals`.

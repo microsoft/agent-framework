@@ -1,7 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import importlib
+import sys
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Any, Generic, Optional, TypeVar, Union
+from unittest.mock import Mock
 
 import pytest
 
@@ -335,6 +339,52 @@ def test_deserialize_type_error_handling() -> None:
     # Test with non-existent type in existing module
     with pytest.raises(AttributeError):
         deserialize_type("builtins.NonExistentType")
+
+
+def test_deserialize_type_does_not_import_unknown_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unknown serialized types fail without importing payload-selected modules."""
+    imported_modules: list[str] = []
+
+    def fail_import(module_name: str) -> None:
+        imported_modules.append(module_name)
+        raise AssertionError("deserialize_type must not import payload-selected modules")
+
+    monkeypatch.setattr(importlib, "import_module", fail_import)
+
+    with pytest.raises(ModuleNotFoundError, match="No module named 'untrusted_request_info_payload'"):
+        deserialize_type("untrusted_request_info_payload.Attack")
+
+    assert imported_modules == []
+
+
+def test_deserialize_type_accepts_explicit_allowed_type() -> None:
+    """Callers can resolve an exact trusted custom type without importing its module."""
+
+    class ExplicitType:
+        pass
+
+    serialized_name = f"{ExplicitType.__module__}.{ExplicitType.__qualname__}"
+
+    assert deserialize_type(serialized_name, allowed_types={serialized_name: ExplicitType}) is ExplicitType
+
+
+def test_deserialize_type_rejects_spoofed_allowed_type() -> None:
+    """Allowed values must be actual class objects, not objects spoofing ``type``."""
+    spoofed_type = Mock(spec=type)
+
+    with pytest.raises(TypeError, match="must be a type"):
+        deserialize_type("spoofed.Type", allowed_types={"spoofed.Type": spoofed_type})  # type: ignore[dict-item]
+
+
+def test_deserialize_type_rejects_spoofed_loaded_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Loaded namespace values must be actual class objects."""
+    module_name = "_spoofed_request_info_type"
+    module = ModuleType(module_name)
+    module.__dict__["Spoofed"] = Mock(spec=type)
+    monkeypatch.setitem(sys.modules, module_name, module)
+
+    with pytest.raises(TypeError, match="does not resolve to a type"):
+        deserialize_type(f"{module_name}.Spoofed")
 
 
 def test_type_compatibility_basic() -> None:

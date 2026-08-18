@@ -3272,6 +3272,7 @@ def test_prepare_message_for_openai_with_function_approval_response() -> None:
         call_id="call_789",
         name="execute_command",
         arguments='{"command": "ls"}',
+        additional_properties={"server_label": "hosted_server"},
     )
 
     approval_response = Content.from_function_approval_response(
@@ -3797,6 +3798,7 @@ def test_function_approval_response_with_mcp_tool_call() -> None:
         tool_name="sensitive_action",
         server_name="SecureServer",
         arguments={"action": "delete"},
+        additional_properties={"server_label": "SecureServer"},
     )
 
     approval_response = Content.from_function_approval_response(
@@ -7840,6 +7842,7 @@ def test_prepare_messages_strips_approval_request_but_keeps_response_under_stora
         call_id="mcp_1",
         name="sensitive_action",
         arguments='{"action": "delete"}',
+        additional_properties={"server_label": "hosted_server"},
     )
     approval_request = Content.from_function_approval_request(
         id="approval_req_1",
@@ -7866,6 +7869,38 @@ def test_prepare_messages_strips_approval_request_but_keeps_response_under_stora
     storage_off_types = [item.get("type") for item in storage_off]
     assert "mcp_approval_request" in storage_off_types
     assert "mcp_approval_response" in storage_off_types
+
+
+@pytest.mark.parametrize("request_uses_service_side_storage", [True, False], ids=["storage", "stateless"])
+def test_prepare_messages_drops_local_approval_controls(
+    request_uses_service_side_storage: bool,
+) -> None:
+    """Local approvals are resolved in-process and must not be emitted as MCP items."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    function_call = Content.from_function_call(
+        call_id="local_1",
+        name="ask_user",
+        arguments="{}",
+    )
+    approval_request = Content.from_function_approval_request(
+        id="local_approval_1",
+        function_call=function_call,
+    )
+    approval_response = Content.from_function_approval_response(
+        approved=True,
+        id="local_approval_1",
+        function_call=function_call,
+    )
+
+    prepared = client._prepare_messages_for_openai(
+        [
+            Message(role="assistant", contents=[approval_request]),
+            Message(role="user", contents=[approval_response]),
+        ],
+        request_uses_service_side_storage=request_uses_service_side_storage,
+    )
+
+    assert prepared == []
 
 
 def test_stateless_history_preserves_pending_hosted_approval_request_until_response() -> None:

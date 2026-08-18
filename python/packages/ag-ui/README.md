@@ -43,9 +43,11 @@ from fastapi import FastAPI
 from agent_framework import WorkflowBuilder, WorkflowContext, executor
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
+
 @executor(id="start")
 async def start(message: str, ctx: WorkflowContext) -> None:
     await ctx.yield_output(f"Workflow received: {message}")
+
 
 workflow = WorkflowBuilder(start_executor=start).build()
 
@@ -62,9 +64,11 @@ from fastapi import FastAPI
 from agent_framework import Workflow, WorkflowBuilder
 from agent_framework.ag_ui import AgentFrameworkWorkflow, add_agent_framework_fastapi_endpoint
 
+
 def build_workflow_for_thread(thread_id: str) -> Workflow:
     # Build a fresh workflow instance for each thread id.
     return WorkflowBuilder(start_executor=...).build()
+
 
 app = FastAPI()
 thread_scoped_workflow = AgentFrameworkWorkflow(
@@ -80,6 +84,7 @@ add_agent_framework_fastapi_endpoint(app, thread_scoped_workflow, "/")
 import asyncio
 from agent_framework.ag_ui import AGUIChatClient
 
+
 async def main():
     async with AGUIChatClient(endpoint="http://localhost:8000/") as client:
         # Stream responses
@@ -88,6 +93,7 @@ async def main():
                 if content.type == "text" and content.text:
                     print(content.text, end="", flush=True)
         print()
+
 
 asyncio.run(main())
 ```
@@ -106,6 +112,7 @@ Use `state_update` when a backend tool needs to send different payloads to the m
 ```python
 from agent_framework import Content, tool
 from agent_framework.ag_ui import state_update
+
 
 @tool
 async def get_weather(city: str) -> Content:
@@ -160,10 +167,23 @@ Interrupted terminal event shape:
         "responseSchema": {
           "type": "object",
           "properties": {
+            "approved": { "type": "boolean" },
             "accepted": { "type": "boolean" },
-            "arguments": { "type": "object" }
+            "city": { "type": "string" },
+            "editedArgs": {
+              "type": "object",
+              "description": "Full replacement of the tool arguments. Not merged.",
+              "properties": {
+                "city": { "type": "string" }
+              },
+              "required": ["city"],
+              "additionalProperties": false
+            }
           },
-          "required": ["accepted"]
+          "anyOf": [
+            { "required": ["approved"] },
+            { "required": ["accepted"] }
+          ]
         },
         "metadata": {
           "agent_framework": {
@@ -185,6 +205,11 @@ Interrupted terminal event shape:
 
 Resume the paused thread with a canonical `resume` array. Each entry addresses exactly one open interrupt by
 `interruptId`; `status` is `resolved` or `cancelled`; resolved entries carry the approval or workflow response payload.
+Tool approvals use the standard `approved` field and may provide `editedArgs` as a full replacement of the tool
+arguments. For compatibility with existing MAF clients, `accepted` remains an alias for `approved`, and direct
+argument fields remain supported as partial edits. Cancellation is a normal terminal decision: cancelled calls do
+not execute, while resolved siblings in the same complete resume continue normally. The same tool-approval shape and
+resume payloads apply when an agent approval is surfaced through a workflow `request_info` event.
 
 ```json
 {
@@ -256,10 +281,12 @@ from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 EXPECTED_API_KEY = os.environ.get("AG_UI_API_KEY")
 
+
 async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None:
     """Verify the API key provided in the request header."""
     if not api_key or api_key != EXPECTED_API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
 
 # Create agent and app
 agent = Agent(name="my_agent", instructions="...", client=...)

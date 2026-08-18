@@ -23,8 +23,8 @@ async def transform_data(data: dict[str, str | int]) -> str:
     return f"[{data['status']}] {data['content']}"
 
 
-# @workflow turns this async function into a FunctionalWorkflow object.
-# Without it, this is just a normal async function. With it, you get:
+# @workflow turns this async function into a stateless workflow definition.
+# Call .build() to create a stateful FunctionalWorkflow with:
 #   - .run() that returns a WorkflowRunResult with events and outputs
 #   - .run(stream=True) for streaming events in real time
 #   - .as_agent() to use this workflow anywhere an agent is expected
@@ -48,8 +48,8 @@ async def data_pipeline(url: str) -> str:
 
 
 async def main():
-    # .run() is provided by @workflow — a plain async function wouldn't have it
-    result = await data_pipeline.run("https://example.com/api/data")
+    workflow_instance = data_pipeline.build()
+    result = await workflow_instance.run("https://example.com/api/data")
     print("Output:", result.get_outputs()[0])
     print("State:", result.get_final_state())
 

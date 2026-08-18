@@ -8,8 +8,11 @@ on:
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
+  GITHUB_TOKEN: ${{ github.token }}
+  GITHUB_COPILOT_MODEL: auto
 
 permissions:
+  copilot-requests: write
   contents: read
   id-token: write
 
@@ -20,13 +23,13 @@ jobs:
     environment: integration
     env:
       # Required configuration for get-started samples
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -45,6 +48,10 @@ jobs:
         run: |
           cd scripts && uv run python -m sample_validation --subdir 01-get-started --save-report --report-name 01-get-started
 
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
@@ -54,12 +61,13 @@ jobs:
 
   validate-02-agents:
     name: Validate 02-agents
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
     runs-on: ubuntu-latest
     environment: integration
     env:
       # Foundry configuration
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
@@ -67,19 +75,19 @@ jobs:
       AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       AZURE_OPENAI_EMBEDDING_MODEL: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME || vars.AZUREOPENAI__EMBEDDINGDEPLOYMENTNAME }}
       # OpenAI configuration
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
       # GitHub MCP
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
       # Observability
       ENABLE_INSTRUMENTATION: "true"
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -105,7 +113,11 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir 02-agents --exclude providers --save-report --report-name 02-agents
+          cd scripts && uv run python -m sample_validation --subdir 02-agents --exclude providers harness tools --save-report --report-name 02-agents
+
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -114,20 +126,110 @@ jobs:
           name: validation-report-02-agents
           path: python/samples/sample_validation/reports/
 
-  validate-02-agents-openai:
-    name: Validate 02-agents/providers/openai
+  validate-02-agents-harness:
+    name: Validate 02-agents/harness
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
     runs-on: ubuntu-latest
     environment: integration
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+      # Optional: enables the Foundry memory path in harness samples
+      FOUNDRY_EMBEDDING_MODEL: ${{ vars.FOUNDRY_EMBEDDING_MODEL || '' }}
+      FOUNDRY_MEMORY_STORE: ${{ vars.FOUNDRY_MEMORY_STORE || '' }}
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
+          echo "FOUNDRY_EMBEDDING_MODEL=$FOUNDRY_EMBEDDING_MODEL" >> .env
+          echo "FOUNDRY_MEMORY_STORE=$FOUNDRY_MEMORY_STORE" >> .env
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/harness --save-report --report-name 02-agents-harness
+
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: validation-report-02-agents-harness
+          path: python/samples/sample_validation/reports/
+
+  validate-02-agents-tools:
+    name: Validate 02-agents/tools
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
+
+      - name: Run sample validation
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/tools --save-report --report-name 02-agents-tools
+
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: validation-report-02-agents-tools
+          path: python/samples/sample_validation/reports/
+
+  validate-02-agents-openai:
+    name: Validate 02-agents/providers/openai
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -148,6 +250,10 @@ jobs:
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/openai --save-report --report-name 02-agents-openai
 
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
@@ -157,6 +263,7 @@ jobs:
 
   validate-02-agents-azure:
     name: Validate 02-agents/providers/azure
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
     runs-on: ubuntu-latest
     environment: integration
     env:
@@ -167,7 +274,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -187,6 +294,10 @@ jobs:
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure --save-report --report-name 02-agents-azure
 
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
@@ -196,6 +307,7 @@ jobs:
 
   validate-02-agents-anthropic:
     name: Validate 02-agents/providers/anthropic
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
     runs-on: ubuntu-latest
     environment: integration
     env:
@@ -205,7 +317,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -224,6 +336,10 @@ jobs:
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/anthropic --save-report --report-name 02-agents-anthropic
 
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
@@ -233,20 +349,14 @@ jobs:
 
   validate-02-agents-github-copilot:
     name: Validate 02-agents/providers/github_copilot
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
     runs-on: ubuntu-latest
     environment: integration
-    permissions:
-      copilot-requests: write
-      contents: read
-      id-token: write
-    env:
-      GITHUB_TOKEN: ${{ github.token }}
-      GITHUB_COPILOT_MODEL: claude-opus-4.6
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -259,6 +369,10 @@ jobs:
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/github_copilot --save-report --report-name 02-agents-github-copilot
+
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -278,7 +392,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -291,6 +405,10 @@ jobs:
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/amazon --save-report --report-name 02-agents-amazon
+
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -310,7 +428,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -324,6 +442,10 @@ jobs:
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/ollama --save-report --report-name 02-agents-ollama
 
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
@@ -333,19 +455,19 @@ jobs:
 
   validate-02-agents-foundry:
     name: Validate 02-agents/providers/foundry
-    if: false # Temporarily disabled - provider folder also contains the local Foundry sample
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       FOUNDRY_AGENT_NAME: ${{ vars.FOUNDRY_AGENT_NAME || '' }}
       FOUNDRY_AGENT_VERSION: ${{ vars.FOUNDRY_AGENT_VERSION || '' }}
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -365,6 +487,10 @@ jobs:
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/foundry --save-report --report-name 02-agents-foundry
+
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -387,7 +513,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -408,6 +534,10 @@ jobs:
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/copilotstudio --save-report --report-name 02-agents-copilotstudio
 
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
@@ -423,7 +553,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -437,6 +567,10 @@ jobs:
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/custom --save-report --report-name 02-agents-custom
 
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
@@ -446,16 +580,17 @@ jobs:
 
   validate-03-workflows:
     name: Validate 03-workflows
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -474,6 +609,10 @@ jobs:
         run: |
           cd scripts && uv run python -m sample_validation --subdir 03-workflows --save-report --report-name 03-workflows
 
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
@@ -481,21 +620,68 @@ jobs:
           name: validation-report-03-workflows
           path: python/samples/sample_validation/reports/
 
-  validate-04-hosting:
-    name: Validate 04-hosting
-    if: false # Temporarily disabled because of sample complexity
+  validate-04-hosting-foundry-hosted-agents:
+    name: Validate 04-hosting (foundry-hosted-agents)
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+      # Foundry hosted agent configuration
+      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL }}
+      FOUNDRY_PROJECT_ID: ${{ vars.FOUNDRY_PROJECT_ID }}
+      AZURE_CONTAINER_REGISTRY_ENDPOINT: ${{ vars.AZURE_CONTAINER_REGISTRY_ENDPOINT }}
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      TOOLBOX_ENDPOINT: ${{ vars.TOOLBOX_ENDPOINT }}
+      FOUNDRY_AGENT_NAME: ${{ vars.FOUNDRY_HOSTED_AGENT_NAME }}
+      MEMORY_STORE_NAME: ${{ vars.FOUNDRY_HOSTED_AGENT_MEMORY_STORE }}
+      AZURE_SEARCH_ENDPOINT: ${{ vars.AZURE_SEARCH_ENDPOINT }}
+      AZURE_SEARCH_INDEX_NAME: ${{ vars.FOUNDRY_HOSTED_AGENT_SEARCH_INDEX_NAME }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup environment
+        uses: ./.github/actions/sample-validation-setup
+        with:
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          os: ${{ runner.os }}
+
+      - name: Run sample validation
+        # Maximum parallel workers is set to 1 because all samples use the same port
+        run: |
+          cd scripts && uv run python -m sample_validation --subdir 04-hosting/foundry-hosted-agents --save-report --report-name 04-hosting-foundry-hosted-agents --max-parallel-workers 1
+
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: validation-report-04-hosting-foundry-hosted-agents
+          path: python/samples/sample_validation/reports/
+
+  validate-04-hosting-other:
+    name: Validate 04-hosting (other)
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
+    runs-on: ubuntu-latest
+    environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # A2A configuration
       A2A_AGENT_HOST: http://localhost:5001/
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -507,13 +693,17 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir 04-hosting --save-report --report-name 04-hosting
+          cd scripts && uv run python -m sample_validation --subdir 04-hosting --exclude foundry-hosted-agents --save-report --report-name 04-hosting-other
+
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
-          name: validation-report-04-hosting
+          name: validation-report-04-hosting-other
           path: python/samples/sample_validation/reports/
 
   validate-05-end-to-end:
@@ -522,8 +712,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
@@ -538,7 +728,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -552,6 +742,10 @@ jobs:
         run: |
           cd scripts && uv run python -m sample_validation --subdir 05-end-to-end --save-report --report-name 05-end-to-end
 
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
@@ -564,21 +758,21 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # Azure OpenAI configuration
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # OpenAI configuration
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
+      OPENAI_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -598,9 +792,16 @@ jobs:
           echo "OPENAI_CHAT_COMPLETION_MODEL=$OPENAI_CHAT_COMPLETION_MODEL" >> .env
           echo "OPENAI_CHAT_MODEL=$OPENAI_CHAT_MODEL" >> .env
 
+      - name: Pre-install AutoGen dependencies for migration samples
+        run: uv pip install "autogen-agentchat" "autogen-ext[openai]"
+
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir autogen-migration --save-report --report-name autogen-migration
+          cd scripts && uv run python -m sample_validation --subdir autogen-migration --save-report --report-name autogen-migration --agent-timeout 600
+
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
 
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -611,23 +812,25 @@ jobs:
 
   validate-semantic-kernel-migration:
     name: Validate semantic-kernel-migration
+    if: false # Temporarily disabled - to free up Copilot quota for other jobs
     runs-on: ubuntu-latest
     environment: integration
     env:
-      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       # Azure OpenAI configuration for AF
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # Azure OpenAI configuration for SK
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME }}
       # OpenAI key
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
-      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
+      OPENAI_MODEL: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
       # OpenAI configuration for SK
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
       # Copilot Studio
       COPILOTSTUDIOAGENT__ENVIRONMENTID: ${{ secrets.COPILOTSTUDIOAGENT__ENVIRONMENTID }}
       COPILOTSTUDIOAGENT__SCHEMANAME: ${{ secrets.COPILOTSTUDIOAGENT__SCHEMANAME }}
@@ -637,7 +840,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup environment
         uses: ./.github/actions/sample-validation-setup
@@ -665,6 +868,10 @@ jobs:
         run: |
           cd scripts && uv run python -m sample_validation --subdir semantic-kernel-migration --save-report --report-name semantic-kernel-migration
 
+      - name: Save sample playbooks
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/sample-validation-save-playbooks
+
       - name: Upload validation report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
@@ -679,6 +886,8 @@ jobs:
     needs:
       - validate-01-get-started
       - validate-02-agents
+      - validate-02-agents-harness
+      - validate-02-agents-tools
       - validate-02-agents-openai
       - validate-02-agents-azure
       - validate-02-agents-anthropic
@@ -689,12 +898,13 @@ jobs:
       - validate-02-agents-copilotstudio
       - validate-02-agents-custom
       - validate-03-workflows
-      - validate-04-hosting
+      - validate-04-hosting-foundry-hosted-agents
+      - validate-04-hosting-other
       - validate-05-end-to-end
       - validate-autogen-migration
       - validate-semantic-kernel-migration
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download all validation reports
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

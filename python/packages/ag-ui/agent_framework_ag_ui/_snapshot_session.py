@@ -86,6 +86,14 @@ class ThreadSnapshotSession:
         """The snapshot loaded at open, or ``None``."""
         return self._stored
 
+    def rebind_thread_id(self, thread_id: str) -> None:
+        """Use a provider-resolved fallback ID for subsequent snapshot operations.
+
+        Runners call this only when the request omitted its AG-UI Thread ID and
+        the provider supplies the lifecycle fallback after the session opened.
+        """
+        self._thread_id = thread_id
+
     async def hydrate_events(self, *, run_id: str) -> AsyncGenerator[BaseEvent]:
         """Replay the stored snapshot as a complete run without invoking the agent."""
         yield RunStartedEvent(run_id=run_id, thread_id=self._thread_id)
@@ -173,6 +181,16 @@ class ThreadSnapshotSession:
         Clears all interrupts when ``interrupt_ids`` is omitted. Failures are
         logged and swallowed for the same reason as :meth:`save`.
         """
+        if self._stored is not None and self._stored.interrupt is not None:
+            if interrupt_ids is None:
+                self._stored.interrupt = None
+            else:
+                remaining_interrupts = [
+                    interrupt
+                    for interrupt in self._stored.interrupt
+                    if str(interrupt.get("id") or interrupt.get("interruptId")) not in interrupt_ids
+                ]
+                self._stored.interrupt = remaining_interrupts or None
         if self._store is None or self._scope is None:
             return
         await _clear_thread_snapshot_interrupt(
