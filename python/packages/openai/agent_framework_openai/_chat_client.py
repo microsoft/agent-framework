@@ -305,25 +305,41 @@ async def _open_event_stream(raw_response: Any) -> AsyncGenerator[Any]:
     returns the event stream as an async context manager so the underlying socket is
     closed deterministically.
 
-    Telemetry instrumentors replace that wrapper with an object that *is* the event
-    stream and exposes neither ``.parse()`` nor ``.headers`` -- for example the
-    ``AsyncStreamWrapper`` installed when ``AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING``
-    is enabled. ``.headers`` is already read defensively at the call sites, so read
-    ``.parse`` defensively too and iterate such an object directly, letting the
-    instrumentor own the stream's lifetime.
+    A telemetry instrumentor can replace that wrapper with one of its own that is
+    itself the async iterator and exposes neither ``.parse()`` nor ``.headers`` -- for
+    example the ``AsyncStreamWrapper`` installed by ``azure-ai-projects`` when
+    ``AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING`` is enabled. That wrapper still holds
+    the unparsed raw response (its ``stream_async_iter``), because
+    ``with_raw_response.create()`` routes through the instrumented ``create``.
+
+    Parse that inner raw response and hand it back to the wrapper, so the wrapper
+    stays in the iteration path and keeps recording telemetry while we iterate real
+    events. Iterating the wrapper as-is would fail, since the unparsed raw response
+    is not an async iterator.
 
     Args:
         raw_response: The object returned by a ``with_raw_response`` streaming call.
 
     Yields:
-        The event stream to iterate.
+        The object to iterate for streaming events.
     """
     parse = getattr(raw_response, "parse", None)
-    if parse is None:
-        yield raw_response
+    if callable(parse):
+        async with cast("Any", parse()) as stream:
+            yield stream
         return
-    async with parse() as stream:
-        yield stream
+
+    # Telemetry wrapper: parse the raw response it wraps, in place.
+    inner = getattr(raw_response, "stream_async_iter", None)
+    inner_parse = getattr(inner, "parse", None)
+    if callable(inner_parse):
+        async with cast("Any", inner_parse()) as stream:
+            raw_response.stream_async_iter = stream
+            yield raw_response
+        return
+
+    # Already an event stream (or an unrecognized wrapper): iterate it directly.
+    yield raw_response
 
 
 def _annotations_to_output_text(annotations: Sequence[Annotation] | None) -> list[dict[str, Any]]:
