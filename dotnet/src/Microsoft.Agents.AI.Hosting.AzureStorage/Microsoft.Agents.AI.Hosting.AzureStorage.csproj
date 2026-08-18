@@ -1,14 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>$(ProjectsCoreTargetFrameworks)</TargetFrameworks>
-    <TargetFrameworks Condition="'$(Configuration)' == 'Debug'">$(ProjectsDebugCoreTargetFrameworks)</TargetFrameworks>
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <VersionSuffix>preview</VersionSuffix>
     <InjectSharedThrow>true</InjectSharedThrow>
 
     <!-- NuGet Package Settings -->
-    <Title>Microsoft Agent Framework AzureStorage</Title>
-    <Description>Provides AzureStorage integration with Microsoft Agent Framework.</Description>
+    <Title>Microsoft Agent Framework Azure Blob Storage integration</Title>
+    <Description>Provides Azure Blob Storage session persistence for Microsoft Agent Framework hosting.</Description>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
@@ -19,9 +18,5 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Hosting\Microsoft.Agents.AI.Hosting.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AzureStorage.UnitTests" />
   </ItemGroup>
 </Project>

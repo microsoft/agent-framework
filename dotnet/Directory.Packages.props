@@ -32,6 +32,7 @@
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
     <PackageVersion Include="Azure.Core" Version="1.60.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
+    <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.1" />
     <PackageVersion Include="DotNetEnv" Version="3.1.1" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.5.0" />
     <!-- Google Gemini  -->
@@ -193,6 +194,5 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageVersion Include="Xunit.SkippableFact" Version="1.5.23" />
   </ItemGroup>
 </Project>
