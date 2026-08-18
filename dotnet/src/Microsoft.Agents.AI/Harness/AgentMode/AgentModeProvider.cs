@@ -128,7 +128,12 @@ public sealed class AgentModeProvider : AIContextProvider, IDisposable
         var modeNamesList = new List<string>(this._modes.Count);
         for (int i = 0; i < this._modes.Count; i++)
         {
-            var mode = this._modes[i] ?? throw new ArgumentException($"Configured mode at index {i} must not be null.", nameof(options));
+            var mode = this._modes[i];
+            if (mode is null)
+            {
+                throw new ArgumentException($"Configured mode at index {i} must not be null.", nameof(options));
+            }
+
             if (string.IsNullOrEmpty(mode.Name))
             {
                 throw new ArgumentException($"Configured mode at index {i} must have a non-empty name.", nameof(options));
@@ -279,10 +284,10 @@ public sealed class AgentModeProvider : AIContextProvider, IDisposable
         var modesListBuilder = new StringBuilder();
         foreach (var mode in this._modes)
         {
-            modesListBuilder.AppendLine($"#### {mode.Name}")
-                .AppendLine()
-                .AppendLine(mode.Instructions.TrimEnd())
-                .AppendLine();
+            modesListBuilder.AppendLine($"#### {mode.Name}");
+            modesListBuilder.AppendLine();
+            modesListBuilder.AppendLine(mode.Instructions.TrimEnd());
+            modesListBuilder.AppendLine();
         }
 
         var modesListText = modesListBuilder.ToString();

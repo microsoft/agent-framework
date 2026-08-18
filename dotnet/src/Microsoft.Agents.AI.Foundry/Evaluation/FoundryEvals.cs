@@ -827,7 +827,7 @@ public sealed class FoundryEvals : IAgentEvaluator
                 if (root.TryGetProperty("per_testing_criteria_results", out var criteriaArray)
                     && criteriaArray.ValueKind == JsonValueKind.Array)
                 {
-                    perEvaluator = [];
+                    perEvaluator = new Dictionary<string, PerEvaluatorResult>();
                     foreach (var item in criteriaArray.EnumerateArray())
                     {
                         var name = item.TryGetProperty("testing_criteria", out var tcProp)
@@ -871,7 +871,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         var detailedItems = new List<EvalItemResult>();
         string? afterCursor = null;
 
-        do
+        while (true)
         {
             var response = await this._evaluationClient.GetEvaluationRunOutputItemsAsync(
                 evalId,
@@ -912,8 +912,12 @@ public sealed class FoundryEvals : IAgentEvaluator
                 var lastItem = data2[data2.GetArrayLength() - 1];
                 afterCursor = lastItem.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
             }
+
+            if (afterCursor is null)
+            {
+                break;
+            }
         }
-        while (afterCursor is not null);
 
         return new FetchResult(meaiResults, detailedItems);
     }

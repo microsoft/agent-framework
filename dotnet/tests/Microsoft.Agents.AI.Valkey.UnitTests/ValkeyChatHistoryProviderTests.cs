@@ -144,6 +144,7 @@ public sealed class ValkeyChatHistoryProviderTests
             _ => new ValkeyChatHistoryProvider.State("conv-1"));
 
         var context = TestHelpers.CreateChatHistoryInvokingContext();
+
         // Act — should not throw
         var result = await provider.InvokingAsync(context);
         var messages = result.ToList();

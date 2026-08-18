@@ -27,6 +27,9 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     private const string DefaultDescription = "An AI agent powered by GitHub Copilot";
 
     private readonly CopilotClient _copilotClient;
+    private readonly string? _id;
+    private readonly string _name;
+    private readonly string _description;
     private readonly SessionConfig? _sessionConfig;
     private readonly bool _ownsClient;
     private readonly JsonSerializerOptions _jsonSerializerOptions;
@@ -67,9 +70,9 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<GitHubCopilotAgent>();
         this._sessionConfig = ConfigureApprovalHook(sessionConfig, this._logger);
         this._ownsClient = ownsClient;
-        this.IdCore = id;
-        this.Name = name ?? DefaultName;
-        this.Description = description ?? DefaultDescription;
+        this._id = id;
+        this._name = name ?? DefaultName;
+        this._description = description ?? DefaultDescription;
         this._jsonSerializerOptions = jsonSerializerOptions ?? GitHubCopilotJsonUtilities.DefaultOptions;
     }
 
@@ -278,13 +281,13 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     }
 
     /// <inheritdoc/>
-    protected override string? IdCore { get; }
+    protected override string? IdCore => this._id;
 
     /// <inheritdoc/>
-    public override string Name { get; }
+    public override string Name => this._name;
 
     /// <inheritdoc/>
-    public override string Description { get; }
+    public override string Description => this._description;
 
     /// <summary>
     /// Disposes the agent and releases resources.
