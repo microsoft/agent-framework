@@ -500,6 +500,97 @@ async def test_chat_client_streaming_sync_setup_span_is_parented_to_chat_span(
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_streaming_input_events_correlated_to_chat_span(
+    mock_chat_client,
+    span_exporter: InMemorySpanExporter,
+    log_record_exporter,
+    enable_sensitive_data,
+) -> None:
+    """Regression guard: streaming input events must carry the chat span's trace/span id.
+
+    ``_capture_message_events_v1_36`` emits the stable v1.36.0 GenAI message events via the
+    native OTel event logger, which derives trace/span correlation from whatever span is
+    current in the ambient context at emit time. In the streaming path the chat span is
+    started with ``_start_streaming_span`` (not attached as current), so those events must be
+    emitted while the chat span is explicitly activated -- otherwise they get correlated with
+    the caller's (parent) span instead of this chat operation.
+    """
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test"])]
+
+    stream = client.get_response(stream=True, messages=messages, options={"model": "Test"})
+    async for _update in stream:
+        pass
+    await stream.get_final_response()
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    chat_span = spans[0]
+    assert chat_span.context is not None
+
+    user_message_records = [
+        record.log_record
+        for record in log_record_exporter.get_finished_logs()
+        if record.log_record.event_name == OtelAttr.USER_MESSAGE.value
+    ]
+    assert len(user_message_records) == 1
+    user_message_record = user_message_records[0]
+
+    assert user_message_record.trace_id == chat_span.context.trace_id, (
+        "input event was not correlated with the chat span's trace"
+    )
+    assert user_message_record.span_id == chat_span.context.span_id, (
+        "input event was not correlated with the chat span; it must be emitted while the "
+        "chat span is activated as current"
+    )
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_streaming_output_events_correlated_to_chat_span(
+    mock_chat_client,
+    span_exporter: InMemorySpanExporter,
+    log_record_exporter,
+    enable_sensitive_data,
+) -> None:
+    """Regression guard: streaming output (choice) events must carry the chat span's trace/span id.
+
+    ``_finalize_stream`` runs as a cleanup hook after the final iterator pull has already exited
+    its ``_activate_span(span)`` context, so the chat span is no longer current by the time output
+    events are emitted there. They must therefore be emitted inside an explicit
+    ``_activate_span(span)`` block, otherwise they get correlated with whatever span happens to be
+    current in the consuming context instead of this chat operation.
+    """
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test"])]
+
+    stream = client.get_response(stream=True, messages=messages, options={"model": "Test"})
+    async for _update in stream:
+        pass
+    await stream.get_final_response()
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    chat_span = spans[0]
+    assert chat_span.context is not None
+
+    choice_records = [
+        record.log_record
+        for record in log_record_exporter.get_finished_logs()
+        if record.log_record.event_name == OtelAttr.CHOICE.value
+    ]
+    assert len(choice_records) == 1
+    choice_record = choice_records[0]
+
+    assert choice_record.trace_id == chat_span.context.trace_id, (
+        "output event was not correlated with the chat span's trace"
+    )
+    assert choice_record.span_id == chat_span.context.span_id, (
+        "output event was not correlated with the chat span; it must be emitted while the "
+        "chat span is activated as current during stream finalization"
+    )
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_chat_client_observability_with_system_message_and_instructions(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
@@ -2954,6 +3045,56 @@ def test_get_response_attributes_finish_reason_from_raw():
     assert OtelAttr.FINISH_REASONS in result
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_choice_event_uses_raw_representation_finish_reason(
+    span_exporter: InMemorySpanExporter,
+    log_record_exporter,
+    enable_sensitive_data,
+) -> None:
+    """Regression guard: choice events must use the raw_representation finish_reason fallback.
+
+    Some providers only populate ``finish_reason`` on ``raw_representation`` rather than the
+    normalized ``ChatResponse.finish_reason`` field. ``_capture_message_events_v1_36`` skips
+    emitting choice events entirely when no finish_reason is available, so callers must resolve
+    the same fallback as ``_get_response_attributes`` before deciding whether to emit.
+    """
+    from unittest.mock import Mock
+
+    class RawFinishReasonChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> Awaitable[ChatResponse]:
+            async def _get() -> ChatResponse:
+                raw_rep = Mock()
+                raw_rep.finish_reason = "stop"
+                return ChatResponse(
+                    messages=[Message("assistant", ["Hello"])],
+                    finish_reason=None,
+                    raw_representation=raw_rep,
+                )
+
+            return _get()
+
+    client = RawFinishReasonChatClient()
+    await client.get_response(messages=[Message(role="user", contents=["Test"])], options={"model": "Test"})
+
+    choice_records = [
+        record.log_record
+        for record in log_record_exporter.get_finished_logs()
+        if record.log_record.event_name == OtelAttr.CHOICE.value
+    ]
+    assert len(choice_records) == 1
+    assert choice_records[0].body["finish_reason"] == "stop"
+
+
 # region Test agent instrumentation
 
 
@@ -4601,12 +4742,12 @@ def test_capture_messages_preserves_framework_instructions_and_system_history(
     ]
 
 
-def test_capture_messages_uses_actual_timestamp_for_each_event():
-    """Test each stable event captures its timestamp when it is emitted."""
-    timestamps = [1_000, 2_000]
+def test_capture_messages_reads_time_once_then_steps_per_event():
+    """Test the timestamp is read once, then stepped by a fixed amount for each subsequent event."""
+    from agent_framework.observability import MESSAGE_EVENT_TIMESTAMP_STEP_NS
 
     with (
-        patch("agent_framework.observability.time_ns", side_effect=timestamps) as mock_time_ns,
+        patch("agent_framework.observability.time_ns", return_value=1_000) as mock_time_ns,
         patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
     ):
         _capture_message_events_v1_36(
@@ -4615,8 +4756,32 @@ def test_capture_messages_uses_actual_timestamp_for_each_event():
             system_instructions="Framework system instruction",
         )
 
-    assert mock_time_ns.call_count == 2
-    assert [call.kwargs["timestamp"] for call in mock_emit.call_args_list] == timestamps
+    mock_time_ns.assert_called_once()
+    assert [call.kwargs["timestamp"] for call in mock_emit.call_args_list] == [
+        1_000,
+        1_000 + MESSAGE_EVENT_TIMESTAMP_STEP_NS,
+    ]
+
+
+def test_capture_messages_stepped_timestamps_preserve_order_when_clock_collapses():
+    """Test the stepped timestamps stay strictly increasing even when the clock reads a single value."""
+    with (
+        patch("agent_framework.observability.time_ns", return_value=1_000),
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+    ):
+        _capture_message_events_v1_36(
+            provider_name="test_provider",
+            messages=[
+                Message(role="user", contents=["First"]),
+                Message(role="user", contents=["Second"]),
+                Message(role="user", contents=["Third"]),
+            ],
+            system_instructions="Framework system instruction",
+        )
+
+    timestamps = [call.kwargs["timestamp"] for call in mock_emit.call_args_list]
+    assert timestamps == sorted(set(timestamps))
+    assert len(timestamps) == 4
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)

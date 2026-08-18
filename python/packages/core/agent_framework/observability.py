@@ -197,6 +197,13 @@ OPERATION_DURATION_BUCKET_BOUNDARIES: Final[tuple[float, ...]] = (
 #
 # This is a workaround, we'll find a generic and better solution - see
 # https://github.com/open-telemetry/semantic-conventions/issues/1701
+#
+# ``_capture_message_events_v1_36`` applies the same 1-microsecond-per-event step directly to the
+# timestamps it passes to the OTel event logger, since those events bypass the stdlib ``logging``
+# pipeline and therefore the MessageListTimestampFilter entirely.
+MESSAGE_EVENT_TIMESTAMP_STEP_NS: Final[int] = 1_000
+
+
 class MessageListTimestampFilter(logging.Filter):
     """A filter to increment the timestamp of INFO logs by 1 microsecond."""
 
@@ -1650,11 +1657,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     span,
                     system_instructions,
                 )
-                _capture_message_events_v1_36(
-                    provider_name=provider_name,
-                    messages=messages,
-                    system_instructions=system_instructions,
-                )
+                # Activate the span so the OTel event logger correlates these input events
+                # with this chat span's trace/span id rather than the ambient parent context.
+                with _activate_span(span):
+                    _capture_message_events_v1_36(
+                        provider_name=provider_name,
+                        messages=messages,
+                        system_instructions=system_instructions,
+                    )
                 _capture_message_span_attributes_experimental(
                     span=span,
                     messages=messages,
@@ -1732,16 +1742,16 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         and response.messages
                         and span.is_recording()
                     ):
-                        finish_reason = cast(
-                            "FinishReason | None",
-                            response.finish_reason,
-                        )
-                        _capture_message_events_v1_36(
-                            provider_name=provider_name,
-                            messages=response.messages,
-                            finish_reason=finish_reason,
-                            output=True,
-                        )
+                        finish_reason = _get_response_finish_reason(response)
+                        # Activate the span: this cleanup hook runs after the final pull has
+                        # exited its _activate_span context, so it wouldn't otherwise be current.
+                        with _activate_span(span):
+                            _capture_message_events_v1_36(
+                                provider_name=provider_name,
+                                messages=response.messages,
+                                finish_reason=finish_reason,
+                                output=True,
+                            )
                         _capture_message_span_attributes_experimental(
                             span=span,
                             messages=response.messages,
@@ -1817,10 +1827,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 )
                 _mark_inner_response_telemetry_captured(response)
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages and span.is_recording():
-                    finish_reason = cast(
-                        "FinishReason | None",
-                        response.finish_reason,
-                    )
+                    finish_reason = _get_response_finish_reason(response)
                     _capture_message_events_v1_36(
                         provider_name=provider_name,
                         messages=response.messages,
@@ -2865,14 +2872,15 @@ def _capture_message_events_v1_36(
     if not OBSERVABILITY_SETTINGS.enable_message_events:
         return
 
+    # One wall-clock read, then a fixed step per event so order survives backends that
+    # truncate/collapse timestamps for tightly-emitted events (see
+    # https://github.com/open-telemetry/semantic-conventions/issues/1701).
+    timestamp = time_ns()
+
     if not output and system_instructions:
         for instruction in _normalize_instructions(system_instructions):
-            _emit_otel_event_v1_36(
-                OtelAttr.SYSTEM_MESSAGE,
-                {"content": instruction},
-                provider_name,
-                time_ns(),
-            )
+            _emit_otel_event_v1_36(OtelAttr.SYSTEM_MESSAGE, {"content": instruction}, provider_name, timestamp)
+            timestamp += MESSAGE_EVENT_TIMESTAMP_STEP_NS
 
     from ._types import normalize_messages
 
@@ -2884,21 +2892,15 @@ def _capture_message_events_v1_36(
             return
         for index, message in enumerate(normalized_messages):
             _emit_otel_event_v1_36(
-                OtelAttr.CHOICE,
-                _to_otel_choice_v1_36(message, index, finish_reason),
-                provider_name,
-                time_ns(),
+                OtelAttr.CHOICE, _to_otel_choice_v1_36(message, index, finish_reason), provider_name, timestamp
             )
+            timestamp += MESSAGE_EVENT_TIMESTAMP_STEP_NS
         return
 
     for message in normalized_messages:
         for event_name, body in _to_otel_input_events_v1_36(message):
-            _emit_otel_event_v1_36(
-                event_name,
-                body,
-                provider_name,
-                time_ns(),
-            )
+            _emit_otel_event_v1_36(event_name, body, provider_name, timestamp)
+            timestamp += MESSAGE_EVENT_TIMESTAMP_STEP_NS
 
 
 def _emit_otel_event_v1_36(
@@ -3098,6 +3100,20 @@ def _apply_usage_attributes(attributes: dict[str, Any], usage: Mapping[str, Any]
         attributes.setdefault(otel_attr, value)
 
 
+def _get_response_finish_reason(response: ChatResponse | AgentResponse) -> FinishReason | None:
+    """Get the finish reason from a response, falling back to the raw representation.
+
+    Some providers only populate ``finish_reason`` on ``raw_representation`` rather than the
+    normalized response field.
+    """
+    finish_reason = getattr(response, "finish_reason", None)
+    if not finish_reason:
+        finish_reason = (
+            getattr(response.raw_representation, "finish_reason", None) if response.raw_representation else None
+        )
+    return cast("FinishReason | None", finish_reason)
+
+
 def _get_response_attributes(
     attributes: dict[str, Any],
     response: ChatResponse | AgentResponse,
@@ -3108,11 +3124,7 @@ def _get_response_attributes(
     """Get the response attributes from a response."""
     if capture_response_id and response.response_id:
         attributes[OtelAttr.RESPONSE_ID] = response.response_id
-    finish_reason = getattr(response, "finish_reason", None)
-    if not finish_reason:
-        finish_reason = (
-            getattr(response.raw_representation, "finish_reason", None) if response.raw_representation else None
-        )
+    finish_reason = _get_response_finish_reason(response)
     if isinstance(finish_reason, str) and finish_reason:
         attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason])
     if model := getattr(response, "model", None):
