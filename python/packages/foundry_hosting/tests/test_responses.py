@@ -3739,6 +3739,25 @@ class TestOAuthConsentSurfacing:
         # The agent must not be run when entry fails.
         agent.run.assert_not_called()
 
+    async def test_mid_stream_consent_content_emits_oauth_output_item(self) -> None:
+        # Consent raised while the agent runs (e.g. OBO identity pass-through) must reach
+        # the caller instead of being dropped as an unsupported content type.
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_oauth_consent_request("https://consent.example.com/obo")],
+                    role="assistant",
+                )
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="list my tasks", stream=False)
+        assert resp.status_code == 200
+        oauth_items = [it for it in resp.json()["output"] if it["type"] == "oauth_consent_request"]
+        assert len(oauth_items) == 1
+        assert oauth_items[0]["consent_link"] == "https://consent.example.com/obo"
+
     async def test_streaming_consent_error_emits_oauth_output_item(self) -> None:
         agent = _make_agent(stream_updates=[AgentResponseUpdate(contents=[Content.from_text("hi")], role="assistant")])
         agent.__aenter__.side_effect = _make_consent_error("https://consent.example.com/auth")

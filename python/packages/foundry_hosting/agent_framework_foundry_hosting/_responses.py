@@ -1736,6 +1736,18 @@ async def _to_outputs(
                 "Approval request was not saved to approval storage because the approval request ID "
                 "could not be extracted from the stream event."
             )
+    elif content.type == "oauth_consent_request" and content.consent_link:
+        # Mirrors the init-time consent path in `_handle_response` so consent requests raised
+        # mid-stream (e.g. OBO identity pass-through) reach the caller instead of being dropped.
+        oauth_item = OAuthConsentRequestOutputItem(
+            id=IdGenerator.new_id("oacr"),
+            type="oauth_consent_request",
+            consent_link=content.consent_link,
+            server_label=content.additional_properties.get("server_label", "agent_framework"),
+        )
+        builder = stream.add_output_item(oauth_item["id"])
+        yield builder.emit_added(oauth_item)
+        yield builder.emit_done(oauth_item)
     else:
         # Log a warning for unsupported content types instead of raising an error to avoid breaking the response stream.
         logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
