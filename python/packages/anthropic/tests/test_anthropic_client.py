@@ -1077,6 +1077,100 @@ async def test_prepare_options_structured_system_blocks_reject_conflicts(
         client._prepare_options(messages, options)
 
 
+async def test_prepare_options_wraps_appended_text_instructions_as_system_blocks(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Text appended to structured blocks should become an additional text block."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    cached_block = {
+        "type": "text",
+        "text": "Stable instructions",
+        "cache_control": {"type": "ephemeral", "ttl": "1h"},
+    }
+
+    run_options = client._prepare_options(messages, {"instructions": [cached_block, "Appended instructions"]})
+
+    assert run_options["system"] == [cached_block, {"type": "text", "text": "Appended instructions"}]
+
+
+async def test_prepare_options_wraps_a_single_structured_mapping_as_system_blocks(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A lone system block mapping should be normalized into a one-element block list."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    block = {"type": "text", "text": "Stable instructions"}
+
+    run_options = client._prepare_options(messages, {"instructions": block})
+
+    assert run_options["system"] == [block]
+
+
+async def test_agent_run_preserves_structured_system_blocks_with_context_provider() -> None:
+    """Regression test for #7700.
+
+    Instructions contributed by a context provider must be appended as an extra system block instead
+    of collapsing the structured blocks into a string, which would disable Anthropic prompt caching.
+    """
+    from agent_framework import InlineSkill, SkillFrontmatter, SkillsProvider
+
+    requests: list[dict[str, Any]] = []
+
+    async def create(**kwargs: Any) -> BetaMessage:
+        requests.append(kwargs)
+        return BetaMessage(
+            id="msg_test",
+            content=[BetaTextBlock(type="text", text="ok")],
+            model="claude-3-5-sonnet-20241022",
+            role="assistant",
+            stop_reason="end_turn",
+            type="message",
+            usage=BetaUsage(input_tokens=1, output_tokens=1),
+        )
+
+    transport = MagicMock()
+    transport.base_url = "https://example.invalid"
+    transport.beta.messages.create = create
+
+    system_blocks = [
+        {
+            "type": "text",
+            "text": "Stable instructions that should be cached.",
+            "cache_control": {"type": "ephemeral", "ttl": "1h"},
+        },
+        {"type": "text", "text": "Dynamic request context that should not be cached."},
+    ]
+    skill = InlineSkill(
+        frontmatter=SkillFrontmatter(name="example-skill", description="A generic standalone example skill."),
+        instructions="Use this generic skill when asked for an example.",
+    )
+    agent = Agent(
+        client=AnthropicClient(anthropic_client=transport, model="claude-3-5-sonnet-20241022"),
+        default_options=cast(
+            ChatOptions,
+            {"model": "claude-3-5-sonnet-20241022", "max_tokens": 64, "instructions": system_blocks},
+        ),
+        context_providers=[
+            SkillsProvider(
+                [skill],
+                disable_load_skill_approval=True,
+                disable_read_skill_resource_approval=True,
+            )
+        ],
+    )
+
+    async with agent:
+        await agent.run("Hello")
+
+    system = requests[0]["system"]
+    # The cached prefix must stay byte-identical so the cache breakpoint keeps matching.
+    assert system[: len(system_blocks)] == system_blocks
+    assert len(system) == len(system_blocks) + 1
+    assert system[-1]["type"] == "text"
+    assert "example-skill" in system[-1]["text"]
+
+
 async def test_prepare_options_splits_assistant_embedded_tool_results(
     mock_anthropic_client: MagicMock,
 ) -> None:
