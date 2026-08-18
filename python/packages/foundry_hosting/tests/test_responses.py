@@ -3601,6 +3601,7 @@ class TestCheckpointContextValidation:
 def _make_consent_error(
     url: str = "https://consent.example.com/auth",
     name: str = "Foundry Toolbox",
+    source_type: str = "mcp",
 ) -> Exception:
     """Build an exception wrapping a Foundry MCP gateway consent error.
 
@@ -3620,7 +3621,7 @@ def _make_consent_error(
         "errors": [
             {
                 "name": name,
-                "type": "mcp",
+                "type": source_type,
                 "error": {
                     "code": "CONSENT_REQUIRED",
                     "message": url,
@@ -3637,6 +3638,16 @@ class TestConsentUrlFromError:
     def test_returns_consent_url_when_inner_arg_is_consent_mcp_error(self) -> None:
         exc = _make_consent_error("https://example.com/consent", name="my-tool")
         assert consent_url_from_error(exc) == [ConsentError(name="my-tool", consent_url="https://example.com/consent")]
+
+    def test_returns_consent_url_for_a2a_preview_source(self) -> None:
+        exc = _make_consent_error(
+            "https://example.com/a2a-consent",
+            name="work-iq",
+            source_type="a2a_preview",
+        )
+        assert consent_url_from_error(exc) == [
+            ConsentError(name="work-iq", consent_url="https://example.com/a2a-consent")
+        ]
 
     def test_returns_none_when_no_mcp_error_in_args(self) -> None:
         assert consent_url_from_error(Exception("boom")) is None

@@ -168,6 +168,7 @@ public class FoundryAgentTests
 
         // Assert: ClientHeadersAgent decorator is present in the delegating chain.
         Assert.NotNull(agent.GetService<ClientHeadersAgent>());
+        Assert.NotNull(agent.GetService<FoundryHostedRequestAgent>());
     }
 
     [Fact]
