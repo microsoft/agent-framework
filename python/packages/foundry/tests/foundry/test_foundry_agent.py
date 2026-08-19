@@ -1655,8 +1655,8 @@ def test_parse_chunk_surfaces_oauth_consent_request() -> None:
     assert update.raw_representation is mock_event
 
 
-def test_parse_chunk_skips_non_https_oauth_consent() -> None:
-    """An oauth_consent_request with a non-HTTPS link is rejected."""
+def test_parse_chunk_surfaces_non_https_oauth_consent() -> None:
+    """A non-HTTPS link is still surfaced so the host can fail the response."""
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
@@ -1678,11 +1678,12 @@ def test_parse_chunk_skips_non_https_oauth_consent() -> None:
     update = client._parse_chunk_from_openai(mock_event, {}, {})
 
     consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
-    assert len(consent_contents) == 0
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "http://insecure.example.com/login"
 
 
 def test_parse_chunk_handles_missing_consent_link() -> None:
-    """An oauth_consent_request without a consent_link produces no content."""
+    """A missing consent_link still surfaces the request, with an empty link."""
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
@@ -1704,11 +1705,12 @@ def test_parse_chunk_handles_missing_consent_link() -> None:
     update = client._parse_chunk_from_openai(mock_event, {}, {})
 
     consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
-    assert len(consent_contents) == 0
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == ""
 
 
 def test_parse_chunk_handles_empty_string_consent_link() -> None:
-    """An oauth_consent_request with empty-string consent_link produces no content."""
+    """An empty-string consent_link still surfaces the request."""
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
@@ -1730,7 +1732,8 @@ def test_parse_chunk_handles_empty_string_consent_link() -> None:
     update = client._parse_chunk_from_openai(mock_event, {}, {})
 
     consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
-    assert len(consent_contents) == 0
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == ""
 
 
 def test_parse_chunk_delegates_non_oauth_events_to_super() -> None:

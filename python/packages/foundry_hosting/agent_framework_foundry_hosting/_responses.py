@@ -7,12 +7,10 @@ import base64
 import json
 import logging
 import os
-import re
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Literal, cast
-from urllib.parse import urlparse
 
 from agent_framework import (
     ChatOptions,
@@ -27,6 +25,7 @@ from agent_framework import (
     SupportsAgentRun,
     WorkflowAgent,
 )
+from agent_framework._oauth import validate_oauth_consent_link
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
 from azure.ai.agentserver.core import get_request_context
@@ -177,54 +176,13 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
     return None
 
 
-# Characters allowed in a registered host name, and in the bracketed IPv6 form that
-# ``urlparse`` reports with its brackets already stripped.
-_HOST_PATTERN = re.compile(r"^[A-Za-z0-9._~%-]+$")
-_IPV6_HOST_PATTERN = re.compile(r"^[0-9A-Fa-f:.%-]+$")
-
-
-def _is_valid_consent_host(hostname: str) -> bool:
-    """Return whether *hostname* is syntactically usable by a standard URL client.
-
-    ``urlparse`` does not reject hosts that contain illegal characters, so values such as
-    ``exa mple.com`` are reported as a hostname even though no client can resolve them.
-    """
-    pattern = _IPV6_HOST_PATTERN if ":" in hostname else _HOST_PATTERN
-    return bool(pattern.match(hostname))
-
-
 def _validated_consent_link(consent_link: str | None) -> str | None:
     """Return *consent_link* when it is an absolute HTTPS URL a client can open, else ``None``.
 
-    A consent link is rendered as a clickable prompt by the client, so anything that is
-    not an absolute ``https`` URL is dropped rather than surfaced. ``urlparse`` raises
-    ``ValueError`` for malformed authorities (for example ``https://[broken``) and for
-    invalid ports, but only when ``port`` is read, so it is accessed here. A non-empty
-    ``netloc`` is not sufficient on its own (``https://@`` has one but no host), and a
-    non-empty ``hostname`` is not either (``https://exa mple.com`` reports one).
+    Thin wrapper over the shared core validator. The rules live in ``agent_framework._oauth``
+    so this host and the Foundry parser that produces the link cannot drift apart.
     """
-    if not consent_link:
-        return None
-    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in consent_link):
-        # ``urlparse`` silently strips tab and newline, which would let a link carrying
-        # control characters through even though it is not safe to render or log.
-        logger.warning("Skipping oauth_consent_request with whitespace in the consent_link.")
-        return None
-    try:
-        parsed = urlparse(consent_link)
-        hostname = parsed.hostname
-        # Reading ``port`` is what validates it; ``https://host:bad`` raises here.
-        _ = parsed.port
-    except ValueError:
-        logger.warning("Skipping oauth_consent_request with a malformed consent_link.")
-        return None
-    if parsed.scheme.lower() != "https" or not hostname:
-        logger.warning("Skipping oauth_consent_request with a non-HTTPS consent_link.")
-        return None
-    if not _is_valid_consent_host(hostname):
-        logger.warning("Skipping oauth_consent_request with an invalid consent_link host.")
-        return None
-    return consent_link
+    return validate_oauth_consent_link(consent_link)
 
 
 def _consent_link_from_content(content: Content) -> str | None:
@@ -613,19 +571,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         elif save_failure is not None:
             for event in self._emit_failure(response_event_stream, tracker, save_failure):
                 yield event
-        elif consent_tracker.emitted:
-            # The turn cannot finish until the user completes OAuth consent, so the response
-            # ends as `incomplete` rather than `completed`, matching the connect-time path.
-            yield response_event_stream.emit_incomplete(reason=_consent_incomplete_reason(len(consent_tracker.emitted)))
-        elif consent_tracker.dropped:
-            # Consent was required but no link could be surfaced, so there is nothing for the
-            # user to act on. Failing is the honest outcome; `completed` would hide the block.
-            for event in self._emit_failure(
-                response_event_stream, tracker, _consent_unusable_link_error(len(consent_tracker.dropped))
-            ):
-                yield event
         else:
-            yield response_event_stream.emit_completed()
+            for event in self._finish_consent_response(response_event_stream, tracker, consent_tracker):
+                yield event
 
     async def _handle_inner_workflow(
         self,
@@ -748,23 +696,39 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in tracker.close():
                 yield event
 
-            if consent_tracker.emitted:
-                yield response_event_stream.emit_incomplete(
-                    reason=_consent_incomplete_reason(len(consent_tracker.emitted))
-                )
-            elif consent_tracker.dropped:
-                # Consent was required but no link could be surfaced, so there is nothing for
-                # the user to act on. Failing is the honest outcome; `completed` would hide it.
-                for event in self._emit_failure(
-                    response_event_stream, tracker, _consent_unusable_link_error(len(consent_tracker.dropped))
-                ):
-                    yield event
-            else:
-                yield response_event_stream.emit_completed()
+            for event in self._finish_consent_response(response_event_stream, tracker, consent_tracker):
+                yield event
         except Exception as ex:
             logger.exception("Failed to produce response for workflow agent")
             for event in self._emit_failure(response_event_stream, tracker, ex):
                 yield event
+
+    @classmethod
+    def _finish_consent_response(
+        cls,
+        response_event_stream: ResponseEventStream,
+        tracker: _OutputItemTracker | None,
+        consent_tracker: _ConsentTracker,
+    ) -> Generator[ResponseStreamEvent]:
+        """Yield the terminal event for a turn that may have requested OAuth consent.
+
+        Shared by the agent and workflow paths so both report the same outcome for the
+        same consent state. Callers must apply any higher-precedence failure (a request
+        or session-persistence error) before delegating here.
+
+        The precedence is: a surfaced consent link ends the turn as ``incomplete``,
+        because it cannot finish until the user completes consent; a consent request whose
+        link was unusable ends it as ``failed``, because there is nothing for the user to
+        act on and ``completed`` would hide the block; otherwise the turn ``completed``.
+        """
+        if consent_tracker.emitted:
+            yield response_event_stream.emit_incomplete(reason=_consent_incomplete_reason(len(consent_tracker.emitted)))
+        elif consent_tracker.dropped:
+            yield from cls._emit_failure(
+                response_event_stream, tracker, _consent_unusable_link_error(len(consent_tracker.dropped))
+            )
+        else:
+            yield response_event_stream.emit_completed()
 
     @staticmethod
     def _emit_failure(

@@ -198,59 +198,36 @@ def test_parses_top_level_consent_requested_event() -> None:
     assert consent[0].consent_link == "https://consent.example.com/authorize"
 
 
-def test_empty_contents_for_non_https_link(caplog: pytest.LogCaptureFixture) -> None:
-    """A non-HTTPS consent_link produces an update with empty contents and logs a warning."""
-    event = _make_output_item_event(consent_link="http://bad.example.com/login", item_id="item-http")
+@pytest.mark.parametrize(
+    ("consent_link", "expected_link", "expected_log"),
+    [
+        pytest.param("http://bad.example.com/login", "http://bad.example.com/login", "non-HTTPS", id="non-https"),
+        pytest.param(None, "", "without valid consent_link", id="missing"),
+        pytest.param("", "", "without valid consent_link", id="empty-string"),
+        pytest.param("https:///path", "https:///path", "non-HTTPS", id="empty-netloc"),
+        pytest.param("https://[broken", "https://[broken", "malformed", id="malformed-authority"),
+    ],
+)
+def test_unusable_consent_link_is_still_surfaced(
+    consent_link: str | None,
+    expected_link: str,
+    expected_log: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unusable link is logged but still surfaced so the host can fail the response.
+
+    Dropping the content here would leave the host with nothing to record, so a turn that
+    cannot proceed without consent would be reported as a silent success.
+    """
+    event = _make_output_item_event(consent_link=consent_link, item_id="item-bad")
     with caplog.at_level(logging.WARNING):
         update = try_parse_oauth_consent_event(event, "test-model")
 
     assert update is not None
-    assert len(update.contents) == 0
-    assert "non-HTTPS" in caplog.text
-
-
-def test_empty_contents_for_missing_consent_link(caplog: pytest.LogCaptureFixture) -> None:
-    """A None consent_link produces an update with empty contents and logs a warning."""
-    event = _make_output_item_event(consent_link=None, item_id="item-none")
-    with caplog.at_level(logging.WARNING):
-        update = try_parse_oauth_consent_event(event, "test-model")
-
-    assert update is not None
-    assert len(update.contents) == 0
-    assert "without valid consent_link" in caplog.text
-
-
-def test_empty_contents_for_empty_string_consent_link(caplog: pytest.LogCaptureFixture) -> None:
-    """An empty-string consent_link produces an update with empty contents and logs a warning."""
-    event = _make_output_item_event(consent_link="", item_id="item-empty")
-    with caplog.at_level(logging.WARNING):
-        update = try_parse_oauth_consent_event(event, "test-model")
-
-    assert update is not None
-    assert len(update.contents) == 0
-    assert "without valid consent_link" in caplog.text
-
-
-def test_empty_contents_for_https_empty_netloc(caplog: pytest.LogCaptureFixture) -> None:
-    """An HTTPS URL with empty netloc (https:///path) is rejected."""
-    event = _make_output_item_event(consent_link="https:///path", item_id="item-no-netloc")
-    with caplog.at_level(logging.WARNING):
-        update = try_parse_oauth_consent_event(event, "test-model")
-
-    assert update is not None
-    assert len(update.contents) == 0
-    assert "non-HTTPS" in caplog.text
-
-
-def test_empty_contents_for_malformed_authority(caplog: pytest.LogCaptureFixture) -> None:
-    """A malformed authority is rejected instead of raising out of the parser."""
-    event = _make_output_item_event(consent_link="https://[broken", item_id="item-malformed")
-    with caplog.at_level(logging.WARNING):
-        update = try_parse_oauth_consent_event(event, "test-model")
-
-    assert update is not None
-    assert len(update.contents) == 0
-    assert "malformed" in caplog.text
+    consent = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent) == 1
+    assert consent[0].consent_link == expected_link
+    assert expected_log in caplog.text
 
 
 def test_server_label_is_preserved_in_additional_properties() -> None:
