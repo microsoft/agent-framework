@@ -107,7 +107,7 @@ def log_record_exporter(span_exporter: SpanExporter) -> Generator[InMemoryLogRec
     provider = get_logger_provider()
     if not hasattr(provider, "add_log_record_processor"):
         raise RuntimeError("Logger provider does not support adding log record processors.")
-    provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))  # type: ignore[attr-defined]
+    provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))  # type: ignore
 
     yield exporter
     # Clean up
