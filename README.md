@@ -41,7 +41,7 @@ MAF is a strong fit if you:
 ## Key Features
 Explore new MAF capabilities and real implementation patterns on the [official blog](https://devblogs.microsoft.com/agent-framework/).
 
-- **Python, C#/.NET, and Go Support**: Full framework support for Python, C#/.NET, and Go implementations with consistent APIs
+- **Python, C#/.NET, and Go Support**: Full framework support for Python and C#/.NET, plus public-preview Go support for core agent and workflow capabilities
   - [Python packages](./python/packages/) | [.NET source](./dotnet/src/) | [Go source](https://github.com/microsoft/agent-framework-go/)
 - **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
   - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/02-agents/AgentProviders/) | [Go examples](https://github.com/microsoft/agent-framework-go/tree/main/examples/02-agents/providers)
@@ -213,7 +213,11 @@ func main() {
 
   // Run the agent.
   ctx := context.Background()
-  fmt.Println(a.RunText(ctx, "Write a haiku about the Microsoft Agent Framework").Collect())
+  response, err := a.RunText(ctx, "Write a haiku about the Microsoft Agent Framework").Collect()
+  if err != nil {
+    panic(err)
+  }
+  fmt.Println(response)
 }
 ```
 
@@ -268,6 +272,7 @@ For environment variable configuration specific to each sample, refer to the REA
 - [Contributing Guide](./CONTRIBUTING.md)
 - [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Python Development Guide](./python/DEV_SETUP.md)
+- [Go Contributing Guide](https://github.com/microsoft/agent-framework-go/blob/main/CONTRIBUTING.md)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)
 
