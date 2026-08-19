@@ -3735,11 +3735,20 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
 
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
         options = dict(options) if options else {}
-        run_config = cast ("FunctionInvocationConfiguration", dict(self.function_invocation_configuration) if self.function_invocation_configuration else {})
+        run_config = cast(
+            "FunctionInvocationConfiguration",
+            dict(self.function_invocation_configuration) if self.function_invocation_configuration else {},
+        )
 
-
+        if not isinstance(options, dict):  # pragma: no cover
+            options = {}
         if tool_exec_order := options.pop("tool_execution_order", None):
             run_config["tool_execution_order"] = tool_exec_order
+            if additional_function_arguments and "tool_execution_order" in additional_function_arguments:
+                logger.debug(
+                    "overriding tool_execution_order from function_invocation_kwargs with explicit run option: %s",
+                    tool_exec_order,
+                )
 
         mutable_options: dict[str, Any] = dict(options)
 
