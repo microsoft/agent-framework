@@ -562,6 +562,19 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
         logger.debug("Skipping duplicate full-text delta for message_id=%s", flow.message_id)
         return []
 
+    # A tool-only response may pre-open a message before its tool-call segment
+    # is tracked. If that segment claims the pre-opened ID, rotate to a fresh
+    # text message before recording the text so snapshot IDs stay unique.
+    current_message_id = flow.message_id
+    if current_message_id and any(
+        segment.get("kind") == "tool_calls" and segment.get("id") == current_message_id
+        for segment in flow.snapshot_segments
+    ):
+        flow.message_id = generate_event_id()
+        flow.accumulated_text = ""
+        events.append(TextMessageEndEvent(message_id=current_message_id))
+        events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
+
     # The message may have been pre-opened by the tool-only path, which never
     # goes through this function, so the first text arriving later has no
     # segment yet; without one the snapshot would drop it.

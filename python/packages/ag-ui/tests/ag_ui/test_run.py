@@ -7,6 +7,7 @@ from typing import cast
 import pytest
 from ag_ui.core import (
     CustomEvent,
+    MessagesSnapshotEvent,
     ReasoningEncryptedValueEvent,
     ReasoningEndEvent,
     ReasoningMessageContentEvent,
@@ -743,20 +744,26 @@ def test_snapshot_without_segment_tracking_keeps_legacy_layout():
 
 
 def test_snapshot_includes_text_when_message_preopened_by_tool_only_path():
-    """Text that arrives after a tool-only preopen still lands in the snapshot."""
+    """Text after a tool-only preopen gets a unique snapshot message ID."""
     flow = FlowState()
     # The tool-only detection in agent_run.py preopens message_id without
     # going through _emit_text, so the first text has no segment yet.
     flow.message_id = "preopened"
     _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
-    _emit_text(Content.from_text("Let me check the docs."), flow)
+    text_events = _emit_text(Content.from_text("Let me check the docs."), flow)
 
     event = _build_messages_snapshot(flow, [])
 
     kinds = _snapshot_kinds(event)
     assert [kind for kind, _ in kinds] == ["tool_calls", "text"]
     assert kinds[1][1]["content"] == "Let me check the docs."
-    assert kinds[1][1]["id"] == "preopened"
+    assert kinds[0][1]["id"] == "preopened"
+    assert kinds[1][1]["id"] != kinds[0][1]["id"]
+    assert len({message["id"] for _, message in kinds}) == len(kinds)
+    assert isinstance(text_events[0], TextMessageEndEvent)
+    assert isinstance(text_events[1], TextMessageStartEvent)
+    assert text_events[0].message_id == "preopened"
+    assert text_events[1].message_id == kinds[1][1]["id"]
 
 
 def test_snapshot_separates_calls_across_results():
@@ -1072,7 +1079,7 @@ async def test_predictive_confirmation_run_finished_interrupt_links_tool_call():
     confirm_start = next(
         event for event in events if isinstance(event, ToolCallStartEvent) and event.tool_call_name == "confirm_changes"
     )
-    snapshots = [event for event in events if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"]
+    snapshots = [event for event in events if isinstance(event, MessagesSnapshotEvent)]
     assert snapshots
     snapshot_tool_message = next(message for message in snapshots[-1].messages if getattr(message, "tool_calls", None))
     assert confirm_start.parent_message_id == snapshot_tool_message.id
