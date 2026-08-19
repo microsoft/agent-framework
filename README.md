@@ -6,16 +6,14 @@
 [![MS Learn Documentation](https://img.shields.io/badge/MS%20Learn-Documentation-blue)](https://learn.microsoft.com/en-us/agent-framework/)
 [![PyPI](https://img.shields.io/pypi/v/agent-framework)](https://pypi.org/project/agent-framework/)
 [![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.AI)](https://www.nuget.org/profiles/MicrosoftAgentFramework/)
-[![Go Reference](https://pkg.go.dev/badge/github.com/microsoft/agent-framework-go.svg)](https://pkg.go.dev/github.com/microsoft/agent-framework-go)
 [![GitHub stars](https://img.shields.io/github/stars/microsoft/agent-framework?style=social)](https://github.com/microsoft/agent-framework)
 
 
-Microsoft Agent Framework (MAF) is an open, multi-language framework for building **production-grade AI agents and multi-agent workflows** in **.NET, Python, and Go**.
+Microsoft Agent Framework (MAF) is an open, multi-language framework for building **production-grade AI agents and multi-agent workflows** in **.NET and Python**.
 
-Microsoft Agent Framework is built for teams taking agents from prototype to production. It provides a consistent foundation for building, orchestrating, and operating agent systems across Python, .NET, and Go, while keeping architecture choices open as requirements evolve, and supports a broad ecosystem including Microsoft Foundry, Azure OpenAI, OpenAI, and the GitHub Copilot SDK, with samples and hosting patterns for both local development and cloud deployment.
+Microsoft Agent Framework is built for teams taking agents from prototype to production. It provides a consistent foundation for building, orchestrating, and operating agent systems across Python and .NET, while keeping architecture choices open as requirements evolve, and supports a broad ecosystem including Microsoft Foundry, Azure OpenAI, OpenAI, and the GitHub Copilot SDK, with samples and hosting patterns for both local development and cloud deployment.
 
-> [!NOTE]
-> Microsoft Agent Framework for Go is in public preview and is developed in the [microsoft/agent-framework-go](https://github.com/microsoft/agent-framework-go/) repository.
+For the Go SDK, including its documentation, samples, contribution guidance, and issue tracker, visit [microsoft/agent-framework-go](https://github.com/microsoft/agent-framework-go/).
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=AAgdMhftj8w" title="Watch the full Agent Framework introduction (30 min)">
@@ -41,22 +39,22 @@ MAF is a strong fit if you:
 ## Key Features
 Explore new MAF capabilities and real implementation patterns on the [official blog](https://devblogs.microsoft.com/agent-framework/).
 
-- **Python, C#/.NET, and Go Support**: Full framework support for Python and C#/.NET, and public-preview Go support
-  - [Python packages](./python/packages/) | [.NET source](./dotnet/src/) | [Go source](https://github.com/microsoft/agent-framework-go/)
+- **Python and C#/.NET Support**: Full framework support for both Python and C#/.NET implementations with consistent APIs
+  - [Python packages](./python/packages/) | [.NET source](./dotnet/src/)
 - **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
-  - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/02-agents/AgentProviders/) | [Go examples](https://github.com/microsoft/agent-framework-go/tree/main/examples/02-agents/providers)
+  - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/02-agents/AgentProviders/)
 - **Middleware**: Flexible middleware system for request/response processing, exception handling, and custom pipelines
-  - [Python middleware](./python/samples/02-agents/middleware/) | [.NET middleware](./dotnet/samples/02-agents/Agents/Agent_Step11_Middleware/) | [Go middleware](https://github.com/microsoft/agent-framework-go/blob/main/agent/middleware.go)
+  - [Python middleware](./python/samples/02-agents/middleware/) | [.NET middleware](./dotnet/samples/02-agents/Agents/Agent_Step11_Middleware/)
 - **Orchestration Patterns & Workflows**: Build multi-agent systems with graph-based workflows supporting sequential, concurrent, handoff, and group collaboration patterns; includes checkpointing, streaming, human-in-the-loop, and time-travel
-  - [Python workflows](./python/samples/03-workflows/) | [.NET workflows](./dotnet/samples/03-workflows/) | [Go workflows](https://github.com/microsoft/agent-framework-go/tree/main/examples/03-workflows)
+  - [Python workflows](./python/samples/03-workflows/) | [.NET workflows](./dotnet/samples/03-workflows/)
 - **Foundry Hosted Agents (new)**: Deploy and host your agents to Foundry-hosted infrastructure with just 2 additional lines of code
   - [Python samples](./python/samples/04-hosting/foundry-hosted-agents/) | [.NET samples](./dotnet/samples/04-hosting/FoundryHostedAgents/)
 - **Observability**: Built-in OpenTelemetry integration for distributed tracing, monitoring, and debugging
-  - [Python observability](./python/samples/02-agents/observability/) | [.NET telemetry](./dotnet/samples/02-agents/AgentOpenTelemetry/) | [Go telemetry](https://github.com/microsoft/agent-framework-go/tree/main/examples/02-agents/agents/step08_observability)
+  - [Python observability](./python/samples/02-agents/observability/) | [.NET telemetry](./dotnet/samples/02-agents/AgentOpenTelemetry/)
 - **Declarative Agents**: Define agents using YAML for faster setup and versioning
   - [Declarative agent samples](./declarative-agents/)
 - **Agent Skills**: Build domain-specific knowledge bases from multiple sources—files, inline code, class libraries—for agents to discover and use
-  - [Skills design](./docs/decisions/0021-agent-skills-design.md) | [Go skills](https://github.com/microsoft/agent-framework-go/tree/main/examples/02-agents/skills)
+  - [Skills design](./docs/decisions/0021-agent-skills-design.md)
 - **AF Labs**: Experimental packages for cutting-edge features including benchmarking, reinforcement learning, and research initiatives
   - [Labs directory](./python/packages/lab/)
 - **DevUI**: Interactive developer UI for agent development, testing, and debugging workflows
@@ -64,27 +62,16 @@ Explore new MAF capabilities and real implementation patterns on the [official b
 
 ## Table of Contents
 
-- [Welcome to Microsoft Agent Framework!](#welcome-to-microsoft-agent-framework)
-  - [Is this the right framework for you?](#is-this-the-right-framework-for-you)
-  - [Key Features](#key-features)
-  - [Table of Contents](#table-of-contents)
-  - [Getting Started](#getting-started)
-    - [Installation](#installation)
-    - [Learning Resources](#learning-resources)
-    - [Quickstart](#quickstart)
-      - [Basic Agent - Python](#basic-agent---python)
-      - [Basic Agent - .NET](#basic-agent---net)
-      - [Basic Agent - Go](#basic-agent---go)
-  - [More Examples \& Samples](#more-examples--samples)
-    - [Python](#python)
-    - [.NET](#net)
-    - [Go](#go)
-  - [Community \& Feedback](#community--feedback)
-  - [Troubleshooting](#troubleshooting)
-    - [Authentication](#authentication)
-    - [Environment Variables](#environment-variables)
-  - [Contributor Resources](#contributor-resources)
-  - [Important Notes](#important-notes)
+- [Getting Started](#getting-started)
+  - [Installation](#installation)
+  - [Learning Resources](#learning-resources)
+  - [Quickstart](#quickstart)
+    - [Basic Agent - Python](#basic-agent---python)
+    - [Basic Agent - .NET](#basic-agent---net)
+- [More Examples & Samples](#more-examples--samples)
+- [Community & Feedback](#community--feedback)
+- [Troubleshooting](#troubleshooting)
+- [Contributor Resources](#contributor-resources)
 
 ## Getting Started
 ### Installation
@@ -104,12 +91,6 @@ dotnet add package Microsoft.Agents.AI
 dotnet add package Microsoft.Agents.AI.Foundry
 dotnet add package Azure.AI.Projects
 dotnet add package Azure.Identity
-```
-
-Go
-
-```bash
-go get github.com/microsoft/agent-framework-go
 ```
 
 ### Learning Resources
@@ -178,49 +159,6 @@ AIAgent agent =
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
 
-#### Basic Agent - Go
-Create a simple Agent, using Microsoft Foundry, that writes a haiku about the Microsoft Agent Framework
-
-```go
-package main
-
-import (
-  "cmp"
-  "context"
-  "fmt"
-  "os"
-
-  "github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-  "github.com/microsoft/agent-framework-go/provider/foundryprovider"
-)
-
-func main() {
-  endpoint := os.Getenv("FOUNDRY_PROJECT_ENDPOINT")
-  model := cmp.Or(os.Getenv("FOUNDRY_MODEL"), "gpt-4o-mini")
-
-  // Authenticate to Microsoft Foundry.
-  token, err := azidentity.NewDefaultAzureCredential(nil)
-  if err != nil {
-    panic(err)
-  }
-
-  // Create a Microsoft Foundry agent.
-  a := foundryprovider.NewAgent(endpoint, token, foundryprovider.ModelDeployment(model),
-    foundryprovider.AgentConfig{
-      Instructions: "You are a helpful assistant.",
-    },
-  )
-
-  // Run the agent.
-  ctx := context.Background()
-  response, err := a.RunText(ctx, "Write a haiku about the Microsoft Agent Framework").Collect()
-  if err != nil {
-    panic(err)
-  }
-  fmt.Println(response)
-}
-```
-
 ## More Examples & Samples
 
 ### Python
@@ -240,13 +178,6 @@ func main() {
 - [Hosting](./dotnet/samples/04-hosting): A2A and Foundry hosted agents. Durable agent and workflow samples are in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/dotnet/samples).
 - [End-to-End](./dotnet/samples/05-end-to-end): full applications and demos
 
-### Go
-
-- [Getting Started](https://github.com/microsoft/agent-framework-go/tree/main/examples/01-get-started): progressive tutorial from hello world to workflows
-- [Agent Concepts](https://github.com/microsoft/agent-framework-go/tree/main/examples/02-agents): deep-dive samples by topic, including tools, middleware, providers, observability, A2A, AG-UI, MCP, and skills
-- [Workflows](https://github.com/microsoft/agent-framework-go/tree/main/examples/03-workflows): multi-agent patterns, routing, checkpointing, observability, and workflow orchestration
-- [End-to-End](https://github.com/microsoft/agent-framework-go/tree/main/examples/05-end-to-end): full applications and demos
-
 ## Community & Feedback
 
 - **Found a bug?** File a [GitHub issue](https://github.com/microsoft/agent-framework/issues) to help us improve.
@@ -265,7 +196,7 @@ func main() {
 > **Tip:** `DefaultAzureCredential` is convenient for development but in production, consider using a specific credential (e.g., `ManagedIdentityCredential`) to avoid latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 
 ### Environment Variables
-For environment variable configuration specific to each sample, refer to the README in the sample directory ([Python samples](./python/samples/) | [.NET samples](./dotnet/samples/) | [Go samples](https://github.com/microsoft/agent-framework-go/tree/main/examples)).
+For environment variable configuration specific to each sample, refer to the README in the sample directory ([Python samples](./python/samples/) | [.NET samples](./dotnet/samples/)).
 
 ## Contributor Resources
 
