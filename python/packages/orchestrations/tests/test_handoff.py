@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework import (
     Agent,
+    AgentContext,
     AgentResponse,
     AgentResponseUpdate,
     ChatOptions,
@@ -21,6 +22,7 @@ from agent_framework import (
     ResponseStream,
     WorkflowEvent,
     WorkflowRunState,
+    agent_middleware,
     function_middleware,
     resolve_agent_id,
     tool,
@@ -803,6 +805,52 @@ async def test_handoff_clone_preserves_all_middleware_types() -> None:
     assert isinstance(executor, HandoffAgentExecutor)
     cloned_middleware = cast(Agent, executor._agent).middleware or []
     assert tracking_middleware in cloned_middleware, "User function middleware should be preserved on cloned agent"
+
+
+async def test_handoff_clone_preserves_additional_properties() -> None:
+    """Handoff clones should preserve additional_properties from the original agent."""
+    tracked_properties: list[dict[str, Any]] = []
+
+    @agent_middleware
+    async def observe_properties(context: AgentContext, call_next):
+        agent = cast(Agent, context.agent)
+        tracked_properties.append(dict(agent.additional_properties))
+        await call_next()
+
+    coordinator = Agent(
+        id="coordinator",
+        name="coordinator",
+        client=MockChatClient(name="coordinator"),
+        additional_properties={"tenant": "contoso", "trace_tag": "triage"},
+        middleware=[observe_properties],
+        require_per_service_call_history_persistence=True,
+    )
+    specialist = Agent(
+        id="specialist",
+        name="specialist",
+        client=MockChatClient(name="specialist"),
+        require_per_service_call_history_persistence=True,
+    )
+
+    workflow = (
+        HandoffBuilder(
+            participants=_as_handoff_agents(coordinator, specialist),
+            termination_condition=lambda conversation: any(msg.role == "assistant" for msg in conversation),
+        )
+        .with_start_agent(_as_handoff_agent(coordinator))
+        .build()
+    )
+
+    await _drain(workflow.run("hello", stream=True))
+
+    assert tracked_properties == [{"tenant": "contoso", "trace_tag": "triage"}]
+
+    # The clone owns its own copy; the original agent's properties stay untouched.
+    executor = workflow.executors[resolve_agent_id(coordinator)]
+    assert isinstance(executor, HandoffAgentExecutor)
+    cloned_additional_properties = cast(Agent, executor.agent).additional_properties
+    assert cloned_additional_properties == {"tenant": "contoso", "trace_tag": "triage"}
+    assert cloned_additional_properties is not coordinator.additional_properties
 
 
 def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:

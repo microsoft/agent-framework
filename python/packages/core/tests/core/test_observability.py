@@ -36,6 +36,7 @@ from agent_framework.observability import (
     MessageListTimestampFilter,
     OtelAttr,
     _capture_messages,
+    _get_instructions_from_options,
     get_function_span,
 )
 
@@ -4546,6 +4547,42 @@ def test_get_instructions_from_options_dict_with_instructions():
 
     assert _get_instructions_from_options({"instructions": "do stuff"}) == "do stuff"
     assert _get_instructions_from_options({"other_key": "value"}) is None
+
+
+def test_get_instructions_from_options_list_of_strings():
+    """A list of plain string instructions is recorded as-is."""
+    assert _get_instructions_from_options({"instructions": ["do stuff", "be brief"]}) == ["do stuff", "be brief"]
+
+
+def test_get_instructions_from_options_structured_blocks():
+    """Structured instruction blocks contribute their text without provider metadata."""
+    blocks = [
+        {"type": "text", "text": "Stable.", "cache_control": {"type": "ephemeral", "ttl": "1h"}},
+        {"type": "text", "text": "Dynamic."},
+    ]
+
+    assert _get_instructions_from_options({"instructions": blocks}) == ["Stable.", "Dynamic."]
+    assert _get_instructions_from_options({"instructions": blocks[0]}) == "Stable."
+
+
+def test_get_instructions_from_options_mixed_structured_and_text():
+    """Instructions appended to structured blocks during a run are still recorded."""
+    instructions = [
+        {"type": "text", "text": "Stable.", "cache_control": {"type": "ephemeral"}},
+        "Appended by a context provider",
+    ]
+
+    assert _get_instructions_from_options({"instructions": instructions}) == [
+        "Stable.",
+        "Appended by a context provider",
+    ]
+
+
+def test_get_instructions_from_options_without_extractable_text():
+    """Entries carrying no usable text yield None rather than provider metadata."""
+    assert _get_instructions_from_options({"instructions": [{"type": "image", "source": {"data": "..."}}]}) is None
+    assert _get_instructions_from_options({"instructions": []}) is None
+    assert _get_instructions_from_options({"instructions": 42}) is None
 
 
 def test_get_span_attributes_with_non_dict_options():

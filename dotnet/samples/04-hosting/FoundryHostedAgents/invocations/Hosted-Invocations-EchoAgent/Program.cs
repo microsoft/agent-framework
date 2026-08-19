@@ -19,6 +19,11 @@ builder.Services.AddScoped<InvocationHandler, EchoInvocationHandler>();
 
 var app = builder.Build();
 
+// The Foundry hosted runtime probes GET /readiness before routing invocations to the container.
+// The Invocations SDK does not map that route (unlike the Responses SDK), so map it explicitly;
+// without it every invoke fails with HTTP 424 session_not_ready.
+app.MapGet("/readiness", () => Results.Ok());
+
 // Map the Invocations protocol endpoints:
 //   POST /invocations              — invoke the agent
 //   GET  /invocations/{id}         — get result (not used by this sample)
