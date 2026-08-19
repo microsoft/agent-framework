@@ -272,7 +272,6 @@ For environment variable configuration specific to each sample, refer to the REA
 - [Contributing Guide](./CONTRIBUTING.md)
 - [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Python Development Guide](./python/DEV_SETUP.md)
-- [Go Contributing Guide](https://github.com/microsoft/agent-framework-go/blob/main/CONTRIBUTING.md)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)
 
