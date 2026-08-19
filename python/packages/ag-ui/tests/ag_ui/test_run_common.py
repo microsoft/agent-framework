@@ -5,7 +5,7 @@
 import logging
 
 import pytest
-from ag_ui.core import EventType
+from ag_ui.core import EventType, StateSnapshotEvent
 from ag_ui.core.events import (
     ReasoningMessageContentEvent,
     ReasoningMessageStartEvent,
@@ -401,14 +401,15 @@ class TestEmitToolResultWithState:
             predict_state_config={"draft": {"tool": "write_draft", "tool_argument": "body"}},
             current_state=flow.current_state,
         )
-        handler.pending_state_updates["draft"] = "updated"
+        deltas = handler.emit_streaming_deltas("write_draft", '{"body":"updated"}')
         content = Content.from_function_result(call_id="c1", result="plain")
 
         events = _emit_tool_result(content, flow, predictive_handler=handler)
 
-        snapshots = [event for event in events if event.type == EventType.STATE_SNAPSHOT]
+        assert len(deltas) == 1
+        snapshots = [event for event in events if isinstance(event, StateSnapshotEvent)]
         assert len(snapshots) == 1
-        assert snapshots[0].snapshot == {"existing": "value", "draft": "updated"}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert snapshots[0].snapshot == {"existing": "value", "draft": "updated"}
         assert flow.current_state == {"existing": "value", "draft": "updated"}
 
     def test_tool_result_content_text_unchanged(self):
