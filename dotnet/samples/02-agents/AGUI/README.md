@@ -208,6 +208,16 @@ dotnet run --project Server --urls http://localhost:8888
 dotnet run --project Client
 ```
 
+### Step08_WorkflowFailure
+
+A deterministic failing workflow. The client shows that the failed executor step is closed.
+
+```bash
+cd Step08_WorkflowFailure
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
 The server runs on port 8888 by default.
 
 #### Client (`Step05_StateManagement/Client`)
