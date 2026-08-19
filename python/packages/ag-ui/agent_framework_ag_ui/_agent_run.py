@@ -2298,9 +2298,12 @@ async def run_agent_stream(
 
     if stored_snapshot is not None:
         if resume_payload is not None and stored_pending_approval_interrupt_ids:
-            raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
             seeded_resume_from_snapshot = True
-        else:
+
+            if not config.use_service_session:
+                raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
+
+        elif not config.use_service_session:
             raw_messages = _reconstruct_messages_from_thread_snapshot(
                 stored_messages=stored_snapshot.messages,
                 incoming_messages=raw_messages,
@@ -2408,6 +2411,15 @@ async def run_agent_stream(
         protected_tool_call_ids=protected_tool_call_ids,
     )
 
+    if config.use_service_session and stored_snapshot is not None:
+        if seeded_resume_from_snapshot:
+            snapshot_messages = snapshot_session.resume_seeded_messages(snapshot_messages)
+        else:
+            snapshot_messages = _reconstruct_messages_from_thread_snapshot(
+                stored_messages=stored_snapshot.messages,
+                incoming_messages=snapshot_messages,
+                stored_interrupt=stored_snapshot.interrupt,
+            )
     # Check for structured output mode (skip text content)
     skip_text = False
     response_format: type[Any] | None = None
@@ -2931,6 +2943,11 @@ async def run_agent_stream(
         flow.pending_tool_calls or flow.tool_results or flow.accumulated_text or flow.reasoning_messages
     )
     latest_messages_snapshot = snapshot_messages
+
+    if config.use_service_session and stored_snapshot is not None and not should_emit_snapshot:
+        latest_messages_snapshot = _event_messages_to_snapshot_dicts(
+            list(_build_messages_snapshot(flow, snapshot_messages).messages)
+        )
     if should_emit_snapshot:
         # Always fold this turn's output into the persisted snapshot, even when the
         # outbound MESSAGES_SNAPSHOT event is suppressed for predictive tools.

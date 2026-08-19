@@ -4,7 +4,15 @@
 
 from dataclasses import fields
 
-from agent_framework_ag_ui import AGUIThreadSnapshot, AGUIThreadSnapshotStore, InMemoryAGUIThreadSnapshotStore
+import pytest
+from agent_framework import AgentResponseUpdate, Content
+
+from agent_framework_ag_ui import (
+    AgentFrameworkAgent,
+    AGUIThreadSnapshot,
+    AGUIThreadSnapshotStore,
+    InMemoryAGUIThreadSnapshotStore,
+)
 
 
 def test_thread_snapshot_model_contains_replayable_and_private_snapshot_fields() -> None:
@@ -204,3 +212,75 @@ async def test_in_memory_snapshot_store_rejects_invalid_keys() -> None:
         await store.delete(scope=None, thread_id="thread-1")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     with pytest.raises(ValueError):
         await store.clear(scope="")
+
+
+class _InputSpyAgent:
+    name = "spy"
+    description = ""
+    default_options: dict = {}
+    context_providers: list = []
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def run(self, messages, *, session, stream=False, **kwargs):
+        async def updates():
+            self.calls.append(
+                {
+                    "roles": [m.role for m in messages],
+                    "service_session_id": session.service_session_id,
+                }
+            )
+            yield AgentResponseUpdate(
+                contents=[Content.from_text("ACK")],
+                role="assistant",
+                response_id=f"resp-{len(self.calls)}",
+            )
+
+        return updates()
+
+
+async def _drain(runner, body):
+    return [event async for event in runner.run(body)]
+
+
+@pytest.mark.asyncio
+async def test_service_session_snapshot_split_authority() -> None:
+    """Verify use_service_session + snapshot_store separates provider input from UI hydration.
+
+    - Provider must receive ONLY incremental input
+    - Snapshot store must retain FULL history for UI hydration
+    """
+    agent = _InputSpyAgent()
+    store = InMemoryAGUIThreadSnapshotStore()
+    runner = AgentFrameworkAgent(
+        agent=agent,
+        use_service_session=True,
+        snapshot_store=store,
+    )
+
+    first_turn = {
+        "threadId": "conv_FHA_SESSION",
+        "__ag_ui_snapshot_scope": "split-auth-test",
+        "messages": [{"id": "u1", "role": "user", "content": "first"}],
+    }
+    second_turn = {
+        "threadId": "conv_FHA_SESSION",
+        "__ag_ui_snapshot_scope": "split-auth-test",
+        "messages": [{"id": "u2", "role": "user", "content": "second"}],
+    }
+
+    await _drain(runner, first_turn)
+    await _drain(runner, second_turn)
+
+    assert agent.calls[1]["roles"] == ["user"], (
+        f"Expected incremental-only input for service-session mode, got: {agent.calls[1]['roles']}"
+    )
+    assert agent.calls[1]["service_session_id"] == "conv_FHA_SESSION"
+
+    snapshot = await store.get(scope="split-auth-test", thread_id="conv_FHA_SESSION")
+    assert snapshot is not None, "Snapshot should exist after two turns"
+    roles = [m.get("role") for m in snapshot.messages]
+    assert roles == ["user", "assistant", "user", "assistant"], (
+        f"Snapshot must contain full transcript for UI hydration, got: {roles}"
+    )
