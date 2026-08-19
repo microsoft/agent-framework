@@ -56,6 +56,7 @@ from ._types import (
     ChatResponseUpdate,
     Message,
     ResponseStream,
+    _append_instructions,  # pyright: ignore[reportPrivateUsage]
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
     map_chat_to_agent_update,
     normalize_messages,
@@ -159,8 +160,8 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
             # Merge metadata dicts
             result["metadata"] = {**result["metadata"], **value}
         elif key == "instructions" and result.get("instructions"):
-            # Concatenate instructions
-            result["instructions"] = f"{result['instructions']}\n{value}"
+            # Concatenate instructions, preserving provider-native structured values
+            result["instructions"] = _append_instructions(result["instructions"], value)
         else:
             result[key] = value
     return {key: value for key, value in result.items() if value is not None}
@@ -1623,10 +1624,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Merge provider-contributed instructions into chat_options
         if session_context.instructions:
             combined_instructions = "\n".join(session_context.instructions)
-            if "instructions" in chat_options:
-                chat_options["instructions"] = f"{chat_options['instructions']}\n{combined_instructions}"
-            else:
-                chat_options["instructions"] = combined_instructions
+            chat_options["instructions"] = _append_instructions(chat_options.get("instructions"), combined_instructions)
 
         return session_context, chat_options
 
