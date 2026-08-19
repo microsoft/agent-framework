@@ -35,6 +35,8 @@
              Link="Workflows\Samples\FailingWorkflow.cs" />
     <Compile Include="..\..\samples\02-agents\AGUI\Step09_WorkflowTools\Server\ToolWorkflow.cs"
              Link="Workflows\Samples\ToolWorkflow.cs" />
+    <Compile Include="..\..\samples\02-agents\AGUI\Step10_WorkflowNested\Server\NestedWorkflow.cs"
+             Link="Workflows\Samples\NestedWorkflow.cs" />
   </ItemGroup>
 
 </Project>

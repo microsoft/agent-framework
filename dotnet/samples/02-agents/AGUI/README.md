@@ -229,6 +229,17 @@ dotnet run --project Server --urls http://localhost:8888
 dotnet run --project Client
 ```
 
+### Step10_WorkflowNested
+
+Two parallel subworkflows whose local executor IDs are both `Analyze`. The sample characterizes the
+currently ambiguous AG-UI step names tracked by issue #7763.
+
+```bash
+cd Step10_WorkflowNested
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
 The server runs on port 8888 by default.
 
 #### Client (`Step05_StateManagement/Client`)
