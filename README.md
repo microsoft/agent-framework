@@ -41,7 +41,7 @@ MAF is a strong fit if you:
 ## Key Features
 Explore new MAF capabilities and real implementation patterns on the [official blog](https://devblogs.microsoft.com/agent-framework/).
 
-- **Python, C#/.NET, and Go Support**: Full framework support for Python and C#/.NET, plus public-preview Go support for core agent and workflow capabilities
+- **Python, C#/.NET, and Go Support**: Full framework support for Python and C#/.NET, and public-preview Go support
   - [Python packages](./python/packages/) | [.NET source](./dotnet/src/) | [Go source](https://github.com/microsoft/agent-framework-go/)
 - **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
   - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/02-agents/AgentProviders/) | [Go examples](https://github.com/microsoft/agent-framework-go/tree/main/examples/02-agents/providers)
