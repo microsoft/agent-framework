@@ -278,6 +278,18 @@ class TestOverrideTypeValidation:
         with pytest.raises(ValueError, match="Invalid type for setting 'config'"):
             load_settings(GenericUnionSettings, env_prefix="TEST_", config=1.5)
 
+    def test_bare_parameterized_generic_field(self) -> None:
+        """A non-union ``dict[str, Any]`` is validated against its origin, not the alias."""
+
+        class GenericSettings(TypedDict, total=False):
+            config: dict[str, Any]
+
+        settings = load_settings(GenericSettings, env_prefix="TEST_", config={"key": "value"})
+        assert settings["config"] == {"key": "value"}
+
+        with pytest.raises(ValueError, match="Invalid type for setting 'config'"):
+            load_settings(GenericSettings, env_prefix="TEST_", config=1.5)
+
     def test_union_with_literal_arm_skips_check(self) -> None:
         """``Literal`` arms have no runtime class, so validation is skipped rather than wrong."""
 
