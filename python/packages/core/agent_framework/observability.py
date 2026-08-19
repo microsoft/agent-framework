@@ -3107,10 +3107,10 @@ def _get_response_finish_reason(response: ChatResponse | AgentResponse) -> Finis
     normalized response field.
     """
     finish_reason = getattr(response, "finish_reason", None)
-    if not finish_reason:
-        finish_reason = (
-            getattr(response.raw_representation, "finish_reason", None) if response.raw_representation else None
-        )
+    if not finish_reason and response.raw_representation is not None:
+        raw_finish_reason = getattr(response.raw_representation, "finish_reason", None)
+        if isinstance(raw_finish_reason, str):
+            finish_reason = raw_finish_reason
     return cast("FinishReason | None", finish_reason)
 
 

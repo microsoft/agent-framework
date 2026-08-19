@@ -3095,6 +3095,54 @@ async def test_chat_client_choice_event_uses_raw_representation_finish_reason(
     assert choice_records[0].body["finish_reason"] == "stop"
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_ignores_non_string_raw_representation_finish_reason(
+    span_exporter: InMemorySpanExporter,
+    log_record_exporter,
+    enable_sensitive_data,
+) -> None:
+    """Regression guard: an unconfigured raw_representation attribute must not crash telemetry.
+
+    ``raw_representation`` is frequently a test double (e.g. ``unittest.mock.Mock()``) whose
+    unset ``finish_reason`` attribute auto-vivifies to a ``Mock`` rather than raising
+    ``AttributeError``. The raw_representation finish_reason fallback must reject non-string
+    values so this never leaks a non-JSON-serializable object into `json.dumps` calls.
+    """
+    from unittest.mock import Mock
+
+    class UnconfiguredRawChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> Awaitable[ChatResponse]:
+            async def _get() -> ChatResponse:
+                return ChatResponse(
+                    messages=[Message("assistant", ["Hello"])],
+                    finish_reason=None,
+                    raw_representation=Mock(),
+                )
+
+            return _get()
+
+    client = UnconfiguredRawChatClient()
+    response = await client.get_response(messages=[Message(role="user", contents=["Test"])], options={"model": "Test"})
+
+    assert response.text == "Hello"
+    choice_records = [
+        record.log_record
+        for record in log_record_exporter.get_finished_logs()
+        if record.log_record.event_name == OtelAttr.CHOICE.value
+    ]
+    assert choice_records == []
+
+
 # region Test agent instrumentation
 
 
