@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -71,6 +72,7 @@ def _start_server(log_file: IO[str]) -> subprocess.Popen:  # type: ignore
     return subprocess.Popen(
         [sys.executable, "main.py"],
         cwd=SAMPLE_DIR,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         stdout=log_file,
         stderr=subprocess.STDOUT,
     )

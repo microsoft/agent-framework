@@ -52,6 +52,7 @@ from azure.ai.agentserver.responses import (
     FileResponseStore,
     InMemoryResponseProvider,
     ResponseContext,
+    ResponseExitForRecovery,
     ResponsesServerOptions,
 )
 from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
@@ -4448,6 +4449,46 @@ class TestWorkflowAgentHosting:
         assert types[-1] == "response.completed"
         assert inner.run_count == 1
 
+    async def test_shutdown_signal_preempts_stuck_workflow_call(self, tmp_path: Path) -> None:
+        """Shutdown must interrupt the workflow's inner agent call stuck awaiting a slow model/tool
+        response, not merely be checked between already-produced updates, and must trigger
+        ``exit_for_recovery()`` because it actually preempted the loop -- not on natural completion."""
+        gate = asyncio.Event()  # Never set: simulates a model/tool call that never returns.
+        workflow_agent, inner = _build_multi_update_workflow_agent(["too late"], gate=gate)
+        server = _make_server(
+            workflow_agent,
+            response_store=FileResponseStore(storage_dir=tmp_path),
+            options=ResponsesServerOptions(resilient_background=True),
+        )
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+        cancellation_signal = asyncio.Event()
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "exit_for_recovery", new=AsyncMock(side_effect=ResponseExitForRecovery())),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            await anext(handler)  # response.created
+            await anext(handler)  # response.in_progress
+
+            # Pull the first workflow event in the background so we can wait for the inner agent's
+            # run() to actually start (proving it's genuinely stuck on `gate`) before signalling.
+            pending = asyncio.ensure_future(anext(handler))
+            await asyncio.wait_for(inner.started.wait(), timeout=1.0)
+            context.shutdown.set()  # Fires while the inner agent is stuck awaiting `gate`.
+
+            # Bounded well below `gate` never being set: proves shutdown preempted the stuck call
+            # instead of only being observed after it (eventually) produced an update.
+            with pytest.raises(ResponseExitForRecovery):
+                await asyncio.wait_for(pending, timeout=1.0)
+
+        assert inner.run_count == 1
+
     async def test_cancellation_signal_set_before_turn_skips_new_input(self) -> None:
         """Explicit-cancel: cancellation set before a continuation turn starts must skip that turn's new
         input entirely, whether caught by the restore-loop's own check or the standalone check
@@ -4480,6 +4521,44 @@ class TestWorkflowAgentHosting:
         assert types[-1] == "response.completed"
         # At most the restore-only replay call happened; the new-turn call (which would deliver
         # "hi again") must never fire.
+        assert inner.run_count <= run_count_after_first_turn + 1
+
+    async def test_shutdown_signal_set_before_restore_only_triggers_recovery(self, tmp_path: Path) -> None:
+        """Shutdown observed while resuming a checkpoint (whether during the restore-only replay or
+        the standalone check guarding the start of a brand new workflow run) must trigger
+        ``exit_for_recovery()`` -- proving the post-loop ``signalled`` check (not a blind re-check of
+        the flag) correctly gates this action so it doesn't also fire on a replay that merely
+        finished naturally."""
+        workflow_agent, inner = _build_multi_update_workflow_agent(["hello"])
+        server = _make_server(
+            workflow_agent,
+            response_store=FileResponseStore(storage_dir=tmp_path),
+            options=ResponsesServerOptions(resilient_background=True),
+        )
+
+        first = await _post(server, conversation_id="conv-1", stream=False)
+        assert first.status_code == 200
+        run_count_after_first_turn = inner.run_count
+        assert run_count_after_first_turn == 1
+
+        request = CreateResponse(model="m", input="hi again", stream=True)
+        context = ResponseContext(response_id="response-2", mode_flags=MagicMock(), conversation_id="conv-1")
+        cancellation_signal = asyncio.Event()
+        context.shutdown.set()  # Fires before the continuation turn even starts.
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "exit_for_recovery", new=AsyncMock(side_effect=ResponseExitForRecovery())),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            with pytest.raises(ResponseExitForRecovery):
+                _ = [event async for event in handler]
+
+        # Only the restore-only replay call may have happened; the new-turn call must never fire.
         assert inner.run_count <= run_count_after_first_turn + 1
 
     async def test_previous_response_requires_existing_workflow_checkpoint(self) -> None:
