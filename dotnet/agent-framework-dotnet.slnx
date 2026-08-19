@@ -135,6 +135,10 @@
     <Project Path="samples/02-agents/AGUI/Step08_WorkflowFailure/Client/Client.csproj" />
     <Project Path="samples/02-agents/AGUI/Step08_WorkflowFailure/Server/Server.csproj" />
   </Folder>
+  <Folder Name="/Samples/02-agents/AGUI/Step09_WorkflowTools/">
+    <Project Path="samples/02-agents/AGUI/Step09_WorkflowTools/Client/Client.csproj" />
+    <Project Path="samples/02-agents/AGUI/Step09_WorkflowTools/Server/Server.csproj" />
+  </Folder>
   <Folder Name="/Samples/02-agents/DevUI/">
     <File Path="samples/02-agents/DevUI/README.md" />
     <Project Path="samples/02-agents/DevUI/DevUI_Step01_BasicUsage/DevUI_Step01_BasicUsage.csproj" />

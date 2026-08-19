@@ -33,6 +33,8 @@
              Link="Workflows\Samples\ConcurrentWorkflow.cs" />
     <Compile Include="..\..\samples\02-agents\AGUI\Step08_WorkflowFailure\Server\FailingWorkflow.cs"
              Link="Workflows\Samples\FailingWorkflow.cs" />
+    <Compile Include="..\..\samples\02-agents\AGUI\Step09_WorkflowTools\Server\ToolWorkflow.cs"
+             Link="Workflows\Samples\ToolWorkflow.cs" />
   </ItemGroup>
 
 </Project>

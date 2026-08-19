@@ -218,6 +218,17 @@ dotnet run --project Server --urls http://localhost:8888
 dotnet run --project Client
 ```
 
+### Step09_WorkflowTools
+
+A workflow containing a backend-tool-enabled agent. The client displays executor steps, tool calls, tool
+results, and text without duplication.
+
+```bash
+cd Step09_WorkflowTools
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
 The server runs on port 8888 by default.
 
 #### Client (`Step05_StateManagement/Client`)
