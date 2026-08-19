@@ -1181,7 +1181,11 @@ def test_get_exporters_from_env_signal_specific_env_wins_over_param(monkeypatch)
     from agent_framework import observability
 
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://traces-env:4317")
-    for key in ("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"):
+    for key in (
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
         monkeypatch.delenv(key, raising=False)
 
     with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
@@ -1216,6 +1220,141 @@ def test_configure_otel_providers_otlp_params(monkeypatch):
     assert kwargs["traces_headers"] == {"Authorization": "Bearer token"}
     assert kwargs["timeout"] == 7.5
     assert kwargs["compression"] == "deflate"
+
+
+def test_get_exporters_from_env_passes_empty_headers_through_not_none(monkeypatch):
+    """An explicit empty otlp_headers={} override must be forwarded as {}, not collapsed to None.
+
+    Regression test for a PR review comment: collapsing an authoritatively-resolved-but-empty
+    headers dict to None before calling `_create_otlp_exporters()` let the OTLP exporter
+    constructors fall back to reading OTEL_EXPORTER_OTLP_HEADERS themselves, silently
+    reattaching an environment-configured credential the caller explicitly tried to suppress.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer env-secret")
+    for key in (
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+        "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+        "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env(endpoint="http://collector:4317", headers={})
+
+    kwargs = create.call_args.kwargs
+    # Explicitly empty, not None -- must not be collapsed, or the exporter would re-read
+    # OTEL_EXPORTER_OTLP_HEADERS itself and resurrect "Authorization: Bearer env-secret".
+    assert kwargs["traces_headers"] == {}
+    assert kwargs["metrics_headers"] == {}
+    assert kwargs["logs_headers"] == {}
+
+
+def test_construct_otlp_exporter_shields_headers_env_for_resolved_headers(monkeypatch):
+    """When headers were authoritatively resolved (even to {}), construction must not let the
+    exporter class see OTEL_EXPORTER_OTLP_HEADERS -- an empty dict is just as falsy to the SDK's
+    own `headers or environ.get(...)` fallback as None, so the env var must be hidden instead.
+    """
+    import os
+
+    from agent_framework.observability import _construct_otlp_exporter
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer env-secret")
+    seen: dict[str, str | None] = {}
+
+    class FakeExporter:
+        def __init__(self, endpoint: str, headers: dict | None, timeout: float | None, compression: object) -> None:
+            seen["header_env_during_construction"] = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
+            self.endpoint = endpoint
+            self.headers = headers
+
+    exporter = _construct_otlp_exporter(
+        FakeExporter, "http://collector:4317", {}, None, None, "OTEL_EXPORTER_OTLP_HEADERS"
+    )
+
+    assert exporter.headers == {}
+    # The env var was hidden from the exporter class during __init__...
+    assert seen["header_env_during_construction"] is None
+    # ...and restored immediately afterward.
+    assert os.environ.get("OTEL_EXPORTER_OTLP_HEADERS") == "Authorization=Bearer env-secret"
+
+
+def test_construct_otlp_exporter_does_not_shield_when_no_headers_resolved(monkeypatch):
+    """When the caller has no opinion on headers (headers=None), the exporter must be left free
+    to read OTEL_EXPORTER_OTLP_HEADERS itself, preserving prior behavior for callers (like the
+    vs_code_extension_port path) that never pass headers to `_create_otlp_exporters()` at all.
+    """
+    import os
+
+    from agent_framework.observability import _construct_otlp_exporter
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer env-secret")
+    seen: dict[str, str | None] = {}
+
+    class FakeExporter:
+        def __init__(self, endpoint: str, headers: dict | None, timeout: float | None, compression: object) -> None:
+            seen["header_env_during_construction"] = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
+
+    _construct_otlp_exporter(FakeExporter, "http://collector:4317", None, None, None, "OTEL_EXPORTER_OTLP_HEADERS")
+
+    assert seen["header_env_during_construction"] == "Authorization=Bearer env-secret"
+
+
+def test_get_exporters_from_env_withholds_programmatic_headers_on_origin_mismatch(monkeypatch):
+    """Programmatic otlp_headers must not follow a signal to a different-origin endpoint.
+
+    Regression test for a PR review comment: if OTEL_EXPORTER_OTLP_TRACES_ENDPOINT happens to
+    point at a different host than the programmatic otlp_endpoint, the programmatic headers
+    (e.g. an Authorization credential) must not be sent to that other host.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://other-host:4317")
+    for key in ("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env(
+            endpoint="http://my-collector:4317",
+            headers={"Authorization": "Bearer secret"},
+        )
+
+    kwargs = create.call_args.kwargs
+    # traces uses a different origin (other-host) -- the programmatic credential is withheld.
+    assert kwargs["traces_headers"] == {}
+    # metrics/logs still use the programmatic base endpoint's origin -- credential is attached.
+    assert kwargs["metrics_headers"] == {"Authorization": "Bearer secret"}
+    assert kwargs["logs_headers"] == {"Authorization": "Bearer secret"}
+
+
+def test_get_exporters_from_env_env_only_headers_unaffected_by_origin_guard(monkeypatch):
+    """The origin-mismatch guard only applies to the new programmatic otlp_endpoint/otlp_headers
+    parameters; pure env-var-driven configuration keeps its existing, spec-conformant behavior of
+    applying OTEL_EXPORTER_OTLP_HEADERS to every signal regardless of which endpoint it uses.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://my-collector:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer env-secret")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://other-host:4317")
+    for key in ("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env()
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["traces_headers"] == {"Authorization": "Bearer env-secret"}
 
 
 # region Test create_resource
@@ -1319,6 +1458,34 @@ def test_create_resource_attributes_param_avoids_keyword_collision(monkeypatch):
     assert resource.attributes["service.name"] == "checkout"
     # The non-colliding key still makes it into the resource, under its literal name.
     assert resource.attributes["env_file_path"] == "from-dict"
+
+
+def test_create_resource_attributes_param_backward_compatible_non_mapping():
+    """create_resource(attributes=<non-mapping>) must keep its pre-existing meaning.
+
+    Regression test for a PR review comment: before `attributes` was a dedicated parameter, it
+    was only reachable through **kwargs, so `create_resource(attributes="some_value")` set a
+    literal resource attribute named "attributes" with that string value. Now that `attributes`
+    is a named parameter documented to accept a mapping, a non-mapping value must not be handed
+    to `dict.update()` (which would raise `ValueError: dictionary update sequence element #0 has
+    length 1; 2 is required` for a string) -- the old call shape must keep working unchanged.
+    """
+    from agent_framework.observability import create_resource
+
+    resource = create_resource(attributes="some_value")
+
+    assert resource.attributes["attributes"] == "some_value"
+
+
+def test_create_resource_attributes_param_mapping_form():
+    """create_resource(attributes={...}) merges the mapping's entries as resource attributes."""
+    from agent_framework.observability import create_resource
+
+    resource = create_resource(attributes={"deployment_environment": "production", "team": "platform"})
+
+    assert resource.attributes["deployment_environment"] == "production"
+    assert resource.attributes["team"] == "platform"
+    assert "attributes" not in resource.attributes
 
 
 # region Test _create_otlp_exporters

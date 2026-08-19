@@ -36,6 +36,7 @@ from typing import (
     cast,
     overload,
 )
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from opentelemetry import metrics, trace
@@ -402,6 +403,29 @@ def _parse_headers(header_str: str) -> dict[str, str]:
     return headers
 
 
+@contextlib.contextmanager
+def _shield_env(*names: str) -> Generator[None, None, None]:
+    """Temporarily hide the given environment variables.
+
+    The raw OTLP exporter constructors (grpc and http) fall back to reading
+    OTEL_EXPORTER_OTLP_HEADERS (and, for the http exporters, the signal-specific
+    OTEL_EXPORTER_OTLP_*_HEADERS too) themselves whenever the ``headers=`` argument they were
+    given is falsy — and an *explicitly empty* dict (``{}``) is just as falsy as ``None`` to
+    that check. So once we've already authoritatively resolved a signal's headers ourselves
+    (merging any programmatic override with the relevant env vars), we must prevent the
+    exporter's own env lookup from re-introducing a credential we intentionally left out —
+    otherwise ``otlp_headers={}`` would not actually suppress an environment-configured header.
+    """
+    sentinel = object()
+    previous: dict[str, str | object] = {name: os.environ.pop(name, sentinel) for name in names}
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if isinstance(value, str):
+                os.environ[name] = value
+
+
 def _grpc_compression(compression: str | None) -> Any:
     """Map a compression name ("gzip"/"deflate"/"none") to the grpc.Compression enum."""
     if compression is None:
@@ -432,6 +456,28 @@ def _http_compression(compression: str | None) -> Any:
         }[compression.lower()]
     except KeyError as exc:
         raise ValueError(f"Invalid compression '{compression}'. Expected 'gzip', 'deflate' or 'none'.") from exc
+
+
+def _construct_otlp_exporter(
+    exporter_cls: Any,
+    endpoint: str,
+    headers: dict[str, str] | None,
+    timeout: float | None,
+    compression: Any,
+    *headers_env_vars: str,
+) -> Any:
+    """Construct one OTLP exporter, shielding it from re-reading header env vars we've already resolved ourselves.
+
+    When `headers` is not None, it is an authoritative, already-fully-resolved value (even if
+    it's `{}`) — see `_shield_env` for why that value alone can't be trusted to suppress the
+    exporter constructor's own env fallback, and why `headers_env_vars` must be hidden for the
+    duration of the call. When `headers` is None, no resolution was attempted for this signal
+    (the caller has no opinion), so the exporter is left free to resolve headers from env itself.
+    """
+    if headers is not None:
+        with _shield_env(*headers_env_vars):
+            return exporter_cls(endpoint=endpoint, headers=headers, timeout=timeout, compression=compression)
+    return exporter_cls(endpoint=endpoint, headers=None, timeout=timeout, compression=compression)
 
 
 def _create_otlp_exporters(
@@ -472,13 +518,20 @@ def _create_otlp_exporters(
         ImportError: If the required OTLP exporter package is not installed.
         ValueError: If `compression` is not a recognized value.
     """
-    # Determine actual endpoints and headers to use
+    # Determine actual endpoints to use
     actual_traces_endpoint = traces_endpoint or endpoint
     actual_metrics_endpoint = metrics_endpoint or endpoint
     actual_logs_endpoint = logs_endpoint or endpoint
-    actual_traces_headers = traces_headers or headers
-    actual_metrics_headers = metrics_headers or headers
-    actual_logs_headers = logs_headers or headers
+
+    # Determine actual headers to use. `is not None` (not `or`) matters here: a caller that
+    # authoritatively resolved a signal's headers to an *empty* dict (e.g. because they passed
+    # `otlp_headers={}` to explicitly suppress an environment-configured credential) must have
+    # that `{}` preserved rather than falling through to `headers`/env — see `_shield_env` below
+    # for why an empty dict alone isn't sufficient to stop the exporter constructors from
+    # re-reading the env var themselves.
+    actual_traces_headers = traces_headers if traces_headers is not None else headers
+    actual_metrics_headers = metrics_headers if metrics_headers is not None else headers
+    actual_logs_headers = logs_headers if logs_headers is not None else headers
 
     exporters: list[LogRecordExporter | SpanExporter | MetricExporter] = []
 
@@ -505,31 +558,39 @@ def _create_otlp_exporters(
 
         grpc_compression = _grpc_compression(compression)
 
+        # The raw grpc exporter classes only read the base OTEL_EXPORTER_OTLP_HEADERS
+        # themselves (not a signal-specific one), but shield it regardless of signal.
         if actual_logs_endpoint:
             exporters.append(
-                GRPCLogExporter(
-                    endpoint=actual_logs_endpoint,
-                    headers=actual_logs_headers if actual_logs_headers else None,
-                    timeout=timeout,
-                    compression=grpc_compression,
+                _construct_otlp_exporter(
+                    GRPCLogExporter,
+                    actual_logs_endpoint,
+                    actual_logs_headers,
+                    timeout,
+                    grpc_compression,
+                    "OTEL_EXPORTER_OTLP_HEADERS",
                 )
             )
         if actual_traces_endpoint:
             exporters.append(
-                GRPCSpanExporter(
-                    endpoint=actual_traces_endpoint,
-                    headers=actual_traces_headers if actual_traces_headers else None,
-                    timeout=timeout,
-                    compression=grpc_compression,
+                _construct_otlp_exporter(
+                    GRPCSpanExporter,
+                    actual_traces_endpoint,
+                    actual_traces_headers,
+                    timeout,
+                    grpc_compression,
+                    "OTEL_EXPORTER_OTLP_HEADERS",
                 )
             )
         if actual_metrics_endpoint:
             exporters.append(
-                GRPCMetricExporter(
-                    endpoint=actual_metrics_endpoint,
-                    headers=actual_metrics_headers if actual_metrics_headers else None,
-                    timeout=timeout,
-                    compression=grpc_compression,
+                _construct_otlp_exporter(
+                    GRPCMetricExporter,
+                    actual_metrics_endpoint,
+                    actual_metrics_headers,
+                    timeout,
+                    grpc_compression,
+                    "OTEL_EXPORTER_OTLP_HEADERS",
                 )
             )
 
@@ -553,31 +614,42 @@ def _create_otlp_exporters(
 
         http_compression = _http_compression(compression)
 
+        # Unlike the grpc exporters, the http exporter classes also read a signal-specific
+        # OTEL_EXPORTER_OTLP_*_HEADERS env var internally, so shield that one too.
         if actual_logs_endpoint:
             exporters.append(
-                HTTPLogExporter(
-                    endpoint=actual_logs_endpoint,
-                    headers=actual_logs_headers if actual_logs_headers else None,
-                    timeout=timeout,
-                    compression=http_compression,
+                _construct_otlp_exporter(
+                    HTTPLogExporter,
+                    actual_logs_endpoint,
+                    actual_logs_headers,
+                    timeout,
+                    http_compression,
+                    "OTEL_EXPORTER_OTLP_HEADERS",
+                    "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
                 )
             )
         if actual_traces_endpoint:
             exporters.append(
-                HTTPSpanExporter(
-                    endpoint=actual_traces_endpoint,
-                    headers=actual_traces_headers if actual_traces_headers else None,
-                    timeout=timeout,
-                    compression=http_compression,
+                _construct_otlp_exporter(
+                    HTTPSpanExporter,
+                    actual_traces_endpoint,
+                    actual_traces_headers,
+                    timeout,
+                    http_compression,
+                    "OTEL_EXPORTER_OTLP_HEADERS",
+                    "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
                 )
             )
         if actual_metrics_endpoint:
             exporters.append(
-                HTTPMetricExporter(
-                    endpoint=actual_metrics_endpoint,
-                    headers=actual_metrics_headers if actual_metrics_headers else None,
-                    timeout=timeout,
-                    compression=http_compression,
+                _construct_otlp_exporter(
+                    HTTPMetricExporter,
+                    actual_metrics_endpoint,
+                    actual_metrics_headers,
+                    timeout,
+                    http_compression,
+                    "OTEL_EXPORTER_OTLP_HEADERS",
+                    "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
                 )
             )
 
@@ -622,6 +694,16 @@ def _get_exporters_from_env(
         those environment variables themselves whenever the corresponding constructor
         argument is left unset. Callers needing programmatic control over those options
         can construct exporters directly and pass them via ``configure_otel_providers(exporters=...)``.
+
+    Note:
+        If both ``endpoint`` and ``headers`` are given programmatically, those headers are
+        withheld from any signal whose endpoint resolves to a different origin (scheme, host or
+        port) than ``endpoint`` — e.g. because ``OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`` happens to
+        point elsewhere. This prevents a credential meant for one collector from being sent to a
+        different, unintended host. It does not apply when configuration is purely
+        env-var-driven (``OTEL_EXPORTER_OTLP_ENDPOINT`` + ``OTEL_EXPORTER_OTLP_HEADERS``), which
+        keeps its existing, spec-conformant behavior of applying headers to all signals
+        regardless of which endpoint they use.
 
     Args:
         env_file_path: Path to a .env file to load environment variables from.
@@ -684,29 +766,60 @@ def _get_exporters_from_env(
     # Get base headers (explicit parameter takes precedence over the env var)
     base_headers = headers if headers is not None else _parse_headers(os.getenv("OTEL_EXPORTER_OTLP_HEADERS", ""))
 
+    # If the caller passed *both* a programmatic base endpoint and base headers (i.e. the
+    # otlp_endpoint=/otlp_headers= parameters, not env vars), don't let those headers follow a
+    # signal whose endpoint resolves to a different origin — e.g. because a stray
+    # OTEL_EXPORTER_OTLP_TRACES_ENDPOINT happens to point elsewhere. Otherwise a credential
+    # meant for one collector could be sent to a different, unintended host. This only guards
+    # the new programmatic parameters: env-var-only configuration (OTEL_EXPORTER_OTLP_ENDPOINT +
+    # OTEL_EXPORTER_OTLP_HEADERS) keeps its existing, spec-conformant behavior of applying
+    # headers to all signals regardless of which endpoint they use.
+    programmatic_origin = _url_origin(endpoint) if (endpoint is not None and headers is not None) else None
+
+    def _signal_base_headers(resolved_endpoint: str | None) -> dict[str, str]:
+        if programmatic_origin is not None and _url_origin(resolved_endpoint) != programmatic_origin:
+            return {}
+        return base_headers
+
     # Get signal-specific headers (these merge with, and take precedence over, base headers)
     traces_headers_str = os.getenv("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "")
     metrics_headers_str = os.getenv("OTEL_EXPORTER_OTLP_METRICS_HEADERS", "")
     logs_headers_str = os.getenv("OTEL_EXPORTER_OTLP_LOGS_HEADERS", "")
 
-    traces_headers = {**base_headers, **_parse_headers(traces_headers_str)}
-    metrics_headers = {**base_headers, **_parse_headers(metrics_headers_str)}
-    logs_headers = {**base_headers, **_parse_headers(logs_headers_str)}
+    traces_headers = {**_signal_base_headers(traces_endpoint), **_parse_headers(traces_headers_str)}
+    metrics_headers = {**_signal_base_headers(metrics_endpoint), **_parse_headers(metrics_headers_str)}
+    logs_headers = {**_signal_base_headers(logs_endpoint), **_parse_headers(logs_headers_str)}
 
     # Create exporters using helper function. `timeout`/`compression` are forwarded as-is
     # (including None) — when None, the underlying OTLP exporter classes resolve them from
-    # OTEL_EXPORTER_OTLP_TIMEOUT / OTEL_EXPORTER_OTLP_COMPRESSION themselves.
+    # OTEL_EXPORTER_OTLP_TIMEOUT / OTEL_EXPORTER_OTLP_COMPRESSION themselves. The header dicts
+    # are forwarded as-is too (even when empty) rather than collapsed to None — see
+    # `_construct_otlp_exporter`/`_shield_env` for why that distinction matters: an empty dict
+    # here means "we've authoritatively resolved this signal's headers to nothing", not
+    # "we have no opinion, the exporter may check the env var itself".
     return _create_otlp_exporters(
         protocol=resolved_protocol,
         traces_endpoint=traces_endpoint,
-        traces_headers=traces_headers if traces_headers else None,
+        traces_headers=traces_headers,
         metrics_endpoint=metrics_endpoint,
-        metrics_headers=metrics_headers if metrics_headers else None,
+        metrics_headers=metrics_headers,
         logs_endpoint=logs_endpoint,
-        logs_headers=logs_headers if logs_headers else None,
+        logs_headers=logs_headers,
         timeout=timeout,
         compression=compression,
     )
+
+
+def _url_origin(url: str | None) -> tuple[str, str | None, int | None] | None:
+    """Return (scheme, hostname, port) for `url`, or None if `url` is falsy.
+
+    Used to compare endpoints by origin (ignoring path) so an HTTP endpoint's auto-appended
+    ``/v1/{traces,metrics,logs}`` suffix doesn't register as a different origin.
+    """
+    if not url:
+        return None
+    parsed = urlparse(url)
+    return (parsed.scheme, parsed.hostname, parsed.port)
 
 
 def create_resource(
@@ -714,7 +827,7 @@ def create_resource(
     service_version: str | None = None,
     env_file_path: str | None = None,
     env_file_encoding: str | None = None,
-    attributes: dict[str, Any] | None = None,
+    attributes: Mapping[str, Any] | Any = None,
     **kwargs: Any,
 ) -> Resource:
     """Create an OpenTelemetry Resource from environment variables and parameters.
@@ -741,12 +854,17 @@ def create_resource(
             Default is None, which does not load a .env file.
         env_file_encoding: Encoding to use when reading the .env file.
             Default is None, which uses the system default encoding.
-        attributes: Additional resource attributes to include, as a dictionary. Prefer this
-            over `**kwargs` when the attribute keys come from caller-controlled data (e.g. a
-            dict that might happen to contain a key like "service_name" or "env_file_path"),
-            since `**kwargs` keys share the keyword namespace with this function's own
-            parameters and would raise `TypeError` on a collision. Merged with (and taking
-            precedence over) attributes from the OTEL_RESOURCE_ATTRIBUTES environment variable.
+        attributes: Additional resource attributes to include, as a mapping. Prefer this over
+            `**kwargs` when the attribute keys come from caller-controlled data (e.g. a dict
+            that might happen to contain a key like "service_name" or "env_file_path"), since
+            `**kwargs` keys share the keyword namespace with this function's own parameters and
+            would raise `TypeError` on a collision. Merged with (and taking precedence over)
+            attributes from the OTEL_RESOURCE_ATTRIBUTES environment variable.
+            For backward compatibility with versions where `attributes` had no dedicated
+            parameter (and was only reachable as part of `**kwargs`, i.e.
+            `create_resource(attributes=<value>)` set a literal resource attribute named
+            "attributes"), a non-mapping value is treated the same way: as the value of a
+            resource attribute literally named "attributes", not merged as a mapping.
         **kwargs: Additional resource attributes to include, as keyword arguments. Merged
             with (and taking precedence over) attributes from the OTEL_RESOURCE_ATTRIBUTES
             environment variable and `attributes`.
@@ -794,8 +912,15 @@ def create_resource(
     if resource_attrs_env := os.getenv("OTEL_RESOURCE_ATTRIBUTES"):
         resource_attributes.update(_parse_headers(resource_attrs_env))
 
-    if attributes:
-        resource_attributes.update(attributes)
+    if attributes is not None:
+        if isinstance(attributes, Mapping):
+            resource_attributes.update(attributes)
+        else:
+            # Backward compatibility: before `attributes` was a dedicated parameter, it was
+            # only reachable via **kwargs — `create_resource(attributes=<value>)` set a
+            # literal resource attribute named "attributes". Preserve that call shape for any
+            # non-mapping value instead of raising when `dict.update()` rejects it.
+            resource_attributes["attributes"] = attributes
     resource_attributes.update(kwargs)
 
     if service_name is None:
