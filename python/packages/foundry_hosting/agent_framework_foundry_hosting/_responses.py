@@ -165,7 +165,7 @@ class _SignalledIterator(Generic[_T]):
         """
         return self._signalled
 
-    def __aiter__(self) -> "_SignalledIterator[_T]":
+    def __aiter__(self) -> _SignalledIterator[_T]:
         return self
 
     async def _drive(self) -> None:
