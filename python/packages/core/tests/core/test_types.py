@@ -36,6 +36,7 @@ from agent_framework._compaction import (
     GROUP_TOKEN_COUNT_KEY,
 )
 from agent_framework._types import (
+    _append_instructions,
     _get_data_bytes,
     _get_data_bytes_as_str,
     _parse_content_list,
@@ -1426,6 +1427,65 @@ def test_chat_options_merge(tool_tool, ai_tool) -> None:
     assert options3.get("tools") == [tool_tool, ai_tool]  # tools are combined
     assert options3.get("logit_bias") == {"x": 1}  # base value preserved
     assert options3.get("metadata") == {"a": "b"}  # base value preserved
+
+
+def test_append_instructions_combines_plain_strings() -> None:
+    """String instructions are concatenated with a newline."""
+    assert _append_instructions("Base.", "Added.") == "Base.\nAdded."
+
+
+def test_append_instructions_returns_the_populated_side_when_one_is_empty() -> None:
+    """An empty base or addition leaves the other side untouched."""
+    blocks = [{"type": "text", "text": "Base."}]
+
+    assert _append_instructions(None, "Added.") == "Added."
+    assert _append_instructions("Base.", None) == "Base."
+    assert _append_instructions([], "Added.") == "Added."
+    assert _append_instructions(blocks, "") == blocks
+
+
+def test_append_instructions_preserves_structured_instructions() -> None:
+    """A structured base is extended element-wise instead of being coerced to a string."""
+    blocks = [
+        {"type": "text", "text": "Stable.", "block_options": {"pinned": True}},
+        {"type": "text", "text": "Dynamic."},
+    ]
+
+    combined = _append_instructions(blocks, "Added.")
+
+    # The leading blocks must stay unchanged for providers that treat them as a stable prefix.
+    assert combined == [*blocks, "Added."]
+    assert blocks == [
+        {"type": "text", "text": "Stable.", "block_options": {"pinned": True}},
+        {"type": "text", "text": "Dynamic."},
+    ]
+
+
+def test_append_instructions_promotes_a_string_base_when_the_addition_is_structured() -> None:
+    """A string base becomes the first element when structured instructions are appended."""
+    assert _append_instructions("Base.", [{"type": "text", "text": "Added."}]) == [
+        "Base.",
+        {"type": "text", "text": "Added."},
+    ]
+
+
+def test_append_instructions_treats_a_single_mapping_as_one_element() -> None:
+    """A lone structured block is appended whole, not iterated into its keys."""
+    block = {"type": "text", "text": "Stable.", "block_options": {"pinned": True}}
+
+    assert _append_instructions(block, "Added.") == [block, "Added."]
+    assert _append_instructions("Base.", block) == ["Base.", block]
+
+
+def test_chat_options_merge_preserves_structured_instructions() -> None:
+    """merge_chat_options must not stringify provider-native structured instructions."""
+    blocks = [{"type": "text", "text": "Stable.", "block_options": {"pinned": True}}]
+    base: ChatOptions = {"instructions": blocks}  # type: ignore[typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    override: ChatOptions = {"instructions": "Added."}
+
+    merged = merge_chat_options(base, override)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    assert merged.get("instructions") == [*blocks, "Added."]
 
 
 def test_chat_options_and_tool_choice_override() -> None:

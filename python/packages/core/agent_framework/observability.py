@@ -2338,16 +2338,29 @@ def _start_streaming_span(attributes: dict[str, Any], span_name_attribute: str) 
 
 
 def _get_instructions_from_options(options: Any) -> str | list[str] | None:
-    """Extract instructions from options dict."""
-    if options is None:
+    """Extract instructions from options dict.
+
+    Chat clients may widen instructions to a provider-native structured form, so structured entries
+    contribute only their ``text`` value to keep provider metadata out of the span.
+    """
+    if not isinstance(options, Mapping):
         return None
-    if isinstance(options, Mapping):
-        instructions = cast(Mapping[str, Any], options).get("instructions")
-        if isinstance(instructions, str):
-            return instructions
-        if isinstance(instructions, list) and all(isinstance(item, str) for item in instructions):  # type: ignore
-            return instructions  # type: ignore[reportUnknownVariableType]
-        return None
+    instructions = cast(Mapping[str, Any], options).get("instructions")
+    if isinstance(instructions, str):
+        return instructions
+    if isinstance(instructions, Mapping):
+        text = cast(Mapping[str, Any], instructions).get("text")
+        return text if isinstance(text, str) else None
+    if isinstance(instructions, Sequence):
+        extracted: list[str] = []
+        for item in cast(Sequence[Any], instructions):
+            if isinstance(item, str):
+                extracted.append(item)
+            elif isinstance(item, Mapping):
+                text = cast(Mapping[str, Any], item).get("text")
+                if isinstance(text, str):
+                    extracted.append(text)
+        return extracted or None
     return None
 
 

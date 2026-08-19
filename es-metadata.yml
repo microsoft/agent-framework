@@ -1,0 +1,12 @@
+schemaVersion: 1.0.0
+providers:
+- provider: InventoryAsCode
+  version: 1.0.0
+  metadata:
+    isProduction: true
+    accountableOwners:
+      service: 69587e29-ab55-4ccf-9e95-bff8d5a945fd
+    routing:
+      defaultAreaPath:
+        org: msdata
+        path: Vienna\Agent Framework Team

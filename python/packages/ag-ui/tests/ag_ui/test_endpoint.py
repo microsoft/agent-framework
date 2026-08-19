@@ -7,7 +7,8 @@ import json
 import subprocess
 import sys
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from inspect import signature
 from typing import Any, cast
 
@@ -40,6 +41,8 @@ from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ign
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.params import Depends
 from fastapi.testclient import TestClient
+from starlette.types import Message as ASGIMessage
+from starlette.types import Receive, Scope, Send
 
 from agent_framework_ag_ui import (
     AGUIRequest,
@@ -56,6 +59,50 @@ from agent_framework_ag_ui._workflow import AgentFrameworkWorkflow
 def _decode_sse_events(response: Any) -> list[dict[str, Any]]:
     content = response.content.decode("utf-8")
     return [json.loads(line[6:]) for line in content.splitlines() if line.startswith("data: ")]
+
+
+async def _post_until_sse_event_then_disconnect(
+    app: FastAPI,
+    path: str,
+    payload: dict[str, Any],
+    *,
+    event_type: str,
+) -> None:
+    """Run one ASGI request until an SSE event is sent, then disconnect the client."""
+    request_sent = False
+    disconnect = asyncio.Event()
+    body = json.dumps(payload).encode()
+
+    async def receive() -> ASGIMessage:
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await disconnect.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: ASGIMessage) -> None:
+        if message["type"] != "http.response.body":
+            return
+        chunk = message.get("body", b"")
+        if isinstance(chunk, bytes) and f'"type":"{event_type}"'.encode() in chunk:
+            disconnect.set()
+
+    scope: Scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"content-type", b"application/json"), (b"host", b"testserver")],
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+    }
+    await asyncio.wait_for(app(scope, cast(Receive, receive), cast(Send, send)), timeout=5)
 
 
 def _run_finished_interrupts(event: dict[str, Any]) -> list[dict[str, Any]]:
@@ -86,6 +133,57 @@ def _latest_messages_snapshot(response: Any) -> list[dict[str, Any]]:
     ]
     assert snapshots
     return snapshots[-1]
+
+
+def _build_server_guard_endpoint(
+    streaming_chat_client_stub: Any,
+    *,
+    first_provider_response: str,
+    server_tool_enabled: bool,
+) -> tuple[TestClient, Agent, FunctionTool, list[str]]:
+    server_executions: list[str] = []
+    provider_calls = 0
+
+    def server_guard() -> str:
+        server_executions.append("executed")
+        return "server guard executed"
+
+    async def stream_fn(
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal provider_calls
+        del messages, options, kwargs
+        provider_calls += 1
+        if provider_calls == 1 and first_provider_response == "text":
+            yield ChatResponseUpdate(contents=[Content.from_text(text="Client tools accepted.")], role="assistant")
+            return
+        function_call_number = 1 if first_provider_response == "function_call" else 2
+        if provider_calls == function_call_number:
+            yield ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call-server-guard",
+                        name="server_guard",
+                        arguments={},
+                    )
+                ],
+                role="assistant",
+            )
+            return
+        yield ChatResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")
+
+    server_tool = FunctionTool(name="server_guard", description="Server guard", func=server_guard)
+    agent = Agent(
+        name="test_agent",
+        instructions="Test",
+        client=streaming_chat_client_stub(stream_fn),
+        tools=[server_tool] if server_tool_enabled else [],
+    )
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, agent, path="/agent")
+    return TestClient(app), agent, server_tool, server_executions
 
 
 @pytest.fixture
@@ -126,6 +224,96 @@ async def test_add_endpoint_with_wrapped_agent(build_chat_client):
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+
+
+async def test_endpoint_failed_client_tool_collision_does_not_affect_next_request(
+    streaming_chat_client_stub,
+) -> None:
+    """A rejected client-tool declaration cannot suppress a server tool on the next request."""
+    client, _, _, server_executions = _build_server_guard_endpoint(
+        streaming_chat_client_stub,
+        first_provider_response="function_call",
+        server_tool_enabled=True,
+    )
+
+    with client:
+        collision_response = client.post(
+            "/agent",
+            json={
+                "runId": "run-collision",
+                "threadId": "attacker-thread",
+                "messages": [{"role": "user", "content": "Declare a colliding client tool"}],
+                "tools": [
+                    {
+                        "name": "server_guard",
+                        "description": "Client-controlled collision",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+            },
+        )
+        collision_events = _decode_sse_events(collision_response)
+        assert [event for event in collision_events if event.get("type") == "RUN_ERROR"]
+
+        next_response = client.post(
+            "/agent",
+            json={
+                "runId": "run-next",
+                "threadId": "victim-thread",
+                "messages": [{"role": "user", "content": "Run the server guard"}],
+            },
+        )
+
+        assert next_response.status_code == 200
+        next_events = _decode_sse_events(next_response)
+        assert not [event for event in next_events if event.get("type") == "RUN_ERROR"]
+        assert server_executions == ["executed"]
+        assert "Done." in [event["delta"] for event in next_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+
+
+async def test_endpoint_client_tools_do_not_persist_into_next_request(
+    streaming_chat_client_stub,
+) -> None:
+    """Client tool declarations are request-scoped on a shared agent."""
+    client, agent, server_tool, server_executions = _build_server_guard_endpoint(
+        streaming_chat_client_stub,
+        first_provider_response="text",
+        server_tool_enabled=False,
+    )
+
+    with client:
+        client_tool_response = client.post(
+            "/agent",
+            json={
+                "runId": "run-client-tools",
+                "threadId": "first-thread",
+                "messages": [{"role": "user", "content": "Use a client tool"}],
+                "tools": [
+                    {
+                        "name": "server_guard",
+                        "description": "Client-side guard",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+            },
+        )
+        assert not [event for event in _decode_sse_events(client_tool_response) if event.get("type") == "RUN_ERROR"]
+        agent.default_options["tools"] = [server_tool]
+
+        next_response = client.post(
+            "/agent",
+            json={
+                "runId": "run-next",
+                "threadId": "second-thread",
+                "messages": [{"role": "user", "content": "Run the server guard"}],
+            },
+        )
+
+        assert next_response.status_code == 200
+        next_events = _decode_sse_events(next_response)
+        assert not [event for event in next_events if event.get("type") == "RUN_ERROR"]
+        assert server_executions == ["executed"]
+        assert "Done." in [event["delta"] for event in next_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
 
 
 async def test_add_endpoint_with_workflow_protocol():
@@ -3553,7 +3741,7 @@ async def test_endpoint_agent_approval_mixed_cancelled_and_resolved_resume_execu
     assert "outcome" not in hydrate_events[-1]
 
 
-def _build_workflow_request_info_app() -> FastAPI:
+def _build_flight_choice_workflow() -> Any:
     class FlightChoiceExecutor(Executor):
         def __init__(self) -> None:
             super().__init__(id="flight_choice")
@@ -3572,10 +3760,78 @@ def _build_workflow_request_info_app() -> FastAPI:
             del original_request
             await ctx.yield_output(f"Booked {response['airline']}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
 
+    return WorkflowBuilder(start_executor=FlightChoiceExecutor()).build()
+
+
+def _build_workflow_request_info_app(
+    *,
+    snapshot_scope_resolver: Callable[[AGUIRequest], str] | None = None,
+) -> FastAPI:
     app = FastAPI()
-    workflow = WorkflowBuilder(start_executor=FlightChoiceExecutor()).build()
-    add_agent_framework_fastapi_endpoint(app, workflow, path="/workflow")
+    add_agent_framework_fastapi_endpoint(
+        app,
+        _build_flight_choice_workflow(),
+        path="/workflow",
+        snapshot_scope_resolver=snapshot_scope_resolver,
+    )
     return app
+
+
+async def test_endpoint_workflow_request_info_resumes_dataclass_response_from_json():
+    """Dataclass response types resume from plain JSON payloads, as AG-UI clients send them."""
+
+    @dataclass
+    class PlanReview:
+        review: list[Message]
+
+    class PlanReviewExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="plan_review")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            await ctx.request_info({"plan": "ship it"}, PlanReview, request_id="plan-review")
+
+        @response_handler
+        async def handle_review(
+            self, original_request: dict[str, Any], response: PlanReview, ctx: WorkflowContext[Any, Any]
+        ) -> None:
+            del original_request
+            verdict = "approved" if not response.review else response.review[0].text
+            await ctx.yield_output(f"Plan {verdict}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app, WorkflowBuilder(start_executor=PlanReviewExecutor()).build(), path="/workflow"
+    )
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-plan",
+                "messages": [{"role": "user", "content": "Draft a plan"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+        resume_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-resume",
+                "threadId": "thread-plan",
+                "messages": [],
+                "resume": [{"interruptId": "plan-review", "status": "resolved", "payload": {"review": []}}],
+            },
+        )
+
+        assert resume_response.status_code == 200
+        resume_events = _decode_sse_events(resume_response)
+        assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+        text_deltas = [event["delta"] for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert "Plan approved" in text_deltas
 
 
 async def test_endpoint_workflow_request_info_emits_canonical_interrupt_and_resumes():
@@ -3628,6 +3884,707 @@ async def test_endpoint_workflow_request_info_emits_canonical_interrupt_and_resu
         text_deltas = [event["delta"] for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
         assert "Booked KLM" in text_deltas
         assert "outcome" not in [event for event in resume_events if event.get("type") == "RUN_FINISHED"][-1]
+
+
+async def test_endpoint_workflow_request_info_rejects_resume_from_different_thread():
+    """A workflow interrupt can only be resumed by the AG-UI thread that created it."""
+    app = _build_workflow_request_info_app()
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "victim-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+        attacker_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-attacker",
+                "threadId": "attacker-thread",
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "KLM"},
+                    }
+                ],
+            },
+        )
+
+        assert attacker_response.status_code == 200
+        attacker_events = _decode_sse_events(attacker_response)
+        attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
+        assert len(attacker_errors) == 1
+        assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+        assert not [event for event in attacker_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+
+        victim_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-victim-resume",
+                "threadId": "victim-thread",
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "United"},
+                    }
+                ],
+            },
+        )
+
+        assert victim_response.status_code == 200
+        victim_events = _decode_sse_events(victim_response)
+        assert not [event for event in victim_events if event.get("type") == "RUN_ERROR"]
+        text_deltas = [event["delta"] for event in victim_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert "Booked United" in text_deltas
+
+
+async def test_endpoint_workflow_request_info_rejects_replay_from_different_thread():
+    """A different AG-UI thread cannot observe another thread's pending interrupt."""
+    app = _build_workflow_request_info_app()
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "victim-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+        attacker_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-attacker",
+                "threadId": "attacker-thread",
+                "messages": [],
+            },
+        )
+
+        attacker_events = _decode_sse_events(attacker_response)
+        attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
+        assert len(attacker_errors) == 1
+        assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+        assert not [event for event in attacker_events if event.get("type") == "TOOL_CALL_START"]
+
+
+async def test_endpoint_workflow_request_info_rejects_resume_from_different_scope():
+    """A workflow interrupt can only be resumed within the Snapshot Scope that created it."""
+
+    def resolve_scope(request: AGUIRequest) -> str:
+        forwarded_props = request.forwarded_props
+        assert forwarded_props is not None
+        tenant = forwarded_props["tenant"]
+        assert isinstance(tenant, str)
+        return tenant
+
+    app = _build_workflow_request_info_app(snapshot_scope_resolver=resolve_scope)
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "shared-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+                "forwardedProps": {"tenant": "tenant-a"},
+            },
+        )
+        assert pause_response.status_code == 200
+
+        attacker_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-attacker",
+                "threadId": "shared-thread",
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "KLM"},
+                    }
+                ],
+                "forwardedProps": {"tenant": "tenant-b"},
+            },
+        )
+
+        assert attacker_response.status_code == 200
+        attacker_events = _decode_sse_events(attacker_response)
+        attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
+        assert len(attacker_errors) == 1
+        assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+        assert not [event for event in attacker_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+
+
+async def test_endpoint_workflow_request_info_stale_snapshot_does_not_replace_live_owner():
+    """A stale scoped snapshot cannot replace a newer live interrupt owner."""
+
+    def resolve_scope(request: AGUIRequest) -> str:
+        forwarded_props = request.forwarded_props
+        assert forwarded_props is not None
+        tenant = forwarded_props["tenant"]
+        assert isinstance(tenant, str)
+        return tenant
+
+    store = InMemoryAGUIThreadSnapshotStore()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        _build_flight_choice_workflow(),
+        path="/workflow",
+        snapshot_store=store,
+        snapshot_scope_resolver=resolve_scope,
+    )
+
+    with TestClient(app) as client:
+        first_pause = client.post(
+            "/workflow",
+            json={
+                "runId": "run-first-pause",
+                "threadId": "shared-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+                "forwardedProps": {"tenant": "tenant-a"},
+            },
+        )
+        assert first_pause.status_code == 200
+        stale_snapshot = await store.get(scope="tenant-a", thread_id="shared-thread")
+        assert stale_snapshot is not None
+
+        first_cancel = client.post(
+            "/workflow",
+            json={
+                "runId": "run-first-cancel",
+                "threadId": "shared-thread",
+                "messages": [],
+                "resume": [{"interruptId": "flight-choice", "status": "cancelled"}],
+                "forwardedProps": {"tenant": "tenant-a"},
+            },
+        )
+        assert first_cancel.status_code == 200
+
+        second_pause = client.post(
+            "/workflow",
+            json={
+                "runId": "run-second-pause",
+                "threadId": "shared-thread",
+                "messages": [{"role": "user", "content": "Book another flight"}],
+                "forwardedProps": {"tenant": "tenant-b"},
+            },
+        )
+        assert second_pause.status_code == 200
+
+        await store.save(scope="tenant-a", thread_id="shared-thread", snapshot=stale_snapshot)
+        stale_resume = client.post(
+            "/workflow",
+            json={
+                "runId": "run-stale-resume",
+                "threadId": "shared-thread",
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "KLM"},
+                    }
+                ],
+                "forwardedProps": {"tenant": "tenant-a"},
+            },
+        )
+
+        stale_events = _decode_sse_events(stale_resume)
+        stale_errors = [event for event in stale_events if event.get("type") == "RUN_ERROR"]
+        assert len(stale_errors) == 1
+        assert stale_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+
+        live_resume = client.post(
+            "/workflow",
+            json={
+                "runId": "run-live-resume",
+                "threadId": "shared-thread",
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "United"},
+                    }
+                ],
+                "forwardedProps": {"tenant": "tenant-b"},
+            },
+        )
+        live_events = _decode_sse_events(live_resume)
+        assert not [event for event in live_events if event.get("type") == "RUN_ERROR"]
+        text_deltas = [event["delta"] for event in live_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert "Booked United" in text_deltas
+
+
+async def test_endpoint_workflow_request_info_rejects_cancellation_from_different_thread():
+    """A different AG-UI thread cannot cancel another thread's workflow interrupt."""
+    app = _build_workflow_request_info_app()
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "victim-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+        attacker_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-attacker-cancel",
+                "threadId": "attacker-thread",
+                "messages": [],
+                "resume": [{"interruptId": "flight-choice", "status": "cancelled"}],
+            },
+        )
+
+        assert attacker_response.status_code == 200
+        attacker_events = _decode_sse_events(attacker_response)
+        attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
+        assert len(attacker_errors) == 1
+        assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+
+        victim_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-victim-resume",
+                "threadId": "victim-thread",
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "United"},
+                    }
+                ],
+            },
+        )
+        victim_events = _decode_sse_events(victim_response)
+        assert not [event for event in victim_events if event.get("type") == "RUN_ERROR"]
+        text_deltas = [event["delta"] for event in victim_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert "Booked United" in text_deltas
+
+
+async def test_endpoint_workflow_request_info_remains_owned_after_client_disconnect():
+    """Disconnecting after an interrupt is visible does not release its thread ownership."""
+    app = _build_workflow_request_info_app()
+
+    await _post_until_sse_event_then_disconnect(
+        app,
+        "/workflow",
+        {
+            "runId": "run-pause",
+            "threadId": "victim-thread",
+            "messages": [{"role": "user", "content": "Book me a flight"}],
+        },
+        event_type="TOOL_CALL_END",
+    )
+
+    with TestClient(app) as client:
+        attacker_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-attacker",
+                "threadId": "attacker-thread",
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "KLM"},
+                    }
+                ],
+            },
+        )
+
+        attacker_events = _decode_sse_events(attacker_response)
+        attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
+        assert len(attacker_errors) == 1
+        assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+
+
+async def test_endpoint_workflow_request_info_rejects_unowned_pending_interrupt():
+    """An explicitly threaded endpoint cannot claim pending state created outside that endpoint."""
+    workflow = _build_flight_choice_workflow()
+    _ = [
+        event
+        async for event in workflow.run(
+            message=[Message(role="user", contents=[Content.from_text(text="Book me a flight")])],
+            stream=True,
+        )
+    ]
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, workflow, path="/workflow")
+
+    with TestClient(app) as client:
+        attacker_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-attacker",
+                "threadId": "attacker-thread",
+                "messages": [],
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "KLM"},
+                    }
+                ],
+            },
+        )
+
+        attacker_events = _decode_sse_events(attacker_response)
+        attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
+        assert len(attacker_errors) == 1
+        assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+
+
+async def test_endpoint_workflow_checkpoint_resume_rejects_threaded_resume_after_restart():
+    """An explicitly threaded cold checkpoint resume fails closed when ownership is unavailable."""
+    storage = InMemoryCheckpointStorage()
+    first_app = FastAPI()
+    first_workflow = _build_flight_choice_workflow()
+    add_agent_framework_fastapi_endpoint(
+        first_app,
+        first_workflow,
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(first_app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "victim-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+    checkpoints = await storage.list_checkpoints(workflow_name=first_workflow.name)
+    pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
+    assert pending_checkpoints
+    checkpoint_id = max(pending_checkpoints, key=lambda checkpoint: checkpoint.timestamp).checkpoint_id
+
+    second_app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        second_app,
+        _build_flight_choice_workflow(),
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(second_app) as client:
+        attacker_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-attacker",
+                "threadId": "attacker-thread",
+                "messages": [],
+                "forwardedProps": {"checkpointId": checkpoint_id},
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "KLM"},
+                    }
+                ],
+            },
+        )
+
+        attacker_events = _decode_sse_events(attacker_response)
+        attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
+        assert len(attacker_errors) == 1
+        assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+        assert not [event for event in attacker_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+
+
+async def test_endpoint_workflow_checkpoint_resume_same_owner_after_restart():
+    """Checkpoint ownership permits the originating thread to resume after restart."""
+    storage = InMemoryCheckpointStorage()
+    first_app = FastAPI()
+    first_workflow = _build_flight_choice_workflow()
+    add_agent_framework_fastapi_endpoint(
+        first_app,
+        first_workflow,
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(first_app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "victim-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+    checkpoints = await storage.list_checkpoints(workflow_name=first_workflow.name)
+    pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
+    assert pending_checkpoints
+    checkpoint_id = max(pending_checkpoints, key=lambda checkpoint: checkpoint.timestamp).checkpoint_id
+
+    second_app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        second_app,
+        _build_flight_choice_workflow(),
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(second_app) as client:
+        resume_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-resume",
+                "threadId": "victim-thread",
+                "messages": [],
+                "forwardedProps": {"checkpointId": checkpoint_id},
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "KLM"},
+                    }
+                ],
+            },
+        )
+
+        resume_events = _decode_sse_events(resume_response)
+        assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+        text_deltas = [event["delta"] for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert "Booked KLM" in text_deltas
+
+
+async def test_endpoint_workflow_checkpoint_resume_uses_checkpoint_owner_not_live_reused_id():
+    """A live reused interrupt ID cannot authorize a different checkpoint occurrence."""
+    storage = InMemoryCheckpointStorage()
+    first_app = FastAPI()
+    first_workflow = _build_flight_choice_workflow()
+    add_agent_framework_fastapi_endpoint(
+        first_app,
+        first_workflow,
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+    with TestClient(first_app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-tenant-a",
+                "threadId": "tenant-a-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+    checkpoints = await storage.list_checkpoints(workflow_name=first_workflow.name)
+    pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
+    assert pending_checkpoints
+    tenant_a_checkpoint_id = max(pending_checkpoints, key=lambda checkpoint: checkpoint.timestamp).checkpoint_id
+
+    second_app = FastAPI()
+    second_workflow = _build_flight_choice_workflow()
+    add_agent_framework_fastapi_endpoint(
+        second_app,
+        second_workflow,
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+    with TestClient(second_app) as client:
+        tenant_b_pause = client.post(
+            "/workflow",
+            json={
+                "runId": "run-tenant-b",
+                "threadId": "tenant-b-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert tenant_b_pause.status_code == 200
+
+        cross_occurrence_resume = client.post(
+            "/workflow",
+            json={
+                "runId": "run-cross-occurrence",
+                "threadId": "tenant-b-thread",
+                "messages": [],
+                "forwardedProps": {"checkpointId": tenant_a_checkpoint_id},
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "KLM"},
+                    }
+                ],
+            },
+        )
+
+        cross_events = _decode_sse_events(cross_occurrence_resume)
+        cross_errors = [event for event in cross_events if event.get("type") == "RUN_ERROR"]
+        assert len(cross_errors) == 1
+        assert cross_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+
+
+async def test_endpoint_workflow_factory_checkpoint_resume_rejects_different_thread_after_restart():
+    """Workflow-factory checkpoint restore validates the exact checkpoint owner."""
+    storage = InMemoryCheckpointStorage()
+    created_workflows: list[Any] = []
+
+    def workflow_factory(_thread_id: str) -> Any:
+        workflow = _build_flight_choice_workflow()
+        created_workflows.append(workflow)
+        return workflow
+
+    first_app = FastAPI()
+    first_runner = AgentFrameworkWorkflow(workflow_factory=workflow_factory, checkpoint_storage=storage)
+    add_agent_framework_fastapi_endpoint(first_app, first_runner, path="/workflow")
+    with TestClient(first_app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-victim",
+                "threadId": "victim-thread",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+    checkpoints = await storage.list_checkpoints(workflow_name=created_workflows[0].name)
+    pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
+    assert pending_checkpoints
+    checkpoint_id = max(pending_checkpoints, key=lambda checkpoint: checkpoint.timestamp).checkpoint_id
+
+    second_app = FastAPI()
+    second_runner = AgentFrameworkWorkflow(workflow_factory=workflow_factory, checkpoint_storage=storage)
+    add_agent_framework_fastapi_endpoint(second_app, second_runner, path="/workflow")
+    with TestClient(second_app) as client:
+        attacker_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-attacker",
+                "threadId": "attacker-thread",
+                "messages": [],
+                "forwardedProps": {"checkpointId": checkpoint_id},
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "KLM"},
+                    }
+                ],
+            },
+        )
+
+        attacker_events = _decode_sse_events(attacker_response)
+        attacker_errors = [event for event in attacker_events if event.get("type") == "RUN_ERROR"]
+        assert len(attacker_errors) == 1
+        assert attacker_errors[0]["code"] == "WORKFLOW_RESUME_NOT_FOUND"
+
+
+async def test_endpoint_workflow_checkpoint_resume_without_thread_remains_supported():
+    """Legacy unthreaded checkpoint resumes remain compatible after wrapper restart."""
+    storage = InMemoryCheckpointStorage()
+    first_app = FastAPI()
+    first_workflow = _build_flight_choice_workflow()
+    add_agent_framework_fastapi_endpoint(
+        first_app,
+        first_workflow,
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(first_app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "messages": [{"role": "user", "content": "Book me a flight"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+    checkpoints = await storage.list_checkpoints(workflow_name=first_workflow.name)
+    pending_checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint.pending_request_info_events]
+    assert pending_checkpoints
+    checkpoint_id = max(pending_checkpoints, key=lambda checkpoint: checkpoint.timestamp).checkpoint_id
+
+    second_app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        second_app,
+        _build_flight_choice_workflow(),
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(second_app) as client:
+        resume_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-resume",
+                "messages": [],
+                "forwardedProps": {"checkpointId": checkpoint_id},
+                "resume": [
+                    {
+                        "interruptId": "flight-choice",
+                        "status": "resolved",
+                        "payload": {"airline": "KLM"},
+                    }
+                ],
+            },
+        )
+
+        resume_events = _decode_sse_events(resume_response)
+        assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+        text_deltas = [event["delta"] for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert "Booked KLM" in text_deltas
+
+
+async def test_endpoint_workflow_checkpoint_load_failure_emits_protocol_error():
+    """Checkpoint load failures emit RUN_STARTED before a useful RUN_ERROR."""
+    storage = InMemoryCheckpointStorage()
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app,
+        _build_flight_choice_workflow(),
+        path="/workflow",
+        checkpoint_storage=storage,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-missing-checkpoint",
+                "threadId": "thread-1",
+                "messages": [],
+                "forwardedProps": {"checkpointId": "missing-checkpoint"},
+            },
+        )
+
+        events = _decode_sse_events(response)
+        assert [event["type"] for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+        assert events[-1]["code"] == "WORKFLOW_CHECKPOINT_LOAD_FAILED"
+        assert "missing-checkpoint" in events[-1]["message"]
 
 
 async def test_endpoint_workflow_request_info_cancelled_resume_completes_normally():
@@ -5743,10 +6700,25 @@ async def test_workflow_resume_preserves_persisted_history(monkeypatch):
 
     @executor(id="noop")
     async def noop(message: Any, ctx: WorkflowContext[Any, Any]) -> None:
-        del message, ctx
+        del message
+        await ctx.request_info({"agent": "flights"}, str, request_id="interrupt-1")
 
+    workflow = WorkflowBuilder(start_executor=noop).build()
+    _ = [
+        event
+        async for event in workflow.run(
+            message=[Message(role="user", contents=[Content.from_text(text="First question")])],
+            stream=True,
+        )
+    ]
+    pending_events = await workflow_module._pending_request_events(workflow)
+    setattr(
+        pending_events["interrupt-1"],
+        workflow_module._REQUEST_OWNER_ATTRIBUTE,
+        ("tenant-a", "workflow-thread"),
+    )
     runner = AgentFrameworkWorkflow(
-        workflow=WorkflowBuilder(start_executor=noop).build(),
+        workflow=workflow,
         snapshot_store=store,
     )
 

@@ -32,10 +32,8 @@
 #pragma warning disable OPENAI001 // FoundryAITool.CreateHostedMcpToolbox is experimental
 
 using Azure.AI.Projects;
-using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
-using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -48,18 +46,22 @@ Env.TraversePath().Load();
 // When deployed, only (1) is available; the AF-repo sample convention to set (2) at
 // deploy time fails silently because the platform reserves all FOUNDRY_* env-var names
 // and rejects them at agent-create time. Read both, prefer the platform-injected one.
-string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
-    ?? Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
+string endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+    ?? System.Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException(
         "Neither FOUNDRY_PROJECT_ENDPOINT (platform-injected in hosted runtime) " +
         "nor AZURE_AI_PROJECT_ENDPOINT (local-dev convention) is set.");
-string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o";
-string toolboxName = Environment.GetEnvironmentVariable("TOOLBOX_NAME") ?? "auth-paths-toolbox";
-string agentName = Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-toolbox-auth-paths-agent";
+string deploymentName = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+    "gpt-4o")!;
+string toolboxName = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("TOOLBOX_NAME"),
+    "auth-paths-toolbox")!;
+string agentName = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("AGENT_NAME"),
+    "hosted-toolbox-auth-paths-agent")!;
 
-TokenCredential credential = new ChainedTokenCredential(
-    new DevTemporaryTokenCredential(),
-    new DefaultAzureCredential());
+var credential = new DefaultAzureCredential();
 
 // Notes on toolbox wiring — there are two ways to attach a Foundry Toolbox to an agent:
 //   - Server-side "baked-in" (what this sample uses): calling AddFoundryToolboxes(credential, name)
@@ -99,47 +101,10 @@ builder.Services.AddFoundryToolboxes(credential, toolboxName);
 var app = builder.Build();
 app.MapFoundryResponses();
 
-// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry
-// uses so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
-// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
-app.MapDevTemporaryLocalAgentEndpoint();
 
 app.Run();
 
+static string? FirstNonBlank(params string?[] candidates) =>
+    Array.Find(candidates, candidate => !string.IsNullOrWhiteSpace(candidate));
+
 // ── DevTemporaryTokenCredential ───────────────────────────────────────────────
-
-/// <summary>
-/// A <see cref="TokenCredential"/> for local Docker debugging only.
-/// Reads a pre-fetched bearer token from the <c>AZURE_BEARER_TOKEN</c> environment variable
-/// once at startup. This should NOT be used in production.
-///
-/// Generate a token on your host and pass it to the container:
-///   export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-///   docker run -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN ...
-/// </summary>
-internal sealed class DevTemporaryTokenCredential : TokenCredential
-{
-    private const string EnvironmentVariable = "AZURE_BEARER_TOKEN";
-    private readonly string? _token;
-
-    public DevTemporaryTokenCredential()
-    {
-        this._token = Environment.GetEnvironmentVariable(EnvironmentVariable);
-    }
-
-    public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => this.GetAccessToken();
-
-    public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => new(this.GetAccessToken());
-
-    private AccessToken GetAccessToken()
-    {
-        if (string.IsNullOrEmpty(this._token) || this._token == "DefaultAzureCredential")
-        {
-            throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
-        }
-
-        return new AccessToken(this._token, DateTimeOffset.MaxValue);
-    }
-}
