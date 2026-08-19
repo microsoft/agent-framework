@@ -66,6 +66,7 @@ from pathlib import Path, PurePosixPath
 from typing import IO, TYPE_CHECKING, Any, ClassVar, Final, Protocol, TypeAlias, TypeVar, cast, runtime_checkable
 
 from ._feature_stage import ExperimentalFeature, experimental
+from ._filesystem import is_link_or_reparse_point
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import ApprovalMode, FunctionTool
@@ -1814,8 +1815,10 @@ RESOURCE_INSTRUCTIONS: Final[str] = (
 
 SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
     "- Use `run_skill_script` to run referenced scripts, using the name exactly as listed.\n"
-    "- Pass script arguments inside `args` as a JSON object"
+    "- Pass named script arguments inside `args` as a JSON object, including for inline scripts"
     ' (e.g. `args: {"length": 24}`), not as top-level tool parameters.\n'
+    "- For file-based scripts that document CLI-style positional arguments, pass `args` as an array of strings"
+    ' (e.g. `args: ["input.docx", "--output", "result.idx"]`).\n'
 )
 
 # endregion
@@ -2989,8 +2992,8 @@ class FileSkillsSource(SkillsSource):
             return False
 
     @staticmethod
-    def _has_symlink_in_path(path: str, directory: str) -> bool:
-        """Detect symlinks in the portion of *path* below *directory*.
+    def _has_link_or_reparse_point_in_path(path: str, directory: str) -> bool:
+        """Detect links or reparse points in the portion of *path* below *directory*.
 
         Only segments below *directory* are inspected; the directory itself
         and anything above it are not checked.
@@ -3003,7 +3006,8 @@ class FileSkillsSource(SkillsSource):
             directory: Root directory; segments above it are not checked.
 
         Returns:
-            ``True`` if any intermediate segment below *directory* is a symlink.
+            ``True`` if any segment below *directory* is a symbolic link,
+            junction, other reparse point, or cannot be safely inspected.
 
         Raises:
             ValueError: If *path* is not relative to *directory*.
@@ -3017,7 +3021,11 @@ class FileSkillsSource(SkillsSource):
         current = dir_path
         for part in relative.parts:
             current = current / part
-            if current.is_symlink():
+            try:
+                is_link = is_link_or_reparse_point(current)
+            except OSError:
+                return True
+            if is_link:
                 return True
         return False
 
@@ -3098,9 +3106,10 @@ class FileSkillsSource(SkillsSource):
                 )
                 return
 
-            if FileSkillsSource._has_symlink_in_path(resolved_target, root_directory_path):
+            if FileSkillsSource._has_link_or_reparse_point_in_path(resolved_target, root_directory_path):
                 logger.warning(
-                    "Skipping resource directory '%s': symlink detected in path under skill directory '%s'",
+                    "Skipping resource directory '%s': symbolic link or reparse point detected in path under "
+                    "skill directory '%s'",
                     target_dir,
                     root_directory_path,
                 )
@@ -3143,9 +3152,10 @@ class FileSkillsSource(SkillsSource):
                 )
                 continue
 
-            if FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
+            if FileSkillsSource._has_link_or_reparse_point_in_path(resource_full_path, root_directory_path):
                 logger.warning(
-                    "Skipping resource '%s': symlink detected in path under skill directory '%s'",
+                    "Skipping resource '%s': symbolic link or reparse point detected in path under "
+                    "skill directory '%s'",
                     entry,
                     root_directory_path,
                 )
@@ -3251,9 +3261,10 @@ class FileSkillsSource(SkillsSource):
                 )
                 return
 
-            if FileSkillsSource._has_symlink_in_path(resolved_target, root_directory_path):
+            if FileSkillsSource._has_link_or_reparse_point_in_path(resolved_target, root_directory_path):
                 logger.warning(
-                    "Skipping script directory '%s': symlink detected in path under skill directory '%s'",
+                    "Skipping script directory '%s': symbolic link or reparse point detected in path under "
+                    "skill directory '%s'",
                     target_dir,
                     root_directory_path,
                 )
@@ -3293,9 +3304,9 @@ class FileSkillsSource(SkillsSource):
                 )
                 continue
 
-            if FileSkillsSource._has_symlink_in_path(script_full_path, root_directory_path):
+            if FileSkillsSource._has_link_or_reparse_point_in_path(script_full_path, root_directory_path):
                 logger.warning(
-                    "Skipping script '%s': symlink detected in path under skill directory '%s'",
+                    "Skipping script '%s': symbolic link or reparse point detected in path under skill directory '%s'",
                     entry,
                     root_directory_path,
                 )
@@ -3359,8 +3370,11 @@ class FileSkillsSource(SkillsSource):
         if not Path(resource_full_path).is_file():
             raise ValueError(f"Resource file '{resource_name}' not found in skill directory '{skill_dir}'.")
 
-        if FileSkillsSource._has_symlink_in_path(resource_full_path, root_directory_path):
-            raise ValueError(f"Resource file '{resource_name}' has a symlink in its path; symlinks are not allowed.")
+        if FileSkillsSource._has_link_or_reparse_point_in_path(resource_full_path, root_directory_path):
+            raise ValueError(
+                f"Resource file '{resource_name}' has a symbolic link or reparse point in its path; "
+                "links and reparse points are not allowed."
+            )
 
         return resource_full_path
 
@@ -3536,6 +3550,15 @@ class FileSkillsSource(SkillsSource):
         search does not descend into its subdirectories: everything beneath a skill
         boundary is part of that skill, not an independent skill root.
 
+        Discovery fails closed on links: any entry below a configured root that is a
+        symbolic link, junction, other reparse point, or cannot be inspected is skipped
+        and never adopted as a skill root, and a directory whose ``SKILL.md`` is itself
+        such a link is skipped too. Without this check a link below a root would become
+        the skill root, and because every later guard treats the skill root as the trust
+        boundary and only inspects segments below it, the link itself would never be
+        inspected. The configured root paths are not checked: the host chose them
+        explicitly, so they define the trust boundary rather than sit inside it.
+
         Args:
             skill_paths: Root directory paths to search.
 
@@ -3544,11 +3567,26 @@ class FileSkillsSource(SkillsSource):
         """
         discovered: list[str] = []
 
+        def _is_unsafe_link(path: Path) -> bool:
+            try:
+                return is_link_or_reparse_point(path)
+            except OSError:
+                return True
+
         def _search(directory: str, current_depth: int) -> None:
             dir_path = Path(directory)
-            if (dir_path / SKILL_FILE_NAME).is_file():
+            skill_file = dir_path / SKILL_FILE_NAME
+            if skill_file.is_file():
                 # This directory is a skill root. Subdirectories are part of this
                 # skill and must not be treated as independent skill roots.
+                if _is_unsafe_link(skill_file):
+                    logger.warning(
+                        "Skipping skill directory '%s': '%s' is a symbolic link or reparse point, "
+                        "or could not be inspected",
+                        directory,
+                        SKILL_FILE_NAME,
+                    )
+                    return
                 discovered.append(str(dir_path.absolute()))
                 return
 
@@ -3561,6 +3599,13 @@ class FileSkillsSource(SkillsSource):
                 return
 
             for entry in entries:
+                if _is_unsafe_link(entry):
+                    logger.warning(
+                        "Skipping discovery entry '%s': symbolic link or reparse point detected, "
+                        "or the entry could not be inspected",
+                        entry,
+                    )
+                    continue
                 if entry.is_dir():
                     _search(str(entry), current_depth + 1)
 
@@ -4678,16 +4723,16 @@ class _ArchiveEntryLoader:
 
         blob = _mcp_first_blob(result)
         if blob is None:
-            logger.debug("Skipping skill '%s': archive resource returned no binary content", entry.name)
+            logger.warning("Skipping skill '%s': archive resource returned no binary content", entry.name)
             return None
 
         data, mime_type = blob
         if not data:
-            logger.debug("Skipping skill '%s': archive resource returned empty content", entry.name)
+            logger.warning("Skipping skill '%s': archive resource returned empty content", entry.name)
             return None
 
         if len(data) > self._max_size_bytes:
-            logger.debug(
+            logger.warning(
                 "Skipping skill '%s': archive resource exceeds the maximum allowed size (%d bytes)",
                 entry.name,
                 self._max_size_bytes,
@@ -4706,7 +4751,9 @@ class _ArchiveEntryLoader:
         """
         archive_format = _detect_archive_format(data, mime_type, entry.url)
         if archive_format is _ArchiveFormat.UNKNOWN:
-            logger.debug("Skipping skill '%s': unsupported archive media type '%s'", entry.name, mime_type or "(none)")
+            logger.warning(
+                "Skipping skill '%s': unsupported archive media type '%s'", entry.name, mime_type or "(none)"
+            )
             return None
 
         try:
@@ -4723,13 +4770,13 @@ class _ArchiveEntryLoader:
         """Assemble an in-memory :class:`FileSkill` from the archive's extracted files."""
         skill_md_key = self._find_skill_md(files)
         if skill_md_key is None:
-            logger.debug("Skipping skill '%s': archive contains no SKILL.md", entry.name)
+            logger.warning("Skipping skill '%s': archive contains no SKILL.md", entry.name)
             return None
 
         try:
             content = files[skill_md_key].decode("utf-8")
         except UnicodeDecodeError:
-            logger.debug("Skipping skill '%s': SKILL.md is not valid UTF-8", entry.name)
+            logger.warning("Skipping skill '%s': SKILL.md is not valid UTF-8", entry.name)
             return None
 
         frontmatter = FileSkillsSource._extract_frontmatter(  # pyright: ignore[reportPrivateUsage]
@@ -4739,7 +4786,7 @@ class _ArchiveEntryLoader:
             return None
 
         if frontmatter.name != entry.name:
-            logger.debug(
+            logger.warning(
                 "Skipping skill '%s': SKILL.md frontmatter name '%s' does not match the advertised entry name",
                 entry.name,
                 frontmatter.name,

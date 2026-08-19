@@ -335,6 +335,32 @@ class TestWorkflowAgent:
         assert deserialized_args.request_event.data == HandoffRequest(target_agent="helper", reason="overflow")
         assert deserialized_args.request_event.response_type is str
 
+    def test_request_info_function_args_from_dict_accepts_explicit_allowed_types(self) -> None:
+        """Envelope reconstruction forwards exact trusted custom types."""
+
+        @dataclass
+        class ExplicitRequest:
+            prompt: str
+
+        serialized_name = f"{ExplicitRequest.__module__}.{ExplicitRequest.__qualname__}"
+        args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(
+            {
+                "request_id": "request-123",
+                "request_event": {
+                    "type": "request_info",
+                    "data": ExplicitRequest(prompt="Approve?"),
+                    "request_id": "request-123",
+                    "source_executor_id": "review_gateway",
+                    "request_type": serialized_name,
+                    "response_type": "builtins.bool",
+                },
+            },
+            allowed_types={serialized_name: ExplicitRequest},
+        )
+
+        assert type(args.request_event.data) is ExplicitRequest
+        assert args.request_event.response_type is bool
+
     def test_process_request_info_event_passes_through_function_approval_request(self) -> None:
         """If the event data is already a function approval request, it is forwarded unchanged.
 

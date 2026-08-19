@@ -51,13 +51,18 @@ public static class FoundryHostingExtensions
     /// </para>
     /// </remarks>
     /// <param name="services">The service collection.</param>
+    /// <param name="configure">
+    /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
+    /// agent's own service to store the responses it produces.
+    /// </param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryResponses(this IServiceCollection services)
+    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, Action<FoundryResponsesOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddResponsesServer();
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
+        ConfigureFoundryResponsesOptions(services, configure);
         services.TryAddSingleton<AgentSessionStore>(_ => FileSystemAgentSessionStore.CreateDefault());
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
@@ -86,8 +91,16 @@ public static class FoundryHostingExtensions
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
     /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, a file-system session store is used, rooted at <c>/.checkpoints</c> when running in a Foundry hosted environment and <c>{cwd}/.checkpoints</c> locally.</param>
+    /// <param name="configure">
+    /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
+    /// agent's own service to store the responses it produces.
+    /// </param>
     /// <returns>The service collection for chaining.</returns>
-    public static IServiceCollection AddFoundryResponses(this IServiceCollection services, AIAgent agent, AgentSessionStore? agentSessionStore = null)
+    public static IServiceCollection AddFoundryResponses(
+        this IServiceCollection services,
+        AIAgent agent,
+        AgentSessionStore? agentSessionStore = null,
+        Action<FoundryResponsesOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(agent);
@@ -95,6 +108,7 @@ public static class FoundryHostingExtensions
         services.AddResponsesServer();
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
+        ConfigureFoundryResponsesOptions(services, configure);
         agentSessionStore ??= FileSystemAgentSessionStore.CreateDefault();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
@@ -110,6 +124,41 @@ public static class FoundryHostingExtensions
 
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
+    }
+
+    /// <summary>
+    /// Applies the caller's <see cref="FoundryResponsesOptions"/> and registers the readiness check that
+    /// reports an agent configured to have its own service store the responses it produces.
+    /// </summary>
+    /// <remarks>
+    /// The check is registered on the same <c>/readiness</c> pipeline that <see cref="MapFoundryResponses"/>
+    /// maps, so a container that would record the conversation twice never takes traffic.
+    /// <c>AddCheck</c> does not dedupe by name, so a repeated registration is guarded here.
+    /// </remarks>
+    private static void ConfigureFoundryResponsesOptions(IServiceCollection services, Action<FoundryResponsesOptions>? configure)
+    {
+        if (configure is not null)
+        {
+            services.Configure(configure);
+        }
+
+        const string HealthCheckName = "foundry-stored-output";
+        services.Configure<HealthCheckServiceOptions>(opts =>
+        {
+            foreach (var existing in opts.Registrations)
+            {
+                if (string.Equals(existing.Name, HealthCheckName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            opts.Registrations.Add(new HealthCheckRegistration(
+                name: HealthCheckName,
+                factory: sp => ActivatorUtilities.CreateInstance<HostedStoredOutputHealthCheck>(sp),
+                failureStatus: HealthStatus.Unhealthy,
+                tags: ["foundry", "responses", "readiness"]));
+        });
     }
 
     /// <summary>

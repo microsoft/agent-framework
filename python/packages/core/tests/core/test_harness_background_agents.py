@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import Any
 
 import pytest
@@ -542,3 +543,303 @@ def test_task_status_enum_values() -> None:
     assert BackgroundTaskStatus.COMPLETED == "completed"
     assert BackgroundTaskStatus.FAILED == "failed"
     assert BackgroundTaskStatus.LOST == "lost"
+
+
+async def test_release_session_cancels_and_clears() -> None:
+    """Should cancel pending tasks and clear runtime state."""
+    provider = _make_provider(_FakeAgent("Slow", delay=10.0))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Slow",
+        input="task",
+        description="long running",
+    )
+
+    runtime = provider._runtime.get(session.session_id)
+    assert runtime is not None
+    assert len(runtime.in_flight_tasks) == 1
+
+    task = next(iter(runtime.in_flight_tasks.values()))
+
+    await provider.release_session(session, cancel_running=True)
+
+    assert task.done()
+    assert task.cancelled()
+    assert runtime.in_flight_tasks == {}
+    assert runtime.background_sessions == {}
+
+    assert session.session_id not in provider._runtime
+
+
+async def test_release_session_raises_if_cancel_running_false() -> None:
+    """Should raise RuntimeError if cancel_running=False and tasks are pending."""
+    provider = _make_provider(_FakeAgent("Slow", delay=10.0))
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Slow",
+        input="task",
+        description="long running",
+    )
+
+    with pytest.raises(RuntimeError, match="tasks still running"):
+        await provider.release_session(session, cancel_running=False)
+
+    assert session.session_id in provider._runtime
+    await provider.release_session(session, cancel_running=True)
+
+
+async def test_release_session_idempotent() -> None:
+    """Should not raise when releasing an unknown or already released session."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+
+    await provider.release_session(AgentSession(session_id="non_existent_session"))
+
+    await provider.release_session(session)
+    await provider.release_session(session)
+
+
+async def test_release_session_isolation() -> None:
+    """Releasing one session should not affect another."""
+    provider = _make_provider(_FakeAgent("Worker", delay=10.0))
+    session_a = AgentSession(session_id="session_a")
+    session_b = AgentSession(session_id="session_b")
+
+    tools_a = await _get_tools(provider, session_a)
+    tools_b = await _get_tools(provider, session_b)
+
+    await _invoke_tool(
+        tools_a["background_agents_start_task"],
+        agent_name="Worker",
+        input="A",
+        description="A",
+    )
+    await _invoke_tool(
+        tools_b["background_agents_start_task"],
+        agent_name="Worker",
+        input="B",
+        description="B",
+    )
+
+    await provider.release_session(session_a, cancel_running=True)
+
+    assert "session_a" not in provider._runtime
+    assert "session_b" in provider._runtime
+
+    await provider.release_session(session_b, cancel_running=True)
+
+
+async def test_get_runtime_replaces_closed_runtime() -> None:
+    """A closed runtime should be replaced by a new runtime instance."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+
+    old_runtime = provider._get_runtime(session)
+    old_runtime.closed = True
+
+    new_runtime = provider._get_runtime(session)
+
+    assert new_runtime is not old_runtime
+    assert provider._runtime.get(session.session_id) is new_runtime
+
+
+async def test_track_task_rejects_when_runtime_closed() -> None:
+    """Closed runtime should not accept new background tasks."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+
+    runtime = provider._get_runtime(session)
+    runtime.closed = True
+
+    async def _dummy() -> Any:
+        await asyncio.sleep(0)
+
+    task = asyncio.create_task(_dummy())
+
+    with pytest.raises(RuntimeError, match="closed"):
+        runtime.track_task(1, task)
+
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert task.cancelled()
+
+
+async def test_start_task_returns_error_when_runtime_closed() -> None:
+    """background_agents_start_task should refuse to run on a closed runtime."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+
+    tools = await _get_tools(provider, session)
+
+    runtime = provider._get_runtime(session)
+    runtime.closed = True
+
+    result = await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Worker",
+        input="task",
+        description="should not start",
+    )
+
+    assert "being released" in result
+    assert runtime.in_flight_tasks == {}
+
+
+async def test_tools_return_error_when_runtime_closed() -> None:
+    """Mutating/background tools should refuse to run on a closed runtime."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+
+    tools = await _get_tools(provider, session)
+
+    runtime = provider._get_runtime(session)
+    runtime.closed = True
+
+    wait_result = await _invoke_tool(
+        tools["background_agents_wait_for_first_completion"],
+        task_ids=[1],
+    )
+    assert "being released" in wait_result
+
+    continue_result = await _invoke_tool(
+        tools["background_agents_continue_task"],
+        task_id=1,
+        text="continue",
+    )
+    assert "being released" in continue_result
+
+    clear_result = await _invoke_tool(
+        tools["background_agents_clear_completed_task"],
+        task_id=1,
+    )
+    assert "being released" in clear_result
+
+
+async def test_release_session_times_out_if_task_ignores_cancellation() -> None:
+    """release_session should return within bounded time even if task ignores cancel."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+
+    runtime = provider._get_runtime(session)
+    unblock = asyncio.Event()
+
+    async def _ignore_cancel() -> Any:
+        try:
+            await unblock.wait()
+        except asyncio.CancelledError:
+            await unblock.wait()
+            raise
+
+    task = asyncio.create_task(_ignore_cancel())
+    runtime.in_flight_tasks[1] = task
+
+    start = asyncio.get_running_loop().time()
+
+    await asyncio.wait_for(
+        provider.release_session(
+            session,
+            cancel_running=True,
+            timeout=0.05,
+        ),
+        timeout=1.0,
+    )
+
+    elapsed = asyncio.get_running_loop().time() - start
+
+    assert elapsed < 1.0
+    assert session.session_id not in provider._runtime
+
+    unblock.set()
+    with suppress(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
+
+
+async def test_release_session_does_not_pop_replacement_runtime() -> None:
+    """A release of an old runtime should not remove a replacement runtime."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+
+    old_runtime = provider._get_runtime(session)
+    unblock = asyncio.Event()
+
+    async def _blocked_task() -> Any:
+        try:
+            await unblock.wait()
+        except asyncio.CancelledError:
+            await unblock.wait()
+            raise
+
+    task = asyncio.create_task(_blocked_task())
+    old_runtime.in_flight_tasks[1] = task
+
+    release_task = asyncio.create_task(
+        provider.release_session(
+            session,
+            cancel_running=True,
+            timeout=5.0,
+        )
+    )
+
+    for _ in range(100):
+        if old_runtime.closed:
+            break
+        await asyncio.sleep(0)
+
+    assert old_runtime.closed
+
+    new_runtime = provider._get_runtime(session)
+    assert new_runtime is not old_runtime
+
+    unblock.set()
+
+    await asyncio.wait_for(release_task, timeout=1.0)
+
+    assert provider._runtime.get(session.session_id) is new_runtime
+
+    with suppress(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
+
+    await provider.release_session(
+        session,
+        cancel_running=True,
+        timeout=1.0,
+    )
+
+
+async def test_release_session_skips_drain_when_no_pending_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Should not invoke the drain path when there are no pending tasks."""
+    provider = _make_provider(_FakeAgent("Worker"))
+    session = _make_session()
+    runtime = provider._get_runtime(session)
+
+    async def completed_task() -> Any:
+        return None
+
+    task = asyncio.create_task(completed_task())
+    await task
+
+    runtime.in_flight_tasks[1] = task
+
+    drain_called = False
+    original_drain = provider._drain_runtime
+
+    async def fake_drain(*args: Any, **kwargs: Any) -> None:
+        nonlocal drain_called
+        drain_called = True
+        await original_drain(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "_drain_runtime", fake_drain)
+
+    await provider.release_session(session)
+
+    assert drain_called is False
+    assert session.session_id not in provider._runtime

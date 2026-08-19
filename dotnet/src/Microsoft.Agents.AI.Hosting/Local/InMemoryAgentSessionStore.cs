@@ -32,9 +32,9 @@ namespace Microsoft.Agents.AI.Hosting;
 /// or guesses another caller's identifier can resume that other caller's persisted
 /// thread. Multi-user hosts must wrap this store in
 /// <see cref="IsolationKeyScopedAgentSessionStore"/> (typically by calling
-/// <c>UseClaimsBasedSessionIsolation(...)</c> from
+/// <c>UseClaimsBasedAgentIsolation(...)</c> from
 /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c> or by registering a custom
-/// <see cref="SessionIsolationKeyProvider"/>) so that the conversation namespace is
+/// <see cref="AgentIsolationKeyProvider"/>) so that the conversation namespace is
 /// scoped per principal. See the trust-model remarks on
 /// <see cref="AgentSessionStore"/> for the full background.
 /// </para>
