@@ -22,9 +22,10 @@ public static class NestedWorkflow
     /// <returns>A parent workflow containing security and style subworkflows.</returns>
     public static Workflow Create()
     {
+        AnalysisGate gate = new();
         ChatForwardingExecutor start = new("Start");
-        ExecutorBinding security = CreateAnalysisWorkflow("Security").BindAsExecutor("SecurityPipeline");
-        ExecutorBinding style = CreateAnalysisWorkflow("Style").BindAsExecutor("StylePipeline");
+        ExecutorBinding security = CreateAnalysisWorkflow("Security", gate).BindAsExecutor("SecurityPipeline");
+        ExecutorBinding style = CreateAnalysisWorkflow("Style", gate).BindAsExecutor("StylePipeline");
 
         return new WorkflowBuilder(start)
             .AddFanOutEdge(start, [security, style])
@@ -32,11 +33,11 @@ public static class NestedWorkflow
             .Build();
     }
 
-    private static Workflow CreateAnalysisWorkflow(string analysisType)
-        => new SequentialWorkflowBuilder(new AnalysisAgent(analysisType)).Build();
+    private static Workflow CreateAnalysisWorkflow(string analysisType, AnalysisGate gate)
+        => new SequentialWorkflowBuilder(new AnalysisAgent(analysisType, gate)).Build();
 }
 
-internal sealed class AnalysisAgent(string analysisType) : AIAgent
+internal sealed class AnalysisAgent(string analysisType, AnalysisGate gate) : AIAgent
 {
     protected override string? IdCore => "Analyze";
 
@@ -56,7 +57,7 @@ internal sealed class AnalysisAgent(string analysisType) : AIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await Task.Yield();
+        await gate.SignalAndWaitAsync(cancellationToken).ConfigureAwait(false);
         yield return new AgentResponseUpdate(ChatRole.Assistant, $"{analysisType} analysis complete.")
         {
             MessageId = $"{analysisType}-message",
@@ -80,4 +81,20 @@ internal sealed class AnalysisAgent(string analysisType) : AIAgent
         => new(new AnalysisSession());
 
     private sealed class AnalysisSession : AgentSession;
+}
+
+internal sealed class AnalysisGate
+{
+    private readonly TaskCompletionSource _bothStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _startedCount;
+
+    public async Task SignalAndWaitAsync(CancellationToken cancellationToken)
+    {
+        if (Interlocked.Increment(ref this._startedCount) == 2)
+        {
+            this._bothStarted.TrySetResult();
+        }
+
+        await this._bothStarted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
 }
