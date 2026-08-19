@@ -380,6 +380,37 @@ class TestEmitToolResultWithState:
         events = _emit_tool_result(content, flow)
         assert all(e.type != EventType.STATE_SNAPSHOT for e in events)
 
+    def test_predictive_handler_without_pending_updates_emits_no_snapshot(self):
+        """A configured predictive handler must not emit unchanged state for unrelated tools."""
+        flow = FlowState(current_state={"existing": "value"})
+        handler = PredictiveStateHandler(
+            predict_state_config={"draft": {"tool": "write_draft", "tool_argument": "body"}},
+            current_state=flow.current_state,
+        )
+        content = Content.from_function_result(call_id="c1", result="plain")
+
+        events = _emit_tool_result(content, flow, predictive_handler=handler)
+
+        assert all(e.type != EventType.STATE_SNAPSHOT for e in events)
+        assert flow.current_state == {"existing": "value"}
+
+    def test_predictive_handler_with_pending_updates_emits_snapshot(self):
+        """A pending predictive update is applied and emitted as one snapshot."""
+        flow = FlowState(current_state={"existing": "value"})
+        handler = PredictiveStateHandler(
+            predict_state_config={"draft": {"tool": "write_draft", "tool_argument": "body"}},
+            current_state=flow.current_state,
+        )
+        handler.pending_state_updates["draft"] = "updated"
+        content = Content.from_function_result(call_id="c1", result="plain")
+
+        events = _emit_tool_result(content, flow, predictive_handler=handler)
+
+        snapshots = [event for event in events if event.type == EventType.STATE_SNAPSHOT]
+        assert len(snapshots) == 1
+        assert snapshots[0].snapshot == {"existing": "value", "draft": "updated"}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert flow.current_state == {"existing": "value", "draft": "updated"}
+
     def test_tool_result_content_text_unchanged(self):
         """The text sent to the LLM must not leak the state marker."""
         tool_return = state_update(text="Weather: 14°C", state={"weather": {"temp": 14}})

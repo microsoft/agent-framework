@@ -783,6 +783,7 @@ def _emit_tool_result_common(
     # in stream order instead of grouping B with A (moonbox3's replay concern).
     flow.snapshot_segments.append({"kind": "tool_results"})
 
+    predictive_state_updated = bool(predictive_handler and predictive_handler.pending_state_updates)
     if predictive_handler:
         predictive_handler.apply_pending_updates()
 
@@ -795,7 +796,7 @@ def _emit_tool_result_common(
         )
 
     # Emit a single coalesced snapshot when either mechanism updated state.
-    if (predictive_handler or state_update) and flow.current_state:
+    if (predictive_state_updated or state_update) and flow.current_state:
         events.append(StateSnapshotEvent(snapshot=flow.current_state))
 
     flow.tool_call_id = None
