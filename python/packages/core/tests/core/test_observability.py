@@ -3092,7 +3092,7 @@ async def test_chat_client_choice_event_uses_raw_representation_finish_reason(
         if record.log_record.event_name == OtelAttr.CHOICE.value
     ]
     assert len(choice_records) == 1
-    assert choice_records[0].body["finish_reason"] == "stop"
+    assert choice_records[0].body["finish_reason"] == "stop"  # type: ignore
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
