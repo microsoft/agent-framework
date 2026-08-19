@@ -9,7 +9,6 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using AGUI.Abstractions;
 using AGUI.Client;
-using AGUI.Server;
 using AGUI.WorkflowApproval;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows;
