@@ -1,13 +1,16 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipelines;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging.Abstractions;
-using ModelContextProtocol;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Extensions.Tasks;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -20,71 +23,74 @@ namespace Microsoft.Agents.AI.Mcp.UnitTests;
 /// </summary>
 internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
 {
-    private readonly McpServer _server;
+    private readonly ServiceProvider _serviceProvider;
     private readonly Task _serverLoop;
     private readonly CancellationTokenSource _cts;
+    private readonly RecordingMcpTaskStore? _taskStore;
 
     public McpClient Client { get; }
 
-    private InMemoryMcpServerFixture(McpServer server, McpClient client, Task serverLoop, CancellationTokenSource cts)
+    public int CreatedTaskCount => this._taskStore?.CreatedTaskCount ?? 0;
+
+    public int InputRequestCount => this._taskStore?.InputRequestCount ?? 0;
+
+    private InMemoryMcpServerFixture(
+        ServiceProvider serviceProvider,
+        McpClient client,
+        Task serverLoop,
+        CancellationTokenSource cts,
+        RecordingMcpTaskStore? taskStore)
     {
-        this._server = server;
+        this._serviceProvider = serviceProvider;
         this.Client = client;
         this._serverLoop = serverLoop;
         this._cts = cts;
+        this._taskStore = taskStore;
     }
 
     public static async Task<InMemoryMcpServerFixture> CreateAsync(
         McpServerPrimitiveCollection<McpServerTool> tools,
+        bool enableTasks = true,
+        McpClientOptions? clientOptions = null,
         CancellationToken cancellationToken = default)
     {
         Pipe clientToServer = new();
         Pipe serverToClient = new();
 
-        // Stream conventions:
-        //   StreamClientTransport(serverInput, serverOutput, ...): serverInput is what the client
-        //   WRITES to (server reads it); serverOutput is what the client READS from (server writes it).
-        //   StreamServerTransport(input, output, ...): input is what the server READS from; output
-        //   is what the server WRITES to.
         Stream clientWriteStream = clientToServer.Writer.AsStream();
         Stream clientReadStream = serverToClient.Reader.AsStream();
         Stream serverReadStream = clientToServer.Reader.AsStream();
         Stream serverWriteStream = serverToClient.Writer.AsStream();
 
-        StreamServerTransport serverTransport = new(
-            serverReadStream,
-            serverWriteStream,
-            "test-server",
-            NullLoggerFactory.Instance);
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.ClearProviders());
+        IMcpServerBuilder builder = services
+            .AddMcpServer(options => options.ServerInfo = new Implementation { Name = "test-server", Version = "1.0.0" })
+            .WithStreamServerTransport(serverReadStream, serverWriteStream)
+            .WithTools(tools);
 
-        McpServerOptions serverOptions = new()
+        RecordingMcpTaskStore? taskStore = null;
+        if (enableTasks)
         {
-            ServerInfo = new Implementation { Name = "test-server", Version = "1.0.0" },
-            TaskStore = new InMemoryMcpTaskStore(),
-            ToolCollection = tools,
-        };
+            taskStore = new RecordingMcpTaskStore();
+            builder.WithTasks(taskStore);
+        }
 
-        McpServer server = McpServer.Create(
-            serverTransport,
-            serverOptions,
-            NullLoggerFactory.Instance,
-            EmptyServiceProvider.Instance);
-
+        ServiceProvider serviceProvider = services.BuildServiceProvider();
+        McpServer server = serviceProvider.GetRequiredService<McpServer>();
         CancellationTokenSource cts = new();
-        Task serverLoop = Task.Run(() => server.RunAsync(cts.Token), cts.Token);
+        Task serverLoop = server.RunAsync(cts.Token);
 
         StreamClientTransport clientTransport = new(
             clientWriteStream,
-            clientReadStream,
-            NullLoggerFactory.Instance);
+            clientReadStream);
 
         McpClient client = await McpClient.CreateAsync(
             clientTransport,
-            clientOptions: null,
-            NullLoggerFactory.Instance,
-            cancellationToken).ConfigureAwait(false);
+            clientOptions,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        return new InMemoryMcpServerFixture(server, client, serverLoop, cts);
+        return new InMemoryMcpServerFixture(serviceProvider, client, serverLoop, cts, taskStore);
     }
 
     public async ValueTask DisposeAsync()
@@ -113,15 +119,58 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
             // Best effort.
         }
 
-        try
+        await this._serviceProvider.DisposeAsync().ConfigureAwait(false);
+        this._cts.Dispose();
+    }
+
+    private sealed class RecordingMcpTaskStore : IMcpTaskStore
+    {
+        private readonly InMemoryMcpTaskStore _inner = new() { DefaultPollIntervalMs = 10 };
+        private int _createdTaskCount;
+        private int _inputRequestCount;
+
+        public int CreatedTaskCount => this._createdTaskCount;
+
+        public int InputRequestCount => this._inputRequestCount;
+
+        public event Action<InputResponseReceivedEventArgs>? InputResponseReceived
         {
-            await this._server.DisposeAsync().ConfigureAwait(false);
-        }
-        catch
-        {
-            // Best effort.
+            add => this._inner.InputResponseReceived += value;
+            remove => this._inner.InputResponseReceived -= value;
         }
 
-        this._cts.Dispose();
+        public async Task<McpTaskInfo> CreateTaskAsync(CancellationToken cancellationToken = default)
+        {
+            McpTaskInfo task = await this._inner.CreateTaskAsync(cancellationToken).ConfigureAwait(false);
+            _ = Interlocked.Increment(ref this._createdTaskCount);
+            return task;
+        }
+
+        public Task<McpTaskInfo?> GetTaskAsync(string taskId, CancellationToken cancellationToken = default) =>
+            this._inner.GetTaskAsync(taskId, cancellationToken);
+
+        public Task SetCompletedAsync(string taskId, JsonElement result, CancellationToken cancellationToken = default) =>
+            this._inner.SetCompletedAsync(taskId, result, cancellationToken);
+
+        public Task SetFailedAsync(string taskId, JsonElement error, CancellationToken cancellationToken = default) =>
+            this._inner.SetFailedAsync(taskId, error, cancellationToken);
+
+        public Task<bool> SetCancelledAsync(string taskId, CancellationToken cancellationToken = default) =>
+            this._inner.SetCancelledAsync(taskId, cancellationToken);
+
+        public Task SetInputRequestsAsync(
+            string taskId,
+            IDictionary<string, InputRequest> inputRequests,
+            CancellationToken cancellationToken = default)
+        {
+            _ = Interlocked.Add(ref this._inputRequestCount, inputRequests.Count);
+            return this._inner.SetInputRequestsAsync(taskId, inputRequests, cancellationToken);
+        }
+
+        public Task ResolveInputRequestsAsync(
+            string taskId,
+            IDictionary<string, InputResponse> inputResponses,
+            CancellationToken cancellationToken = default) =>
+            this._inner.ResolveInputRequestsAsync(taskId, inputResponses, cancellationToken);
     }
 }

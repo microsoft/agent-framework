@@ -1,12 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
+using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -15,145 +17,199 @@ namespace Microsoft.Agents.AI.Mcp.UnitTests;
 public class TaskAwareMcpClientAIFunctionTests
 {
     [Fact]
-    public async Task InvokeAsync_RequiredTool_HappyPath_ReturnsResultAsync()
+    public async Task InvokeAsync_TaskBackedTool_ReturnsResultAsync()
     {
         // Arrange
         McpServerPrimitiveCollection<McpServerTool> tools = [
-            TestTools.Create("req", ToolTaskSupport.Required, () => "required-result"),
+            TestTools.Create("task-tool", async () =>
+            {
+                await Task.Delay(25);
+                return "task-result";
+            }),
         ];
         await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
-        var result = await fixture.Client.ListAgentToolsWithTaskSupportAsync();
-        AIFunction req = result.Single(f => f.Name == "req");
-        req.Should().BeOfType<TaskAwareMcpClientAIFunction>();
+        AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
 
         // Act
-        object? invokeResult = await req.InvokeAsync(arguments: null, CancellationToken.None);
+        object? result = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        JsonElement payload = invokeResult.Should().BeOfType<JsonElement>().Subject;
-        ExtractTextContent(payload).Should().Be("required-result");
+        result.Should().BeOfType<TextContent>()
+            .Which.Text.Should().Be("task-result");
+        fixture.CreatedTaskCount.Should().Be(1);
     }
 
     [Fact]
-    public async Task InvokeAsync_PropagatesDefaultTimeToLiveAsync()
+    public async Task InvokeAsync_ServerWithoutTasks_ReturnsInlineResultAsync()
     {
-        // Arrange — capture the request meta on the server so we can assert TTL flowed through.
-        TimeSpan? observedTtl = null;
-        McpServerTool tool = McpServerTool.Create(
-            (RequestContext<CallToolRequestParams> ctx) =>
-            {
-                observedTtl = ctx.Params?.Task?.TimeToLive;
-                return "ok";
-            },
-            new McpServerToolCreateOptions
-            {
-                Name = "ttl-tool",
-                Description = "Echoes the requested TTL.",
-                Execution = new ToolExecution { TaskSupport = ToolTaskSupport.Required },
-            });
-        McpServerPrimitiveCollection<McpServerTool> tools = [tool];
-
-        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
-
-        TimeSpan requestedTtl = TimeSpan.FromMinutes(7);
-        var result = await fixture.Client.ListAgentToolsWithTaskSupportAsync(new McpTaskOptions { DefaultTimeToLive = requestedTtl });
-        AIFunction wrapped = result.Single();
+        // Arrange
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create("inline-tool", () => "inline-result"),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools, enableTasks: false);
+        AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
 
         // Act
-        _ = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
+        object? result = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
         // Assert
-        observedTtl.Should().Be(requestedTtl);
+        result.Should().BeOfType<TextContent>()
+            .Which.Text.Should().Be("inline-result");
+        fixture.CreatedTaskCount.Should().Be(0);
     }
 
     [Fact]
-    public async Task InvokeAsync_RespectsCancellationAsync()
+    public async Task InvokeAsync_InputRequired_DispatchesClientHandlerAsync()
     {
-        // Arrange — a tool that never completes until it's cancelled.
-        var serverCancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        McpServerTool tool = McpServerTool.Create(
-            async (CancellationToken ct) =>
-            {
-                try
+        // Arrange
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            McpServerTool.Create(
+                async (McpServer server, CancellationToken cancellationToken) =>
                 {
-                    await Task.Delay(Timeout.Infinite, ct);
-                }
-                catch (OperationCanceledException)
+                    ElicitResult elicitation = await server.ElicitAsync(
+                        new ElicitRequestParams
+                        {
+                            Message = "Confirm the operation.",
+                            RequestedSchema = new(),
+                        },
+                        cancellationToken);
+
+                    return $"{elicitation.Action}:{elicitation.Content!["confirmed"].GetString()}";
+                },
+                new McpServerToolCreateOptions
                 {
-                    serverCancelled.TrySetResult(true);
-                    throw;
-                }
-
-                return "should-not-complete";
-            },
-            new McpServerToolCreateOptions
-            {
-                Name = "blocking",
-                Description = "Blocks indefinitely until cancelled.",
-                Execution = new ToolExecution { TaskSupport = ToolTaskSupport.Required },
-            });
-        McpServerPrimitiveCollection<McpServerTool> tools = [tool];
-
-        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
-        var result = await fixture.Client.ListAgentToolsWithTaskSupportAsync();
-        AIFunction wrapped = result.Single();
-
-        using CancellationTokenSource cts = new();
-
-        // Act — start the invocation, cancel after a brief delay.
-        Task<object?> invocation = wrapped.InvokeAsync(arguments: null, cts.Token).AsTask();
-        await Task.Delay(200);
-        cts.Cancel();
-
-        // Assert — wrapper observes cancellation and signals server-side cancellation.
-        Func<Task> awaitInvocation = async () => await invocation;
-        await awaitInvocation.Should().ThrowAsync<OperationCanceledException>();
-
-        // Server-side handler should have observed cancellation as a result of the wrapper's
-        // tasks/cancel call (best-effort wait — give the server-loop a few seconds).
-        Task observedTask = serverCancelled.Task;
-        Task completed = await Task.WhenAny(observedTask, Task.Delay(TimeSpan.FromSeconds(5)));
-        completed.Should().BeSameAs(observedTask, "the wrapper should have issued tasks/cancel");
-    }
-
-    [Fact]
-    public async Task InvokeAsync_FailedTask_ThrowsInvalidOperationAsync()
-    {
-        // Arrange — a tool whose handler throws, which the server surfaces as a Failed task.
-        McpServerTool tool = McpServerTool.Create(
-            (Func<string>)(() => throw new InvalidOperationException("simulated tool failure")),
-            new McpServerToolCreateOptions
-            {
-                Name = "boom",
-                Description = "Throws unconditionally.",
-                Execution = new ToolExecution { TaskSupport = ToolTaskSupport.Required },
-            });
-        McpServerPrimitiveCollection<McpServerTool> tools = [tool];
-
-        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
-        var result = await fixture.Client.ListAgentToolsWithTaskSupportAsync();
-        AIFunction wrapped = result.Single();
+                    Name = "input-tool",
+                    Description = "Requests confirmation before completing.",
+                }),
+        ];
+        var clientOptions = new McpClientOptions();
+        clientOptions.Handlers.ElicitationHandler = (_, _) =>
+            new ValueTask<ElicitResult>(
+                new ElicitResult
+                {
+                    Action = "accept",
+                    Content = new Dictionary<string, JsonElement>
+                    {
+                        ["confirmed"] = JsonSerializer.SerializeToElement("yes"),
+                    },
+                });
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(
+            tools,
+            clientOptions: clientOptions);
+        AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
 
         // Act
-        Func<Task> act = async () => await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
+        object? result = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
 
-        // Assert — Phase 1 surfaces non-Completed terminal states as InvalidOperationException
-        // carrying the server's StatusMessage. (See PollAndRetrieveResultAsync.)
-        await act.Should().ThrowAsync<Exception>().Where(ex =>
-            ex is InvalidOperationException
-            || ex.GetType().FullName == "ModelContextProtocol.McpException");
+        // Assert
+        result.Should().BeOfType<TextContent>()
+            .Which.Text.Should().Be("accept:yes");
+        fixture.CreatedTaskCount.Should().Be(1);
+        fixture.InputRequestCount.Should().Be(1);
     }
 
-    /// <summary>
-    /// Extracts the first text-content block from a serialized <c>CallToolResult</c>
-    /// (the JSON shape returned by the wrapper and by <c>McpClientTool.InvokeAsync</c>).
-    /// </summary>
-    private static string ExtractTextContent(JsonElement payload)
+    [Fact]
+    public async Task InvokeAsync_ForwardsNullPrimitiveAndComplexArgumentsAsync()
     {
-        payload.ValueKind.Should().Be(JsonValueKind.Object);
-        JsonElement content = payload.GetProperty("content");
-        content.ValueKind.Should().Be(JsonValueKind.Array);
-        JsonElement firstBlock = content.EnumerateArray().First();
-        return firstBlock.GetProperty("text").GetString()!;
+        // Arrange
+        IDictionary<string, JsonElement>? observedArguments = null;
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            McpServerTool.Create(
+                (RequestContext<CallToolRequestParams> context) =>
+                {
+                    observedArguments = context.Params?.Arguments;
+                    return "ok";
+                },
+                new McpServerToolCreateOptions
+                {
+                    Name = "arguments-tool",
+                    Description = "Captures arguments.",
+                }),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
+        AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
+        var arguments = new AIFunctionArguments
+        {
+            ["optional"] = null,
+            ["count"] = 3,
+            ["payload"] = new Dictionary<string, object?> { ["label"] = "nested" },
+        };
+
+        // Act
+        _ = await wrapped.InvokeAsync(arguments, CancellationToken.None);
+
+        // Assert
+        observedArguments.Should().NotBeNull();
+        observedArguments!["optional"].ValueKind.Should().Be(JsonValueKind.Null);
+        observedArguments["count"].GetInt32().Should().Be(3);
+        observedArguments["payload"].GetProperty("label").GetString().Should().Be("nested");
+    }
+
+    [Fact]
+    public async Task InvokeAsync_SimpleResult_MatchesMcpClientToolProjectionAsync()
+    {
+        // Arrange
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create("projection-tool", () => "projected-result"),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
+        McpClientTool inner = (await fixture.Client.ListToolsAsync()).Single();
+        AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
+
+        // Act
+        object? innerResult = await inner.InvokeAsync(arguments: null, CancellationToken.None);
+        object? wrappedResult = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
+
+        // Assert
+        wrappedResult.Should().BeEquivalentTo(innerResult);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ToolError_PreservesCallToolResultEnvelopeAsync()
+    {
+        // Arrange
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create(
+                "error-tool",
+                () => new CallToolResult
+                {
+                    IsError = true,
+                    Content = [new TextContentBlock { Text = "tool failed" }],
+                }),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
+        AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
+
+        // Act
+        object? result = await wrapped.InvokeAsync(arguments: null, CancellationToken.None);
+
+        // Assert
+        JsonElement payload = result.Should().BeOfType<JsonElement>().Subject;
+        payload.GetProperty("isError").GetBoolean().Should().BeTrue();
+        payload.GetProperty("content")[0].GetProperty("text").GetString().Should().Be("tool failed");
+    }
+
+    [Fact]
+    public async Task InvokeAsync_LocalCancellation_CancelsPollingAsync()
+    {
+        // Arrange
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create(
+                "blocking-tool",
+                async (CancellationToken cancellationToken) =>
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                    return "unreachable";
+                }),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
+        AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync()).Single();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        // Act
+        Func<Task> act = async () => await wrapped.InvokeAsync(arguments: null, cts.Token);
+
+        // Assert
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 }

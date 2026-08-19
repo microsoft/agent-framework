@@ -1,19 +1,21 @@
-# Agent with MCP long-running task (transparent polling)
+# Agent with MCP Tasks extension (transparent polling)
 
-This sample demonstrates Microsoft Agent Framework's MCP long-running task support: an agent invokes an MCP tool whose execution takes too long for a single request/response cycle, and the framework polls it to completion behind the function-calling loop. From the agent's perspective the tool simply returns its result.
+This sample demonstrates Microsoft Agent Framework's support for the MCP 2026-07-28 Tasks extension: an agent invokes an MCP tool whose execution takes too long for a single request/response cycle, and the framework polls it to completion behind the function-calling loop. From the agent's perspective the tool simply returns its result.
 
 ## What this sample shows
 
-- Using `McpClient.ListAgentToolsWithTaskSupportAsync(...)` (in `Microsoft.Agents.AI.Mcp`) to wrap MCP tools with task-aware behavior.
-- Configuring `McpTaskOptions.DefaultTimeToLive` to bound the server-side task.
-- Hosting a small MCP server (in this same executable, launched with `--server`) that advertises `execution.taskSupport=required` on a tool that sleeps for ~15 seconds.
+- Using `McpClient.ListAgentToolsWithTasksAsync(...)` (in `Microsoft.Agents.AI.Mcp`) to wrap MCP tools with task-aware behavior.
+- Hosting a small MCP server (in this same executable, launched with `--server`) that enables `io.modelcontextprotocol/tasks` with `WithTasks(...)` and exposes a tool that sleeps for ~15 seconds.
+- Allowing the server to return either an inline result or a task handle after the client opts into the extension.
 - No application-level polling, continuation tokens, or `AllowBackgroundResponses` flag are required.
 
 The decorator drives the lifecycle internally:
 
-1. `tools/call` augmented with task metadata (`CallToolAsTaskAsync`)
-2. `tasks/get` polled until terminal (`PollTaskUntilCompleteAsync`)
-3. `tasks/result` retrieved (`GetTaskResultAsync`) and returned to the function-calling loop
+1. `tools/call` includes the Tasks extension capability.
+2. The server returns either the ordinary tool result or a task handle.
+3. `tasks/get` is polled until it carries the final result, which is returned to the function-calling loop.
+
+The transparent adapter uses the MCP SDK's automatic poller. Cancelling the local invocation stops polling, but it does not automatically send `tasks/cancel` because the poller does not expose the created task ID. Applications that need task handles or explicit remote cancellation can use `ModelContextProtocol.Extensions.Tasks` directly.
 
 The sample exercises both invocation styles against the same wrapper:
 

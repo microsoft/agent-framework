@@ -44,15 +44,15 @@
     <!-- System.* -->
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
-    <PackageVersion Include="Microsoft.Bcl.Memory" Version="10.0.5" />
+    <PackageVersion Include="Microsoft.Bcl.Memory" Version="10.0.10" />
     <PackageVersion Include="System.ClientModel" Version="1.14.0" />
     <PackageVersion Include="System.CodeDom" Version="10.0.0" />
-    <PackageVersion Include="System.Collections.Immutable" Version="10.0.1" />
+    <PackageVersion Include="System.Collections.Immutable" Version="10.0.10" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.11" />
     <PackageVersion Include="System.Linq.AsyncEnumerable" Version="10.0.5" />
     <PackageVersion Include="System.Net.Http.Json" Version="10.0.0" />
-    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.8" />
+    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.10" />
     <!-- AG-UI .NET SDK packages (published by the AG-UI team). -->
     <PackageVersion Include="AGUI.Abstractions" Version="0.0.5" />
     <PackageVersion Include="AGUI.Formatting" Version="0.0.5" />
@@ -119,7 +119,8 @@
     <PackageVersion Include="A2A" Version="1.0.0-preview2" />
     <PackageVersion Include="A2A.AspNetCore" Version="1.0.0-preview2" />
     <!-- MCP -->
-    <PackageVersion Include="ModelContextProtocol" Version="1.2.0" />
+    <PackageVersion Include="ModelContextProtocol" Version="2.1.0" />
+    <PackageVersion Include="ModelContextProtocol.Extensions.Tasks" Version="2.1.0" />
     <!-- Hyperlight -->
     <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.4.0" />
     <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.4.0" />
