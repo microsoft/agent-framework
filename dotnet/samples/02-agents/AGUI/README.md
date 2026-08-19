@@ -197,6 +197,17 @@ dotnet run --project Server --urls http://localhost:8888
 dotnet run --project Client
 ```
 
+### Step07_WorkflowConcurrent
+
+A concurrent workflow that runs a researcher and critic together. The client displays each executor's steps
+and both streamed responses.
+
+```bash
+cd Step07_WorkflowConcurrent
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
 The server runs on port 8888 by default.
 
 #### Client (`Step05_StateManagement/Client`)
