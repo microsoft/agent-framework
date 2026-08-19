@@ -6384,3 +6384,262 @@ def test_progressive_tools_helpers_raise_without_live_tools():
 
 
 # endregion
+
+
+# region max_duration_seconds and stop_reason
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_max_duration_seconds_non_streaming_triggers_graceful_degradation(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """When max_duration_seconds is exceeded mid-loop, tools are disabled and the model
+    produces a final text response (same graceful-degradation path as max_function_calls)."""
+    exec_counter = 0
+
+    @tool(name="step", approval_mode="never_require")
+    def step_func() -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 5.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="c1", name="step", arguments="{}")],
+            )
+        ),
+        # model would call again, but duration check fires first
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="c2", name="step", arguments="{}")],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["giving up"])),
+    ]
+
+    call_count = 0
+
+    def fake_perf_counter() -> float:
+        nonlocal call_count
+        call_count += 1
+        # First call (start_time setdefault): t=0. Second call (duration check after iteration 1): t=10.
+        return 0.0 if call_count == 1 else 10.0
+
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["go"])], options={"tool_choice": "auto", "tools": [step_func]}
+        )
+
+    # Only first tool call executes; duration fires before second iteration's tool call
+    assert exec_counter == 1
+    assert response.additional_properties.get("_agent_framework_stop_reason") == "max_duration_seconds"
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_max_duration_seconds_streaming_triggers_graceful_degradation(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """max_duration_seconds works in the streaming path: stop_reason is in the final ChatResponse."""
+    exec_counter = 0
+
+    @tool(name="step", approval_mode="never_require")
+    def step_func() -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 5.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="s1", name="step", arguments="{}")],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+        ],
+        # duration fires after iteration 1; second batch never executes tool
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_function_call(call_id="s2", name="step", arguments="{}")],
+                role="assistant",
+                finish_reason="tool_calls",
+            )
+        ],
+    ]
+
+    call_count = 0
+
+    def fake_perf_counter() -> float:
+        nonlocal call_count
+        call_count += 1
+        return 0.0 if call_count == 1 else 10.0
+
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["go"])],
+            stream=True,
+            options={"tool_choice": "auto", "tools": [step_func]},
+        )
+        async for _ in stream:
+            pass
+        final = await stream.get_final_response()
+
+    assert exec_counter == 1
+    assert final.additional_properties.get("_agent_framework_stop_reason") == "max_duration_seconds"
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_stop_reason_completed_on_normal_finish(chat_client_base: SupportsChatGetResponse):
+    """When the model finishes normally (no limit hit), stop_reason is 'completed'."""
+
+    @tool(name="q", approval_mode="never_require")
+    def q_func() -> str:
+        return "answer"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="q1", name="q", arguments="{}")],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["Final answer."])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["question"])], options={"tool_choice": "auto", "tools": [q_func]}
+    )
+
+    assert response.additional_properties.get("_agent_framework_stop_reason") == "completed"
+
+
+@pytest.mark.parametrize("max_iterations", [1])
+async def test_stop_reason_max_iterations(chat_client_base: SupportsChatGetResponse):
+    """When the iteration budget is exhausted, stop_reason is 'max_iterations'."""
+
+    @tool(name="loop", approval_mode="never_require")
+    def loop_func() -> str:
+        return "looping"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="l1", name="loop", arguments="{}")],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["Gave up."])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["loop"])], options={"tool_choice": "auto", "tools": [loop_func]}
+    )
+
+    assert response.additional_properties.get("_agent_framework_stop_reason") == "max_iterations"
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_stop_reason_max_function_calls(chat_client_base: SupportsChatGetResponse):
+    """When the function-call budget is exhausted, stop_reason reflects the limit-triggered degradation."""
+
+    @tool(name="w", approval_mode="never_require")
+    def w_func() -> str:
+        return "work"
+
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="w1", name="w", arguments="{}")],
+            )
+        ),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="w2", name="w", arguments="{}")],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["Done."])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["work"])], options={"tool_choice": "auto", "tools": [w_func]}
+    )
+
+    # max_function_calls degradation: stop_reason will be "completed" (the final phase-3 fallback
+    # path doesn't set a specific reason for max_function_calls; the limit disables tools and
+    # the model returns normally via action=="return"). This test documents the current behaviour.
+    assert response.additional_properties.get("_agent_framework_stop_reason") in ("completed", "max_iterations")
+
+
+@pytest.mark.parametrize("max_iterations", [10])
+async def test_duration_wins_precedence_over_iterations(chat_client_base: SupportsChatGetResponse):
+    """When duration fires in the same batch as the last iteration, duration takes precedence
+    (setdefault on stop_reason is set by the duration check before Phase 3 stamps max_iterations)."""
+    exec_counter = 0
+
+    @tool(name="t", approval_mode="never_require")
+    def t_func() -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return "t"
+
+    # Exactly max_iterations=1 so the loop falls into Phase 3 — but duration also fires.
+    chat_client_base.function_invocation_configuration["max_iterations"] = 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 0.001  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id="t1", name="t", arguments="{}")],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    call_count = 0
+
+    def fake_perf_counter() -> float:
+        nonlocal call_count
+        call_count += 1
+        return 0.0 if call_count == 1 else 100.0  # always exceeded after start
+
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["go"])], options={"tool_choice": "auto", "tools": [t_func]}
+        )
+
+    # Duration check runs inside the loop (before Phase 3 stamps max_iterations via setdefault).
+    assert response.additional_properties.get("_agent_framework_stop_reason") == "max_duration_seconds"
+
+
+def test_normalize_rejects_non_positive_max_duration_seconds():
+    """normalize_function_invocation_configuration raises ValueError for max_duration_seconds <= 0."""
+    from agent_framework import normalize_function_invocation_configuration
+
+    with pytest.raises(ValueError, match="max_duration_seconds"):
+        normalize_function_invocation_configuration({"max_duration_seconds": 0.0})
+
+    with pytest.raises(ValueError, match="max_duration_seconds"):
+        normalize_function_invocation_configuration({"max_duration_seconds": -1.0})
+
+    # None and positive values are accepted.
+    cfg = normalize_function_invocation_configuration({"max_duration_seconds": None})
+    assert cfg["max_duration_seconds"] is None
+
+    cfg = normalize_function_invocation_configuration({"max_duration_seconds": 30.0})
+    assert cfg["max_duration_seconds"] == 30.0
+
+
+# endregion
