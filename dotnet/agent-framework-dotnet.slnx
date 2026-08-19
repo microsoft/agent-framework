@@ -68,6 +68,7 @@
     <Project Path="samples/02-agents/Agents/Agent_Step21_ShellWithEnvironment/Agent_Step21_ShellWithEnvironment.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step22_AgentMode/Agent_Step22_AgentMode.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step23_TodoList/Agent_Step23_TodoList.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step24_MultiModelRouting/Agent_Step24_MultiModelRouting.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/DeclarativeAgents/">
     <Project Path="samples/02-agents/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />

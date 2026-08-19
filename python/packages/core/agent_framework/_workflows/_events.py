@@ -6,7 +6,7 @@ import builtins
 import sys
 import traceback as _traceback
 import warnings
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -426,14 +426,24 @@ class WorkflowEvent(Generic[DataT]):
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> WorkflowEvent[Any]:
-        """Create a REQUEST_INFO event from a dictionary."""
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        allowed_types: Mapping[str, builtins.type[Any]] | None = None,
+    ) -> WorkflowEvent[Any]:
+        """Create a request-info event from a dictionary.
+
+        Args:
+            data: Serialized request-info event fields.
+            allowed_types: Optional exact mapping of serialized names to trusted custom types.
+        """
         for prop in ["data", "request_id", "source_executor_id", "request_type", "response_type"]:
             if prop not in data:
                 raise KeyError(f"Missing '{prop}' field in WorkflowEvent dictionary.")
 
         request_data = data["data"]
-        request_type = deserialize_type(data["request_type"])
+        request_type = deserialize_type(data["request_type"], allowed_types=allowed_types)
 
         if request_type is not type(request_data):
             raise TypeError(
@@ -444,5 +454,5 @@ class WorkflowEvent(Generic[DataT]):
             request_id=data["request_id"],
             source_executor_id=data["source_executor_id"],
             request_data=cast(Any, request_data),  # type: ignore
-            response_type=deserialize_type(data["response_type"]),
+            response_type=deserialize_type(data["response_type"], allowed_types=allowed_types),
         )
