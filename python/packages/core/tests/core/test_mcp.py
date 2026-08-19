@@ -3789,6 +3789,39 @@ async def test_connect_cancelled_error_unmasks_inner_auth_failure():
         assert "Cancelled via cancel scope" not in message
 
 
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup is Python >= 3.11")
+async def test_connect_bare_cancel_names_cleanup_error_from_exit_stack():
+    """The reported 401 path: initialize() raises a bare CancelledError and the
+    real HTTP failure only surfaces from the exit-stack close. The ToolException
+    must name that close-time error, not the cancellation."""
+    tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
+
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
+
+    cleanup_group = ExceptionGroup(  # noqa: F821 -- gated to 3.11+ by the skipif above
+        "unhandled errors in a TaskGroup", [RuntimeError("401 Client Error: Unauthorized")]
+    )
+
+    mock_session = Mock()
+    mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError("Cancelled via cancel scope"))
+
+    with patch("mcp.client.session.ClientSession") as mock_session_class:
+        mock_session_class.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_class.return_value.__aexit__ = AsyncMock(side_effect=cleanup_group)
+
+        with pytest.raises(ToolException) as exc_info:
+            await tool.connect()
+
+        message = str(exc_info.value)
+        assert "MCP server failed to initialize" in message
+        assert "401 Client Error: Unauthorized" in message
+        assert "Cancelled via cancel scope" not in message
+
+
 async def test_connect_cancelled_error_during_session_creation_logs_with_exc_info():
     """Test that CancelledError from session creation is logged with exc_info=True."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
