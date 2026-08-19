@@ -267,7 +267,11 @@ async def test_service_session_snapshot_split_authority() -> None:
     second_turn = {
         "threadId": "conv_FHA_SESSION",
         "__ag_ui_snapshot_scope": "split-auth-test",
-        "messages": [{"id": "u2", "role": "user", "content": "second"}],
+        "messages": [
+            {"id": "u1", "role": "user", "content": "first"},
+            {"id": "a1", "role": "assistant", "content": "ACK"},
+            {"id": "u2", "role": "user", "content": "second"},
+        ],
     }
 
     await _drain(runner, first_turn)

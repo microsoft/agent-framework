@@ -2302,13 +2302,18 @@ async def run_agent_stream(
 
             if not config.use_service_session:
                 raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
-
+            else:
+                stored_count = len(stored_snapshot.messages)
+                raw_messages = raw_messages[stored_count:]
         elif not config.use_service_session:
             raw_messages = _reconstruct_messages_from_thread_snapshot(
                 stored_messages=stored_snapshot.messages,
                 incoming_messages=raw_messages,
                 stored_interrupt=stored_snapshot.interrupt,
             )
+        else:
+            stored_count = len(stored_snapshot.messages)
+            raw_messages = raw_messages[stored_count:]
 
     # Initialize flow state with stored state plus request-provided overrides;
     # endpoint-deferred defaults apply only to keys missing from both.
@@ -2944,10 +2949,6 @@ async def run_agent_stream(
     )
     latest_messages_snapshot = snapshot_messages
 
-    if config.use_service_session and stored_snapshot is not None and not should_emit_snapshot:
-        latest_messages_snapshot = _event_messages_to_snapshot_dicts(
-            list(_build_messages_snapshot(flow, snapshot_messages).messages)
-        )
     if should_emit_snapshot:
         # Always fold this turn's output into the persisted snapshot, even when the
         # outbound MESSAGES_SNAPSHOT event is suppressed for predictive tools.
