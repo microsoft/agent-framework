@@ -69,6 +69,104 @@ class TestRequestComposition:
         assert req.url.params.get("limit") == "5"
 
     @pytest.mark.asyncio
+    async def test_query_parameters_preserve_url_query_string(self) -> None:
+        """query_parameters must be appended, not replace the URL's existing query string.
+
+        Regression for https://github.com/microsoft/agent-framework/issues/7749:
+        passing ``params=`` to httpx replaces the URL's existing query string, and the
+        handler used to do exactly that — URL parameters (api-version, tenant, ...) were
+        silently dropped. The .NET DefaultHttpRequestHandler.ResolveRequestUri preserves
+        them; Python now matches that behavior.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?api-version=2025-01-01&tenant=alpha",
+                    query_parameters={"page": "2"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        req = captured["req"]
+        # URL-supplied params are preserved and query_parameters are appended on top
+        assert req.url.params.get("api-version") == "2025-01-01"
+        assert req.url.params.get("tenant") == "alpha"
+        assert req.url.params.get("page") == "2"
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_append_before_fragment(self) -> None:
+        """query_parameters must be inserted before any fragment, not appended after.
+
+        Plain string concatenation would produce ``url#frag?key=val`` (an invalid URL
+        — the query string must come before the fragment). The fix uses urlsplit so
+        reassembly keeps the fragment last.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?api-version=2025-01-01#section",
+                    query_parameters={"page": "2"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        req = captured["req"]
+        assert req.url.params.get("api-version") == "2025-01-01"
+        assert req.url.params.get("page") == "2"
+        # The fragment is preserved and stays last
+        assert str(req.url).endswith("#section")
+        assert req.url.fragment == "section"
+
+    @pytest.mark.asyncio
+    async def test_query_parameters_when_url_ends_with_question_mark(self) -> None:
+        """query_parameters must append cleanly when the URL already ends with ``?``.
+
+        urlsplit parses the trailing ``?`` as an empty query part, so the result is
+        a clean ``?key=val`` rather than a malformed ``?&key=val`` that plain string
+        concatenation would produce.
+        """
+        captured: dict[str, httpx.Request] = {}
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            captured["req"] = request
+            return httpx.Response(200, text="ok")
+
+        handler = _make_handler(httpx.MockTransport(respond))
+        try:
+            await handler.send(
+                HttpRequestInfo(
+                    method="GET",
+                    url="https://api.example.test/items?",
+                    query_parameters={"page": "2"},
+                )
+            )
+        finally:
+            await handler.aclose()
+
+        req = captured["req"]
+        assert req.url.params.get("page") == "2"
+        # Result is a clean query string, not && or && at the start
+        assert str(req.url) == "https://api.example.test/items?page=2"
+
+    @pytest.mark.asyncio
     async def test_body_content_type_forwarded(self) -> None:
         captured: dict[str, httpx.Request] = {}
 

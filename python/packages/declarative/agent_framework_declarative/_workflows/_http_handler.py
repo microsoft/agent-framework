@@ -24,6 +24,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -173,12 +174,29 @@ class DefaultHttpRequestHandler:
                 # callers (not just the YAML executor) get sensible defaults.
                 headers["Content-Type"] = info.body_content_type or "text/plain"
 
-        params: Mapping[str, str] | None = info.query_parameters or None
+        # Build the final URL manually instead of passing httpx's ``params=`` kwarg,
+        # which *replaces* any query string already present in ``info.url``. Append
+        # encoded ``query_parameters`` to the URL's existing query, preserving
+        # URL-embedded params. Matches the .NET ``DefaultHttpRequestHandler.
+        # ResolveRequestUri`` behavior (skip empty keys, leave the URL unchanged when
+        # nothing remains, percent-encode with ``%20`` for spaces rather than
+        # form-encoded ``+``), and additionally uses urlsplit/urlunsplit so the new
+        # query string is inserted between the path and any fragment (avoids the
+        # string-concat bug that would place the query after a trailing ``#fragment``).
+        url = info.url
+        query_string = urlencode(
+            [(key, value) for key, value in info.query_parameters.items() if key],
+            quote_via=quote,
+        )
+        if query_string:
+            parts = urlsplit(url)
+            existing_query = parts.query
+            merged_query = f"{existing_query}&{query_string}" if existing_query else query_string
+            url = urlunsplit((parts.scheme, parts.netloc, parts.path, merged_query, parts.fragment))
 
         response = await client.request(
             method=info.method,
-            url=info.url,
-            params=params,
+            url=url,
             headers=headers or None,
             content=content,
             timeout=timeout,
