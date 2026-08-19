@@ -23,8 +23,9 @@ import os
 import re
 import socket
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any, Callable
+from typing import Annotated, Any
 from unittest.mock import MagicMock
 
 import httpx
@@ -886,7 +887,7 @@ class _ToolCallExecutor(Executor):
 
 
 @executor(id="complete")
-async def _countdown_complete(message: str, ctx: WorkflowContext[Never, str]) -> None:
+async def _countdown_complete(message: str, ctx: WorkflowContext[Never, str]) -> None:  # zuban: ignore
     """Yield the workflow's completion output."""
     await ctx.yield_output(message)
 
