@@ -169,25 +169,40 @@ def _select_run_level_tools(tools: Any, options: Mapping[str, Any] | None) -> An
 
 
 def _materialize_tool_container(tools: Any) -> Any:
-    """Materialize a one-shot iterable tool container into a list, elements untouched.
+    """Materialize one-shot iterable tool containers into lists, tools untouched.
 
-    ``normalize_tools`` flattens any iterable tool collection, so generators and other
-    single-pass iterables are supported containers — but each observer that iterates
-    one consumes it for everyone after it. Listing the outer container once (without
-    converting the elements: middleware must keep seeing the caller's original tool
-    objects, so identity-based policy checks still fire) makes the value safely
-    re-iterable for the middleware pipeline, the run-start resolution, and the run
-    itself. Re-iterable values (sequences) and the leaf or collection shapes
-    ``normalize_tools`` handles without directly iterating them (strings, mappings,
-    pydantic models, single tools/callables) pass through untouched.
+    ``normalize_tools`` recursively flattens any iterable tool collection, so
+    generators and other single-pass iterables are supported containers at every
+    nesting level — but each observer that iterates one consumes it for everyone
+    after it. This walks exactly the container shapes that flattening walks and lists
+    them once, without converting any tool: middleware must keep seeing the caller's
+    original tool objects, so identity-based policy checks still fire. Leaf shapes —
+    tools, dict specs, mapping-like collections (flattened via their re-iterable
+    ``.tools`` attribute), pydantic models, strings, callables — pass through
+    untouched, and an already re-iterable container whose elements needed no
+    materialization keeps its identity.
     """
     from pydantic import BaseModel
 
-    if tools is None or isinstance(tools, (str, bytes, bytearray, Mapping, BaseModel, Sequence)):
-        return cast("Any", tools)
-    if isinstance(tools, Iterable):
-        return list(cast("Iterable[Any]", tools))
-    return tools
+    from ._mcp import MCPTool
+    from ._tools import FunctionTool
+
+    def is_leaf(value: Any) -> bool:
+        # Mirror the shapes normalize_tools treats as non-container leaves (or
+        # flattens without directly iterating the value itself).
+        if value is None or isinstance(value, (FunctionTool, MCPTool, Mapping, BaseModel, str, bytes, bytearray)):
+            return True
+        return callable(value) or not isinstance(value, Iterable)
+
+    def materialize(value: Any) -> Any:
+        if is_leaf(value):
+            return value
+        items = [materialize(item) for item in cast("Iterable[Any]", value)]
+        if isinstance(value, Sequence) and all(new is old for new, old in zip(items, cast("Sequence[Any]", value))):
+            return cast("Any", value)
+        return items
+
+    return materialize(tools)
 
 
 class AgentContext:
@@ -1640,6 +1655,32 @@ class AgentMiddlewareLayer:
         effective_function_invocation_kwargs = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
         )
+        # Select the winning run-level tool route first, then materialize only that
+        # source: the losing route is never iterated — a losing one-shot options
+        # entry stays untouched for its owner and cannot raise or trigger side
+        # effects — and it is dropped from the forwarded options (on a copy), so no
+        # layer below (telemetry serialization, run setup) ever consumes or records a
+        # source the run will not use. Materialization covers the nested collection
+        # forms normalize_tools recursively flattens, so every observer of the run —
+        # middleware pipeline, telemetry, run setup — shares one re-iterable
+        # structure of the caller's original tool objects: observation never consumes
+        # the run's tool source, and identity-based policy checks (for example
+        # rejecting one specific privileged callable) keep seeing exactly what the
+        # caller supplied.
+        selected_tools = _select_run_level_tools(tools, options)
+        materialized_tools = _materialize_tool_container(selected_tools)
+        if tools is not None:
+            tools = materialized_tools
+            if options is not None and "tools" in options:
+                options = cast(
+                    "ChatOptions[Any]",
+                    {key: item for key, item in options.items() if key != "tools"},
+                )
+        elif materialized_tools is not selected_tools:
+            # The options mapping supplied the winner; swap the materialized value in
+            # on a copy (the caller's mapping is never mutated).
+            options = cast("ChatOptions[Any]", {**cast("Mapping[str, Any]", options), "tools": materialized_tools})
+
         # Execute with middleware if available
         if not pipeline.has_middlewares:
             return super().run(  # type: ignore[misc, no-any-return]
@@ -1653,19 +1694,6 @@ class AgentMiddlewareLayer:
                 function_invocation_kwargs=effective_function_invocation_kwargs,
                 client_kwargs=effective_client_kwargs,
             )
-
-        # Run-level tool containers may be one-shot iterables (normalize_tools flattens
-        # any iterable collection). Materialize only the outer container here — list()
-        # without converting the elements — so the context the middleware observes and
-        # the run executed beneath it share one re-iterable container of the caller's
-        # original tool objects: observation never consumes the run's tool source, and
-        # identity-based policy checks (for example rejecting one specific privileged
-        # callable) keep seeing exactly what the caller supplied.
-        tools = _materialize_tool_container(tools)
-        if options is not None and (options_tools := options.get("tools")) is not None:
-            materialized_options_tools = _materialize_tool_container(options_tools)
-            if materialized_options_tools is not options_tools:
-                options = cast("ChatOptions[Any]", {**options, "tools": materialized_options_tools})
 
         context = AgentContext(
             agent=self,  # type: ignore[arg-type]

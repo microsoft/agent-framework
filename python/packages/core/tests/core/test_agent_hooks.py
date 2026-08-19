@@ -624,6 +624,29 @@ async def test_one_shot_iterable_run_tools_survive_the_snapshot(
 
 
 @requires_sdk
+async def test_nested_one_shot_collection_survives_the_snapshot(chat_client_base: MockBaseChatClient) -> None:
+    """Nested one-shot containers are materialized too, at every level flattening walks.
+
+    ``normalize_tools`` flattens iterable collections recursively, so a generator
+    nested inside a list is a supported shape; the run-start materialization must
+    cover it, or the startup projection drains the inner iterator and the run loses
+    that tool (the same silent degradation one level down).
+    """
+    guard = AllowGuard()
+    chat_client_base.run_responses = [tool_call_response(), final_response()]
+    agent = Agent(client=chat_client_base, middleware=[create_agent_hooks_middleware([guard])])
+
+    response = await agent.run("Get weather for Seattle", tools=[(item for item in [weather_tool])])
+
+    assert response.text == "Final response"
+    assert weather_tool_calls == ["Seattle"]
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool"]
+    for pre_model in guard.contexts_for("pre_model_call"):
+        assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool"]
+
+
+@requires_sdk
 async def test_snapshot_and_per_call_agree_when_both_run_tool_routes_are_supplied(
     chat_client_base: MockBaseChatClient,
 ) -> None:

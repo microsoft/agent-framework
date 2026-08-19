@@ -3124,4 +3124,42 @@ async def test_named_tools_parameter_wins_over_options_tools_entry() -> None:
     assert [getattr(item, "name", None) for item in captured["tools"]] == ["kw_tool"]
 
 
+async def test_losing_run_tool_route_is_never_iterated() -> None:
+    """Only the winning run-level route is materialized; the loser stays untouched.
+
+    A losing one-shot ``options["tools"]`` source must not be consumed (or allowed to
+    raise / trigger side effects) when the named parameter wins: the framework drops
+    the losing entry without iterating it, and its owner can still consume it after
+    the run.
+    """
+
+    @tool(approval_mode="never_require")
+    def winning_tool(x: str) -> str:
+        """Named-parameter tool."""
+        return x
+
+    @tool(approval_mode="never_require")
+    def losing_tool(x: str) -> str:
+        """Options-entry tool."""
+        return x
+
+    iterations: list[str] = []
+
+    def losing_source() -> Any:
+        iterations.append("iterated")
+        yield losing_tool
+
+    class Passthrough(AgentMiddleware):
+        async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+    losing = losing_source()
+    agent = Agent(client=MockBaseChatClient(), middleware=[Passthrough()])
+    await agent.run("hi", tools=[winning_tool], options={"tools": losing})
+
+    assert iterations == []
+    # The source still belongs to its owner, un-drained.
+    assert list(losing) == [losing_tool]
+
+
 # endregion
