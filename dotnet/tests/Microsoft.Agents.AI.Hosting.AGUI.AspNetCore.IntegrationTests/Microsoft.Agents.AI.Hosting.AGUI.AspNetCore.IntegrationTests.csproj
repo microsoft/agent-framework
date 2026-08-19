@@ -27,6 +27,8 @@
     <PackageReference Include="AGUI.Abstractions" />
     <PackageReference Include="AGUI.Server" />
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.OpenAI\Microsoft.Agents.AI.OpenAI.csproj" />
+    <Compile Include="..\..\samples\02-agents\AGUI\Step06_WorkflowSequential\Server\SequentialWorkflow.cs"
+             Link="Workflows\Samples\SequentialWorkflow.cs" />
   </ItemGroup>
 
 </Project>

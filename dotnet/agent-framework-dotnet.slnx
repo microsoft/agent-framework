@@ -123,6 +123,10 @@
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Client/Client.csproj" />
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Server/Server.csproj" />
   </Folder>
+  <Folder Name="/Samples/02-agents/AGUI/Step06_WorkflowSequential/">
+    <Project Path="samples/02-agents/AGUI/Step06_WorkflowSequential/Client/Client.csproj" />
+    <Project Path="samples/02-agents/AGUI/Step06_WorkflowSequential/Server/Server.csproj" />
+  </Folder>
   <Folder Name="/Samples/02-agents/DevUI/">
     <File Path="samples/02-agents/DevUI/README.md" />
     <Project Path="samples/02-agents/DevUI/DevUI_Step01_BasicUsage/DevUI_Step01_BasicUsage.csproj" />
@@ -670,4 +674,3 @@
     <Project Path="tests/Microsoft.Agents.AI.Workflows.UnitTests/Microsoft.Agents.AI.Workflows.UnitTests.csproj" />
   </Folder>
 </Solution>
-

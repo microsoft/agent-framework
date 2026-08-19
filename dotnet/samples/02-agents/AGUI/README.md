@@ -186,6 +186,17 @@ cd Step05_StateManagement/Server
 dotnet run
 ```
 
+### Step06_WorkflowSequential
+
+A two-agent sequential workflow hosted over AG-UI. The client displays executor `STEP_STARTED` and
+`STEP_FINISHED` events alongside the writer and reviewer text.
+
+```bash
+cd Step06_WorkflowSequential
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
 The server runs on port 8888 by default.
 
 #### Client (`Step05_StateManagement/Client`)
