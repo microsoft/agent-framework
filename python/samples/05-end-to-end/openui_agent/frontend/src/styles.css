@@ -1,0 +1,46 @@
+/* Copyright (c) Microsoft. All rights reserved. */
+
+:root {
+  font-family: "Segoe UI", Inter, system-ui, sans-serif;
+  color: #172554;
+  background: #eaf2ff;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 320px;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  width: 100%;
+  height: 100%;
+  min-height: 640px;
+  background:
+    radial-gradient(circle at 85% 0%, rgb(147 197 253 / 35%), transparent 32rem),
+    #f5f9ff;
+}
+
+.app-shell .openui-agent-container {
+  height: 100%;
+}

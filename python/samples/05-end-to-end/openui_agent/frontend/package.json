@@ -1,0 +1,32 @@
+{
+  "name": "agent-framework-openui-demo-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "generate:openui": "openui generate ./src/openui-library.ts --out ../backend/generated/system-prompt.txt",
+    "backend": "npm run generate:openui && cd ../../../.. && uv run python samples/05-end-to-end/openui_agent/backend/server.py",
+    "dev": "npm run generate:openui && vite",
+    "build": "npm run generate:openui && tsc -b && vite build",
+    "test": "vitest run",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@openuidev/react-lang": "0.2.11",
+    "@openuidev/react-ui": "0.13.6",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "zod": "4.1.12",
+    "zustand": "4.5.7"
+  },
+  "devDependencies": {
+    "@openuidev/cli": "0.2.8",
+    "@types/node": "22.12.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.2",
+    "typescript": "5.9.3",
+    "vite": "8.0.16",
+    "vitest": "4.1.11"
+  }
+}
