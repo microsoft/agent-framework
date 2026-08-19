@@ -623,6 +623,32 @@ async def test_one_shot_iterable_run_tools_survive_the_snapshot(
         assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool"]
 
 
+@requires_sdk
+async def test_snapshot_and_per_call_agree_when_both_run_tool_routes_are_supplied(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """With both ``tools=`` and ``options={"tools": ...}`` supplied, the named parameter
+    wins everywhere: ``tools_registered`` and the per-call ``tools`` projection report
+    the same set the run executes. (Previously the losing options entry silently
+    overrode the request's tools, so the run-start view and the executed set
+    disagreed.)"""
+
+    @tool(approval_mode="never_require")
+    def options_entry_tool(x: str) -> str:
+        """Arrives through the options dict and loses the precedence."""
+        return x
+
+    guard = AllowGuard()
+    agent = Agent(client=chat_client_base, middleware=[create_agent_hooks_middleware([guard])])
+
+    await agent.run("hello", tools=[weather_tool], options={"tools": [options_entry_tool]})
+
+    startup = guard.contexts_for("agent_startup")[0]
+    assert startup["agent_init"]["tools_registered"] == ["weather_tool"]
+    pre_model = guard.contexts_for("pre_model_call")[0]
+    assert [entry["name"] for entry in pre_model["tools"]] == ["weather_tool"]
+
+
 # endregion
 
 # region Deny-before-execution
