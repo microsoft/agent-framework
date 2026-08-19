@@ -1781,14 +1781,14 @@ class TestChatAgentSessionBehavior:
         second_after = thread_states[3]
         assert second_after["before_next"] is False
         assert second_after["messages_count"] == 1  # Input messages unchanged
-        assert second_after["thread_count"] == 4  # Previous history + current input + current response
+        assert second_after["thread_count"] == 3  # Previous history (2) + current input (1)
         assert second_after["messages_text"] == ["second message"]
-        # Thread should contain: first input + first response + second input + second response
+        # Thread should contain: first input + first response + second input
         assert "first message" in second_after["thread_messages_text"]
         assert "second message" in second_after["thread_messages_text"]
-        # Should have two "test response" entries (one for each run)
+        # "test response" should only appear once since the duplicate was correctly filtered
         response_count = sum(1 for text in second_after["thread_messages_text"] if "test response" in text)
-        assert response_count == 2
+        assert response_count == 1
 
 
 class TestChatAgentChatMiddleware:

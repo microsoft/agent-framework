@@ -2072,7 +2072,7 @@ async def test_drained_and_discarded_attempt_flushes_on_allow(streaming: bool) -
     expected_response = "update - hello there" if streaming else "test response - hello there"
     assert final.text == expected_response
     stored = cast("list[Message]", session.state[provider.source_id]["messages"])
-    assert [message.text for message in stored] == ["hello there", expected_response] * 2
+    assert [message.text for message in stored] == ["hello there", expected_response]
 
 
 class _DrainThenTerminateWithoutResultMiddleware(AgentMiddleware):

@@ -3917,6 +3917,38 @@ def validate_tool_mode(
     return tool_choice
 
 
+def _append_instructions(
+    base: str | Mapping[str, Any] | Sequence[Any] | None,
+    addition: str | Mapping[str, Any] | Sequence[Any] | None,
+) -> str | Mapping[str, Any] | Sequence[Any] | None:
+    """Append instructions to existing instructions without discarding their structure.
+
+    ``instructions`` is declared as ``str`` on :class:`ChatOptions`, but chat clients may widen it to a
+    provider-native structured form, such as a sequence of typed instruction blocks. Combining such a
+    value with string formatting would coerce it to its ``repr``, silently turning structured metadata
+    into literal text, so a non-string base is extended element-wise instead.
+
+    The addition is always placed after the existing instructions, so the leading portion stays
+    unchanged for providers that treat it as a stable, structure-sensitive prefix.
+
+    Args:
+        base: The existing instructions, if any.
+        addition: The instructions to append, if any.
+
+    Returns:
+        The combined instructions, preserving the structure of ``base`` when it is not a string.
+    """
+    if not base:
+        return addition
+    if not addition:
+        return base
+    if isinstance(base, str) and isinstance(addition, str):
+        return f"{base}\n{addition}"
+    combined: list[Any] = [base] if isinstance(base, (str, Mapping)) else list(base)
+    combined.extend([addition] if isinstance(addition, (str, Mapping)) else addition)
+    return combined
+
+
 def merge_chat_options(
     base: dict[str, Any] | None,
     override: dict[str, Any] | None,
@@ -3966,12 +3998,8 @@ def merge_chat_options(
             continue
 
         if key == "instructions":
-            # Concatenate instructions
-            base_instructions = result.get("instructions")
-            if base_instructions:
-                result["instructions"] = f"{base_instructions}\n{value}"
-            else:
-                result["instructions"] = value
+            # Concatenate instructions, preserving provider-native structured values
+            result["instructions"] = _append_instructions(result.get("instructions"), value)
         elif key == "tools":
             # Merge tools lists
             base_tools = result.get("tools")
