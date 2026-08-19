@@ -52,6 +52,7 @@ $Scenarios = @(
     'azure-search-rag',
     'session-files',
     'agent-skills',
+    'user-identity',
     'unsupported-protocol'
 )
 

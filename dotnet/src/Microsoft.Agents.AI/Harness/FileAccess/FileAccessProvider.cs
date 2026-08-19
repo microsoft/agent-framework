@@ -327,7 +327,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <param name="globPattern">An optional glob pattern (e.g., "*.md") matched against entry names to filter the listing.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A list of entries, each with a name and a type of "file" or "directory" (subdirectories first).</returns>
-    [Description("List the direct child files and subdirectories of a directory. Omit the directory (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example \"reports\" or \"reports/2024\". Optionally filter entries with a glob_pattern (e.g. \"*.md\"). Subdirectories are listed before files, and each entry has a name and a type of \"file\" or \"directory\".")]
+    [Description("List the direct child files and subdirectories of a directory. Omit the directory (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example \"reports\" or \"reports/2024\". Optionally filter entries with a globPattern (e.g. \"*.md\"). Subdirectories are listed before files, and each entry has a name and a type of \"file\" or \"directory\".")]
     private async Task<List<FileStoreEntry>> LsAsync(string? directory = null, string? globPattern = null, CancellationToken cancellationToken = default)
     {
         string target = string.IsNullOrWhiteSpace(directory) ? string.Empty : directory!;
@@ -346,7 +346,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <param name="replaceAll">When <see langword="true"/>, replace every occurrence; otherwise fail unless exactly one occurrence exists.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A confirmation message including the number of occurrences replaced, or a failure message.</returns>
-    [Description("Replace occurrences of old_string with new_string in a file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced.")]
+    [Description("Replace occurrences of oldString with newString in a file. Fails if oldString is not found, or if it occurs more than once and replaceAll is false. Returns the number of occurrences replaced.")]
     private async Task<string> ReplaceAsync(string fileName, string oldString, string newString, bool replaceAll = false, CancellationToken cancellationToken = default)
     {
         await this._writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);

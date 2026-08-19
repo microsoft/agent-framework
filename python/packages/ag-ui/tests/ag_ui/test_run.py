@@ -7,6 +7,7 @@ from typing import cast
 import pytest
 from ag_ui.core import (
     CustomEvent,
+    MessagesSnapshotEvent,
     ReasoningEncryptedValueEvent,
     ReasoningEndEvent,
     ReasoningMessageContentEvent,
@@ -17,6 +18,7 @@ from ag_ui.core import (
     TextMessageEndEvent,
     TextMessageStartEvent,
     ToolCallArgsEvent,
+    ToolCallStartEvent,
 )
 from agent_framework import AgentResponseUpdate, Content, Message, ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
@@ -664,6 +666,24 @@ def test_snapshot_preserves_stream_order_around_tool_results():
     assert kinds[3][1]["id"] != kinds[0][1]["id"]
 
 
+def test_snapshot_reuses_streamed_tool_message_id_after_text():
+    """Tool-call snapshots reuse the stream ID used by the reference client merge."""
+    flow = FlowState()
+    _emit_text(Content.from_text("First, the plan."), flow)
+    tool_events = _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
+    tool_start = next(event for event in tool_events if isinstance(event, ToolCallStartEvent))
+    _emit_tool_result(Content.from_function_result(call_id="call_1", result="done"), flow)
+    _emit_text(Content.from_text("And the summary."), flow)
+
+    event = _build_messages_snapshot(flow, [])
+
+    kinds = _snapshot_kinds(event)
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls", "result", "text"]
+    assert tool_start.parent_message_id is not None
+    assert kinds[1][1]["id"] == tool_start.parent_message_id
+    assert kinds[1][1]["id"] != kinds[0][1]["id"]
+
+
 def test_snapshot_tool_only_message_reuses_stream_message_id():
     """Tool-only turns keep the message id the stream opened with."""
     flow = FlowState()
@@ -675,6 +695,27 @@ def test_snapshot_tool_only_message_reuses_stream_message_id():
     kinds = _snapshot_kinds(event)
     assert [kind for kind, _ in kinds] == ["tool_calls"]
     assert kinds[0][1]["id"] == "tool-only-msg"
+
+
+def test_snapshot_tool_only_segments_get_unique_ids_across_reasoning():
+    """A tool-only opening ID is consumed once across separated tool segments."""
+    flow = FlowState(message_id="tool-only-msg")
+    first_events = _emit_tool_call(
+        Content.from_function_call(call_id="call_1", name="first_tool", arguments="{}"), flow
+    )
+    _emit_text_reasoning(Content.from_text("Thinking between calls."), flow)
+    second_events = _emit_tool_call(
+        Content.from_function_call(call_id="call_2", name="second_tool", arguments="{}"), flow
+    )
+
+    snapshot = _build_messages_snapshot(flow, [])
+    tool_messages = [message for kind, message in _snapshot_kinds(snapshot) if kind == "tool_calls"]
+    first_start = next(event for event in first_events if isinstance(event, ToolCallStartEvent))
+    second_start = next(event for event in second_events if isinstance(event, ToolCallStartEvent))
+
+    assert [message["id"] for message in tool_messages] == ["tool-only-msg", second_start.parent_message_id]
+    assert first_start.parent_message_id == "tool-only-msg"
+    assert second_start.parent_message_id != first_start.parent_message_id
 
 
 def test_snapshot_keeps_reasoning_in_emission_order():
@@ -706,20 +747,26 @@ def test_snapshot_without_segment_tracking_keeps_legacy_layout():
 
 
 def test_snapshot_includes_text_when_message_preopened_by_tool_only_path():
-    """Text that arrives after a tool-only preopen still lands in the snapshot."""
+    """Text after a tool-only preopen gets a unique snapshot message ID."""
     flow = FlowState()
     # The tool-only detection in agent_run.py preopens message_id without
     # going through _emit_text, so the first text has no segment yet.
     flow.message_id = "preopened"
     _emit_tool_call(Content.from_function_call(call_id="call_1", name="docs_fetch", arguments="{}"), flow)
-    _emit_text(Content.from_text("Let me check the docs."), flow)
+    text_events = _emit_text(Content.from_text("Let me check the docs."), flow)
 
     event = _build_messages_snapshot(flow, [])
 
     kinds = _snapshot_kinds(event)
     assert [kind for kind, _ in kinds] == ["tool_calls", "text"]
     assert kinds[1][1]["content"] == "Let me check the docs."
-    assert kinds[1][1]["id"] == "preopened"
+    assert kinds[0][1]["id"] == "preopened"
+    assert kinds[1][1]["id"] != kinds[0][1]["id"]
+    assert len({message["id"] for _, message in kinds}) == len(kinds)
+    assert isinstance(text_events[0], TextMessageEndEvent)
+    assert isinstance(text_events[1], TextMessageStartEvent)
+    assert text_events[0].message_id == "preopened"
+    assert text_events[1].message_id == kinds[1][1]["id"]
 
 
 def test_snapshot_separates_calls_across_results():
@@ -943,6 +990,26 @@ def test_emit_approval_request_populates_interrupt_metadata():
     }
 
 
+def test_emit_approval_request_reuses_confirmation_message_id_in_snapshot():
+    """Confirmation tool events and snapshots share the same message ID."""
+    flow = FlowState()
+    _emit_text(Content.from_text("Before approval."), flow)
+    text_message_id = flow.message_id
+    function_call = Content.from_function_call(call_id="call_123", name="write_doc", arguments={"content": "x"})
+    approval_content = Content.from_function_approval_request(id="approval_1", function_call=function_call)
+
+    events = _emit_approval_request(approval_content, flow)
+    confirm_start = next(
+        event for event in events if isinstance(event, ToolCallStartEvent) and event.tool_call_name == "confirm_changes"
+    )
+    snapshot = _build_messages_snapshot(flow, [])
+    kinds = _snapshot_kinds(snapshot)
+
+    assert [kind for kind, _ in kinds] == ["text", "tool_calls"]
+    assert confirm_start.parent_message_id == kinds[1][1]["id"]
+    assert confirm_start.parent_message_id != text_message_id
+
+
 def test_emit_approval_request_keeps_protocol_fields_when_tool_arguments_use_reserved_names() -> None:
     """Reserved protocol fields remain controls while editedArgs carries colliding tool arguments."""
     flow = FlowState(message_id="msg-1")
@@ -1042,6 +1109,14 @@ async def test_predictive_confirmation_run_finished_interrupt_links_tool_call():
         "name": "write_doc",
         "arguments": {"content": "Draft"},
     }
+
+    confirm_start = next(
+        event for event in events if isinstance(event, ToolCallStartEvent) and event.tool_call_name == "confirm_changes"
+    )
+    snapshots = [event for event in events if isinstance(event, MessagesSnapshotEvent)]
+    assert snapshots
+    snapshot_tool_message = next(message for message in snapshots[-1].messages if getattr(message, "tool_calls", None))
+    assert confirm_start.parent_message_id == snapshot_tool_message.id
 
 
 def test_resume_to_tool_messages_from_interrupts_payload():
@@ -1782,6 +1857,8 @@ class TestEmitMcpToolCall:
     def test_produces_start_and_args_events(self):
         """MCP tool call emits ToolCallStart + ToolCallArgs events."""
         flow = FlowState()
+        _emit_text(Content.from_text("Before MCP call."), flow)
+        text_message_id = flow.message_id
         content = Content.from_mcp_server_tool_call(
             call_id="mcp_call_1",
             tool_name="search",
@@ -1798,6 +1875,12 @@ class TestEmitMcpToolCall:
         assert events[1].type == "TOOL_CALL_ARGS"
         assert events[1].tool_call_id == "mcp_call_1"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         assert "weather" in events[1].delta  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+        snapshot = _build_messages_snapshot(flow, [])
+        kinds = _snapshot_kinds(snapshot)
+        assert [kind for kind, _ in kinds] == ["text", "tool_calls"]
+        assert events[0].parent_message_id == kinds[1][1]["id"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert events[0].parent_message_id != text_message_id  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_tracks_in_flow_state(self):
         """MCP tool call is tracked in flow.pending_tool_calls and tool_calls_by_id."""

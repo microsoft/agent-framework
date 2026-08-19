@@ -90,14 +90,22 @@ public static class ChatClientExtensions
                 new InvocableFunctionBypassingChatClient(innerClient, services.GetService<ILoggerFactory>()));
         }
 
-        if (chatClient.GetService<FunctionInvokingChatClient>() is null)
+        var functionInvokingChatClient = chatClient.GetService<FunctionInvokingChatClient>();
+        if (functionInvokingChatClient is null)
         {
             chatBuilder.Use((innerClient, services) =>
             {
                 var loggerFactory = services.GetService<ILoggerFactory>();
 
-                return new FunctionInvokingChatClient(innerClient, loggerFactory, services);
+                return new FunctionInvokingChatClient(innerClient, loggerFactory, services)
+                {
+                    AllowConcurrentInvocation = options?.AllowConcurrentInvocation is true,
+                };
             });
+        }
+        else if (options?.AllowConcurrentInvocation is true)
+        {
+            functionInvokingChatClient.AllowConcurrentInvocation = true;
         }
 
         // MessageInjectingChatClient is injected when EnableMessageInjection is enabled.

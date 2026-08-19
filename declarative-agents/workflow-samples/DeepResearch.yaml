@@ -14,6 +14,9 @@
 # - Knowledge Agent: Performs generic web searches.
 # - Coder Agent: Able to write and execute code.
 # - Weather Agent: Provides weather information.
+#  
+# Example input: 
+# Find the current temperatures in Seattle and San Francisco, calculate the difference in Celsius and Fahrenheit, and recommend what clothing to pack for each city.  
 # 
 kind: Workflow
 maxTurns: 500
@@ -264,14 +267,14 @@ trigger:
                       output:
                         messages: Local.Plan
                       input:
+                        arguments:
+                          team: =Local.TeamDescription
                         messages: |-
                           =UserMessage(
                              "Please briefly explain what went wrong on this last run (the root cause of the failure),
                               and then come up with a new plan that takes steps and/or includes hints to overcome prior challenges and especially avoids repeating the same mistakes.
-                              As before, the new plan should be concise, be expressed in bullet-point form, and consider the following team composition
-                              (do not involve any other outside people since we cannot contact anyone else):
-
-                              {Local.TeamDescription}")
+                              As before, the new plan should be concise, be expressed in bullet-point form, and only involve the team members already described
+                              (do not involve any other outside people since we cannot contact anyone else).")
 
                     - kind: SetTextVariable
                       id: setVariable_jW7tmM
