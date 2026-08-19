@@ -13,8 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, cast, overload
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -47,11 +46,7 @@ from agent_framework import (
     executor,
     tool,
 )
-from azure.ai.agentserver.core import (
-    FoundryAgentRequestContext,
-    reset_request_context,
-    set_request_context,
-)
+from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import InMemoryResponseProvider, ResponseContext
 from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputItem
 from mcp import McpError
@@ -70,8 +65,13 @@ from agent_framework_foundry_hosting._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
     FunctionApprovalStoreProvider,
-    InMemoryFunctionApprovalStore,
 )
+
+
+def _function_approval_store(request: Content) -> MagicMock:
+    storage = MagicMock()
+    storage.load_approval_request = AsyncMock(return_value=request)
+    return storage
 
 
 def _make_function_approval_request_content(
@@ -87,21 +87,6 @@ def _make_function_approval_request_content(
         call_id, name, arguments=arguments, additional_properties={"server_label": server_label}
     )
     return Content.from_function_approval_request(request_id, function_call)
-
-
-@contextmanager
-def _request_context(
-    *,
-    call_id: str | None = None,
-    user_id: str | None = None,
-    session_id: str | None = None,
-) -> Generator[None]:
-    """Install a Foundry request context for the duration of the block."""
-    token = set_request_context(FoundryAgentRequestContext(call_id=call_id, user_id=user_id, session_id=session_id))
-    try:
-        yield
-    finally:
-        reset_request_context(token)
 
 
 # region Helpers
@@ -419,44 +404,6 @@ class TestResponsesHostServerInit:
         with pytest.raises(RuntimeError, match="history provider"):
             ResponsesHostServer(agent)
 
-    async def test_hosted_request_requires_user_partition_key(self) -> None:
-        agent = _make_agent(
-            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("hi")])])
-        )
-        server = _make_server(agent)
-        request = CreateResponse(model="m", input="hi")
-        context = ResponseContext(
-            response_id="caresp_aaaaaaaaaaaaaaaa00" + "1" * 32,
-            mode_flags=MagicMock(),
-        )
-
-        with (
-            patch.object(server.config, "is_hosted", True),
-            _request_context(call_id="call-1"),
-            pytest.raises(RuntimeError, match="platform user ID"),
-        ):
-            await server._handle_response(  # pyright: ignore[reportPrivateUsage]
-                request,
-                context,
-                asyncio.Event(),
-            )
-
-    async def test_hosted_request_requires_protocol_v2(self) -> None:
-        server = _make_server(_make_agent())
-        request = CreateResponse(model="m", input="hi")
-        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
-
-        with (
-            patch.object(server.config, "is_hosted", True),
-            _request_context(user_id="user-1"),
-            pytest.raises(RuntimeError, match="protocol 2.0.0"),
-        ):
-            await server._handle_response(  # pyright: ignore[reportPrivateUsage]
-                request,
-                context,
-                asyncio.Event(),
-            )
-
     async def test_previous_response_requires_existing_agent_session(self) -> None:
         agent = _make_agent()
         server = _make_server(agent, session_store=SessionStore())
@@ -517,7 +464,7 @@ class TestAgentSessionPersistence:
 
         provider = server._session_storage_provider  # pyright: ignore[reportPrivateUsage]
         assert provider is not None
-        session_store = provider.get_store(config=server.config)
+        session_store = provider.get_store(config=server.config, platform_context=get_request_context())
         assert session_store is not None
         first_session = await session_store.get(first.json()["id"])
         second_session = await session_store.get(second.json()["id"])
@@ -1068,6 +1015,66 @@ class TestStreaming:
         assert len(args_done) == 1
         assert args_done[0]["data"]["arguments"] == '{"q": "hello"}'
 
+    @pytest.mark.parametrize(("arguments", "expected_count"), [(None, 1), ("", 2)])
+    async def test_declaration_only_metadata_replay_requires_none_arguments(
+        self, arguments: str | None, expected_count: int
+    ) -> None:
+        metadata = Content.from_function_call("call_1", "search", arguments=arguments)
+        metadata.id = "call_1"
+        metadata.user_input_request = True
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "search", arguments='{"q": "hello"}')],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(contents=[Content.from_text("Waiting for the result")], role="assistant"),
+                AgentResponseUpdate(contents=[metadata], role="assistant"),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        function_items = [
+            event
+            for event in events
+            if event["event"] == "response.output_item.added" and event["data"]["item"]["type"] == "function_call"
+        ]
+        assert len(function_items) == expected_count
+
+    async def test_function_call_id_can_be_reused_after_terminal_result(self) -> None:
+        reused_call = Content.from_function_call("call_1", "search", arguments=None)
+        reused_call.id = "call_1"
+        reused_call.user_input_request = True
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(
+                    contents=[Content.from_function_call("call_1", "search", arguments='{"q": "first"}')],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(
+                    contents=[Content.from_function_result("call_1", result="first result")],
+                    role="tool",
+                ),
+                AgentResponseUpdate(contents=[reused_call], role="assistant"),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        function_items = [
+            event
+            for event in events
+            if event["event"] == "response.output_item.added" and event["data"]["item"]["type"] == "function_call"
+        ]
+        assert [event["data"]["item"]["call_id"] for event in function_items] == ["call_1", "call_1"]
+
     async def test_function_call_streaming_serializes_dataclass_arguments(self) -> None:
         @dataclass
         class HandoffLikeRequest:
@@ -1483,9 +1490,8 @@ class TestOutputItemToMessage:
     async def test_mcp_approval_request(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = OutputItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -1501,9 +1507,8 @@ class TestOutputItemToMessage:
     async def test_mcp_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = OutputItemMcpApprovalResponseResource({
             "type": "mcp_approval_response",
@@ -1993,9 +1998,8 @@ class TestItemToMessage:
     async def test_mcp_approval_request(self) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = ItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -2012,9 +2016,8 @@ class TestItemToMessage:
     async def test_mcp_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import MCPApprovalResponse
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = MCPApprovalResponse({
             "type": "mcp_approval_response",
@@ -3244,39 +3247,14 @@ class TestMultiTurnMixedContent:
 # region Function approval round-trip
 
 
-class TestFunctionApprovalStore:
-    """Unit tests for the function approval storage classes."""
-
-    async def test_in_memory_save_and_load(self) -> None:
-        storage = InMemoryFunctionApprovalStore()
-        request = _make_function_approval_request_content(request_id="apr_1")
-        await storage.save_approval_request("apr_1", request)
-        loaded = await storage.load_approval_request("apr_1")
-        assert loaded.type == "function_approval_request"
-        assert loaded.id == "apr_1"
-
-    async def test_in_memory_duplicate_save_raises(self) -> None:
-        storage = InMemoryFunctionApprovalStore()
-        request = _make_function_approval_request_content(request_id="apr_1")
-        await storage.save_approval_request("apr_1", request)
-        with pytest.raises(ValueError, match="already exists"):
-            await storage.save_approval_request("apr_1", request)
-
-    async def test_in_memory_missing_load_raises(self) -> None:
-        storage = InMemoryFunctionApprovalStore()
-        with pytest.raises(KeyError):
-            await storage.load_approval_request("missing")
-
-
 class TestFunctionApprovalConversion:
     """Tests for the approval-aware paths in `_item_to_message` / `_output_item_to_message`."""
 
     async def test_output_item_mcp_approval_request_loads_from_storage(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = OutputItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -3311,9 +3289,8 @@ class TestFunctionApprovalConversion:
     async def test_output_item_mcp_approval_response_resolves_to_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemMcpApprovalResponseResource
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = OutputItemMcpApprovalResponseResource({
             "type": "mcp_approval_response",
@@ -3346,9 +3323,8 @@ class TestFunctionApprovalConversion:
     async def test_input_item_mcp_approval_request_loads_from_storage(self) -> None:
         from azure.ai.agentserver.responses.models import ItemMcpApprovalRequest
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = ItemMcpApprovalRequest({
             "type": "mcp_approval_request",
@@ -3365,9 +3341,8 @@ class TestFunctionApprovalConversion:
     async def test_input_item_mcp_approval_response_resolves_to_approval_response(self) -> None:
         from azure.ai.agentserver.responses.models import MCPApprovalResponse
 
-        storage = InMemoryFunctionApprovalStore()
         saved = _make_function_approval_request_content(request_id="apr-1")
-        await storage.save_approval_request("apr-1", saved)
+        storage = _function_approval_store(saved)
 
         item = MCPApprovalResponse({
             "type": "mcp_approval_response",
@@ -3410,7 +3385,7 @@ class TestFunctionApprovalRoundTrip:
 
         # Storage must contain a saved entry under the emitted request id.
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config
+            config=server.config, platform_context=get_request_context()
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert loaded.function_call is not None
@@ -3440,7 +3415,7 @@ class TestFunctionApprovalRoundTrip:
         assert approval_request_id is not None
 
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config
+            config=server.config, platform_context=get_request_context()
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
 
@@ -3626,6 +3601,7 @@ class TestCheckpointContextValidation:
 def _make_consent_error(
     url: str = "https://consent.example.com/auth",
     name: str = "Foundry Toolbox",
+    source_type: str = "mcp",
 ) -> Exception:
     """Build an exception wrapping a Foundry MCP gateway consent error.
 
@@ -3645,7 +3621,7 @@ def _make_consent_error(
         "errors": [
             {
                 "name": name,
-                "type": "mcp",
+                "type": source_type,
                 "error": {
                     "code": "CONSENT_REQUIRED",
                     "message": url,
@@ -3662,6 +3638,16 @@ class TestConsentUrlFromError:
     def test_returns_consent_url_when_inner_arg_is_consent_mcp_error(self) -> None:
         exc = _make_consent_error("https://example.com/consent", name="my-tool")
         assert consent_url_from_error(exc) == [ConsentError(name="my-tool", consent_url="https://example.com/consent")]
+
+    def test_returns_consent_url_for_a2a_preview_source(self) -> None:
+        exc = _make_consent_error(
+            "https://example.com/a2a-consent",
+            name="work-iq",
+            source_type="a2a_preview",
+        )
+        assert consent_url_from_error(exc) == [
+            ConsentError(name="work-iq", consent_url="https://example.com/a2a-consent")
+        ]
 
     def test_returns_none_when_no_mcp_error_in_args(self) -> None:
         assert consent_url_from_error(Exception("boom")) is None
@@ -4283,7 +4269,7 @@ class TestWorkflowAgentHosting:
         # ``function_call``) must be persisted under that id so the next
         # turn can reconstruct it.
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config
+            config=server.config, platform_context=get_request_context()
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert loaded.function_call is not None
@@ -4313,7 +4299,7 @@ class TestWorkflowAgentHosting:
         assert approval_request_id is not None
 
         loaded = await server._function_approval_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
-            config=server.config
+            config=server.config, platform_context=get_request_context()
         ).load_approval_request(approval_request_id)
         assert loaded.type == "function_approval_request"
         assert mock_agent.run_count == 1
@@ -4333,32 +4319,39 @@ class TestWorkflowAgentHosting:
             final_text="done with approval",
         )
         server = _make_server(workflow_agent)
+        checkpoint_provider = server._checkpoint_storage_provider  # pyright: ignore[reportPrivateUsage]
 
-        first = await _post(server, stream=False)
-        assert first.status_code == 200
-        first_body = first.json()
-        first_response_id = first_body["id"]
-        approval_items = [it for it in first_body["output"] if it["type"] == "mcp_approval_request"]
-        assert len(approval_items) == 1
-        approval_request_id = approval_items[0]["id"]
-        assert mock_agent.run_count == 1
+        with patch.object(checkpoint_provider, "get_store", wraps=checkpoint_provider.get_store) as get_store:
+            first = await _post(server, stream=False)
+            assert first.status_code == 200
+            first_body = first.json()
+            first_response_id = first_body["id"]
+            approval_items = [it for it in first_body["output"] if it["type"] == "mcp_approval_request"]
+            assert len(approval_items) == 1
+            approval_request_id = approval_items[0]["id"]
+            assert mock_agent.run_count == 1
 
-        second_payload: dict[str, Any] = {
-            "model": "test-model",
-            "input": [
-                {
-                    "type": "mcp_approval_response",
-                    "approval_request_id": approval_request_id,
-                    "approve": True,
-                }
-            ],
-            "stream": False,
-            "previous_response_id": first_response_id,
-        }
-        second = await _post_json(server, second_payload)
+            second_payload: dict[str, Any] = {
+                "model": "test-model",
+                "input": [
+                    {
+                        "type": "mcp_approval_response",
+                        "approval_request_id": approval_request_id,
+                        "approve": True,
+                    }
+                ],
+                "stream": False,
+                "previous_response_id": first_response_id,
+            }
+            second = await _post_json(server, second_payload)
         assert second.status_code == 200
         second_body = second.json()
         assert second_body["status"] == "completed"
+        assert [call.kwargs["context_id"] for call in get_store.call_args_list] == [
+            first_response_id,
+            second_body["id"],
+            first_response_id,
+        ]
 
         # The inner agent must have been resumed (restore replay + new turn).
         # Restore call is a no-op for the mock (no input); the new-turn call

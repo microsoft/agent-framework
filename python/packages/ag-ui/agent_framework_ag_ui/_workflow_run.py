@@ -41,6 +41,8 @@ from agent_framework.observability import (
 from ._message_adapters import normalize_agui_input_messages
 from ._run_common import (
     FlowState,
+    _approval_interrupt_for_function_call,  # pyright: ignore[reportPrivateUsage]
+    _approval_response_schema,  # pyright: ignore[reportPrivateUsage]
     _build_run_finished_event,
     _close_reasoning_block,
     _emit_content,
@@ -191,6 +193,26 @@ def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | N
         return None
 
     value = _workflow_interrupt_value(request_payload.get("data"))
+    request_data = getattr(request_event, "data", None)
+    if (
+        isinstance(request_data, Content)
+        and request_data.type == "function_approval_request"
+        and request_data.function_call is not None
+    ):
+        workflow_metadata = _workflow_interrupt_metadata(request_payload, value)["agent_framework"]
+        workflow_metadata.pop("type", None)
+        response_schema = (
+            _approval_response_schema()
+            if request_data.function_call.additional_properties.get("server_label")
+            else None
+        )
+        return _approval_interrupt_for_function_call(
+            interrupt_id=str(request_payload["request_id"]),
+            function_call=request_data.function_call,
+            metadata=workflow_metadata,
+            response_schema=response_schema,
+        )
+
     entry: dict[str, Any] = {
         "id": str(request_payload["request_id"]),
         "reason": "input_required",
@@ -303,16 +325,11 @@ def _pending_workflow_interrupt_ids(pending_events: dict[str, Any]) -> set[str]:
 def _resume_error_for_pending_workflow_requests(
     resume_entries: list[dict[str, Any]],
 ) -> RunErrorEvent | None:
-    """Return a workflow resume error for explicit non-resolved canonical resume entries."""
+    """Return a workflow resume error for unsupported canonical resume entries."""
     for entry in resume_entries:
         interrupt_id = str(entry["interrupt_id"])
         status = entry.get("status")
-        if status == "cancelled":
-            return RunErrorEvent(
-                message=f"Workflow resume for interruptId '{interrupt_id}' was cancelled.",
-                code="WORKFLOW_RESUME_CANCELLED",
-            )
-        if status not in {None, "resolved"}:
+        if status not in {None, "resolved", "cancelled"}:
             return RunErrorEvent(
                 message=f"Unsupported workflow resume status '{status}' for interruptId '{interrupt_id}'.",
                 code="WORKFLOW_RESUME_INVALID",
@@ -321,7 +338,7 @@ def _resume_error_for_pending_workflow_requests(
 
 
 def _consume_cancelled_workflow_requests(workflow: Workflow, resume_entries: list[dict[str, Any]]) -> None:
-    """Remove cancelled workflow request_info events from the runner context."""
+    """Remove cancelled workflow requests from runner and owning agent-executor state."""
     cancelled_ids = {str(entry["interrupt_id"]) for entry in resume_entries if entry.get("status") == "cancelled"}
     if not cancelled_ids:
         return
@@ -330,9 +347,15 @@ def _consume_cancelled_workflow_requests(workflow: Workflow, resume_entries: lis
     pending_events = getattr(runner_context, "_pending_request_info_events", None)
     if not isinstance(pending_events, dict):
         return
+    pending_events = cast(dict[str, Any], pending_events)
 
     for interrupt_id in cancelled_ids:
-        pending_events.pop(interrupt_id, None)
+        request_event = pending_events.pop(interrupt_id, None)
+        source_executor_id = getattr(request_event, "source_executor_id", None)
+        executor = workflow.executors.get(source_executor_id) if source_executor_id else None
+        pending_agent_requests = getattr(executor, "_pending_agent_requests", None)
+        if isinstance(pending_agent_requests, dict):
+            cast(dict[str, Any], pending_agent_requests).pop(interrupt_id, None)
 
 
 def _coerce_json_value(value: Any) -> Any:
@@ -439,6 +462,79 @@ def _coerce_message(value: Any) -> Message | None:
     )
 
 
+def _approval_argument_value_matches(original_value: Any, edited_value: Any) -> bool:
+    """Return whether an edited approval argument preserves its JSON value type."""
+    if isinstance(original_value, bool):
+        return isinstance(edited_value, bool)
+    if isinstance(original_value, int) and not isinstance(original_value, bool):
+        return isinstance(edited_value, int) and not isinstance(edited_value, bool)
+    if isinstance(original_value, float):
+        return isinstance(edited_value, (int, float)) and not isinstance(edited_value, bool)
+    if isinstance(original_value, str):
+        return isinstance(edited_value, str)
+    if isinstance(original_value, list):
+        return isinstance(edited_value, list)
+    if isinstance(original_value, dict):
+        return isinstance(edited_value, dict)
+    return True
+
+
+def _coerce_compact_approval_response(request_data: Content, candidate: dict[str, Any]) -> Content | None:
+    """Reconstruct a workflow approval response from client-owned decision fields."""
+    if {"type", "id", "function_call"}.intersection(candidate):
+        return None
+
+    approved = candidate.get("approved", candidate.get("accepted"))
+    if not isinstance(approved, bool):
+        return None
+
+    direct_edited_arguments = {
+        key: value for key, value in candidate.items() if key not in {"approved", "accepted", "editedArgs"}
+    }
+    standard_edited_arguments = candidate.get("editedArgs")
+    if request_data.function_call is None:
+        return None
+    if (
+        direct_edited_arguments or standard_edited_arguments is not None
+    ) and request_data.function_call.additional_properties.get("server_label"):
+        return None
+
+    original_arguments = request_data.function_call.parse_arguments() or {}
+    if standard_edited_arguments is not None:
+        if not isinstance(standard_edited_arguments, dict) or direct_edited_arguments:
+            return None
+        edited_arguments = cast(dict[str, Any], standard_edited_arguments)
+        if set(edited_arguments) != set(original_arguments):
+            return None
+        final_arguments = dict(edited_arguments)
+    else:
+        edited_arguments = direct_edited_arguments
+        if not set(edited_arguments).issubset(original_arguments):
+            return None
+        final_arguments = {**original_arguments, **edited_arguments}
+
+    if any(
+        not _approval_argument_value_matches(original_arguments[name], edited_arguments[name])
+        for name in edited_arguments
+    ):
+        return None
+    if not edited_arguments:
+        return request_data.to_function_approval_response(approved)
+
+    edited_function_call = Content.from_function_call(
+        call_id=request_data.function_call.call_id or "",
+        name=request_data.function_call.name or "",
+        arguments=final_arguments,
+        informational_only=request_data.function_call.informational_only,
+        annotations=request_data.function_call.annotations,
+        additional_properties=request_data.function_call.additional_properties,
+        raw_representation=request_data.function_call.raw_representation,
+    )
+    response = request_data.to_function_approval_response(approved)
+    response.function_call = edited_function_call
+    return response
+
+
 def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     """Coerce a candidate value into the request's expected response type."""
     response_type = getattr(request_event, "response_type", None)
@@ -485,6 +581,15 @@ def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     if target_type is Message:
         return _coerce_message(candidate)
     if target_type is Content:
+        request_data = getattr(request_event, "data", None)
+        if (
+            isinstance(request_data, Content)
+            and request_data.type == "function_approval_request"
+            and isinstance(candidate, dict)
+        ):
+            compact_response = _coerce_compact_approval_response(request_data, cast(dict[str, Any], candidate))
+            if compact_response is not None:
+                return compact_response
         return _coerce_content(candidate)
     if target_type is bool:
         return candidate if isinstance(candidate, bool) else None
@@ -499,7 +604,21 @@ def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     return candidate
 
 
-def _approval_response_matches_request(request_id: str, request_event: Any, response: Any) -> bool:
+def _is_compact_approval_response_payload(value: Any) -> bool:
+    """Return whether a value contains only client-owned approval decision fields."""
+    candidate = _coerce_json_value(value)
+    return isinstance(candidate, dict) and not {"type", "id", "function_call"}.intersection(
+        cast(dict[str, Any], candidate)
+    )
+
+
+def _approval_response_matches_request(
+    request_id: str,
+    request_event: Any,
+    response: Any,
+    *,
+    allow_edited_arguments: bool = False,
+) -> bool:
     """Check whether an approval response matches the pending approval request."""
     request_data = getattr(request_event, "data", None)
     if not isinstance(request_data, Content) or request_data.type != "function_approval_request":
@@ -519,6 +638,8 @@ def _approval_response_matches_request(request_id: str, request_event: Any, resp
     if getattr(response_call, "name", None) != getattr(request_call, "name", None):
         return False
 
+    if allow_edited_arguments:
+        return True
     return canonical_function_arguments(response_call) == canonical_function_arguments(request_call)
 
 
@@ -541,7 +662,12 @@ def _single_pending_response_from_value(pending_events: dict[str, Any], value: A
         )
         return {}
 
-    if not _approval_response_matches_request(str(request_id), request_event, coerced_value):
+    if not _approval_response_matches_request(
+        str(request_id),
+        request_event,
+        coerced_value,
+        allow_edited_arguments=_is_compact_approval_response_payload(value),
+    ):
         logger.info(
             "Ignoring pending request response for request_id=%s: approval response does not match pending request",
             request_id,
@@ -582,7 +708,12 @@ def _coerce_responses_for_pending_requests(
                 _response_type_name(request_event),
             )
             continue
-        if not _approval_response_matches_request(request_key, request_event, coerced_value):
+        if not _approval_response_matches_request(
+            request_key,
+            request_event,
+            coerced_value,
+            allow_edited_arguments=_is_compact_approval_response_payload(value),
+        ):
             logger.info(
                 "Ignoring resume response for request_id=%s: approval response does not match pending request",
                 request_key,
@@ -627,7 +758,12 @@ def _coerce_responses_for_pending_requests_strict(
                     code="WORKFLOW_RESUME_INVALID_RESPONSE",
                 ),
             )
-        if not _approval_response_matches_request(request_key, request_event, coerced_value):
+        if not _approval_response_matches_request(
+            request_key,
+            request_event,
+            coerced_value,
+            allow_edited_arguments=_is_compact_approval_response_payload(value),
+        ):
             return (
                 {},
                 RunErrorEvent(
@@ -864,6 +1000,7 @@ async def run_workflow_stream(
         pending_before_run = await _pending_request_events(workflow)
     pending_interrupt_ids = _pending_workflow_interrupt_ids(pending_before_run)
     resume_entries: list[dict[str, Any]] = []
+    cancelled_request_ids: set[str] = set()
     if pending_interrupt_ids:
         resume_entries, contract_error, contract_code = _resume_contract_error(
             resume_payload,
@@ -879,11 +1016,12 @@ async def run_workflow_stream(
             return
         resume_error = _resume_error_for_pending_workflow_requests(resume_entries)
         if resume_error is not None:
-            if getattr(resume_error, "code", None) == "WORKFLOW_RESUME_CANCELLED":
-                _consume_cancelled_workflow_requests(workflow, resume_entries)
             yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
             yield resume_error
             return
+        cancelled_request_ids = {
+            str(entry["interrupt_id"]) for entry in resume_entries if entry.get("status") == "cancelled"
+        }
 
     resume_responses = (
         _resume_entries_to_workflow_responses(resume_entries)
@@ -901,6 +1039,13 @@ async def run_workflow_stream(
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         yield response_error
         return
+    if cancelled_request_ids:
+        _consume_cancelled_workflow_requests(workflow, resume_entries)
+        pending_before_run = {
+            request_id: request_event
+            for request_id, request_event in pending_before_run.items()
+            if str(getattr(request_event, "request_id", None) or request_id) not in cancelled_request_ids
+        }
     pending_interrupts = _interrupts_from_pending_requests(pending_before_run)
 
     # A checkpoint resume must always reach ``workflow.run(checkpoint_id=...)`` so the
