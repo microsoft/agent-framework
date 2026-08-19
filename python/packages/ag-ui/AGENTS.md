@@ -40,6 +40,9 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - `_approval_lifecycle.py` is the sole owner of approval occurrence registration, trusted aliases, authority
   validation, claims, terminal outcomes, and retry deduplication. Runner code normalizes AG-UI protocol values and
   projects lifecycle outcomes but must not maintain a parallel pending-approval registry.
+- Default stateless conversation history is client-controlled, including historical tool calls and results. Never
+  document conversational tool results as authorization or policy evidence; use deterministic server-side checks,
+  server-validated approvals, or scoped authoritative snapshots.
 - `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
   it must never concatenate unrelated tool results or record accepted changes without a matching real result.
 - SSE keepalive is endpoint-owned transport behavior configured through

@@ -10,7 +10,8 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator
 from functools import partial
-from typing import Any, cast, get_args, get_origin
+from types import UnionType
+from typing import Any, Union, cast, get_args, get_origin, get_type_hints
 
 from ag_ui.core import (
     ActivitySnapshotEvent,
@@ -33,6 +34,10 @@ from agent_framework import (
     Message,
     Workflow,
     WorkflowRunState,
+)
+from agent_framework._workflows._typing_utils import (  # pyright: ignore[reportPrivateUsage]
+    is_instance_of,
+    try_coerce_to_type,
 )
 from agent_framework.observability import (
     _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
@@ -535,6 +540,48 @@ def _coerce_compact_approval_response(request_data: Content, candidate: dict[str
     return response
 
 
+def _without_optional(annotation: Any) -> Any:
+    """Unwrap ``X | None`` so optional fields normalize like their plain counterpart."""
+    if get_origin(annotation) not in (Union, UnionType):
+        return annotation
+    members = [member for member in get_args(annotation) if member is not type(None)]
+    return members[0] if len(members) == 1 else annotation
+
+
+def _normalize_agui_message_fields(response_type: Any, candidate: Any) -> Any:
+    """Convert AG-UI message payloads for fields the response type declares as Message.
+
+    Core coercion only understands the canonical ``contents`` form, so AG-UI wire shapes
+    (``{"role": ..., "content": ...}`` and bare strings) are translated here.
+    """
+    if not isinstance(candidate, dict):
+        return candidate
+
+    try:
+        field_types = get_type_hints(response_type)
+    except Exception:
+        return candidate
+
+    normalized = dict(cast(dict[str, Any], candidate))
+    for name, annotation in field_types.items():
+        if name not in normalized:
+            continue
+        annotation = _without_optional(annotation)
+        target_type = get_origin(annotation) or annotation
+        if target_type is Message:
+            message = _coerce_message(normalized[name])
+            if message is not None:
+                normalized[name] = message
+        elif target_type is list and get_args(annotation)[:1] == (Message,):
+            items = normalized[name]
+            if not isinstance(items, list):
+                continue
+            messages = [_coerce_message(item) for item in cast(list[Any], items)]
+            if all(message is not None for message in messages):
+                normalized[name] = messages
+    return normalized
+
+
 def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     """Coerce a candidate value into the request's expected response type."""
     response_type = getattr(request_event, "response_type", None)
@@ -598,7 +645,8 @@ def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     if target_type is float:
         return candidate if isinstance(candidate, (int, float)) and not isinstance(candidate, bool) else None
     if isinstance(target_type, type):
-        return candidate if isinstance(candidate, target_type) else None
+        coerced = try_coerce_to_type(_normalize_agui_message_fields(response_type, candidate), response_type)
+        return coerced if is_instance_of(coerced, response_type) else None
 
     # Unknown typing metadata: preserve value as-is.
     return candidate

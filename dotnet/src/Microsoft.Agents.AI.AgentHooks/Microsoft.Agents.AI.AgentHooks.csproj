@@ -1,0 +1,46 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- ResponsibleAI.AgentHooks targets net8.0, so this package cannot target netstandard2.0/net472. -->
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <!-- The AGENT-HOOKS wire projection serializes arbitrary tool arguments/results via
+         reflection-based System.Text.Json, which is incompatible with trimming/AOT. -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <!-- This package consumes experimental framework APIs (its own maturity is carried
+         by the alpha version suffix, per repo convention for pre-release packages). -->
+    <NoWarn>$(NoWarn);MEAI001;MAAI001</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Ships as alpha: the package's maturity follows its ResponsibleAI.AgentHooks
+         dependency (alpha). -->
+    <VersionSuffix>alpha</VersionSuffix>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+    <PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="ResponsibleAI.AgentHooks" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework - Responsible AI Agent-Hooks Protocol Support</Title>
+    <Description>Microsoft Agent Framework support for the Agent-Hooks interception protocol (AGENT-HOOKS-0.1, maintained by the Responsible AI project at github.com/responsibleai/agent-hooks): fail-closed policy interception across the agent, model-call and tool-call seams, with transform write-back, buffered streaming and verdict-gated history persistence.</Description>
+    <PackageTags>AI, Artificial Intelligence, Agent, SDK, Framework, Agent-Hooks, Responsible AI, Guardrails, Policy, Interception</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.AgentHooks.UnitTests" />
+  </ItemGroup>
+
+</Project>

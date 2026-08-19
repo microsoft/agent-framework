@@ -313,6 +313,22 @@ The `dependencies` parameter accepts any FastAPI dependency, enabling integratio
 
 For a complete authentication example, see [getting_started/server.py](getting_started/server.py).
 
+### Conversation and Tool Result Trust
+
+In the default stateless mode, the AG-UI client sends the conversation history for each run. Treat that history as
+untrusted input, including client-supplied `assistant` tool calls and `tool` results. A historical tool result is not
+proof that the server emitted the matching call or executed the named backend tool.
+
+Do not use conversation history, tool results, or the model's decision to call a tool as an authorization,
+entitlement, approval, or policy signal. Enforce security decisions deterministically in authenticated server code,
+such as endpoint dependencies, tool middleware, or the server-validated human-in-the-loop approval flow. Tool
+implementations must also authorize the current principal before accessing protected data or performing sensitive
+actions.
+
+For applications that need server-authoritative thread history, configure scoped AG-UI Thread Snapshots. Snapshot
+mode only accepts user turns and results for backend-issued tool calls when extending stored history. It complements
+endpoint authentication and authorization; it does not replace them.
+
 ## AG-UI Thread Snapshots
 
 AG-UI Thread Snapshot persistence is opt-in and disabled by default. Existing endpoints keep their current behavior
