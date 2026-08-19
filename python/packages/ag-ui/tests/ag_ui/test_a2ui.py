@@ -1255,9 +1255,13 @@ def test_mixed_batch_honors_max_function_calls_budget_across_rounds():
     assert len(ran) == 2  # capped cumulatively across rounds (search + generate both charge)
 
 
-def test_generate_only_planner_honors_call_budget():
-    # A generate-only planner (no server tool) must not run more render-subagent calls than
-    # max_function_calls: generate_a2ui charges the budget too.
+def test_generate_only_planner_honors_call_budget_then_narrates():
+    # A generate-only planner must not run more render-subagent calls than
+    # max_function_calls (generate_a2ui charges the budget), AND once the budget is spent
+    # the run must still make a tools-off final narration turn — not end abruptly after the
+    # surface — matching the core loop's budget-exhausted final response.
+    seen_options: list = []
+
     class _RepeatGenerateInner:
         client = _FIConfigClient({"max_function_calls": 1})
 
@@ -1266,6 +1270,7 @@ def test_generate_only_planner_honors_call_budget():
 
         def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
             self.calls += 1
+            seen_options.append(kwargs.get("options"))
 
             async def gen():
                 yield AgentResponseUpdate(
@@ -1283,7 +1288,8 @@ def test_generate_only_planner_honors_call_budget():
     kinds = asyncio.run(_drive(A2UIAgent(inner, _RenderSub())))
     gen_results = [k for k in kinds if k[0] == "result" and k[1] == "g1"]
     assert len(gen_results) == 1  # one render, not one per planner round
-    assert inner.calls == 1  # budget stopped the loop after the first surface
+    assert inner.calls == 2  # planner round + a final narration turn (not an abrupt end)
+    assert (seen_options[-1] or {}).get("tool_choice") == "none"  # final turn: tools off
 
 
 def test_generate_only_planner_honors_max_iterations():
@@ -1415,20 +1421,3 @@ def test_final_narration_turn_forces_tools_off():
     asyncio.run(_drive(A2UIAgent(inner, _RenderSub())))
     assert inner.calls >= 2  # planner round(s) + a final narration turn
     assert (seen_options[-1] or {}).get("tool_choice") == "none"  # final turn: tools off
-
-
-def test_function_call_budget_core_primitive():
-    # The core-owned budget owns the accounting A2UI used to reimplement.
-    from agent_framework._tools import FunctionCallBudget
-
-    b = FunctionCallBudget.from_config({"max_function_calls": 3, "max_iterations": 2})
-    assert b.enabled is True
-    assert b.rounds_remaining(8) == 2  # capped by max_iterations
-    b.start_round()
-    assert b.rounds_remaining(8) == 1
-    assert b.take(2) == 2 and b.calls_used == 2  # reserves what fits
-    assert b.take(5) == 1 and b.exhausted is True  # only the last one fits, then spent
-    assert b.final_response_options({"metadata": {"x": 1}}) == {"metadata": {"x": 1}, "tool_choice": "none"}
-
-    disabled = FunctionCallBudget.from_config({"enabled": False})
-    assert disabled.take(3) == 0  # nothing runs when invocation is disabled

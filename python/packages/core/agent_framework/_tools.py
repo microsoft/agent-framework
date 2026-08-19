@@ -1853,72 +1853,6 @@ async def _try_execute_function_call_groups(
 
 
 @dataclass
-class FunctionCallBudget:
-    """Shared per-request function-call / iteration budget for out-of-loop callers.
-
-    For callers that run their own invocation loop but must honor the same limits and
-    final-response behavior as the core :class:`FunctionInvocationLayer`, instead of
-    re-deriving the accounting.
-
-    Owns the configuration, the cumulative call count, and the round count, and answers the
-    decisions a caller would otherwise reimplement: whether invocation is enabled, how many
-    of a batch fit (:meth:`take`, which also reserves them), how many planner rounds remain
-    under ``max_iterations`` (:meth:`rounds_remaining`), whether the call budget is spent
-    (:attr:`exhausted`), and the options for a tools-off final response
-    (:meth:`final_response_options`, matching the core loop's budget-exhausted final turn).
-    """
-
-    config: "FunctionInvocationConfiguration"
-    calls_used: int = 0
-    rounds_used: int = 0
-
-    @classmethod
-    def from_config(cls, config: "FunctionInvocationConfiguration | None" = None) -> "FunctionCallBudget":
-        """Build a budget from a (possibly unset) configuration, normalizing defaults."""
-        return cls(config=normalize_function_invocation_configuration(config))
-
-    @property
-    def enabled(self) -> bool:
-        """Whether function invocation is enabled at all."""
-        return self.config.get("enabled", True)
-
-    @property
-    def exhausted(self) -> bool:
-        """Whether the cumulative call budget (``max_function_calls``) is spent."""
-        maximum = self.config.get("max_function_calls")
-        return maximum is not None and self.calls_used >= maximum
-
-    def rounds_remaining(self, hard_cap: int) -> int:
-        """Planner rounds still allowed, capping ``hard_cap`` by ``max_iterations``."""
-        maximum = self.config.get("max_iterations")
-        cap = hard_cap if maximum is None else min(hard_cap, maximum)
-        return max(0, cap - self.rounds_used)
-
-    def start_round(self) -> None:
-        """Record that a planner round is starting."""
-        self.rounds_used += 1
-
-    def take(self, count: int) -> int:
-        """Reserve up to ``count`` calls against the budget, returning how many fit.
-
-        Returns 0 when invocation is disabled; otherwise the number that fit under
-        ``max_function_calls`` (all of them when unset), charging the budget by that amount.
-        """
-        if not self.enabled:
-            return 0
-        maximum = self.config.get("max_function_calls")
-        allowed = count if maximum is None else max(0, min(count, maximum - self.calls_used))
-        self.calls_used += allowed
-        return allowed
-
-    def final_response_options(self, options: "Mapping[str, Any] | None" = None) -> dict[str, Any]:
-        """Options for a tools-off final response, matching the core loop's final turn."""
-        result = dict(options or {})
-        result["tool_choice"] = "none"
-        return result
-
-
-@dataclass
 class FunctionCallBatchExecution:
     """Outcome of executing a pre-formed batch of function calls outside the model loop."""
 
@@ -1930,9 +1864,6 @@ class FunctionCallBatchExecution:
     than treat as completion."""
     should_terminate: bool
     """Whether function middleware requested the invocation loop to stop."""
-    deferred: list["Content"]
-    """Calls not executed because a supplied budget was disabled or spent — the caller must
-    not treat these as completed."""
 
 
 async def execute_function_call_batch(
@@ -1940,7 +1871,6 @@ async def execute_function_call_batch(
     tools: "ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]]",
     *,
     session: "AgentSession | None" = None,
-    budget: "FunctionCallBudget | None" = None,
     config: "FunctionInvocationConfiguration | None" = None,
     static_function_middleware: "Sequence[Any]" = (),
     runtime_middleware: Any = None,
@@ -1954,46 +1884,30 @@ async def execute_function_call_batch(
     function-category middleware found in ``runtime_middleware`` (bare objects and
     :class:`~._middleware.MiddlewareBundle` s normalized and expanded via
     :func:`~._middleware.categorize_middleware`, so a bundle's function middleware is
-    applied rather than silently skipped), threads the invocation ``session``, and splits
-    the executor output into :class:`FunctionCallBatchExecution`.
-
-    When a :class:`FunctionCallBudget` is supplied it owns the accounting: calls beyond the
-    remaining budget (or all of them when invocation is disabled) are returned as
-    ``deferred`` rather than executed, and the budget is charged for those that run.
-    Otherwise ``config`` (normalized) is used and every call runs.
+    applied rather than silently skipped), normalizes ``config``, threads the invocation
+    ``session``, and splits the executor output into :class:`FunctionCallBatchExecution`
+    (``results`` / ``control`` / ``should_terminate``). This keeps callers from
+    interpreting result, control, and termination separately from the core loop.
     """
     from ._middleware import FunctionMiddlewarePipeline, categorize_middleware
 
-    if budget is not None:
-        normalized_config = budget.config
-        allowed = budget.take(len(function_calls))
-        runnable = list(function_calls[:allowed])
-        deferred = list(function_calls[allowed:])
-    else:
-        normalized_config = normalize_function_invocation_configuration(config)
-        runnable = list(function_calls)
-        deferred = []
-
+    normalized_config = normalize_function_invocation_configuration(config)
+    runtime_fn_mw = categorize_middleware(runtime_middleware)["function"] if runtime_middleware is not None else []
+    pipeline = FunctionMiddlewarePipeline(*static_function_middleware, *runtime_fn_mw)
+    groups, should_terminate = await _try_execute_function_call_groups(
+        custom_args=dict(custom_args or {}),
+        function_calls=function_calls,
+        tools=tools,
+        config=normalized_config,
+        invocation_session=session,
+        middleware_pipeline=pipeline,
+    )
     results: list[Content] = []
     control: list[Content] = []
-    should_terminate = False
-    if runnable:
-        runtime_fn_mw = categorize_middleware(runtime_middleware)["function"] if runtime_middleware is not None else []
-        pipeline = FunctionMiddlewarePipeline(*static_function_middleware, *runtime_fn_mw)
-        groups, should_terminate = await _try_execute_function_call_groups(
-            custom_args=dict(custom_args or {}),
-            function_calls=runnable,
-            tools=tools,
-            config=normalized_config,
-            invocation_session=session,
-            middleware_pipeline=pipeline,
-        )
-        for group in groups:
-            for content in group:
-                (results if content.type == "function_result" else control).append(content)
-    return FunctionCallBatchExecution(
-        results=results, control=control, should_terminate=should_terminate, deferred=deferred
-    )
+    for group in groups:
+        for content in group:
+            (results if content.type == "function_result" else control).append(content)
+    return FunctionCallBatchExecution(results=results, control=control, should_terminate=should_terminate)
 
 
 @dataclass
