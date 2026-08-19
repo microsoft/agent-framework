@@ -7,10 +7,10 @@ import base64
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator, AsyncIterable, Generator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Literal, cast
+from typing import Generic, Literal, TypeVar, cast
 
 from agent_framework import (
     AgentResponseUpdate,
@@ -112,6 +112,107 @@ def _create_response_event_stream(context: ResponseContext) -> ResponseEventStre
         if persisted_response is not None:
             return ResponseEventStream(response=persisted_response, response_id=context.response_id)
     return ResponseEventStream(response_id=context.response_id)
+
+
+_T = TypeVar("_T")
+
+# Sentinel put on the internal queue by _SignalledIterator's driver task to signal that the
+# wrapped iterator is exhausted (distinct from `None`, which is a valid item value).
+_STOP_SENTINEL: Any = object()
+
+
+class _SignalledIterator(Generic[_T]):
+    """Wraps an async iterator, stopping early as soon as any of ``events`` fires.
+
+    Plain ``async for update in agent.run(...): if event.is_set(): break`` only observes ``event``
+    once ``run()`` actually yields an item -- if it's suspended on a single slow model or tool call
+    with no intermediate item, the signal is invisible until that call resolves. This drives the
+    wrapped iterator from a single persistent background task and races each produced item against
+    ``events`` via ``asyncio.wait`` instead, so a signal is observed immediately.
+
+    The background task (``_drive``) is required (rather than spawning a fresh task per step)
+    because some cleanup run by the wrapped iterator (e.g. observability span teardown) resets a
+    contextvar token set on an earlier call and requires every call against it to share the same
+    async context.
+
+    If an event and a new item becomes ready at the same time, the event takes priority and the item
+    is discarded. Cancelling the background task while it's mid-call is also what actually interrupts
+    a suspended model/tool call, since ``ResponseStream`` (what ``SupportsAgentRun.run(stream=True)``
+    returns) has no ``aclose()``.
+    """
+
+    def __init__(self, iterator: AsyncIterator[_T], *events: asyncio.Event) -> None:
+        """Wrap an async iterator, stopping early if any of ``events`` fires.
+
+        Args:
+            iterator: The async iterator to wrap.
+            events: One or more asyncio.Event objects to watch for. If any of them is set, iteration stops early.
+        """
+        self._iterator = iterator
+        self._events = events
+        self._signalled = False
+        # The queue is used to communicate items from the background driver task to the main iteration loop.
+        self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
+        # The background task that drives the wrapped iterator.
+        self._driver: asyncio.Task[None] | None = None
+
+    @property
+    def signalled(self) -> bool:
+        """Whether iteration stopped early due to an event being set.
+
+        ``signalled`` is only set when iteration stopped early because of an event -- never on ordinary
+        exhaustion -- so callers can tell "the agent/workflow finished" apart from "we gave up waiting".
+        """
+        return self._signalled
+
+    def __aiter__(self) -> "_SignalledIterator[_T]":
+        return self
+
+    async def _drive(self) -> None:
+        """Pull items from the wrapped iterator into ``self._queue`` for the object's lifetime."""
+        while True:
+            try:
+                item: Any = await self._iterator.__anext__()
+            except StopAsyncIteration:
+                await self._queue.put(_STOP_SENTINEL)
+                return
+            except Exception as exc:
+                await self._queue.put(exc)
+                return
+            await self._queue.put(item)
+
+    async def __anext__(self) -> _T:
+        if self._driver is None:
+            self._driver = asyncio.ensure_future(self._drive())
+
+        # Create the background tasks for monitoring the events and the queue.
+        waiters = [asyncio.ensure_future(event.wait()) for event in self._events]
+        get_task = asyncio.ensure_future(self._queue.get())
+        try:
+            # Waits until at least one of the tasks is completed.
+            await asyncio.wait([get_task, *waiters], return_when=asyncio.FIRST_COMPLETED)
+            if any(waiter.done() for waiter in waiters):
+                self._signalled = True
+                self._driver.cancel()
+                with suppress(BaseException):
+                    await self._driver
+                get_task.cancel()
+                with suppress(BaseException):
+                    await get_task
+                raise StopAsyncIteration
+            item = get_task.result()
+        finally:
+            for waiter in waiters:
+                if not waiter.done():
+                    waiter.cancel()
+            for waiter in waiters:
+                with suppress(BaseException):
+                    await waiter
+        if item is _STOP_SENTINEL:
+            raise StopAsyncIteration
+        if isinstance(item, Exception):
+            raise item
+        return cast(_T, item)
 
 
 # Reserved response metadata key pinning the workflow checkpoint that was current at the moment of
@@ -511,11 +612,14 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             else:
                 run_kwargs["options"] = chat_options
 
-            async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
-                if context.shutdown.is_set() or cancellation_signal.is_set():
-                    # Non-workflow agents can't be resilient, so there is no exit_for_recovery path here:
-                    # both shutdown and steering/cancel just wind the turn down and let it complete normally.
-                    break
+            # Non-workflow agents can't be resilient, so there is no exit_for_recovery path here:
+            # both shutdown and steering/cancel just wind the turn down once observed.
+            agent_stream = _SignalledIterator(
+                self._agent.run(stream=True, **run_kwargs),  # type: ignore[reportUnknownMemberType]
+                context.shutdown,
+                cancellation_signal,
+            )
+            async for update in agent_stream:
                 for content in update.contents:
                     async for event in tracker.handle(
                         content, message_id=update.message_id, approval_storage=approval_storage
@@ -669,11 +773,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     # ``run(input_messages, ...)`` call may contain ``function_call_output``
                     # items (carried as FunctionResult/FunctionApprovalResponse content)
                     # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-                    async for _ in self._agent.run(
-                        stream=True,
-                        checkpoint_id=latest_checkpoint.checkpoint_id,
-                        checkpoint_storage=restore_checkpoint_storage,
-                    ):
+                    restore_iter = _SignalledIterator(
+                        self._agent.run(
+                            stream=True,
+                            checkpoint_id=latest_checkpoint.checkpoint_id,
+                            checkpoint_storage=restore_checkpoint_storage,
+                        ),
+                        context.shutdown,
+                        cancellation_signal,
+                    )
+                    async for _ in restore_iter:
+                        pass
+                    if restore_iter.signalled:
                         if context.shutdown.is_set():
                             await context.exit_for_recovery()
                         if cancellation_signal.is_set():
@@ -690,12 +801,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     checkpoint_storage=checkpoint_storage,
                 )
 
-            async for update in run_stream:
-                if context.shutdown.is_set():
-                    await context.exit_for_recovery()
-                if cancellation_signal.is_set():
-                    break
-
+            main_iter = _SignalledIterator(run_stream, context.shutdown, cancellation_signal)
+            async for update in main_iter:
                 if self._resilient_background:
                     latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
                     if (
@@ -724,6 +831,10 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         content, message_id=update.message_id, approval_storage=approval_storage
                     ):
                         yield event
+            # Cancellation needs no extra action here (the loop above already stopped); shutdown
+            # does, but only if it's what actually stopped the loop, not a natural completion.
+            if main_iter.signalled and context.shutdown.is_set():
+                await context.exit_for_recovery()
         except Exception:
             logger.exception("Failed to produce response for workflow agent")
             raise

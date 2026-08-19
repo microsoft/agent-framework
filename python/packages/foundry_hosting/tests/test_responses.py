@@ -786,6 +786,50 @@ class TestAgentSessionPersistence:
         stored = await store.get("response-1")
         assert stored is not None
 
+    async def test_cancellation_signal_preempts_stuck_agent_call(self) -> None:
+        """Steering/explicit-cancel must interrupt an agent call stuck awaiting a slow model/tool
+        response, not merely be checked between already-produced updates."""
+        store = SessionStore()
+        gate = asyncio.Event()  # Never set: simulates a model/tool call that never returns.
+        agent = _make_agent()
+
+        async def _stream_gen() -> AsyncIterator[AgentResponseUpdate]:
+            await gate.wait()
+            yield AgentResponseUpdate(contents=[Content.from_text("too late")], role="assistant")
+
+        def run_streaming(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del _args, kwargs
+            return ResponseStream(_stream_gen(), finalizer=AgentResponse.from_updates)
+
+        agent.run = MagicMock(side_effect=run_streaming)
+        server = _make_server(agent, session_store=store)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+        cancellation_signal = asyncio.Event()
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            await anext(handler)  # response.created
+            await anext(handler)  # response.in_progress
+            cancellation_signal.set()  # Fires while the agent is stuck awaiting `gate`.
+
+            async def _drain() -> list[Any]:
+                return [event async for event in handler]
+
+            # Bounded well below `gate` never being set: proves cancellation preempted the stuck
+            # call instead of only being observed after it (eventually) produced an update.
+            events = await asyncio.wait_for(_drain(), timeout=1.0)
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert "response.output_text.delta" not in types
+        assert types[-1] == "response.completed"
+
 
 # endregion
 
@@ -4188,12 +4232,14 @@ def _build_text_workflow_agent(text: str) -> WorkflowAgent:
 class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
     """Inner agent that streams one update per text in a single ``run`` call, and tracks ``run_count``."""
 
-    def __init__(self, name: str, texts: Sequence[str]) -> None:
+    def __init__(self, name: str, texts: Sequence[str], *, gate: asyncio.Event | None = None) -> None:
         self.id = str(uuid.uuid4())
         self.name = name
         self.description: str | None = None
         self._texts = list(texts)
+        self._gate = gate
         self.run_count = 0
+        self.started = asyncio.Event()  # Set at the top of run(), before any gate wait.
 
     def create_session(self, **kwargs: Any) -> AgentSession:
         del kwargs
@@ -4234,10 +4280,14 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
         del messages, session, kwargs
         assert stream is True, "The inner agent only runs in stream mode in Foundry Hosted Agents."
         self.run_count += 1
+        self.started.set()
         texts = self._texts
         name = self.name
+        gate = self._gate
 
         async def _aiter() -> AsyncIterator[AgentResponseUpdate]:
+            if gate is not None:
+                await gate.wait()  # Simulates a stuck model/tool call for preemption tests.
             for text in texts:
                 yield AgentResponseUpdate(
                     contents=[Content.from_text(text=text)],
@@ -4248,9 +4298,11 @@ class _MultiUpdateWorkflowAgentMock(SupportsAgentRun):
         return ResponseStream(_aiter(), finalizer=AgentResponse.from_updates)
 
 
-def _build_multi_update_workflow_agent(texts: Sequence[str]) -> tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]:
+def _build_multi_update_workflow_agent(
+    texts: Sequence[str], *, gate: asyncio.Event | None = None
+) -> tuple[WorkflowAgent, _MultiUpdateWorkflowAgentMock]:
     """Build a ``WorkflowAgent`` whose inner agent streams one update per text in ``texts``."""
-    inner = _MultiUpdateWorkflowAgentMock("multi-update-agent", texts)
+    inner = _MultiUpdateWorkflowAgentMock("multi-update-agent", texts, gate=gate)
 
     @executor
     async def start(messages: list[Message], ctx: WorkflowContext[AgentExecutorRequest]) -> None:
@@ -4352,6 +4404,47 @@ class TestWorkflowAgentHosting:
 
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert types.count("response.output_text.delta") == 1
+        assert types[-1] == "response.completed"
+        assert inner.run_count == 1
+
+    async def test_cancellation_signal_preempts_stuck_workflow_call(self) -> None:
+        """Explicit-cancel must interrupt the workflow's inner agent call stuck awaiting a slow
+        model/tool response, not merely be checked between already-produced updates."""
+        gate = asyncio.Event()  # Never set: simulates a model/tool call that never returns.
+        workflow_agent, inner = _build_multi_update_workflow_agent(["too late"], gate=gate)
+        server = _make_server(workflow_agent)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+        cancellation_signal = asyncio.Event()
+
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, cancellation_signal),  # pyright: ignore[reportPrivateUsage]
+            )
+            await anext(handler)  # response.created
+            await anext(handler)  # response.in_progress
+
+            # Pull the first workflow event in the background so we can wait for the inner agent's
+            # run() to actually start (proving it's genuinely stuck on `gate`) before signalling --
+            # otherwise cancellation could preempt the pull before the workflow even reaches it.
+            pending = asyncio.ensure_future(anext(handler))
+            await asyncio.wait_for(inner.started.wait(), timeout=1.0)
+            cancellation_signal.set()  # Fires while the inner agent is stuck awaiting `gate`.
+
+            async def _drain() -> list[Any]:
+                first = await pending
+                return [first, *[event async for event in handler]]
+
+            # Bounded well below `gate` never being set: proves cancellation preempted the stuck
+            # call instead of only being observed after it (eventually) produced an update.
+            events = await asyncio.wait_for(_drain(), timeout=1.0)
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert "response.output_text.delta" not in types
         assert types[-1] == "response.completed"
         assert inner.run_count == 1
 
