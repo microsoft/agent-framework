@@ -8,6 +8,7 @@ import subprocess
 import sys
 from collections import Counter
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from inspect import signature
 from typing import Any, cast
 
@@ -3774,6 +3775,63 @@ def _build_workflow_request_info_app(
         snapshot_scope_resolver=snapshot_scope_resolver,
     )
     return app
+
+
+async def test_endpoint_workflow_request_info_resumes_dataclass_response_from_json():
+    """Dataclass response types resume from plain JSON payloads, as AG-UI clients send them."""
+
+    @dataclass
+    class PlanReview:
+        review: list[Message]
+
+    class PlanReviewExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="plan_review")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext[Any, Any]) -> None:
+            del message
+            await ctx.request_info({"plan": "ship it"}, PlanReview, request_id="plan-review")
+
+        @response_handler
+        async def handle_review(
+            self, original_request: dict[str, Any], response: PlanReview, ctx: WorkflowContext[Any, Any]
+        ) -> None:
+            del original_request
+            verdict = "approved" if not response.review else response.review[0].text
+            await ctx.yield_output(f"Plan {verdict}")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(
+        app, WorkflowBuilder(start_executor=PlanReviewExecutor()).build(), path="/workflow"
+    )
+
+    with TestClient(app) as client:
+        pause_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-pause",
+                "threadId": "thread-plan",
+                "messages": [{"role": "user", "content": "Draft a plan"}],
+            },
+        )
+        assert pause_response.status_code == 200
+
+        resume_response = client.post(
+            "/workflow",
+            json={
+                "runId": "run-resume",
+                "threadId": "thread-plan",
+                "messages": [],
+                "resume": [{"interruptId": "plan-review", "status": "resolved", "payload": {"review": []}}],
+            },
+        )
+
+        assert resume_response.status_code == 200
+        resume_events = _decode_sse_events(resume_response)
+        assert not [event for event in resume_events if event.get("type") == "RUN_ERROR"]
+        text_deltas = [event["delta"] for event in resume_events if event.get("type") == "TEXT_MESSAGE_CONTENT"]
+        assert "Plan approved" in text_deltas
 
 
 async def test_endpoint_workflow_request_info_emits_canonical_interrupt_and_resumes():
