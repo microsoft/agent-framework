@@ -4,6 +4,7 @@
 
 import json
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, make_dataclass
 from enum import Enum
 from types import SimpleNamespace
 from typing import Any, cast
@@ -28,7 +29,9 @@ from agent_framework import (
     response_handler,
     tool,
 )
+from agent_framework.orchestrations import MagenticPlanReviewResponse
 from conftest import StreamingChatClientStub  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+from pydantic import BaseModel
 
 from agent_framework_ag_ui._workflow_run import (
     _coerce_content,
@@ -1312,6 +1315,93 @@ def test_coerce_response_for_request_bool_int_float_and_mismatch() -> None:
 
     dict_request = SimpleNamespace(response_type=dict)
     assert _coerce_response_for_request(dict_request, "[1,2,3]") is None
+
+
+def test_coerce_response_for_request_builds_dataclass_from_json() -> None:
+    """JSON objects should map onto dataclass response types such as plan review."""
+    request = SimpleNamespace(response_type=MagenticPlanReviewResponse)
+
+    approved = _coerce_response_for_request(request, {"review": []})
+    assert isinstance(approved, MagenticPlanReviewResponse)
+    assert approved.review == []
+
+    revised = _coerce_response_for_request(request, '{"review": [{"role": "user", "content": "add tests"}]}')
+    assert isinstance(revised, MagenticPlanReviewResponse)
+    assert len(revised.review) == 1
+    assert revised.review[0].text == "add tests"
+
+    from_strings = _coerce_response_for_request(request, {"review": ["add tests"]})
+    assert isinstance(from_strings, MagenticPlanReviewResponse)
+    assert from_strings.review[0].text == "add tests"
+
+    assert _coerce_response_for_request(request, {"unknown": 1}) is None
+    assert _coerce_response_for_request(request, "approve") is None
+
+
+def test_coerce_response_for_request_leaves_non_message_fields_untouched() -> None:
+    """Message normalization must follow field annotations, not payload shape."""
+
+    @dataclass
+    class Tagged:
+        note: Message
+        revision: Message | None
+        metadata: dict[str, str]
+
+    request = SimpleNamespace(response_type=Tagged)
+    message_shaped = {"role": "admin", "content": "keep raw"}
+
+    tagged = _coerce_response_for_request(
+        request,
+        {
+            "note": {"role": "user", "content": "translate me"},
+            "revision": {"role": "user", "content": "optional fields too"},
+            "metadata": message_shaped,
+        },
+    )
+    assert isinstance(tagged, Tagged)
+    assert tagged.note.text == "translate me"
+    assert tagged.revision is not None
+    assert tagged.revision.text == "optional fields too"
+    assert tagged.metadata == message_shaped
+
+
+def test_coerce_response_for_request_rejects_malformed_message_field_payloads() -> None:
+    """A Message-typed field that is not message-shaped must fail, not crash normalization."""
+
+    @dataclass
+    class Review:
+        notes: list[Message]
+
+    request = SimpleNamespace(response_type=Review)
+
+    assert _coerce_response_for_request(request, {"notes": "not-a-list"}) is None
+    assert _coerce_response_for_request(request, {"notes": [42]}) is None
+
+
+def test_coerce_response_for_request_skips_normalization_without_resolvable_hints() -> None:
+    """Unresolvable annotations skip message normalization instead of failing the resume."""
+
+    mystery_type = make_dataclass("Mystery", [("value", "DoesNotExist")])
+    request = SimpleNamespace(response_type=mystery_type)
+
+    mystery = _coerce_response_for_request(request, {"value": 1})
+    assert type(mystery) is mystery_type
+    assert vars(mystery) == {"value": 1}
+
+
+def test_coerce_response_for_request_builds_pydantic_model_from_json() -> None:
+    """JSON objects should validate into pydantic response types."""
+
+    class ReviewDecision(BaseModel):
+        approved: bool
+
+    request = SimpleNamespace(response_type=ReviewDecision)
+
+    decision = _coerce_response_for_request(request, {"approved": True})
+    assert isinstance(decision, ReviewDecision)
+    assert decision.approved is True
+
+    assert _coerce_response_for_request(request, {"approved": "not-a-bool"}) is None
 
 
 async def test_workflow_run_emits_run_error_when_stream_raises() -> None:
