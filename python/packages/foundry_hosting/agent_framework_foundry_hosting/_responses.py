@@ -82,9 +82,9 @@ _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
 class _CapturingCheckpointStorage:
     """Delegate storage while retaining the latest successful checkpoint save.
 
-    The workflow runner does not expose the checkpoint it creates. Capturing it
-    here lets the host snapshot the current turn under its response ID without
-    rescanning the conversation's full checkpoint history.
+    The workflow runner does not expose the checkpoint it creates. Capturing its
+    ID lets the host copy the exact persisted response state to the conversation
+    without rescanning the full checkpoint history.
     """
 
     def __init__(self, storage: CheckpointStorage) -> None:
@@ -574,11 +574,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             # any future async resources owned by the workflow are entered here.
             await self._ensure_agent_ready()
 
-            checkpoint_save_id = context.conversation_id or context.response_id
-            _validate_checkpoint_context_id(checkpoint_save_id)
+            # Persist each turn under its immutable response ID first. For conversation turns,
+            # the latest successfully saved checkpoint is copied to the conversation ID below.
+            _validate_checkpoint_context_id(context.response_id)
             checkpoint_storage = self._checkpoint_storage_provider.get_store(
                 config=self.config,
-                context_id=checkpoint_save_id,
+                context_id=context.response_id,
                 platform_context=request_context,
             )
 
@@ -599,7 +600,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             restore_checkpoint_storage = checkpoint_storage
             if checkpoint_load_id is not None:
                 _validate_checkpoint_context_id(checkpoint_load_id)
-                if checkpoint_load_id != checkpoint_save_id:
+                if checkpoint_load_id != context.response_id:
                     restore_checkpoint_storage = self._checkpoint_storage_provider.get_store(
                         config=self.config,
                         context_id=checkpoint_load_id,
@@ -678,25 +679,25 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         and context.conversation_id is not None
                     ):
                         checkpoint = await write_checkpoint_storage.load(write_checkpoint_storage.latest_checkpoint_id)
-                        await self._snapshot_conversation_workflow_checkpoint(
+                        await self._copy_workflow_checkpoint_to_conversation(
                             checkpoint,
-                            response_id=context.response_id,
+                            conversation_id=context.conversation_id,
                             platform_context=request_context,
                         )
                 except Exception as save_error:
                     save_failure = save_error
                     if request_interrupted:
-                        message = "Failed to snapshot the workflow checkpoint while unwinding an interrupted request"
+                        message = "Failed to persist the workflow checkpoint while unwinding an interrupted request"
                     elif request_failure is not None:
-                        message = "Failed to snapshot the workflow checkpoint after a workflow failure"
+                        message = "Failed to persist the workflow checkpoint after a workflow failure"
                     else:
-                        message = "Failed to snapshot the workflow checkpoint after a successful request"
+                        message = "Failed to persist the workflow checkpoint after a successful request"
                     logger.error(message, exc_info=(type(save_error), save_error, save_error.__traceback__))
 
             if request_failure is not None and save_failure is not None:
                 failure = RuntimeError(
                     f"Workflow request failed: {str(request_failure) or type(request_failure).__name__}; "
-                    f"checkpoint snapshot also failed: {str(save_failure) or type(save_failure).__name__}"
+                    f"checkpoint persistence also failed: {str(save_failure) or type(save_failure).__name__}"
                 )
                 for event in self._emit_failure(response_event_stream, tracker, failure):
                     yield event
@@ -713,20 +714,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in self._emit_failure(response_event_stream, tracker, ex):
                 yield event
 
-    async def _snapshot_conversation_workflow_checkpoint(
+    async def _copy_workflow_checkpoint_to_conversation(
         self,
         checkpoint: WorkflowCheckpoint,
         *,
-        response_id: str,
+        conversation_id: str,
         platform_context: FoundryAgentRequestContext,
     ) -> None:
-        """Snapshot a conversation turn's latest workflow checkpoint under its response ID."""
-        response_storage = self._checkpoint_storage_provider.get_store(
+        """Copy a response turn's latest workflow checkpoint to its conversation."""
+        conversation_storage = self._checkpoint_storage_provider.get_store(
             config=self.config,
-            context_id=response_id,
+            context_id=conversation_id,
             platform_context=platform_context,
         )
-        await response_storage.save(checkpoint)
+        await conversation_storage.save(checkpoint)
 
     @staticmethod
     def _emit_failure(

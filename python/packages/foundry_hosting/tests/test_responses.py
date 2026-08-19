@@ -4409,15 +4409,15 @@ class TestWorkflowAgentHosting:
         assert branch_text == ["turn 2"]
 
     @pytest.mark.parametrize(
-        ("termination", "save_new_checkpoint", "snapshot_failure"),
+        ("termination", "save_new_checkpoint", "copy_failure"),
         [
             pytest.param("failure", True, False, id="failure"),
-            pytest.param("failure", True, True, id="request-and-snapshot-failure"),
-            pytest.param("success", True, True, id="snapshot-failure"),
+            pytest.param("failure", True, True, id="request-and-copy-failure"),
+            pytest.param("success", True, True, id="copy-failure"),
             pytest.param("cancel", True, False, id="cancel"),
-            pytest.param("cancel", True, True, id="cancel-and-snapshot-failure"),
+            pytest.param("cancel", True, True, id="cancel-and-copy-failure"),
             pytest.param("close", True, False, id="close"),
-            pytest.param("close", True, True, id="close-and-snapshot-failure"),
+            pytest.param("close", True, True, id="close-and-copy-failure"),
             pytest.param("failure", False, False, id="failure-before-checkpoint"),
         ],
     )
@@ -4425,7 +4425,7 @@ class TestWorkflowAgentHosting:
         self,
         termination: str,
         save_new_checkpoint: bool,
-        snapshot_failure: bool,
+        copy_failure: bool,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         workflow_agent = _build_text_workflow_agent("ignored")
@@ -4469,16 +4469,16 @@ class TestWorkflowAgentHosting:
             conversation_id="conversation-1",
             mode_flags=MagicMock(),
         )
-        snapshot = (
-            AsyncMock(side_effect=RuntimeError("snapshot failed"))
-            if snapshot_failure
-            else AsyncMock(wraps=server._snapshot_conversation_workflow_checkpoint)  # pyright: ignore[reportPrivateUsage]
+        copy_checkpoint = (
+            AsyncMock(side_effect=RuntimeError("copy failed"))
+            if copy_failure
+            else AsyncMock(wraps=server._copy_workflow_checkpoint_to_conversation)  # pyright: ignore[reportPrivateUsage]
         )
 
         with (
             patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
             patch.object(workflow_agent, "run", side_effect=run),
-            patch.object(server, "_snapshot_conversation_workflow_checkpoint", new=snapshot),
+            patch.object(server, "_copy_workflow_checkpoint_to_conversation", new=copy_checkpoint),
         ):
             if termination in {"failure", "success"}:
                 events = [
@@ -4495,8 +4495,8 @@ class TestWorkflowAgentHosting:
                 error_message = str(error["message"])
                 if termination == "failure":
                     assert "workflow failed" in error_message
-                if snapshot_failure:
-                    assert "snapshot failed" in error_message
+                if copy_failure:
+                    assert "copy failed" in error_message
             else:
                 handler = cast(
                     AsyncGenerator[Any, None],
@@ -4517,13 +4517,22 @@ class TestWorkflowAgentHosting:
             platform_context=get_request_context(),
         )
         latest = await response_storage.get_latest(workflow_name=workflow_agent.workflow.name)
-        if save_new_checkpoint and not snapshot_failure:
+        if save_new_checkpoint:
             assert latest is not None
             assert latest.checkpoint_id == checkpoint.checkpoint_id
             assert latest.state["nested"]["value"] == "saved"
+            if not copy_failure:
+                conversation_storage = server._checkpoint_storage_provider.get_store(  # pyright: ignore[reportPrivateUsage]
+                    config=server.config,
+                    context_id="conversation-1",
+                    platform_context=get_request_context(),
+                )
+                conversation_latest = await conversation_storage.get_latest(workflow_name=workflow_agent.workflow.name)
+                assert conversation_latest is not None
+                assert conversation_latest.to_dict() == latest.to_dict()
         else:
             assert latest is None
-        if termination in {"cancel", "close"} and snapshot_failure:
+        if termination in {"cancel", "close"} and copy_failure:
             assert "while unwinding an interrupted request" in caplog.text
 
     async def test_non_streaming_emits_mcp_approval_request_and_persists_to_storage(self) -> None:
