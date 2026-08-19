@@ -1,7 +1,7 @@
 ﻿# Failing Workflow over AG-UI
 
-This sample demonstrates an executor failure. The AG-UI stream still emits `STEP_FINISHED` for the failed
-executor so clients do not leave the step active.
+This sample demonstrates an executor failure. The AG-UI stream emits `STEP_FINISHED` for the failed executor
+and then terminates with `RUN_ERROR`; it does not append a successful `RUN_FINISHED`.
 
 ## Run
 

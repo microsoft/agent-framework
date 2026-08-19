@@ -210,7 +210,8 @@ dotnet run --project Client
 
 ### Step08_WorkflowFailure
 
-A deterministic failing workflow. The client shows that the failed executor step is closed.
+A deterministic failing workflow. The client shows the failed executor step closing before terminal
+`RUN_ERROR`.
 
 ```bash
 cd Step08_WorkflowFailure

@@ -51,7 +51,7 @@ public sealed class WorkflowAGUIExtensionsTests
     }
 
     [Fact]
-    public async Task MapWorkflowEventsToAGUI_MapsExecutorFailedAndPreservesErrorAsync()
+    public async Task MapWorkflowEventsToAGUI_MapsExecutorFailedToStepFinishedAndRunErrorAsync()
     {
         // Arrange
         ErrorContent error = new("An error occurred while executing the workflow.");
@@ -70,8 +70,44 @@ public sealed class WorkflowAGUIExtensionsTests
         results[0].RawRepresentation.Should().BeOfType<StepFinishedEvent>()
             .Which.StepName.Should().Be("reviewer");
         results[0].Contents.Should().BeEmpty();
-        results[1].RawRepresentation.Should().BeSameAs(update);
-        results[1].Contents.Should().ContainSingle().Which.Should().BeSameAs(error);
+        results[1].RawRepresentation.Should().BeOfType<RunErrorEvent>()
+            .Which.Message.Should().Be(error.Message);
+        results[1].Contents.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task MakeRunErrorTerminalAsync_EmitsCleanupThenErrorWithoutSuccessAsync()
+    {
+        // Arrange
+        BaseEvent[] events =
+        [
+            new StepStartedEvent { StepName = "reviewer" },
+            new TextMessageStartEvent { MessageId = "message", Role = "assistant" },
+            new RunErrorEvent { Message = "failed" },
+            new TextMessageStartEvent { MessageId = "orphan", Role = "assistant" },
+            new TextMessageEndEvent { MessageId = "orphan" },
+            new RunFinishedEvent
+            {
+                RunId = "run",
+                ThreadId = "thread",
+                Outcome = new RunFinishedSuccessOutcome(),
+            },
+        ];
+
+        // Act
+        List<BaseEvent> results = await ToAsyncEnumerableAsync(events)
+            .MakeRunErrorTerminalAsync()
+            .ToListAsync();
+
+        // Assert
+        results.Should().HaveCount(5);
+        results[^3].Should().BeOfType<TextMessageEndEvent>()
+            .Which.MessageId.Should().Be("message");
+        results[^2].Should().BeOfType<StepFinishedEvent>()
+            .Which.StepName.Should().Be("reviewer");
+        results[^1].Should().BeOfType<RunErrorEvent>();
+        results.OfType<TextMessageStartEvent>().Should().ContainSingle()
+            .Which.MessageId.Should().Be("message");
     }
 
     [Fact]
@@ -118,5 +154,15 @@ public sealed class WorkflowAGUIExtensionsTests
     {
         await Task.Yield();
         yield return update;
+    }
+
+    private static async IAsyncEnumerable<BaseEvent> ToAsyncEnumerableAsync(
+        IEnumerable<BaseEvent> events)
+    {
+        await Task.Yield();
+        foreach (BaseEvent evt in events)
+        {
+            yield return evt;
+        }
     }
 }

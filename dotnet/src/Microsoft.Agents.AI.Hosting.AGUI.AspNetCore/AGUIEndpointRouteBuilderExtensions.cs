@@ -159,7 +159,8 @@ public static class AGUIEndpointRouteBuilderExtensions
                     cancellationToken: cancellationToken)
                 .AsChatResponseUpdatesAsync()
                 .MapWorkflowEventsToAGUI()
-                .AsAGUIEventStreamAsync(ctx, cancellationToken);
+                .AsAGUIEventStreamAsync(ctx, cancellationToken)
+                .MakeRunErrorTerminalAsync();
 
             // Wrap the event stream to save the session after streaming completes.
             var eventsWithSessionSave = SaveSessionAfterStreamingAsync(events, hostAgent, threadId, session, cancellationToken);

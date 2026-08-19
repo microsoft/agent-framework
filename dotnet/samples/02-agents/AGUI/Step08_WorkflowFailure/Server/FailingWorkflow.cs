@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -40,12 +41,20 @@ public sealed class FailingAgent : AIAgent
         CancellationToken cancellationToken = default)
         => throw new InvalidOperationException("The sample executor failed.");
 
-    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentSession? session = null,
         AgentRunOptions? options = null,
-        CancellationToken cancellationToken = default)
-        => throw new InvalidOperationException("The sample executor failed.");
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        yield return new AgentResponseUpdate(ChatRole.Assistant, "Starting work before failure.")
+        {
+            MessageId = "failure-message",
+            ResponseId = "failure-response",
+        };
+        await Task.Yield();
+        throw new InvalidOperationException("The sample executor failed.");
+    }
 
     protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
         => new(new FailingSession());
