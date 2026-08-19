@@ -1261,6 +1261,7 @@ def test_generate_only_planner_honors_call_budget_then_narrates():
     # the run must still make a tools-off final narration turn — not end abruptly after the
     # surface — matching the core loop's budget-exhausted final response.
     seen_options: list = []
+    seen_messages: list = []
 
     class _RepeatGenerateInner:
         client = _FIConfigClient({"max_function_calls": 1})
@@ -1271,6 +1272,7 @@ def test_generate_only_planner_honors_call_budget_then_narrates():
         def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
             self.calls += 1
             seen_options.append(kwargs.get("options"))
+            seen_messages.append(messages)
 
             async def gen():
                 yield AgentResponseUpdate(
@@ -1290,6 +1292,15 @@ def test_generate_only_planner_honors_call_budget_then_narrates():
     assert len(gen_results) == 1  # one render, not one per planner round
     assert inner.calls == 2  # planner round + a final narration turn (not an abrupt end)
     assert (seen_options[-1] or {}).get("tool_choice") == "none"  # final turn: tools off
+    # The final turn must SEE this turn's surface (its generate_a2ui call + result), not
+    # just the original user message, or it cannot narrate the result it just produced.
+    final_call_ids = {
+        getattr(c, "call_id", None)
+        for m in seen_messages[-1]
+        for c in (getattr(m, "contents", None) or [])
+        if getattr(c, "type", None) in ("function_call", "function_result")
+    }
+    assert "g1" in final_call_ids
 
 
 def test_generate_only_planner_honors_max_iterations():

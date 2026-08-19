@@ -744,16 +744,21 @@ class A2UIAgent:
             # final response.
             if client_calls or deferred_calls or deferred_generate or server_control or server_terminated:
                 return
-            budget_exhausted = max_calls is not None and calls_used >= max_calls
-            if budget_exhausted:
-                break
 
+            # Record this round's assistant call(s) + results BEFORE deciding to stop, so
+            # the tools-off final narration below sees the surface this turn just produced
+            # (otherwise it receives only the original user messages and cannot narrate it).
             assistant_contents = [*text_contents, *server_calls, *generate_calls]
             history = [
                 *history,
                 Message(role="assistant", contents=assistant_contents),
                 Message(role="tool", contents=all_results),
             ]
+
+            budget_exhausted = max_calls is not None and calls_used >= max_calls
+            if budget_exhausted:
+                break
+
             pending = history
             pending_session = None
 
