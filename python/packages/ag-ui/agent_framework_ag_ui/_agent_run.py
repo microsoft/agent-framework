@@ -72,7 +72,7 @@ from ._approval_lifecycle import (
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY, InMemoryAGUIApprovalStateStore, approval_state_thread_id
 from ._message_adapters import normalize_agui_input_messages
 from ._predictive_state import PredictiveStateHandler
-from ._tooling import collect_server_tools, merge_tools, register_additional_client_tools
+from ._tooling import collect_server_tools, merge_tools
 from ._run_common import (
     FlowState,
     _approval_interrupt_for_function_call,  # type: ignore
@@ -2309,7 +2309,6 @@ async def run_agent_stream(
     approval_snapshot_reconciliations: list[ApprovalSnapshotReconciliation] = []
     client_tools = convert_agui_tools_to_agent_framework(input_data.get("tools"))
     server_tools = collect_server_tools(agent)
-    register_additional_client_tools(agent, client_tools)
     tools = merge_tools(server_tools, client_tools)
     approval_resume_messages, handled_resume_ids, cancelled_resume_ids, resume_error = (
         _canonical_approval_resume_messages(

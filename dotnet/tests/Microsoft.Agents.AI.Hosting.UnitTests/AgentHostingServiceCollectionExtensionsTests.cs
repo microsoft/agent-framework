@@ -1,7 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -292,5 +296,137 @@ public class AgentHostingServiceCollectionExtensionsTests
         Assert.NotNull(descriptor);
         Assert.Equal(lifetime, descriptor.Lifetime);
         Assert.Equal(lifetime, result.Lifetime);
+    }
+
+    /// <summary>
+    /// Verifies end-to-end that a tool invoked by an agent registered via <c>AddAIAgent</c> receives the
+    /// application's <see cref="IServiceProvider"/> in its <see cref="AIFunctionArguments.Services"/>, and can
+    /// therefore resolve its dependencies at invocation time.
+    /// Regression test for https://github.com/microsoft/agent-framework/issues/4453.
+    /// </summary>
+    [Theory]
+    [InlineData(AddAIAgentOverload.Instructions)]
+    [InlineData(AddAIAgentOverload.ChatClientInstance)]
+    [InlineData(AddAIAgentOverload.ChatClientServiceKey)]
+    [InlineData(AddAIAgentOverload.DescriptionAndChatClientServiceKey)]
+    public async Task AddAIAgent_ToolInvocationCanResolveServicesFromDIAsync(AddAIAgentOverload overload)
+    {
+        // Arrange
+        var tool = new ServiceCapturingAIFunction();
+        var services = new ServiceCollection();
+        services.AddSingleton<IMarkerService, MarkerService>();
+        RegisterAgent(services, overload).WithAITool(tool);
+
+        var serviceProvider = services.BuildServiceProvider();
+        var agent = serviceProvider.GetRequiredKeyedService<AIAgent>(AgentName);
+
+        // Act
+        var response = await agent.RunAsync("call the tool");
+
+        // Assert
+        Assert.Equal("done", response.Text);
+        Assert.True(tool.WasInvoked);
+        Assert.NotNull(tool.ResolvedMarkerService);
+    }
+
+    private const string AgentName = "test-agent";
+    private const string ChatClientServiceKey = "test-chat-client";
+
+    /// <summary>
+    /// Identifies which <c>AddAIAgent</c> overload a test exercises.
+    /// </summary>
+    public enum AddAIAgentOverload
+    {
+        /// <summary>The overload taking only a name and instructions.</summary>
+        Instructions,
+
+        /// <summary>The overload taking an <see cref="IChatClient"/> instance.</summary>
+        ChatClientInstance,
+
+        /// <summary>The overload taking a chat client service key.</summary>
+        ChatClientServiceKey,
+
+        /// <summary>The overload taking a description and a chat client service key.</summary>
+        DescriptionAndChatClientServiceKey,
+    }
+
+    private static IHostedAgentBuilder RegisterAgent(IServiceCollection services, AddAIAgentOverload overload)
+    {
+        switch (overload)
+        {
+            case AddAIAgentOverload.Instructions:
+                services.AddSingleton<IChatClient>(new ToolCallingChatClient());
+                return services.AddAIAgent(AgentName, "Test instructions");
+
+            case AddAIAgentOverload.ChatClientInstance:
+                return services.AddAIAgent(AgentName, "Test instructions", new ToolCallingChatClient());
+
+            case AddAIAgentOverload.ChatClientServiceKey:
+                services.AddKeyedSingleton<IChatClient>(ChatClientServiceKey, new ToolCallingChatClient());
+                return services.AddAIAgent(AgentName, "Test instructions", (object?)ChatClientServiceKey);
+
+            case AddAIAgentOverload.DescriptionAndChatClientServiceKey:
+                services.AddKeyedSingleton<IChatClient>(ChatClientServiceKey, new ToolCallingChatClient());
+                return services.AddAIAgent(AgentName, "Test instructions", "A test agent", ChatClientServiceKey);
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(overload));
+        }
+    }
+
+    /// <summary>
+    /// Marker service used to verify that the application's service provider is reachable from tool invocations.
+    /// </summary>
+    private interface IMarkerService;
+
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection.")]
+    private sealed class MarkerService : IMarkerService;
+
+    /// <summary>
+    /// An <see cref="AIFunction"/> that records whether it could resolve <see cref="IMarkerService"/> from the
+    /// <see cref="AIFunctionArguments.Services"/> supplied at invocation time.
+    /// </summary>
+    private sealed class ServiceCapturingAIFunction : AIFunction
+    {
+        public bool WasInvoked { get; private set; }
+
+        public IMarkerService? ResolvedMarkerService { get; private set; }
+
+        public override string Name => "TestTool";
+
+        public override string Description => "A test tool.";
+
+        protected override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
+        {
+            this.WasInvoked = true;
+            this.ResolvedMarkerService = arguments.Services?.GetService<IMarkerService>();
+            return new ValueTask<object?>("tool result");
+        }
+    }
+
+    /// <summary>
+    /// A chat client that requests the test tool on the first call and returns a final answer afterwards.
+    /// </summary>
+    private sealed class ToolCallingChatClient : IChatClient
+    {
+        private int _callCount;
+
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            var content = Interlocked.Increment(ref this._callCount) == 1
+                ? new FunctionCallContent(callId: "call-1", name: "TestTool", arguments: null)
+                : (AIContent)new TextContent("done");
+
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, [content])));
+        }
+
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
     }
 }

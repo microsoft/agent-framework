@@ -9,19 +9,18 @@
 //
 //   * Session files (per-session $HOME volume) — files uploaded at runtime via the alpha
 //     Azure.AI.Projects.AgentSessionFiles SDK. Live at $HOME inside the per-session
-//     container, which the platform sets to /home/session by default
-//     (container-image-spec.md line 127, "If you use the session files API, $HOME is
-//     also the base path for those operations").
+//     container, which the platform sets to /home/session by default.
 //
 // Each source is exposed via a separate tool pair, each rooted at its own directory.
 // Tools take a fileName, not a path: Path.GetFileName strips any directory components,
-// then a canonicalize + StartsWith(root) check enforces the boundary. The model cannot
-// be tricked into reading /etc/passwd or any path outside its tool's root, even via
-// indirect prompt injection in an uploaded file.
+// then a canonicalize + StartsWith(root) check enforces the boundary.
+//
+// This sample is deployed to Foundry directly from source (code / ZIP upload), so the
+// platform builds and runs your code with no container image.
 //
 // Required environment variables:
-//   FOUNDRY_PROJECT_ENDPOINT         - Foundry project endpoint
-//   FOUNDRY_MODEL    - Model deployment name (default: gpt-4o)
+//   FOUNDRY_PROJECT_ENDPOINT          - Foundry project endpoint
+//   AZURE_AI_MODEL_DEPLOYMENT_NAME    - Model deployment name (default: gpt-4o)
 //
 // Optional:
 //   AGENT_NAME                        - Agent name (default: hosted-files)
@@ -32,46 +31,46 @@
 
 using System.ComponentModel;
 using Azure.AI.Projects;
-using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
-using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
 
-// Load .env file if present (for local development)
+// Load a local .env file when present (local development only). In Foundry the
+// platform injects the required environment variables at runtime.
 Env.TraversePath().Load();
 
-// Bypass SampleEnvironment alias (which prompts on missing env vars) for optional values.
-string? GetOptionalEnv(string key) => System.Environment.GetEnvironmentVariable(key);
-
-string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+var endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
-string deploymentName = GetOptionalEnv("FOUNDRY_MODEL") ?? "gpt-4o";
 
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-// Use a chained credential: try a temporary dev token first (for local Docker debugging),
-// then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
-TokenCredential credential = new ChainedTokenCredential(
-    new DevTemporaryTokenCredential(),
-    new DefaultAzureCredential());
+// Environment variables can arrive set but blank: azd substitutes an empty string when the azd
+// environment does not define the variable referenced from azure.yaml. An empty string is not
+// null, so a plain ?? chain would pass the blank straight through and fail deep inside the SDK.
+var deploymentName = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+    System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    "gpt-4o");
+
+var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-files";
+
+// WARNING: DefaultAzureCredential is convenient for development but requires careful
+// consideration in production. Consider a specific credential (for example
+// ManagedIdentityCredential) to avoid latency, unintended credential probing, and
+// fallback security risks.
+var credential = new DefaultAzureCredential();
 
 // ── File roots (canonicalized once) ──────────────────────────────────────────
 
 // Bundled root: where csproj <Content Include="resources\**"> lands at runtime.
 // In the container that resolves to /app/resources/.
 string bundledRoot = Path.GetFullPath(
-    GetOptionalEnv("BUNDLED_FILES_DIR")
+    System.Environment.GetEnvironmentVariable("BUNDLED_FILES_DIR")
     ?? Path.Combine(AppContext.BaseDirectory, "resources"));
 
 // Session root: the per-session $HOME volume mounted by the Foundry platform.
-// Files uploaded via AgentSessionFiles.UploadSessionFileAsync(sessionStoragePath: "foo")
-// land at $HOME/foo per container-image-spec.md line 172.
 string sessionRoot = Path.GetFullPath(
-    GetOptionalEnv("HOME")
+    System.Environment.GetEnvironmentVariable("HOME")
     ?? "/home/session");
 
 // ── Tools: bundled files (image-baked, /app/resources/) ──────────────────────
@@ -106,7 +105,7 @@ string SafeListNames(string root)
         }
 
         return string.Join(
-            Environment.NewLine,
+            System.Environment.NewLine,
             Directory.EnumerateFiles(root).Select(Path.GetFileName));
     }
     catch (Exception ex)
@@ -167,7 +166,7 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
             both first. Always read the file before answering; do not guess. Quote
             numbers and figures verbatim from the file.
             """,
-        name: GetOptionalEnv("AGENT_NAME") ?? "hosted-files",
+        name: agentName,
         description: "Hosted agent that answers questions over bundled (image-baked) and session-uploaded files via two scoped tool pairs.",
         tools:
         [
@@ -177,51 +176,15 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
             AIFunctionFactory.Create(ReadSessionFile),
         ]);
 
+// Host the agent using the Responses protocol.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();
 
-// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry uses
-// so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
-// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
-app.MapDevTemporaryLocalAgentEndpoint();
-
 app.Run();
 
-/// <summary>
-/// A <see cref="TokenCredential"/> for local Docker debugging only.
-/// Reads a pre-fetched bearer token from the <c>AZURE_BEARER_TOKEN</c> environment variable
-/// once at startup. This should NOT be used in production.
-///
-/// Generate a token on your host and pass it to the container:
-///   export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-///   docker run -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN ...
-/// </summary>
-internal sealed class DevTemporaryTokenCredential : TokenCredential
-{
-    private const string EnvironmentVariable = "AZURE_BEARER_TOKEN";
-    private readonly string? _token;
-
-    public DevTemporaryTokenCredential()
-    {
-        this._token = System.Environment.GetEnvironmentVariable(EnvironmentVariable);
-    }
-
-    public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => this.GetAccessToken();
-
-    public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
-        => new(this.GetAccessToken());
-
-    private AccessToken GetAccessToken()
-    {
-        if (string.IsNullOrEmpty(this._token) || this._token == "DefaultAzureCredential")
-        {
-            throw new CredentialUnavailableException($"{EnvironmentVariable} environment variable is not set.");
-        }
-
-        return new AccessToken(this._token, DateTimeOffset.UtcNow.AddHours(1));
-    }
-}
+// Returns the first candidate that has an actual value, ignoring null and blank entries.
+static string FirstNonBlank(params string?[] candidates) =>
+    Array.Find(candidates, c => !string.IsNullOrWhiteSpace(c))!;
