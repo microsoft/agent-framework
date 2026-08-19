@@ -89,11 +89,11 @@ class _CapturingCheckpointStorage:
 
     def __init__(self, storage: CheckpointStorage) -> None:
         self._storage = storage
-        self.latest_checkpoint: WorkflowCheckpoint | None = None
+        self.latest_checkpoint_id: CheckpointID | None = None
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         checkpoint_id = await self._storage.save(checkpoint)
-        self.latest_checkpoint = checkpoint
+        self.latest_checkpoint_id = checkpoint_id
         return checkpoint_id
 
     async def load(self, checkpoint_id: CheckpointID) -> WorkflowCheckpoint:
@@ -492,19 +492,37 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         finally:
             if self._uses_hosted_responses_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
-            try:
-                await session_storage.set(context.response_id, session)
-                if context.conversation_id is not None:
-                    await session_storage.set(context.conversation_id, session)
-            except Exception as save_error:
-                save_failure = save_error
-                if request_interrupted:
-                    message = "Failed to persist the Agent Framework session while unwinding an interrupted request"
-                elif request_failure is not None:
-                    message = "Failed to persist the Agent Framework session after an agent failure"
-                else:
-                    message = "Failed to persist the Agent Framework session after a successful request"
-                logger.error(message, exc_info=(type(save_error), save_error, save_error.__traceback__))
+            if request_interrupted:
+                message = "Failed to persist the Agent Framework session while unwinding an interrupted request"
+            elif request_failure is not None:
+                message = "Failed to persist the Agent Framework session after an agent failure"
+            else:
+                message = "Failed to persist the Agent Framework session after a successful request"
+
+            save_errors: list[tuple[str, Exception]] = []
+            session_save_ids = [("response snapshot", context.response_id)]
+            if context.conversation_id is not None:
+                session_save_ids.append(("conversation", context.conversation_id))
+            for save_target, session_save_id in session_save_ids:
+                try:
+                    await session_storage.set(session_save_id, session)
+                except Exception as save_error:
+                    save_errors.append((save_target, save_error))
+                    logger.error(
+                        "%s (%s)",
+                        message,
+                        save_target,
+                        exc_info=(type(save_error), save_error, save_error.__traceback__),
+                    )
+
+            if len(save_errors) == 1:
+                save_failure = save_errors[0][1]
+            elif save_errors:
+                details = "; ".join(
+                    f"{save_target}: {str(save_error) or type(save_error).__name__}"
+                    for save_target, save_error in save_errors
+                )
+                save_failure = RuntimeError(f"Multiple session persistence operations failed: {details}")
 
         if request_failure is not None and save_failure is not None:
             failure = RuntimeError(
@@ -655,9 +673,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
             finally:
                 try:
-                    if write_checkpoint_storage.latest_checkpoint is not None and context.conversation_id is not None:
+                    if (
+                        write_checkpoint_storage.latest_checkpoint_id is not None
+                        and context.conversation_id is not None
+                    ):
+                        checkpoint = await write_checkpoint_storage.load(write_checkpoint_storage.latest_checkpoint_id)
                         await self._snapshot_conversation_workflow_checkpoint(
-                            write_checkpoint_storage.latest_checkpoint,
+                            checkpoint,
                             response_id=context.response_id,
                             platform_context=request_context,
                         )

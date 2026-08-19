@@ -263,6 +263,22 @@ class _FailingSessionStore(SessionStore):
         raise OSError("session storage is full")
 
 
+class _FailingResponseSnapshotStore(SessionStore):
+    def __init__(self, *, fail_conversation: bool = False) -> None:
+        super().__init__()
+        self.fail_conversation = fail_conversation
+        self.set_attempts: list[str] = []
+
+    async def set(self, session_id: str, session: AgentSession) -> None:
+        self.set_attempts.append(session_id)
+        if session_id == "conversation-1":
+            if self.fail_conversation:
+                raise OSError("conversation storage is full")
+            await super().set(session_id, session)
+            return
+        raise OSError("response snapshot storage is full")
+
+
 _SESSION_STORE_UNSET = object()
 
 
@@ -668,6 +684,44 @@ class TestAgentSessionPersistence:
         assert event_types[-1] == "response.failed"
         assert "response.completed" not in event_types
         assert store.set_attempts == 1
+
+    async def test_response_snapshot_failure_still_persists_conversation(self) -> None:
+        store = _FailingResponseSnapshotStore()
+        agent = _make_agent()
+
+        def run(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            session = kwargs["session"]
+            assert isinstance(session, AgentSession)
+
+            async def updates() -> AsyncIterator[AgentResponseUpdate]:
+                session.state["run_complete"] = True
+                yield AgentResponseUpdate(contents=[Content.from_text("done")], role="assistant")
+
+            return ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+
+        agent.run = MagicMock(side_effect=run)
+        server = _make_server(agent, session_store=store)
+
+        response = await _post(server, conversation_id="conversation-1")
+        conversation = await store.get("conversation-1")
+
+        assert response.json()["status"] == "failed"
+        assert response.json()["id"] == store.set_attempts[0]
+        assert store.set_attempts == [response.json()["id"], "conversation-1"]
+        assert conversation is not None
+        assert conversation.state["run_complete"] is True
+
+    async def test_response_and_conversation_save_failures_are_both_reported(self) -> None:
+        store = _FailingResponseSnapshotStore(fail_conversation=True)
+        server = _make_server(_make_agent(), session_store=store)
+
+        response = await _post(server, conversation_id="conversation-1")
+        error_message = response.json()["error"]["message"]
+
+        assert response.json()["status"] == "failed"
+        assert "response snapshot: response snapshot storage is full" in error_message
+        assert "conversation: conversation storage is full" in error_message
+        assert store.set_attempts == [response.json()["id"], "conversation-1"]
 
     async def test_run_and_save_failure_emit_one_combined_failure(
         self,
@@ -4378,6 +4432,7 @@ class TestWorkflowAgentHosting:
         checkpoint = WorkflowCheckpoint(
             workflow_name=workflow_agent.workflow.name,
             graph_signature_hash="hash",
+            state={"nested": {"value": "saved"}},
         )
         server = _make_server(workflow_agent)
 
@@ -4397,6 +4452,7 @@ class TestWorkflowAgentHosting:
         async def updates(checkpoint_storage: CheckpointStorage) -> AsyncIterator[AgentResponseUpdate]:
             if save_new_checkpoint:
                 await checkpoint_storage.save(checkpoint)
+                checkpoint.state["nested"]["value"] = "mutated"
             if termination == "failure":
                 raise RuntimeError("workflow failed")
             yield AgentResponseUpdate(contents=[Content.from_text("started")], role="assistant")
@@ -4464,6 +4520,7 @@ class TestWorkflowAgentHosting:
         if save_new_checkpoint and not snapshot_failure:
             assert latest is not None
             assert latest.checkpoint_id == checkpoint.checkpoint_id
+            assert latest.state["nested"]["value"] == "saved"
         else:
             assert latest is None
         if termination in {"cancel", "close"} and snapshot_failure:
