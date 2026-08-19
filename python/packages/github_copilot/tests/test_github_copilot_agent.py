@@ -448,26 +448,45 @@ class TestGitHubCopilotAgentLifecycle:
             "otlp_endpoint": "http://localhost:4318",
             "capture_content": True,
         }
-        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": json.dumps(telemetry)}),
+        ):
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
-            agent._settings["telemetry"] = json.dumps(telemetry)
             await agent.start()
 
             assert MockClient.call_args.kwargs["telemetry"] == telemetry
 
     async def test_start_ignores_malformed_telemetry_string(self) -> None:
         """A malformed telemetry JSON value is dropped instead of breaking startup."""
-        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": "{not json"}),
+        ):
             mock_client = MagicMock()
             mock_client.start = AsyncMock()
             MockClient.return_value = mock_client
 
             agent = GitHubCopilotAgent()
-            agent._settings["telemetry"] = "{not json"
+            await agent.start()
+
+            assert "telemetry" not in MockClient.call_args.kwargs
+
+    async def test_start_ignores_non_object_telemetry_string(self) -> None:
+        """Valid JSON that is not an object cannot be a TelemetryConfig and is dropped."""
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": "[1, 2]"}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
             await agent.start()
 
             assert "telemetry" not in MockClient.call_args.kwargs

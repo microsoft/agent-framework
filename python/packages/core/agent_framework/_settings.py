@@ -135,10 +135,20 @@ def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
 
     allowed: tuple[type, ...]
     if origin is Union or origin is type(int | str):
-        allowed = tuple(a for a in args if isinstance(a, type) and a is not type(None))
         # If any arm is a Callable, allow anything callable
         if any(get_origin(a) is Callable or a is Callable for a in args):
             return
+        resolved: list[type] = []
+        for arm in args:
+            if arm is type(None):
+                continue
+            runtime_type = arm if isinstance(arm, type) else get_origin(arm)
+            if not isinstance(runtime_type, type):
+                # An arm such as ``Literal[...]`` has no runtime class to test against;
+                # checking the remaining arms would reject values the annotation allows.
+                return
+            resolved.append(runtime_type)
+        allowed = tuple(resolved)
     elif isinstance(field_type, type):
         allowed = (field_type,)
     else:

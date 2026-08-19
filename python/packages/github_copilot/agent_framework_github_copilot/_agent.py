@@ -386,7 +386,9 @@ class GitHubCopilotSettings(TypedDict, total=False):
             Only applicable when the SDK spawns the CLI process (ignored when
             connecting to an external server via a pre-configured client).
         telemetry: OpenTelemetry configuration for the Copilot CLI process. This is
-            passed to the SDK client when it is created by the agent.
+            passed to the SDK client when it is created by the agent. Values coming
+            from GITHUB_COPILOT_TELEMETRY or a .env file arrive as a JSON string and
+            are parsed into a mapping before they reach the SDK.
     """
 
     cli_path: str | None
@@ -394,7 +396,7 @@ class GitHubCopilotSettings(TypedDict, total=False):
     timeout: float | None
     log_level: str | None
     base_directory: str | None
-    telemetry: dict[str, Any]
+    telemetry: dict[str, Any] | str | None
 
 
 class GitHubCopilotOptions(TypedDict, total=False):
