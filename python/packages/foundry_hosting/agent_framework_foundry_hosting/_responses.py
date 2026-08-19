@@ -494,7 +494,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             consent_errors_to_emit = consent_url_from_error(ex)
             if consent_errors_to_emit is None or len(consent_errors_to_emit) == 0:
                 logger.error("Failed to prepare agent: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
-                raise
+                for event in self._emit_failure(response_event_stream, None, ex):
+                    yield event
+                return
 
             for consent_error in consent_errors_to_emit:
                 logger.warning("Consent URL for tool '%s': %s", consent_error.name, consent_error.consent_url)
@@ -855,6 +857,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         workflow) genuinely continues -- and may run to completion -- from its own queued
         messages, and that output must not be lost. Drive the underlying ``Workflow`` directly so
         none of it is discarded, converting each event the same way ``WorkflowAgent.run`` does.
+
+        TODO(@taochen): #7677
         """
         if not isinstance(self._agent, WorkflowAgent):
             raise RuntimeError("Agent is not a workflow agent.")
