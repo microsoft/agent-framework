@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
 import json
 import tempfile
 from dataclasses import dataclass
@@ -1113,6 +1114,59 @@ async def test_file_checkpoint_storage_save_and_load():
         assert loaded_checkpoint.messages == checkpoint.messages
         assert loaded_checkpoint.state == checkpoint.state
         assert loaded_checkpoint.pending_request_info_events == checkpoint.pending_request_info_events
+
+
+async def test_file_checkpoint_storage_concurrent_saves_same_id():
+    """Concurrent saves of the same checkpoint ID must not fail on a shared temp path.
+
+    Regression for https://github.com/microsoft/agent-framework/issues/7748:
+    FileCheckpointStorage.save() used a fixed `<id>.json.tmp` temp path, so concurrent
+    saves raced on it (one rename removed it before another's rename). Uses enough
+    concurrent saves to reliably trip the race on the unfixed code.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        checkpoint = WorkflowCheckpoint(
+            workflow_name="test-workflow",
+            graph_signature_hash="test-hash",
+            checkpoint_id="shared-id",
+        )
+
+        results = await asyncio.gather(*(storage.save(checkpoint) for _ in range(50)), return_exceptions=True)
+
+        errors = [r for r in results if isinstance(r, BaseException)]
+        assert not errors, f"concurrent saves raised internal filesystem errors: {errors[:1]!r}"
+        assert all(r == "shared-id" for r in results)
+        # One of the saves won; the destination is intact and parseable, not corrupted or truncated.
+        assert (Path(temp_dir) / "shared-id.json").exists()
+        loaded = await storage.load("shared-id")
+        assert loaded.checkpoint_id == checkpoint.checkpoint_id
+        assert loaded.workflow_name == checkpoint.workflow_name
+        assert loaded.graph_signature_hash == checkpoint.graph_signature_hash
+
+
+async def test_file_checkpoint_storage_save_lock_registry_bounded():
+    """Save-lock registry entries must be released after each save completes.
+
+    The reference-counted bookkeeping in FileCheckpointStorage must remove the entry
+    for a checkpoint ID once the final holder exits, so successive saves of many
+    distinct IDs do not accumulate entries in the per-loop registry.
+    """
+    with tempfile.TemporaryDirectory() as temp_dir:
+        storage = FileCheckpointStorage(temp_dir)
+        for i in range(50):
+            checkpoint = WorkflowCheckpoint(
+                workflow_name="test-workflow",
+                graph_signature_hash="test-hash",
+                checkpoint_id=f"checkpoint-{i}",
+            )
+            await storage.save(checkpoint)
+
+        # Each save takes and releases its lock reference inside save() itself, so
+        # by the time we observe the registry here every entry should be gone.
+        loop = asyncio.get_running_loop()
+        locks = storage._save_locks_by_loop.get(loop)  # pyright: ignore[reportPrivateUsage]
+        assert not locks
 
 
 async def test_file_checkpoint_storage_load_nonexistent():
