@@ -43,6 +43,8 @@
              Link="Workflows\Samples\NestedWorkflow.cs" />
     <Compile Include="..\..\samples\02-agents\AGUI\Step11_WorkflowApproval\Server\ApprovalWorkflow.cs"
              Link="Workflows\Samples\ApprovalWorkflow.cs" />
+    <Compile Include="..\..\samples\02-agents\AGUI\Step12_WorkflowMultipleInputs\Server\MultipleInputsWorkflow.cs"
+             Link="Workflows\Samples\MultipleInputsWorkflow.cs" />
   </ItemGroup>
 
 </Project>

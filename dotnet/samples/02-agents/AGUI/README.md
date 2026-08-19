@@ -250,6 +250,17 @@ dotnet run --project Server --urls http://localhost:8888
 dotnet run --project Client
 ```
 
+### Step12_WorkflowMultipleInputs
+
+A travel workflow that emits three input interruptions in one turn, accepts partial and out-of-order
+responses, and completes after the remaining input arrives.
+
+```bash
+cd Step12_WorkflowMultipleInputs
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
 The server runs on port 8888 by default.
 
 #### Client (`Step05_StateManagement/Client`)
