@@ -55,6 +55,12 @@ internal sealed class WorkflowHostAgent : AIAgent
     public override string? Name { get; }
     public override string? Description { get; }
 
+    /// <inheritdoc />
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+        => serviceKey is null && serviceType == typeof(Workflow)
+            ? this._workflow
+            : base.GetService(serviceType, serviceKey);
+
     private string GenerateNewId()
     {
         string result;

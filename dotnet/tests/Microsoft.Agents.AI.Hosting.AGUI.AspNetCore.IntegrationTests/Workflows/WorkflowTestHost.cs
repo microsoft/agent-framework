@@ -22,14 +22,28 @@ internal sealed class WorkflowTestHost : IAsyncDisposable
 
     public HttpClient Client { get; }
 
-    public static async Task<WorkflowTestHost> StartAsync(AIAgent agent)
+    public static async Task<WorkflowTestHost> StartAsync(AIAgent agent, bool persistSession = false)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Services.AddAGUIServer();
 
+        if (persistSession)
+        {
+            string agentName = agent.Name ?? throw new InvalidOperationException("A named agent is required for session persistence.");
+            builder.Services.AddAIAgent(agentName, (_, _) => agent)
+                .WithInMemorySessionStore(withIsolation: false);
+        }
+
         WebApplication app = builder.Build();
-        app.MapAGUIServer("/agent", agent);
+        if (persistSession)
+        {
+            app.MapAGUIServer(agent.Name!, "/agent");
+        }
+        else
+        {
+            app.MapAGUIServer("/agent", agent);
+        }
         await app.StartAsync();
 
         TestServer server = app.Services.GetRequiredService<IServer>() as TestServer

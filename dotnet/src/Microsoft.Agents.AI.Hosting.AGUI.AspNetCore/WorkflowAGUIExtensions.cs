@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using AGUI.Abstractions;
 using Microsoft.Agents.AI.Workflows;
@@ -16,11 +17,27 @@ internal static class WorkflowAGUIExtensions
         this IAsyncEnumerable<ChatResponseUpdate> updates)
     {
         ArgumentNullException.ThrowIfNull(updates);
+        List<ChatResponseUpdate> interruptions = [];
 
         await foreach (ChatResponseUpdate update in updates.ConfigureAwait(false))
         {
             switch (update.RawRepresentation)
             {
+                case AgentResponseUpdate { RawRepresentation: RequestInfoEvent requestInfo }
+                    when update.Contents.OfType<FunctionCallContent>().SingleOrDefault() is { } request:
+                    update.Contents =
+                    [
+                        new InterruptRequestContent(requestInfo.Request.RequestId)
+                        {
+                            Message = $"Input required for {request.Name}.",
+                            Reason = InterruptReasons.InputRequired,
+                            ToolCallId = request.CallId,
+                        },
+                    ];
+                    update.RawRepresentation = null;
+                    interruptions.Add(update);
+                    break;
+
                 case AgentResponseUpdate { RawRepresentation: ExecutorInvokedEvent invoked }:
                     update.RawRepresentation = new StepStartedEvent { StepName = invoked.ExecutorId };
                     yield return update;
@@ -44,6 +61,11 @@ internal static class WorkflowAGUIExtensions
                     break;
             }
         }
+
+        foreach (ChatResponseUpdate interruption in interruptions)
+        {
+            yield return interruption;
+        }
     }
 #pragma warning restore VSTHRD200
 
@@ -64,4 +86,23 @@ internal static class WorkflowAGUIExtensions
             Role = update.Role,
             ContinuationToken = update.ContinuationToken,
         };
+
+    internal static List<ChatMessage> MapAGUIInterruptResponsesToWorkflow(
+        this IEnumerable<ChatMessage> messages)
+        => [.. messages.Select(static message =>
+        {
+            AIContent[] contents = [.. message.Contents.Select(static content =>
+                content is InterruptResponseContent response
+                    ? new FunctionResultContent(response.RequestId, response.Payload)
+                    : content)];
+
+            return new ChatMessage(message.Role, contents)
+            {
+                AdditionalProperties = message.AdditionalProperties,
+                AuthorName = message.AuthorName,
+                CreatedAt = message.CreatedAt,
+                MessageId = message.MessageId,
+                RawRepresentation = message.RawRepresentation,
+            };
+        })];
 }

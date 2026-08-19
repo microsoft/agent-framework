@@ -240,6 +240,16 @@ dotnet run --project Server --urls http://localhost:8888
 dotnet run --project Client
 ```
 
+### Step11_WorkflowApproval
+
+An expense workflow that pauses with an AG-UI approval interruption and resumes on the same persisted thread.
+
+```bash
+cd Step11_WorkflowApproval
+dotnet run --project Server --urls http://localhost:8888
+dotnet run --project Client
+```
+
 The server runs on port 8888 by default.
 
 #### Client (`Step05_StateManagement/Client`)
