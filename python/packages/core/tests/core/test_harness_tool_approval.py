@@ -1456,7 +1456,7 @@ async def test_streaming_tool_approval_preserves_structured_value(
         client=chat_client_base,
         tools=[echo],
         middleware=[ToolApprovalMiddleware()],
-        default_options=default_options,  # type: ignore[arg-type]
+        default_options=default_options,  # type: ignore[arg-type, typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
     )
     session = AgentSession(session_id=f"structured-stream-{via}")
     chat_client_base.streaming_responses = [
@@ -1525,6 +1525,65 @@ async def test_streaming_auto_approved_tool_preserves_structured_value(
         pass
     response = await stream.get_final_response()
 
+    assert calls == 1
+    assert isinstance(response.value, Answer)
+    assert response.value.answer == "42"
+
+
+async def test_streaming_auto_approved_tool_preserves_value_when_preamble_text_coalesces(
+    chat_client_base: MockBaseChatClient,
+) -> None:
+    """Preamble assistant text plus a tool call must not clobber the parsed structured value.
+
+    Updates without ``message_id`` are coalesced by ``AgentResponse.from_updates``. If the
+    outer finalizer rebuilt from every yielded update, ``Calling echo…{"answer":"42"}``
+    would fail to parse. The terminal inner response's value must be kept instead.
+    """
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        answer: str
+
+    json_text = '{"answer": "42"}'
+    calls = 0
+
+    @tool(name="echo", approval_mode="always_require")
+    def echo(text: str) -> str:
+        nonlocal calls
+        calls += 1
+        return text
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[echo],
+        middleware=[ToolApprovalMiddleware(auto_approval_rules=[lambda function_call: True])],
+    )
+    session = AgentSession(session_id="structured-stream-auto-approve-preamble")
+    function_call = Content.from_function_call(call_id="call_echo", name="echo", arguments='{"text": "hi"}')
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(role="assistant", contents=[Content.from_text("Calling echo…")]),
+            ChatResponseUpdate(role="assistant", contents=[function_call]),
+        ],
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                contents=[Content.from_text(json_text)],
+                finish_reason="stop",
+            )
+        ],
+    ]
+
+    stream = agent.run(
+        "Call echo and return an Answer.",
+        stream=True,
+        session=session,
+        options={"response_format": Answer},
+    )
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert any("Calling echo" in (content.text or "") for update in updates for content in update.contents)
     assert calls == 1
     assert isinstance(response.value, Answer)
     assert response.value.answer == "42"

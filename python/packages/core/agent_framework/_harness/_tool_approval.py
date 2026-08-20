@@ -7,7 +7,6 @@ import inspect
 import json
 from asyncio import sleep
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, MutableMapping, Sequence
-from functools import partial
 from typing import Any, Literal, cast
 
 from .._middleware import AgentContext, AgentMiddleware
@@ -457,6 +456,13 @@ class ToolApprovalMiddleware(AgentMiddleware):
         call_next: Callable[[], Awaitable[None]],
         state: ToolApprovalState,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        # Last inner AgentResponse. Returning it from the outer finalizer matches
+        # the non-streaming path and preserves an already-parsed structured value
+        # even when earlier auto-approved turns yielded assistant text that
+        # AgentResponse.from_updates would coalesce into the JSON message.
+        holder: dict[str, AgentResponse | None] = {"final": None}
+        response_format = _structured_response_format(context)
+
         async def _stream() -> AsyncIterable[AgentResponseUpdate]:
             if context.session is None:
                 raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
@@ -503,7 +509,7 @@ class ToolApprovalMiddleware(AgentMiddleware):
                             additional_properties=update.additional_properties,
                             raw_representation=update.raw_representation,
                         )
-                await context.result.get_final_response()
+                holder["final"] = await context.result.get_final_response()
                 if not approval_requests:
                     return
 
@@ -518,13 +524,12 @@ class ToolApprovalMiddleware(AgentMiddleware):
                 context.messages = []
                 context.result = None
 
-        return ResponseStream(
-            _stream(),
-            finalizer=partial(
-                AgentResponse.from_updates,
-                output_format_type=_structured_response_format(context),
-            ),
-        )
+        def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            if holder["final"] is not None:
+                return holder["final"]
+            return AgentResponse.from_updates(updates, output_format_type=response_format)
+
+        return ResponseStream(_stream(), finalizer=_finalize)
 
     def _prepare_inbound_messages(
         self,
