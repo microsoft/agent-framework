@@ -18,6 +18,7 @@ namespace Microsoft.Agents.AI.UnitTests.Harness.FileMemory;
 public class AgentFileStoreContractTests
 {
     private const string Needle = "keep me";
+    private const string Pathological = "(a+)+b";
 
     /// <summary>
     /// A store implementing only the mandatory members. Before the contract this could not exist:
@@ -99,6 +100,32 @@ public class AgentFileStoreContractTests
         public override bool ReportsAlignedLineNumbers => true;
     }
 
+    /// <summary>Reports a line number below the first line.</summary>
+    private sealed class ZeroLineStore : ContentOnlyStore
+    {
+        public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<FileSearchResult>>(
+            [
+                new FileSearchResult
+                {
+                    FileName = "cfg.txt",
+                    Snippet = string.Empty,
+                    MatchingLines = [new FileSearchMatch { LineNumber = 0, Line = Needle }],
+                }
+            ]);
+    }
+
+    /// <summary>Two results: the first line backtracks past the budget, the second is misnumbered.</summary>
+    private sealed class TrapThenSkewedStore : ContentOnlyStore
+    {
+        public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<FileSearchResult>>(
+            [
+                new FileSearchResult { FileName = "trap.txt", Snippet = string.Empty, MatchingLines = [new FileSearchMatch { LineNumber = 1, Line = string.Empty }] },
+                new FileSearchResult { FileName = "cfg.txt", Snippet = string.Empty, MatchingLines = [new FileSearchMatch { LineNumber = 1, Line = string.Empty }] },
+            ]);
+    }
+
     [Fact]
     public void SplitLines_PublishesTheEditorsRule()
     {
@@ -170,7 +197,8 @@ public class AgentFileStoreContractTests
     [Fact]
     public async Task BaseSearch_NarrowsThroughTheHookAsync()
     {
-        // Arrange: three files match, but only one is indexed.
+        // Arrange: three files match, but only one is indexed. Under-returning breaks the hook's
+        // contract; it is done here because nothing else proves the hook chose what got read.
         var store = new NarrowingStore();
         for (int i = 0; i < 3; i++)
         {
@@ -232,6 +260,36 @@ public class AgentFileStoreContractTests
 
         // Assert
         Assert.Equal(1, results[0].MatchingLines[0].LineNumber);
+    }
+
+    [Fact]
+    public async Task Alignment_RefusesANonPositiveLineNumberAsync()
+    {
+        // Arrange: line 0 is out of range downwards, which an upper-bound check alone lets through.
+        var store = new ZeroLineStore();
+        await store.WriteAsync("cfg.txt", $"alpha\n{Needle}\n");
+        IReadOnlyList<FileSearchResult> results = await store.SearchAsync(string.Empty, Needle, recursive: true);
+
+        // Act + Assert: the misalignment error, not a raw index error.
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => SearchAlignment.ThrowIfMisalignedAsync(store, string.Empty, results, Needle, CancellationToken.None));
+        Assert.Contains("do not line up", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Alignment_KeepsCheckingAfterAMatchItCannotEvaluateAsync()
+    {
+        // Arrange: trap.txt backtracks past the budget, cfg.txt is skewed and evaluates instantly.
+        var store = new TrapThenSkewedStore();
+        await store.WriteAsync("trap.txt", new string('a', 30));
+        await store.WriteAsync("cfg.txt", "zzz\naab\n");
+        IReadOnlyList<FileSearchResult> results = await store.SearchAsync(string.Empty, Pathological, recursive: true);
+
+        // Act + Assert: giving up at the trap would let cfg.txt through unchecked.
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => SearchAlignment.ThrowIfMisalignedAsync(
+                store, string.Empty, results, Pathological, CancellationToken.None, TimeSpan.FromMilliseconds(1)));
+        Assert.Contains("do not line up", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -47,7 +47,8 @@ internal static class SearchAlignment
         string directory,
         IReadOnlyList<FileSearchResult> results,
         string regexPattern,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? matchTimeout = null) // Overridable so a test can reach the timeout path.
     {
         if (results.Count == 0 || IsTrusted(store, results))
         {
@@ -60,7 +61,7 @@ internal static class SearchAlignment
         Regex regex;
         try
         {
-            regex = new Regex(regexPattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
+            regex = new Regex(regexPattern, RegexOptions.IgnoreCase, matchTimeout ?? TimeSpan.FromSeconds(5));
         }
         catch (ArgumentException)
         {
@@ -84,7 +85,8 @@ internal static class SearchAlignment
             IReadOnlyList<string> lines = AgentFileStore.SplitLines(content);
             foreach (FileSearchMatch match in result.MatchingLines)
             {
-                if (match.LineNumber > lines.Count)
+                // Both bounds: 0 or negative would index out of range below instead of reporting misalignment.
+                if (match.LineNumber < 1 || match.LineNumber > lines.Count)
                 {
                     throw new InvalidOperationException(MisalignedMessage);
                 }
@@ -97,7 +99,8 @@ internal static class SearchAlignment
                 }
                 catch (RegexMatchTimeoutException)
                 {
-                    return; // Cannot verify within the budget; do not claim a mismatch.
+                    // Skip this match only; returning would leave every later result unchecked but reported.
+                    continue;
                 }
 
                 if (!matched)

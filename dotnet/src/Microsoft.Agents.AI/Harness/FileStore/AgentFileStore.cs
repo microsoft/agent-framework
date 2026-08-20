@@ -145,8 +145,8 @@ public abstract class AgentFileStore
     /// deliberately a <b>superset</b>: returning a file that turns out not to match is harmless,
     /// because <see cref="SearchAsync"/> re-scans every candidate, while omitting one loses the match.
     /// A backend with a native search index should override this and push
-    /// <paramref name="regexPattern"/> down to it, accepting that a dialect mismatch costs recall
-    /// and nothing else.
+    /// <paramref name="regexPattern"/> down to it, widening rather than guessing where the dialect
+    /// cannot express the pattern.
     /// </para>
     /// <para>
     /// The default implementation has no index to narrow with, so it walks
