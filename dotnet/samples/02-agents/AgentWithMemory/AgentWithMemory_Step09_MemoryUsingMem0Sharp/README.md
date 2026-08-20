@@ -1,4 +1,4 @@
-# Agent with Memory Using Mem0Sharp
+﻿# Agent with Memory Using Mem0Sharp
 
 This sample uses the [`Mem0Sharp`](https://www.nuget.org/packages/Mem0Sharp) NuGet package as a local, in-memory store for an Agent Framework agent. It stores a user preference and recalls it from a new agent session without requiring a memory service or database.
 
