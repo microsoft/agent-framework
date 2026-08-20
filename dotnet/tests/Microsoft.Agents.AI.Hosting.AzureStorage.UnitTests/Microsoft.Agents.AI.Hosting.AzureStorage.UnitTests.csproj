@@ -1,9 +1,5 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFrameworks>$(TargetFrameworksCore);net472</TargetFrameworks>
-  </PropertyGroup>
-
   <ItemGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
     <PackageReference Include="AGUI.Abstractions" />
     <PackageReference Include="AGUI.Client" />
