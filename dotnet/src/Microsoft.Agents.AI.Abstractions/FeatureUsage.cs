@@ -17,6 +17,7 @@ namespace Microsoft.Agents.AI;
 /// Feature usage is accumulated for the lifetime of the process and does not represent invocation counts.
 /// </remarks>
 [EditorBrowsable(EditorBrowsableState.Never)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class FeatureUsage
 {
     private const string FeatureMaskDisabledEnvironmentVariable = "AGENT_FRAMEWORK_FEATURE_MASK_DISABLED";
@@ -39,7 +40,6 @@ public static class FeatureUsage
     /// When <c>AGENT_FRAMEWORK_FEATURE_MASK_DISABLED</c> is set to <c>true</c> or <c>1</c>,
     /// marking is disabled and this method is a no-op.
     /// </remarks>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public static void MarkUsed(int index)
     {
         if (Volatile.Read(ref s_isDisabled))
@@ -79,7 +79,6 @@ public static class FeatureUsage
     /// This infrastructure method does not approve a destination and does not sanitize the supplied User-Agent.
     /// Callers must independently verify that the actual request destination is approved before including the token.
     /// </remarks>
-    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public static string ApplyToUserAgent(string userAgent, bool includeFeatureToken = true)
     {
         if (userAgent is null)

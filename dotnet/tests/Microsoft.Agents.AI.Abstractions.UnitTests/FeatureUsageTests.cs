@@ -172,15 +172,13 @@ public sealed partial class FeatureUsageTests : IDisposable
 
         // Act
         EditorBrowsableAttribute? editorBrowsable = featureUsageType.GetCustomAttribute<EditorBrowsableAttribute>();
-        ExperimentalAttribute? markUsedExperimental = markUsedMethod?.GetCustomAttribute<ExperimentalAttribute>();
-        ExperimentalAttribute? applyExperimental = applyMethod?.GetCustomAttribute<ExperimentalAttribute>();
+        ExperimentalAttribute? experimental = featureUsageType.GetCustomAttribute<ExperimentalAttribute>();
 
         // Assert
         Assert.NotNull(markUsedMethod);
         Assert.NotNull(applyMethod);
         Assert.Equal(EditorBrowsableState.Never, editorBrowsable?.State);
-        Assert.Equal("MAAI001", markUsedExperimental?.DiagnosticId);
-        Assert.Equal("MAAI001", applyExperimental?.DiagnosticId);
+        Assert.Equal("MAAI001", experimental?.DiagnosticId);
     }
 
     [Fact]
