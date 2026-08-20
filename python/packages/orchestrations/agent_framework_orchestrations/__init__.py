@@ -129,7 +129,6 @@ for _checkpoint_type in (
     MagenticPlanReviewResponse,
     MagenticProgressLedger,
     MagenticProgressLedgerItem,
-    _MagenticTaskLedger,
 ):
     register_checkpoint_type(_checkpoint_type)
 
