@@ -45,17 +45,44 @@ jobs:
           # python-<package>-<version> for a single package. Package names may
           # themselves contain hyphens (hosting-a2a, azure-ai-search), so the
           # package part cannot be found by splitting on the first hyphen.
+          #
+          # Versions follow the lifecycle patterns in the python-package-management
+          # skill: X.Y.Z, X.Y.ZaYYMMDD, X.Y.ZbYYMMDD, X.Y.ZrcN, each optionally
+          # carrying a .N or .postN re-cut suffix.
+          VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+([ab][0-9]+|rc[0-9]+)?(\.[0-9]+|\.post[0-9]+)?$'
+
           REST="${TAG#python-}"
 
-          if [[ "$REST" != *-* ]]; then
+          if [[ -z "$REST" ]]; then
+            echo "Error: tag '$TAG' has no version or package component"
+            exit 1
+          fi
+
+          if [[ "$REST" =~ $VERSION_PATTERN ]]; then
             # python-<version>: build every workspace package plus the root meta package.
             PACKAGE="all"
             echo "Resolved tag '$TAG' to the full workspace build"
           else
-            # Strip the trailing -<version> component, then resolve what is left
-            # against the real package directories. Tags use hyphens even where the
-            # directory uses underscores (python-github-copilot -> github_copilot).
+            # python-<package>-<version>: split off the trailing version component and
+            # require it to be a real version, so a malformed tag fails here rather
+            # than being mistaken for another kind of release.
             CANDIDATE="${REST%-*}"
+            VERSION="${REST##*-}"
+
+            if [[ "$CANDIDATE" == "$REST" || -z "$CANDIDATE" ]]; then
+              echo "Error: tag '$TAG' is neither python-<version> nor python-<package>-<version>"
+              exit 1
+            fi
+
+            if [[ ! "$VERSION" =~ $VERSION_PATTERN ]]; then
+              echo "Error: tag '$TAG' does not end in a supported version"
+              echo "Derived version: '$VERSION'"
+              exit 1
+            fi
+
+            # Resolve the package part against the real package directories. Tags use
+            # hyphens even where the directory uses underscores
+            # (python-github-copilot -> github_copilot).
             PACKAGE=""
 
             for dir in packages/*/; do
