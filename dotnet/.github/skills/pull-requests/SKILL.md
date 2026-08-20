@@ -74,9 +74,12 @@ code before the user has reviewed the plan**:
    approval or adjustments before implementing anything.
 4. **Implement.** Make the agreed changes.
 5. **Reply to every comment.** Add a reply to **all** comments explaining how it
-   was addressed (or the agreed outcome) — leave none unanswered.
-6. **Resolve resolved threads.** Mark a review thread as resolved only when the
-   comment has actually been addressed.
+   was addressed, preferably citing the commit containing the change. If the
+   feedback was not addressed, explain why. Leave no comment unanswered.
+6. **Resolve completed threads yourself.** After replying and completing any
+   necessary discussion, resolve the review thread. Do not wait for the reviewer
+   or a maintainer to resolve it. Leave a thread open only while it has an
+   unanswered question or active discussion.
 
 ### Useful commands
 

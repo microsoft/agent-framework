@@ -68,6 +68,7 @@
     <Project Path="samples/02-agents/Agents/Agent_Step21_ShellWithEnvironment/Agent_Step21_ShellWithEnvironment.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step22_AgentMode/Agent_Step22_AgentMode.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step23_TodoList/Agent_Step23_TodoList.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step24_MultiModelRouting/Agent_Step24_MultiModelRouting.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/DeclarativeAgents/">
     <Project Path="samples/02-agents/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
@@ -109,6 +110,10 @@
     <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step01_MeetYourClaw/Claw_Step01_MeetYourClaw.csproj" />
     <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step02_WorkingWithData/Claw_Step02_WorkingWithData.csproj" />
     <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step03_ScalingCapabilities/Claw_Step03_ScalingCapabilities.csproj" />
+    <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step04_ProductionReady/ClawAgent/ClawAgent.csproj" />
+    <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step04_ProductionReady/ClawAgent.Console/ClawAgent.Console.csproj" />
+    <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step04_ProductionReady/ClawAgent.Hosted/ClawAgent.Hosted.csproj" />
+    <Project Path="samples/02-agents/Harness/BuildYourOwnClaw/Claw_Step04_ProductionReady/ClawAgent.Evals/ClawAgent.Evals.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveComponents/ConsoleReactiveComponents.csproj" />
     <Project Path="samples/02-agents/Harness/ConsoleReactiveFramework/ConsoleReactiveFramework.csproj" />
     <Project Path="samples/02-agents/Harness/Harness_Shared_Console/Harness_Shared_Console.csproj" />
@@ -605,6 +610,7 @@
     <Project Path="src/Microsoft.Agents.AI.Hyperlight/Microsoft.Agents.AI.Hyperlight.csproj" />
     <Project Path="src/Microsoft.Agents.AI.LocalCodeAct/Microsoft.Agents.AI.LocalCodeAct.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Mcp/Microsoft.Agents.AI.Mcp.csproj" />
+    <Project Path="src/Microsoft.Agents.AI.AgentHooks/Microsoft.Agents.AI.AgentHooks.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Mem0/Microsoft.Agents.AI.Mem0.csproj" />
     <Project Path="src/Microsoft.Agents.AI.OpenAI/Microsoft.Agents.AI.OpenAI.csproj" />
     <Project Path="src/Microsoft.Agents.AI.Purview/Microsoft.Agents.AI.Purview.csproj" />
@@ -642,6 +648,7 @@
     <Project Path="tests/Aspire.Hosting.AgentFramework.DevUI.UnitTests/Aspire.Hosting.AgentFramework.DevUI.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.A2A.UnitTests/Microsoft.Agents.AI.A2A.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Abstractions.UnitTests/Microsoft.Agents.AI.Abstractions.UnitTests.csproj" />
+    <Project Path="tests/Microsoft.Agents.AI.AgentHooks.UnitTests/Microsoft.Agents.AI.AgentHooks.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Anthropic.UnitTests/Microsoft.Agents.AI.Anthropic.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests/Microsoft.Agents.AI.AzureAI.Persistent.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.CosmosNoSql.UnitTests/Microsoft.Agents.AI.CosmosNoSql.UnitTests.csproj" />

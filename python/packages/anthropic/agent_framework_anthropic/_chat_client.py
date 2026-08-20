@@ -669,10 +669,25 @@ class RawAnthropicClient(
         messages: Sequence[Message],
         instructions: Any,
     ) -> Sequence[BetaTextBlockParam] | Sequence[Mapping[str, Any]]:
+        """Normalize structured instructions into Anthropic system blocks.
+
+        Plain strings are wrapped as text blocks, which is how instructions contributed later in a run
+        (by a context provider or per-run options) arrive alongside caller-supplied blocks.
+
+        Raises:
+            ValueError: If a leading system message is present, since that is a second, ambiguous
+                source of system content.
+        """
         if messages and isinstance(messages[0], Message) and messages[0].role == "system":
             raise ValueError("structured Anthropic instructions cannot be combined with a leading system message.")
 
-        return cast(Sequence[BetaTextBlockParam] | Sequence[Mapping[str, Any]], instructions)
+        raw_blocks: Sequence[Any] = (
+            [instructions] if isinstance(instructions, Mapping) else cast(Sequence[Any], instructions)
+        )
+        blocks: list[Any] = [
+            {"type": "text", "text": block} if isinstance(block, str) else block for block in raw_blocks
+        ]
+        return cast(Sequence[BetaTextBlockParam] | Sequence[Mapping[str, Any]], blocks)
 
     def _prepare_text_instructions_for_anthropic(self, messages: Sequence[Message], instructions: Any) -> str:
         if isinstance(instructions, str):

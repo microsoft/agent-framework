@@ -50,6 +50,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Shell tool with environment-aware system prompt](./Agent_Step21_ShellWithEnvironment/)|This sample demonstrates how to use the shell tool together with the ShellEnvironmentProvider to run commands in stateless and persistent modes, injecting environment-aware instructions so the agent emits commands in the right shell idiom.|
 |[Switching agent operating mode](./Agent_Step22_AgentMode/)|This sample demonstrates how to use the AgentModeProvider to track and switch an agent's operating mode at runtime, including the built-in plan/execute modes and custom modes, with a simple input loop that switches mode using a slash command.|
 |[Tracking work with a todo list](./Agent_Step23_TodoList/)|This sample demonstrates how to use the TodoProvider to let an agent plan and track multi-step work using a todo list that persists across turns, printing the evolving todo list after each turn.|
+|[Routing turns across multiple models](./Agent_Step24_MultiModelRouting/)|This sample demonstrates how to use the RoutePersistingRoutingChatClient to route each agent turn to one of several named chat clients, switching the active model mid-conversation while preserving the conversation history.|
 
 ## Running the samples from the console
 
