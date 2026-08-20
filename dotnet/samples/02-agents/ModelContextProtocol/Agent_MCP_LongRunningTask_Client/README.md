@@ -15,7 +15,7 @@ The decorator drives the lifecycle internally:
 2. The server returns either the ordinary tool result or a task handle.
 3. `tasks/get` is polled until it carries the final result, which is returned to the function-calling loop.
 
-The transparent adapter uses the MCP SDK's automatic poller. Cancelling the local invocation stops polling, but it does not automatically send `tasks/cancel` because the poller does not expose the created task ID. Applications that need task handles or explicit remote cancellation can use `ModelContextProtocol.Extensions.Tasks` directly.
+The transparent adapter retains the created task handle while it polls. By default, cancelling the local invocation also sends a best-effort `tasks/cancel` so abandoned server work can stop cooperatively. Set `McpTaskOptions.CancelRemoteTaskOnLocalCancellation` to `false` when server work should continue independently after the caller stops waiting.
 
 The sample exercises both invocation styles against the same wrapper:
 

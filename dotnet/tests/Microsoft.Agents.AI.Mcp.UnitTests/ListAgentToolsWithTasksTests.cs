@@ -41,4 +41,21 @@ public class ListAgentToolsWithTasksTests
         // Assert
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
+
+    [Fact]
+    public async Task ListAgentToolsWithTasks_NonPositiveStuckPollLimit_ThrowsAsync()
+    {
+        // Arrange
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create("tool", () => "result"),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
+        var options = new McpTaskOptions { MaxConsecutiveStuckPolls = 0 };
+
+        // Act
+        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
 }

@@ -1,12 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 using ModelContextProtocol.Client;
-using ModelContextProtocol.Extensions.Tasks;
 
 namespace Microsoft.Agents.AI.Mcp;
 
@@ -24,25 +24,38 @@ public static class McpClientTaskExtensions
     /// ordinary inline results from servers that do not create a task.
     /// </summary>
     /// <param name="client">The connected MCP client.</param>
+    /// <param name="options">
+    /// Options that control the task lifecycle. When <see langword="null"/>, defaults described
+    /// on <see cref="McpTaskOptions"/> apply.
+    /// </param>
     /// <param name="cancellationToken">Token used to cancel listing the server's tools.</param>
     /// <returns>The tools, ready to pass to <c>AsAIAgent(tools: …)</c>.</returns>
-    /// <remarks>
-    /// Cancelling an invocation stops local polling but does not automatically send
-    /// <c>tasks/cancel</c>. Use <see cref="McpTasksClientExtensions.CallToolAsTaskAsync"/>
-    /// directly when the caller needs a task handle for explicit remote cancellation.
-    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="options"/> specifies a non-positive
+    /// <see cref="McpTaskOptions.MaxConsecutiveStuckPolls"/>.
+    /// </exception>
     public static async Task<IReadOnlyList<AIFunction>> ListAgentToolsWithTasksAsync(
         this McpClient client,
+        McpTaskOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(client);
+
+        McpTaskOptions effectiveOptions = options ?? new();
+        if (effectiveOptions.MaxConsecutiveStuckPolls <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                effectiveOptions.MaxConsecutiveStuckPolls,
+                "MaxConsecutiveStuckPolls must be greater than zero.");
+        }
 
         IList<McpClientTool> tools = await client.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
         AIFunction[] result = new AIFunction[tools.Count];
         for (int i = 0; i < tools.Count; i++)
         {
-            result[i] = new TaskAwareMcpClientAIFunction(client, tools[i]);
+            result[i] = new TaskAwareMcpClientAIFunction(client, tools[i], effectiveOptions);
         }
 
         return result;

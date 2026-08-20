@@ -34,6 +34,19 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
 
     public int InputRequestCount => this._taskStore?.InputRequestCount ?? 0;
 
+    public int PollCount => this._taskStore?.PollCount ?? 0;
+
+    public int RemoteCancellationCount => this._taskStore?.RemoteCancellationCount ?? 0;
+
+    public Task TaskCreated => this._taskStore?.TaskCreated
+        ?? throw new InvalidOperationException("Tasks are not enabled for this fixture.");
+
+    public Task FirstPollObserved => this._taskStore?.FirstPollObserved
+        ?? throw new InvalidOperationException("Tasks are not enabled for this fixture.");
+
+    public Task RemoteCancellationObserved => this._taskStore?.RemoteCancellationObserved
+        ?? throw new InvalidOperationException("Tasks are not enabled for this fixture.");
+
     private InMemoryMcpServerFixture(
         ServiceProvider serviceProvider,
         McpClient client,
@@ -52,6 +65,7 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
         McpServerPrimitiveCollection<McpServerTool> tools,
         bool enableTasks = true,
         McpClientOptions? clientOptions = null,
+        bool ignoreInputResponses = false,
         CancellationToken cancellationToken = default)
     {
         Pipe clientToServer = new();
@@ -72,7 +86,7 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
         RecordingMcpTaskStore? taskStore = null;
         if (enableTasks)
         {
-            taskStore = new RecordingMcpTaskStore();
+            taskStore = new RecordingMcpTaskStore(ignoreInputResponses);
             builder.WithTasks(taskStore);
         }
 
@@ -123,15 +137,48 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
         this._cts.Dispose();
     }
 
+    public Task CancelLatestTaskAsync(CancellationToken cancellationToken = default) =>
+        this._taskStore?.CancelLatestTaskAsync(cancellationToken)
+        ?? throw new InvalidOperationException("Tasks are not enabled for this fixture.");
+
+    public Task FailLatestTaskAsync(JsonElement error, CancellationToken cancellationToken = default) =>
+        this._taskStore?.FailLatestTaskAsync(error, cancellationToken)
+        ?? throw new InvalidOperationException("Tasks are not enabled for this fixture.");
+
     private sealed class RecordingMcpTaskStore : IMcpTaskStore
     {
         private readonly InMemoryMcpTaskStore _inner = new() { DefaultPollIntervalMs = 10 };
+        private readonly bool _ignoreInputResponses;
+        private readonly TaskCompletionSource<object?> _taskCreated =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<object?> _firstPollObserved =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<object?> _remoteCancellationObserved =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _createdTaskCount;
         private int _inputRequestCount;
+        private int _pollCount;
+        private int _remoteCancellationCount;
+        private string? _latestTaskId;
+
+        public RecordingMcpTaskStore(bool ignoreInputResponses)
+        {
+            this._ignoreInputResponses = ignoreInputResponses;
+        }
 
         public int CreatedTaskCount => this._createdTaskCount;
 
         public int InputRequestCount => this._inputRequestCount;
+
+        public int PollCount => this._pollCount;
+
+        public int RemoteCancellationCount => this._remoteCancellationCount;
+
+        public Task TaskCreated => this._taskCreated.Task;
+
+        public Task FirstPollObserved => this._firstPollObserved.Task;
+
+        public Task RemoteCancellationObserved => this._remoteCancellationObserved.Task;
 
         public event Action<InputResponseReceivedEventArgs>? InputResponseReceived
         {
@@ -142,12 +189,18 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
         public async Task<McpTaskInfo> CreateTaskAsync(CancellationToken cancellationToken = default)
         {
             McpTaskInfo task = await this._inner.CreateTaskAsync(cancellationToken).ConfigureAwait(false);
+            this._latestTaskId = task.TaskId;
             _ = Interlocked.Increment(ref this._createdTaskCount);
+            _ = this._taskCreated.TrySetResult(null);
             return task;
         }
 
-        public Task<McpTaskInfo?> GetTaskAsync(string taskId, CancellationToken cancellationToken = default) =>
-            this._inner.GetTaskAsync(taskId, cancellationToken);
+        public Task<McpTaskInfo?> GetTaskAsync(string taskId, CancellationToken cancellationToken = default)
+        {
+            _ = Interlocked.Increment(ref this._pollCount);
+            _ = this._firstPollObserved.TrySetResult(null);
+            return this._inner.GetTaskAsync(taskId, cancellationToken);
+        }
 
         public Task SetCompletedAsync(string taskId, JsonElement result, CancellationToken cancellationToken = default) =>
             this._inner.SetCompletedAsync(taskId, result, cancellationToken);
@@ -155,8 +208,19 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
         public Task SetFailedAsync(string taskId, JsonElement error, CancellationToken cancellationToken = default) =>
             this._inner.SetFailedAsync(taskId, error, cancellationToken);
 
-        public Task<bool> SetCancelledAsync(string taskId, CancellationToken cancellationToken = default) =>
-            this._inner.SetCancelledAsync(taskId, cancellationToken);
+        public async Task<bool> SetCancelledAsync(string taskId, CancellationToken cancellationToken = default)
+        {
+            bool result = await this._inner.SetCancelledAsync(taskId, cancellationToken).ConfigureAwait(false);
+            // Count only the first successful terminal transition. The SDK background runner
+            // may make a later idempotent cancellation attempt after cleanup has already won.
+            if (result)
+            {
+                _ = Interlocked.Increment(ref this._remoteCancellationCount);
+                _ = this._remoteCancellationObserved.TrySetResult(null);
+            }
+
+            return result;
+        }
 
         public Task SetInputRequestsAsync(
             string taskId,
@@ -171,6 +235,22 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
             string taskId,
             IDictionary<string, InputResponse> inputResponses,
             CancellationToken cancellationToken = default) =>
-            this._inner.ResolveInputRequestsAsync(taskId, inputResponses, cancellationToken);
+            this._ignoreInputResponses
+                ? Task.CompletedTask
+                : this._inner.ResolveInputRequestsAsync(taskId, inputResponses, cancellationToken);
+
+        public async Task CancelLatestTaskAsync(CancellationToken cancellationToken)
+        {
+            string taskId = this._latestTaskId
+                ?? throw new InvalidOperationException("No task has been created.");
+            _ = await this.SetCancelledAsync(taskId, cancellationToken).ConfigureAwait(false);
+        }
+
+        public Task FailLatestTaskAsync(JsonElement error, CancellationToken cancellationToken)
+        {
+            string taskId = this._latestTaskId
+                ?? throw new InvalidOperationException("No task has been created.");
+            return this.SetFailedAsync(taskId, error, cancellationToken);
+        }
     }
 }
