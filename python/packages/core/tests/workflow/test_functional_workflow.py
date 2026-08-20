@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator
@@ -25,6 +26,7 @@ from agent_framework import (
     RunContext,
     StepWrapper,
     WorkflowEvent,
+    WorkflowEventSource,
     WorkflowRunResult,
     WorkflowRunState,
     get_run_context,
@@ -532,6 +534,58 @@ class TestStreaming:
         streaming_flag = None
         await wf.run(1)
         assert streaming_flag is False
+
+    async def test_abandoned_stream_finalizes_without_event_loop_error(self) -> None:
+        """Breaking out of a streaming run must not leak ContextVar tokens on GC.
+
+        Regression for https://github.com/microsoft/agent-framework/issues/7787:
+        the run span and ``_framework_event_origin()`` used to stay open across
+        event yields, so abandoning the stream and letting it be garbage-collected
+        reset those tokens from a different Context.
+        """
+        loop = asyncio.get_running_loop()
+        loop_errors: list[BaseException] = []
+        original_handler = loop.get_exception_handler()
+
+        def _capture_loop_exception(_loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+            exc = context.get("exception")
+            if isinstance(exc, BaseException):
+                loop_errors.append(exc)
+            if original_handler is not None:
+                original_handler(_loop, context)
+
+        loop.set_exception_handler(_capture_loop_exception)
+        try:
+
+            @built_workflow
+            async def pipeline(x: int) -> int:
+                return await add_one(x)
+
+            stream = pipeline.run(5, stream=True)
+            async for _event in stream:
+                break
+
+            del stream
+            gc.collect()
+            for _ in range(5):
+                await asyncio.sleep(0)
+        finally:
+            loop.set_exception_handler(original_handler)
+
+        assert loop_errors == [], f"Abandoned stream leaked loop exceptions: {loop_errors!r}"
+
+    async def test_started_event_origin_is_framework_after_origin_manager_closes(self) -> None:
+        """Framework lifecycle events stay tagged FRAMEWORK even when yielded outside the origin CM."""
+
+        @built_workflow
+        async def pipeline(x: int) -> int:
+            return await add_one(x)
+
+        stream = pipeline.run(5, stream=True)
+        started = await anext(aiter(stream))
+        assert started.type == "started"
+        assert started.origin == WorkflowEventSource.FRAMEWORK
+        await stream.get_final_response()
 
 
 # ---------------------------------------------------------------------------
