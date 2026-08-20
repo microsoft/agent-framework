@@ -404,7 +404,7 @@ def _parse_headers(header_str: str) -> dict[str, str]:
 
 
 @contextlib.contextmanager
-def _shield_env(*names: str) -> Generator[None, None, None]:
+def _shield_env(*names: str) -> Generator[None]:
     """Temporarily hide the given environment variables.
 
     The raw OTLP exporter constructors (grpc and http) fall back to reading
@@ -914,7 +914,7 @@ def create_resource(
 
     if attributes is not None:
         if isinstance(attributes, Mapping):
-            resource_attributes.update(attributes)
+            resource_attributes.update(cast("Mapping[str, Any]", attributes))
         else:
             # Backward compatibility: before `attributes` was a dedicated parameter, it was
             # only reachable via **kwargs — `create_resource(attributes=<value>)` set a
