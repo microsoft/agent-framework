@@ -500,30 +500,35 @@ class A2UIAgent:
         config: Any,
         run_kwargs: dict[str, Any],
     ) -> tuple[list[Any], list[Any], bool]:
-        """Execute server tools called alongside generate_a2ui via the core executor.
+        """Execute server tools called alongside generate_a2ui through the shared executor.
 
-        Delegates to the core ``execute_function_call_batch``, handing it the run's
-        ``session``, the client's static + runtime middleware, and the run ``config`` so the
-        executor owns the middleware pipeline, session threading, and the
-        result/control/termination split — the same execution owner AG-UI approval resume
-        uses. The call-budget accounting stays in the planner loop (which alone knows how
-        the budget is shared with generate_a2ui across rounds). Returns
+        Runs them via the framework's function-invocation helper with the run's ``session``,
+        the run ``config``, and a middleware pipeline built from the client's static function
+        middleware plus the runtime ``middleware`` (bare objects and MiddlewareBundles
+        normalized/expanded via ``categorize_middleware``, so a bundle's function middleware
+        is applied, not skipped) — the same helper AG-UI approval resume uses, so
+        authorization/audit/policy middleware, the session, and approval controls all apply.
+        Kept here in the adapter (not behind a new core abstraction). Returns
         ``(results, control, should_terminate)``; ``control`` are non-result contents (e.g. a
         ``function_approval_request``) that must reach the client. Execution failures surface
         as error results rather than aborting the surface generation.
         """
-        from agent_framework._tools import execute_function_call_batch
+        from agent_framework._middleware import FunctionMiddlewarePipeline, categorize_middleware
+        from agent_framework._tools import _try_execute_function_call_groups
 
         client = getattr(self.inner_agent, "client", None)
+        runtime_middleware = run_kwargs.get("middleware")
+        runtime_fn_mw = categorize_middleware(runtime_middleware)["function"] if runtime_middleware is not None else []
+        pipeline = FunctionMiddlewarePipeline(*(getattr(client, "function_middleware", None) or ()), *runtime_fn_mw)
+        custom_args = {k: v for k, v in run_kwargs.items() if k not in ("options", "middleware")}
         try:
-            outcome = await execute_function_call_batch(
-                server_calls,
-                tools,
-                session=session,
+            groups, should_terminate = await _try_execute_function_call_groups(
+                custom_args=custom_args,
+                function_calls=server_calls,
+                tools=tools,
                 config=config,
-                static_function_middleware=getattr(client, "function_middleware", None) or (),
-                runtime_middleware=run_kwargs.get("middleware"),
-                custom_args={k: v for k, v in run_kwargs.items() if k not in ("options", "middleware")},
+                invocation_session=session,
+                middleware_pipeline=pipeline,
             )
         except Exception as exc:  # noqa: BLE001 — surface as tool results, never abort the surface
             logger.warning("A2UI: server tool execution failed during a mixed generate turn: %s", exc)
@@ -534,7 +539,12 @@ class A2UIAgent:
                 for c in server_calls
             ]
             return errors, [], False
-        return outcome.results, outcome.control, outcome.should_terminate
+        results: list[Any] = []
+        control: list[Any] = []
+        for group in groups:
+            for content in group:
+                (results if getattr(content, "type", None) == "function_result" else control).append(content)
+        return results, control, should_terminate
 
     async def _invoke_render_subagent(self, prompt: str, conversation: list[Any]) -> dict[str, Any] | None:
         """Run the render sub-agent (forced render_a2ui) and return its args, or None."""

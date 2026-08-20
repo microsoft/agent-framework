@@ -1875,64 +1875,6 @@ async def _try_execute_function_call_groups(
 
 
 @dataclass
-class FunctionCallBatchExecution:
-    """Outcome of executing a pre-formed batch of function calls outside the model loop."""
-
-    results: list["Content"]
-    """``function_result`` contents, one or more per executed call."""
-    control: list["Content"]
-    """Non-result contents the executor surfaced (e.g. a ``function_approval_request`` for
-    an ``always_require`` tool, or user-input requests) that the caller must forward rather
-    than treat as completion."""
-    should_terminate: bool
-    """Whether function middleware requested the invocation loop to stop."""
-
-
-async def execute_function_call_batch(
-    function_calls: "Sequence[Content]",
-    tools: "ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]]",
-    *,
-    session: "AgentSession | None" = None,
-    config: "FunctionInvocationConfiguration | None" = None,
-    static_function_middleware: "Sequence[Any]" = (),
-    runtime_middleware: Any = None,
-    custom_args: "Mapping[str, Any] | None" = None,
-) -> FunctionCallBatchExecution:
-    """Execute a pre-formed batch of function calls through the shared execution owner.
-
-    Callers outside the normal model loop (e.g. AG-UI A2UI mixed-batch turns, or approval
-    resume) get one place that owns the mechanics instead of re-deriving them: it builds
-    the function-middleware pipeline from ``static_function_middleware`` plus the
-    function-category middleware found in ``runtime_middleware`` (bare objects and
-    :class:`~._middleware.MiddlewareBundle` s normalized and expanded via
-    :func:`~._middleware.categorize_middleware`, so a bundle's function middleware is
-    applied rather than silently skipped), normalizes ``config``, threads the invocation
-    ``session``, and splits the executor output into :class:`FunctionCallBatchExecution`
-    (``results`` / ``control`` / ``should_terminate``). This keeps callers from
-    interpreting result, control, and termination separately from the core loop.
-    """
-    from ._middleware import FunctionMiddlewarePipeline, categorize_middleware
-
-    normalized_config = normalize_function_invocation_configuration(config)
-    runtime_fn_mw = categorize_middleware(runtime_middleware)["function"] if runtime_middleware is not None else []
-    pipeline = FunctionMiddlewarePipeline(*static_function_middleware, *runtime_fn_mw)
-    groups, should_terminate = await _try_execute_function_call_groups(
-        custom_args=dict(custom_args or {}),
-        function_calls=function_calls,
-        tools=tools,
-        config=normalized_config,
-        invocation_session=session,
-        middleware_pipeline=pipeline,
-    )
-    results: list[Content] = []
-    control: list[Content] = []
-    for group in groups:
-        for content in group:
-            (results if content.type == "function_result" else control).append(content)
-    return FunctionCallBatchExecution(results=results, control=control, should_terminate=should_terminate)
-
-
-@dataclass
 class _FunctionExecutionBatch:
     """Results from one ordered batch of function-call executions."""
 

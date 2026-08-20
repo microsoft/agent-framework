@@ -12,6 +12,7 @@ extra; the base package does not require it).
 
 import asyncio
 import json
+from typing import Any
 
 import pytest
 
@@ -47,7 +48,7 @@ class _GenerateOnceInner:
 
     def __init__(self):
         self.calls = 0
-        self.last_tools = None
+        self.last_tools: list[Any] | None = None
 
     def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
         self.calls += 1
@@ -99,7 +100,7 @@ async def _drive(agent, tools=None):
     not a run option, so this helper passes no options. ``tools`` supplies developer
     tools for the mixed-batch (ordinary tool + generate_a2ui) path.
     """
-    kinds = []
+    kinds: list[tuple[Any, ...]] = []
     run_kwargs = {"tools": tools} if tools is not None else {}
     async for update in agent.run("make a card", stream=True, **run_kwargs):
         for c in update.contents:
@@ -113,7 +114,7 @@ async def _drive(agent, tools=None):
     return kinds
 
 
-def _generate_envelope(kinds):
+def _generate_envelope(kinds) -> Any:
     for kind, call_id, result in (k for k in kinds if k[0] == "result"):
         if call_id == "g1":
             return json.loads(result)
@@ -227,7 +228,7 @@ def test_streaming_closing_turn_withholds_generate_tool_at_round_cap():
         id = name = description = "planner"
 
         def __init__(self):
-            self.tools_per_call = []
+            self.tools_per_call: list[Any] = []
 
         def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
             self.tools_per_call.append([getattr(t, "name", None) for t in (tools or [])])
@@ -497,7 +498,7 @@ def test_run_agent_stream_auto_wraps_and_drops_render_tool(stub_agent):
 
     asyncio.run(_consume())
 
-    received = [getattr(t, "name", None) for t in (agent.tools_received or [])]
+    received = [getattr(t, "name", None) for t in (getattr(agent, "tools_received", None) or [])]
     assert "generate_a2ui" in received  # auto-injected
     assert "render_a2ui" not in received  # middleware-injected render tool dropped
 
@@ -938,7 +939,7 @@ def test_a2ui_existing_tool_names_includes_agent_default_tools():
     from agent_framework_ag_ui._agent_run import _a2ui_existing_tool_names
 
     tool = FunctionTool(name="generate_a2ui", description="d", func=lambda: None)
-    agent = Agent(name="a", instructions="i", client=None, tools=[tool])
+    agent = Agent(name="a", instructions="i", client=None, tools=[tool])  # type: ignore[arg-type]
     assert "generate_a2ui" in _a2ui_existing_tool_names(agent, None)  # no runtime tools
 
 
@@ -1090,7 +1091,7 @@ async def test_bridge_client_tool_with_generate_surfaces_resumable_not_synthesiz
 
     inner = _ClientToolThenGenerateBridgeInner()
     runner = A2UIAgent(inner, _RenderSub())  # manual enable_a2ui path
-    wrapper = AgentFrameworkAgent(agent=runner)
+    wrapper = AgentFrameworkAgent(agent=runner)  # type: ignore[arg-type]
     input_data = {
         "messages": [{"role": "user", "content": "hi"}],
         "tools": [{"name": "browser_action", "description": "d", "parameters": {"type": "object"}}],
@@ -1140,7 +1141,7 @@ def test_a2ui_agent_delegates_run_loop_attrs_to_inner():
     class _Inner:
         id = name = description = "p"
         client = object()
-        default_options = {"tools": []}
+        default_options: dict[str, Any] = {"tools": []}
         context_providers = ["cp"]
 
     inner = _Inner()
@@ -1163,7 +1164,7 @@ def test_a2ui_agent_uses_per_request_context_over_constructor():
         id = name = description = "p"
 
         def __init__(self):
-            self.seen = None
+            self.seen: Any = None
 
         def run(self, messages, *, stream=False, session=None, tools=None, **kwargs):
             self.seen = messages
