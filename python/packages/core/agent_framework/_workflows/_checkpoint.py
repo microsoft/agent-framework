@@ -10,7 +10,6 @@ import os
 import threading
 import time
 import uuid
-import weakref
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
@@ -249,18 +248,31 @@ class InMemoryCheckpointStorage:
         return [cp.checkpoint_id for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
 
 
-class _SaveLockRef:
-    """A reference-counted asyncio.Lock entry for per-checkpoint-ID save serialization.
+# Process-wide serialization of os.replace() per destination file.
+#
+# asyncio.Lock is loop-bound, so a per-(loop, checkpoint-id) registry (the previous
+# design) could not serialize two FileCheckpointStorage instances pointed at the
+# same directory, nor one instance driven from two event loops. A threading.Lock
+# keyed by the canonical destination path *does* span coroutines, loops, and
+# instances because asyncio.to_thread runs the actual file write on a worker
+# thread, and threading primitives serialize across those.
+#
+# Locks are created lazily on first save and never removed. The registry grows
+# by at most one entry per *distinct* checkpoint file ever written; that is
+# bounded by the number of files actually present under any FileCheckpointStorage
+# directory the process touches — a working-set bound, not unbounded.
+_file_locks: dict[Path, threading.Lock] = {}
+_file_locks_guard = threading.Lock()
 
-    ``refs`` counts the holder plus any in-flight acquirers, so the registry entry is
-    only deleted once the final user releases it.
-    """
 
-    __slots__ = ("lock", "refs")
-
-    def __init__(self) -> None:
-        self.lock = asyncio.Lock()
-        self.refs = 0
+def _get_file_lock(file_path: Path) -> threading.Lock:
+    """Return the process-wide lock guarding *file_path*, creating it on first use."""
+    with _file_locks_guard:
+        lock = _file_locks.get(file_path)
+        if lock is None:
+            lock = threading.Lock()
+            _file_locks[file_path] = lock
+        return lock
 
 
 class FileCheckpointStorage:
@@ -305,44 +317,7 @@ class FileCheckpointStorage:
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
         self._allowed_types: frozenset[str] = frozenset(allowed_checkpoint_types or [])
-        # Serialize writes per checkpoint ID within each event loop. Entries are
-        # reference-counted: a save takes a reference before awaiting the lock and
-        # releases it after the write finishes, and the entry is removed once the
-        # last user exits. This keeps held/waited-on locks undisturbed (no eviction
-        # of active entries), bounds map growth to the number of in-flight saves,
-        # and lets the weak loop key be collected once its entries are gone.
-        # Locks are keyed per loop because asyncio.Lock is loop-bound.
-        self._save_locks_by_loop: weakref.WeakKeyDictionary[
-            asyncio.AbstractEventLoop, dict[CheckpointID, _SaveLockRef]
-        ] = weakref.WeakKeyDictionary()
-        self._save_locks_guard = threading.Lock()
         logger.info(f"Initialized file checkpoint storage at {self.storage_path}")
-
-    def _acquire_save_lock_ref(self, checkpoint_id: CheckpointID) -> tuple[asyncio.AbstractEventLoop, _SaveLockRef]:
-        """Take a reference on the per-loop, per-checkpoint-ID lock, creating it on first use."""
-        loop = asyncio.get_running_loop()
-        with self._save_locks_guard:
-            locks = self._save_locks_by_loop.get(loop)
-            if locks is None:
-                locks = {}
-                self._save_locks_by_loop[loop] = locks
-            entry = locks.get(checkpoint_id)
-            if entry is None:
-                entry = _SaveLockRef()
-                locks[checkpoint_id] = entry
-            entry.refs += 1
-            return loop, entry
-
-    def _release_save_lock_ref(
-        self, loop: asyncio.AbstractEventLoop, checkpoint_id: CheckpointID, entry: _SaveLockRef
-    ) -> None:
-        """Release a reference; the entry is removed once no holder or waiter remains."""
-        with self._save_locks_guard:
-            entry.refs -= 1
-            if entry.refs == 0:
-                locks = self._save_locks_by_loop.get(loop)
-                if locks is not None and locks.get(checkpoint_id) is entry:
-                    del locks[checkpoint_id]
 
     def _validate_file_path(self, checkpoint_id: CheckpointID) -> Path:
         """Validate that a checkpoint ID resolves to a path within the storage directory.
@@ -379,16 +354,13 @@ class FileCheckpointStorage:
         checkpoint_dict = checkpoint.to_dict()
         encoded_checkpoint = encode_checkpoint_value(checkpoint_dict)
 
-        # Take a lock reference before awaiting so waiters count toward it; the entry
-        # is removed by _release_save_lock_ref only when no holder or waiter remains.
-        loop, save_lock_ref = self._acquire_save_lock_ref(checkpoint.checkpoint_id)
-
         def _replace_with_retry(tmp_path: Path) -> None:
             # On Windows, os.replace can transiently fail with PermissionError when a
             # background indexer or AV scan briefly holds a handle to the destination
-            # file. The per-ID lock serializes concurrent save() calls, but the OS
-            # callback is still external to the process and can trip a transient
-            # error even when only one replace is in flight. Retry briefly to absorb it.
+            # file. The process-wide per-path lock serializes concurrent save() calls
+            # to the same destination, but the OS callback is still external to the
+            # process and can trip a transient error even when only one replace is in
+            # flight. Retry briefly to absorb it.
             for attempt in range(5):
                 try:
                     os.replace(tmp_path, file_path)
@@ -399,40 +371,54 @@ class FileCheckpointStorage:
                     time.sleep(0.001 * (2**attempt))
 
         def _write_atomic() -> None:
-            # Use a unique temp file per save in the destination directory so
-            # concurrent saves of the same checkpoint ID never race on a shared
-            # temporary path, and os.replace remains atomic (same filesystem).
-            # A short, ID-independent name keeps every destination name accepted by
-            # _validate_file_path saveable regardless of checkpoint-ID length or
-            # filesystem limits.
-            tmp_path: Path | None = None
-            try:
-                # O_CREAT | O_EXCL | O_WRONLY with an explicit 0o666 mode, so the file
-                # is created with the process umask exactly like the previous
-                # open(..., "w") path was (NamedTemporaryFile would hard-code 0o600
-                # and downgrade modes on POSIX after an os.replace over an existing
-                # checkpoint).
-                tmp_name = f".maf-ckpt-{uuid.uuid4().hex}.tmp"
-                tmp_path = file_path.parent / tmp_name
-                fd = os.open(tmp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
-                with os.fdopen(fd, "w") as f:
-                    json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
-                _replace_with_retry(tmp_path)
-                tmp_path = None
-            finally:
-                if tmp_path is not None and tmp_path.exists():
-                    try:
-                        tmp_path.unlink()
-                    except OSError:
-                        # Best-effort cleanup only; leaking a temp file is harmless
-                        # compared to masking the original exception.
-                        logger.debug(f"Failed to remove checkpoint temp file {tmp_path}", exc_info=True)
+            # The threading lock here is the heartbeat of cross-instance/cross-loop
+            # safety: a same-directory save racing through a different
+            # FileCheckpointStorage instance — or from another event loop in the
+            # same process — contends on the same canonical destination path and
+            # therefore on the same lock. Holding it across the entire open + write
+            # + replace keeps no window where a second writer can briefly see a
+            # half-published temp file or reach os.replace concurrently.
+            with _get_file_lock(file_path):
+                # Use a unique temp file per save in the destination directory so
+                # concurrent saves of distinct checkpoint IDs never contend on a
+                # shared temporary path, and os.replace remains atomic (same
+                # filesystem). A short, ID-independent name keeps every destination
+                # name accepted by _validate_file_path saveable regardless of
+                # checkpoint-ID length or filesystem limits.
+                tmp_path: Path | None = None
+                try:
+                    # O_CREAT | O_EXCL | O_WRONLY with an explicit 0o666 mode, so the
+                    # file is created with the process umask exactly like the previous
+                    # open(..., "w") path was (NamedTemporaryFile would hard-code 0o600
+                    # and downgrade modes on POSIX after an os.replace over an existing
+                    # checkpoint).
+                    tmp_name = f".maf-ckpt-{uuid.uuid4().hex}.tmp"
+                    tmp_path = file_path.parent / tmp_name
+                    fd = os.open(tmp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+                    with os.fdopen(fd, "w") as f:
+                        json.dump(encoded_checkpoint, f, indent=2, ensure_ascii=False)
+                    _replace_with_retry(tmp_path)
+                    tmp_path = None
+                finally:
+                    if tmp_path is not None and tmp_path.exists():
+                        try:
+                            tmp_path.unlink()
+                        except OSError:
+                            # Best-effort cleanup only; leaking a temp file is harmless
+                            # compared to masking the original exception.
+                            logger.debug(f"Failed to remove checkpoint temp file {tmp_path}", exc_info=True)
 
-        try:
-            async with save_lock_ref.lock:
-                await asyncio.to_thread(_write_atomic)
-        finally:
-            self._release_save_lock_ref(loop, checkpoint.checkpoint_id, save_lock_ref)
+        # Shield the worker from caller-side cancellation: without the shield, a
+        # cancellation delivered while the coroutine is suspended inside
+        # asyncio.to_thread exits the await but leaves the OS thread running, so
+        # its os.replace can still come in *after* the caller has been cancelled
+        # and a subsequent save for the same checkpoint ID has started — on
+        # Windows that reintroduces the PermissionError race this path exists to
+        # avoid, and it can also overwrite a newer checkpoint with stale data.
+        # Shielding guarantees the in-flight write completes (or fails) before
+        # the caller observes a result, so the order seen on disk matches the
+        # order callers observed.
+        await asyncio.shield(asyncio.to_thread(_write_atomic))
 
         logger.info(f"Saved checkpoint {checkpoint.checkpoint_id} to {file_path}")
         return checkpoint.checkpoint_id
