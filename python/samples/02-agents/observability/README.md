@@ -199,8 +199,8 @@ Agent Framework reads the following environment variables:
 | `ENABLE_INSTRUMENTATION` | `true` | Set to `false` to disable native instrumentation. See [Disabling instrumentation](#disabling-instrumentation) for the programmatic alternative with sticky semantics. |
 | `ENABLE_SENSITIVE_DATA` | `false` | Set to `true` to emit sensitive data (prompts, responses, etc.). |
 | `ENABLE_CONSOLE_EXPORTERS` | `false` | Set to `true` to add console exporters. Only used by `configure_otel_providers()`. |
-| `ENABLE_MESSAGE_EVENTS` | `true` | Set to `false` to stop emitting the stable v1.36.0 GenAI message events (`gen_ai.system.message`, etc.). **Has no effect unless `ENABLE_SENSITIVE_DATA=true`.** See [GenAI semantic-conventions versioning](#genai-semantic-conventions-versioning). |
-| `OTEL_SEMCONV_STABILITY_OPT_IN` | unset (conventions above v1.36.0) | A comma-separated list of category-specific values, following the standard OpenTelemetry comma-separated opt-in list format, currently only containing a single token ``"gen_ai_latest_experimental"``. v1.36.0 is the OTel-recommended stable release; every version above it is collectively "experimental". The default, unlike upstream OpenTelemetry which defaults to stable-only, ``"gen_ai_latest_experimental"`` selects the conventions above v1.36.0; a list that omits that token (e.g. ``""``) selects the v1.36.0 conventions instead. See [GenAI semantic-conventions versioning](#genai-semantic-conventions-versioning). |
+| `ENABLE_MESSAGE_EVENTS` | `true` | Set to `false` to stop emitting the baseline v1.36.0 GenAI message events (`gen_ai.system.message`, etc.) for model invocation. **Has no effect unless `ENABLE_SENSITIVE_DATA=true`.** See [GenAI semantic-conventions versioning](#genai-semantic-conventions-versioning). |
+| `OTEL_SEMCONV_STABILITY_OPT_IN` | unset (conventions above v1.36.0) | A comma-separated list of category-specific values, following the standard OpenTelemetry comma-separated opt-in list format, currently only containing a single token ``"gen_ai_latest_experimental"``. v1.36.0 is the OTel-recommended baseline; every version above it is referred to here as "latest" (even the baseline is an expeirmental release). The default, unlike upstream OpenTelemetry which retains the baseline conventions, ``"gen_ai_latest_experimental"`` selects the latest conventions above v1.36.0; a list that omits that token (e.g. ``""``) selects the v1.36.0 conventions instead. See [GenAI semantic-conventions versioning](#genai-semantic-conventions-versioning). |
 | `VS_CODE_EXTENSION_PORT` | unset | Port used by the [AI Toolkit for VS Code](https://marketplace.visualstudio.com/items?itemName=ms-windows-ai-studio.windows-ai-studio#tracing) tracing integration. Only used by `configure_otel_providers()`. |
 
 You can also call `enable_sensitive_telemetry()` from `agent_framework.observability` to opt in to sensitive-data capture programmatically.
@@ -209,9 +209,9 @@ You can also call `enable_sensitive_telemetry()` from `agent_framework.observabi
 
 ### GenAI semantic-conventions versioning
 
-[v1.36.0](https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai) is the OpenTelemetry-recommended **stable** release of the [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/). Every release above it (v1.37.0 and later) is collectively **experimental** and, per OTel's own [stability warning](https://github.com/open-telemetry/semantic-conventions/blob/v1.37.0/docs/gen-ai), keeps changing in more than one way. `OTEL_SEMCONV_STABILITY_OPT_IN` is the OTel-standard switch between these two rule sets, and Agent Framework applies it consistently across every attribute/representation it knows differs between the two:
+[v1.36.0](https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai) is the OpenTelemetry-recommended **baseline** for existing GenAI instrumentations. Releases above it (v1.37.0 and later) are referred to as **latest** and, per OTel's own [stability warning](https://github.com/open-telemetry/semantic-conventions/blob/v1.37.0/docs/gen-ai), keep changing in more than one way. `OTEL_SEMCONV_STABILITY_OPT_IN` is the OTel-standard switch between these two rule sets, and Agent Framework applies it consistently across every attribute/representation it knows differs between the two:
 
-| Aspect | v1.36.0 (stable) | Above v1.36.0 (experimental, the default) |
+| Aspect | v1.36.0 (baseline) | Above v1.36.0 (latest, the default) |
 |--------|------------------|--------------------------------------------|
 | Input/output message representation | Log-record **events** (`gen_ai.system.message`, `gen_ai.user.message`, `gen_ai.assistant.message`, `gen_ai.tool.message`, `gen_ai.choice`) | `gen_ai.input.messages`/`gen_ai.output.messages` **span attributes** |
 | Provider-identifying attribute | `gen_ai.system` | `gen_ai.provider.name` |
@@ -221,17 +221,18 @@ You can also call `enable_sensitive_telemetry()` from `agent_framework.observabi
 
 > **`ENABLE_SENSITIVE_DATA=true` is a prerequisite for the message-representation and tool-call-attribute rows above.** Chat content (prompts, responses, tool arguments/results) is only ever captured when sensitive-data capture is enabled (see [`ENABLE_SENSITIVE_DATA`](#environment-variables) above); the provider-attribute rename applies regardless, since `gen_ai.system`/`gen_ai.provider.name` is not sensitive data. If `ENABLE_SENSITIVE_DATA` is `false` (the default), `ENABLE_MESSAGE_EVENTS` has nothing to switch and is effectively ignored, and no `gen_ai.tool.call.*` attributes are emitted under either semconv version.
 
-Agent Framework defaults to the conventions above v1.36.0 (unlike upstream OpenTelemetry, which defaults to stable-only) because most users already depend on them, and — to avoid a breaking change for anyone consuming the older message events — also keeps emitting those events by default via `ENABLE_MESSAGE_EVENTS`. `ENABLE_MESSAGE_EVENTS` is controlled independently of `OTEL_SEMCONV_STABILITY_OPT_IN`:
+Agent Framework defaults to the conventions above v1.36.0 (unlike upstream OpenTelemetry, which retains the baseline conventions) because most users already depend on them, and — to avoid a breaking change for anyone consuming the older message events for modelinvocation — also keeps emitting those events by default via `ENABLE_MESSAGE_EVENTS`. `ENABLE_MESSAGE_EVENTS` is controlled independently of `OTEL_SEMCONV_STABILITY_OPT_IN`:
 
 ```bash
 # Capture agent/chat client/tool input and output contents (default: false):
 export ENABLE_SENSITIVE_DATA=true
 
-# Opt into the stable v1.36.0 conventions only (default: "gen_ai_latest_experimental"):
+# Opt into the baseline v1.36.0 conventions only (default: "gen_ai_latest_experimental"):
 export OTEL_SEMCONV_STABILITY_OPT_IN=""
 
-# Agent Framework still emits the stable v1.36.0 message events even when the semconv opt-in
-# is set to experimental for compatibility reasons. To stop emitting those events (default: true):
+# Agent Framework still emits the baseline v1.36.0 message events for model invocations even
+# when the semconv opt-in is set to latest for compatibility reasons. To stop emitting those
+# events (default: true):
 export ENABLE_MESSAGE_EVENTS=false
 ```
 

@@ -653,8 +653,8 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
-async def test_tool_invoke_telemetry_omits_tool_call_attrs_under_stable_semconv(span_exporter: InMemorySpanExporter):
-    """gen_ai.tool.call.arguments/result were introduced above v1.36.0; omit them under the stable semconv."""
+async def test_tool_invoke_telemetry_omits_tool_call_attrs_under_baseline_semconv(span_exporter: InMemorySpanExporter):
+    """gen_ai.tool.call.arguments/result were introduced above v1.36.0; omit them under the baseline semconv."""
     import agent_framework.observability as observability
 
     observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""

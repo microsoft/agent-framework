@@ -733,7 +733,8 @@ def create_metric_views() -> list[View]:
 
 
 # Token recognized in the OTEL_SEMCONV_STABILITY_OPT_IN env var that opts into the GenAI
-# conventions above the v1.36.0 stable release (collectively "experimental"; see
+# conventions above the v1.36.0 baseline (referred to here as "latest", since even the
+# baseline is not itself a stable release; see
 # https://github.com/open-telemetry/semantic-conventions/blob/v1.37.0/docs/gen-ai).
 GEN_AI_LATEST_EXPERIMENTAL_OPT_IN: Final[str] = "gen_ai_latest_experimental"
 
@@ -779,17 +780,18 @@ class ObservabilitySettings:
             Can be set via environment variable ENABLE_SENSITIVE_DATA.
         enable_console_exporters: Enable console exporters for traces, logs, and metrics.
             Default is False. Can be set via environment variable ENABLE_CONSOLE_EXPORTERS.
-        enable_message_events: Emit the stable v1.36.0 GenAI message events (``gen_ai.system.message``,
-            ``gen_ai.user.message``, ``gen_ai.assistant.message``, ``gen_ai.tool.message``, ``gen_ai.choice``).
-            Default is True. Can be set via environment variable ENABLE_MESSAGE_EVENTS. Only takes effect
-            when sensitive data capture is enabled.
+        enable_message_events: Emit the baseline v1.36.0 GenAI message events (``gen_ai.system.message``,
+            ``gen_ai.user.message``, ``gen_ai.assistant.message``, ``gen_ai.tool.message``, ``gen_ai.choice``)
+            for model invocation. Default is True. Can be set via environment variable ENABLE_MESSAGE_EVENTS.
+            Only takes effect when sensitive data capture is enabled.
         otel_semconv_stability_opt_in: A comma-separated list of category-specific values, following the
             standard OpenTelemetry comma-separated opt-in list format, currently only containing a single
-            token ``"gen_ai_latest_experimental"``. v1.36.0 is the OTel-recommended stable release; every
-            version above it is collectively "experimental". The default, unlike upstream OpenTelemetry which
-            defaults to stable-only, ``"gen_ai_latest_experimental"`` selects the conventions above v1.36.0;
-            a list that omits that token (e.g. ``""``) selects the v1.36.0 conventions instead. Can be set via
-            environment variable OTEL_SEMCONV_STABILITY_OPT_IN.
+            token ``"gen_ai_latest_experimental"``. v1.36.0 is the OTel-recommended baseline; every
+            version above it is referred to here as "latest" (per OTel's own stability warning, even the
+            baseline is not a stable release of the GenAI conventions). The default, unlike upstream
+            OpenTelemetry which defaults to the baseline, ``"gen_ai_latest_experimental"`` selects the latest
+            conventions above v1.36.0; a list that omits that token (e.g. ``""``) selects the v1.36.0
+            conventions instead. Can be set via environment variable OTEL_SEMCONV_STABILITY_OPT_IN.
         vs_code_extension_port: The port the AI Toolkit or Microsoft Foundry VS Code extensions are listening on.
             Default is None.
             Can be set via environment variable VS_CODE_EXTENSION_PORT.
@@ -891,15 +893,15 @@ class ObservabilitySettings:
 
     @property
     def use_latest_experimental_gen_ai_semconv(self) -> bool:
-        """Whether to emit the GenAI semantic conventions above the v1.36.0 stable release.
+        """Whether to emit the GenAI semantic conventions above the v1.36.0 baseline.
 
-        v1.36.0 is the OTel-recommended stable release; every version above it is collectively
-        "experimental".
+        v1.36.0 is the OTel-recommended baseline; every version above it is referred to here as
+        "latest".
 
         Computed from ``otel_semconv_stability_opt_in`` (env var ``OTEL_SEMCONV_STABILITY_OPT_IN``), a
         comma-separated opt-in list per the standard OpenTelemetry format. Agent Framework defaults this
         to True (opted into the conventions above v1.36.0) when the setting is unset, which differs from
-        upstream OpenTelemetry's default of stable-only.
+        upstream OpenTelemetry's default of retaining the baseline conventions.
         """
         if self.otel_semconv_stability_opt_in is None:
             return True
@@ -1341,13 +1343,13 @@ def configure_otel_providers(
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
         enable_console_exporters: Enable console exporters for traces, logs, and metrics.
             Overrides the environment variable ENABLE_CONSOLE_EXPORTERS if set. Default is None.
-        enable_message_events: Emit the stable v1.36.0 GenAI message events (``gen_ai.system.message``, etc.).
-            Overrides the environment variable ENABLE_MESSAGE_EVENTS if set. Default is None, which resolves
-            to True (events enabled).
+        enable_message_events: Emit the baseline v1.36.0 GenAI message events (``gen_ai.system.message``, etc.)
+            for model invocation. Overrides the environment variable ENABLE_MESSAGE_EVENTS if set. Default is
+            None, which resolves to True (events enabled).
         otel_semconv_stability_opt_in: a comma-separated list of category-specific values (see
             ``ObservabilitySettings.otel_semconv_stability_opt_in`` for the full explanation). Overrides the
             environment variable OTEL_SEMCONV_STABILITY_OPT_IN if set. Default is None, which resolves to the
-            conventions above the v1.36.0 stable release.
+            conventions above the v1.36.0 baseline.
         exporters: A list of custom exporters for logs, metrics or spans, or any combination.
             These will be added in addition to exporters configured via environment variables.
             Default is None.
@@ -1652,7 +1654,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                 system_instructions = _get_instructions_from_options(opts)
-                _capture_current_agent_system_instructions_experimental(
+                _capture_current_agent_system_instructions_latest_experimental(
                     agent_span,
                     span,
                     system_instructions,
@@ -1665,7 +1667,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         messages=messages,
                         system_instructions=system_instructions,
                     )
-                _capture_message_span_attributes_experimental(
+                _capture_message_span_attributes_latest_experimental(
                     span=span,
                     messages=messages,
                     system_instructions=system_instructions,
@@ -1752,7 +1754,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                                 finish_reason=finish_reason,
                                 output=True,
                             )
-                        _capture_message_span_attributes_experimental(
+                        _capture_message_span_attributes_latest_experimental(
                             span=span,
                             messages=response.messages,
                             finish_reason=finish_reason,
@@ -1783,7 +1785,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
                     system_instructions = _get_instructions_from_options(opts)
-                    _capture_current_agent_system_instructions_experimental(
+                    _capture_current_agent_system_instructions_latest_experimental(
                         agent_span,
                         span,
                         system_instructions,
@@ -1793,7 +1795,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         messages=messages,
                         system_instructions=system_instructions,
                     )
-                    _capture_message_span_attributes_experimental(
+                    _capture_message_span_attributes_latest_experimental(
                         span=span,
                         messages=messages,
                         system_instructions=system_instructions,
@@ -1834,7 +1836,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         finish_reason=finish_reason,
                         output=True,
                     )
-                    _capture_message_span_attributes_experimental(
+                    _capture_message_span_attributes_latest_experimental(
                         span=span,
                         messages=response.messages,
                         finish_reason=finish_reason,
@@ -1993,7 +1995,7 @@ class AgentTelemetryLayer:
             span = _start_streaming_span(attributes, OtelAttr.AGENT_NAME)
 
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
-                _capture_message_span_attributes_experimental(
+                _capture_message_span_attributes_latest_experimental(
                     span=span,
                     messages=messages,
                     system_instructions=_get_instructions_from_options(dict(merged_options)),
@@ -2066,7 +2068,7 @@ class AgentTelemetryLayer:
                         and response.messages
                         and span.is_recording()
                     ):
-                        _capture_message_span_attributes_experimental(
+                        _capture_message_span_attributes_latest_experimental(
                             span=span,
                             messages=response.messages,
                             output=True,
@@ -2131,7 +2133,7 @@ class AgentTelemetryLayer:
                 with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
                     try:
                         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages and span.is_recording():
-                            _capture_message_span_attributes_experimental(
+                            _capture_message_span_attributes_latest_experimental(
                                 span=span,
                                 messages=messages,
                                 system_instructions=_get_instructions_from_options(dict(merged_options)),
@@ -2163,7 +2165,7 @@ class AgentTelemetryLayer:
                                 and response.messages
                                 and span.is_recording()
                             ):
-                                _capture_message_span_attributes_experimental(
+                                _capture_message_span_attributes_latest_experimental(
                                     span=span,
                                     messages=response.messages,
                                     output=True,
@@ -2789,7 +2791,7 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
     span.set_status(status=trace.StatusCode.ERROR, description=repr(exception))
 
 
-def _capture_system_instructions_experimental(span: trace.Span, system_instructions: str | list[str] | None) -> None:
+def _capture_system_instructions_latest_experimental(span: trace.Span, system_instructions: str | list[str] | None) -> None:
     """Capture system instructions on a span."""
     if not OBSERVABILITY_SETTINGS.use_latest_experimental_gen_ai_semconv or not system_instructions:
         return
@@ -2802,7 +2804,7 @@ def _capture_system_instructions_experimental(span: trace.Span, system_instructi
     )
 
 
-def _capture_current_agent_system_instructions_experimental(
+def _capture_current_agent_system_instructions_latest_experimental(
     agent_span: trace.Span,
     chat_span: trace.Span,
     system_instructions: str | list[str] | None,
@@ -2834,7 +2836,7 @@ def _capture_current_agent_system_instructions_experimental(
     ):
         return
 
-    _capture_system_instructions_experimental(agent_span, system_instructions)
+    _capture_system_instructions_latest_experimental(agent_span, system_instructions)
 
 
 def _normalize_instructions(system_instructions: str | list[str]) -> list[str]:
@@ -2881,7 +2883,7 @@ def _capture_message_events_v1_36(
     output: bool = False,
     finish_reason: FinishReason | None = None,
 ) -> None:
-    """Emit stable v1.36.0 GenAI events for a chat request or response."""
+    """Emit baseline v1.36.0 GenAI events for a model invocation."""
     if not OBSERVABILITY_SETTINGS.enable_message_events:
         return
 
@@ -2931,7 +2933,7 @@ def _emit_otel_event_v1_36(
     )
 
 
-def _capture_message_span_attributes_experimental(
+def _capture_message_span_attributes_latest_experimental(
     span: trace.Span,
     messages: AgentRunInputs,
     *,
@@ -2939,24 +2941,24 @@ def _capture_message_span_attributes_experimental(
     output: bool = False,
     finish_reason: FinishReason | None = None,
 ) -> None:
-    """Capture the latest-experimental GenAI message span attributes."""
+    """Capture the latest (above-baseline) GenAI message span attributes."""
     if not OBSERVABILITY_SETTINGS.use_latest_experimental_gen_ai_semconv:
         return
 
     from ._types import normalize_messages
 
-    otel_messages = [_to_otel_message_experimental(message) for message in normalize_messages(messages)]
+    otel_messages = [_to_otel_message_latest_experimental(message) for message in normalize_messages(messages)]
     if finish_reason and otel_messages:
         otel_messages[-1]["finish_reason"] = FINISH_REASON_MAP.get(finish_reason, finish_reason)
     span.set_attribute(
         OtelAttr.OUTPUT_MESSAGES if output else OtelAttr.INPUT_MESSAGES,
         json.dumps(otel_messages, ensure_ascii=False),
     )
-    _capture_system_instructions_experimental(span, system_instructions)
+    _capture_system_instructions_latest_experimental(span, system_instructions)
 
 
 def _to_otel_input_events_v1_36(message: Message) -> list[tuple[OtelAttr, dict[str, Any]]]:
-    """Create stable v1.36.0 event names and bodies for an input message."""
+    """Create baseline v1.36.0 event names and bodies for an input message."""
     event_name = ROLE_EVENT_MAP.get(message.role)
     if event_name is None:
         return []
@@ -2988,7 +2990,7 @@ def _to_otel_input_events_v1_36(message: Message) -> list[tuple[OtelAttr, dict[s
 
 
 def _to_otel_choice_v1_36(message: Message, index: int, finish_reason: str) -> dict[str, Any]:
-    """Create a stable v1.36.0 choice event body."""
+    """Create a baseline v1.36.0 choice event body."""
     choice_message: dict[str, Any] = {}
     if message.text:
         choice_message["content"] = message.text
@@ -3005,7 +3007,7 @@ def _to_otel_choice_v1_36(message: Message, index: int, finish_reason: str) -> d
 
 
 def _to_otel_tool_calls_v1_36(message: Message) -> list[dict[str, Any]]:
-    """Create stable v1.36.0 function-call structures for a message."""
+    """Create baseline v1.36.0 function-call structures for a message."""
     return [
         {
             "id": content.call_id,
@@ -3020,15 +3022,15 @@ def _to_otel_tool_calls_v1_36(message: Message) -> list[dict[str, Any]]:
     ]
 
 
-def _to_otel_message_experimental(message: Message) -> dict[str, Any]:
+def _to_otel_message_latest_experimental(message: Message) -> dict[str, Any]:
     """Create a otel representation of a message."""
     return {
         "role": message.role,
-        "parts": [_to_otel_part_experimental(content) for content in message.contents],
+        "parts": [_to_otel_part_latest_experimental(content) for content in message.contents],
     }
 
 
-def _to_otel_part_experimental(content: Content) -> dict[str, Any] | None:
+def _to_otel_part_latest_experimental(content: Content) -> dict[str, Any] | None:
     """Create a otel representation of a Content."""
     from ._types import _get_data_bytes_as_str  # pyright: ignore[reportPrivateUsage]
 
