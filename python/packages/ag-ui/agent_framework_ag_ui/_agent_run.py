@@ -86,6 +86,7 @@ from ._run_common import (
     _has_only_tool_calls,  # type: ignore
     _iterate_with_context,  # type: ignore
     _normalize_resume_interrupts,  # type: ignore
+    _new_tool_call_segment_id,  # type: ignore
     _reconstruct_messages_from_thread_snapshot,  # type: ignore
     _resume_contract_error,  # type: ignore
     _resolve_ui_payload,  # type: ignore
@@ -2002,11 +2003,6 @@ def _append_segmented_snapshot_messages(flow: FlowState, all_messages: list[dict
     they answer. Anything not covered by segment tracking falls back to the
     legacy grouping so no content is dropped.
     """
-    text_message_ids = {segment["id"] for segment in flow.snapshot_segments if segment["kind"] == "text"}
-    # A tool-only opening message (TextMessageStart with no text segment) lets
-    # the first tool-call message reuse the streamed message id, matching the
-    # legacy layout; every other tool message gets a fresh id.
-    tool_open_id = flow.message_id if flow.message_id and flow.message_id not in text_message_ids else None
     emitted_call_ids: set[str] = set()
 
     for segment in flow.snapshot_segments:
@@ -2020,8 +2016,8 @@ def _append_segmented_snapshot_messages(flow: FlowState, all_messages: list[dict
             ]
             if not calls:
                 continue
-            message_id = tool_open_id or generate_event_id()
-            tool_open_id = None
+            message_id = str(segment.get("id") or _new_tool_call_segment_id(flow))
+            segment["id"] = message_id
             all_messages.append({"id": message_id, "role": "assistant", "tool_calls": [call.copy() for call in calls]})
             # Only mark the calls we actually emitted; a stale segment id that
             # never made it into tool_calls_by_id must stay eligible for the
@@ -2037,7 +2033,7 @@ def _append_segmented_snapshot_messages(flow: FlowState, all_messages: list[dict
         leftover_ids = {cid for call in leftover_calls if (cid := call.get("id")) is not None}
         all_messages.append(
             {
-                "id": tool_open_id or generate_event_id(),
+                "id": _new_tool_call_segment_id(flow),
                 "role": "assistant",
                 "tool_calls": [call.copy() for call in leftover_calls],
             }
@@ -2784,10 +2780,11 @@ async def run_agent_stream(
 
                         # Emit confirm_changes tool call
                         confirm_id = generate_event_id()
+                        confirm_message_id = _track_tool_call_segment(flow, confirm_id)
                         yield ToolCallStartEvent(
                             tool_call_id=confirm_id,
                             tool_call_name="confirm_changes",
-                            parent_message_id=flow.message_id,
+                            parent_message_id=confirm_message_id,
                         )
                         confirm_args = {
                             "function_name": tool_name,
@@ -2809,7 +2806,6 @@ async def run_agent_stream(
                         flow.pending_tool_calls.append(confirm_entry)
                         flow.tool_calls_by_id[confirm_id] = confirm_entry
                         flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
-                        _track_tool_call_segment(flow, confirm_id)
                         flow.waiting_for_approval = True
                         flow.interrupts.append(
                             _approval_interrupt_for_function_call(

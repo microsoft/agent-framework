@@ -165,7 +165,7 @@ knightsKnavesAgentBuilder.AddA2AServer();
 var app = builder.Build();
 
 app.MapOpenApi();
-app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents API"));
+app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents API")); // CodeQL [SM04686] Swagger UI is intentionally enabled because this is a sample application, not a production deployment.
 
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();
