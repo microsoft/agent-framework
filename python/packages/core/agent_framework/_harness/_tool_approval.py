@@ -7,6 +7,7 @@ import inspect
 import json
 from asyncio import sleep
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, MutableMapping, Sequence
+from functools import partial
 from typing import Any, Literal, cast
 
 from .._middleware import AgentContext, AgentMiddleware
@@ -77,6 +78,24 @@ def _contents_from_state(values: Any) -> list[Content]:
         return []
     state_items = list(cast(Iterable[Any], values))
     return [_content_from_state(value) for value in state_items]
+
+
+def _structured_response_format(context: AgentContext) -> Any | None:
+    """Return the structured-output schema for this invocation, if any.
+
+    Run ``options`` take precedence over the agent's ``default_options``. The
+    streaming re-wrap in :meth:`ToolApprovalMiddleware._process_stream` must
+    forward this to ``AgentResponse.from_updates`` or ``response.value`` is
+    dropped even when the inner stream already parsed it.
+    """
+    if context.options is not None:
+        response_format = context.options.get("response_format")
+        if response_format is not None:
+            return response_format
+    default_options = getattr(context.agent, "default_options", None)
+    if isinstance(default_options, Mapping):
+        return default_options.get("response_format")
+    return None
 
 
 def _content_to_state(content: Content) -> dict[str, Any]:
@@ -499,7 +518,13 @@ class ToolApprovalMiddleware(AgentMiddleware):
                 context.messages = []
                 context.result = None
 
-        return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
+        return ResponseStream(
+            _stream(),
+            finalizer=partial(
+                AgentResponse.from_updates,
+                output_format_type=_structured_response_format(context),
+            ),
+        )
 
     def _prepare_inbound_messages(
         self,
