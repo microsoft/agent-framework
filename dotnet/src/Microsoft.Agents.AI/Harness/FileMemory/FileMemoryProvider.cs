@@ -62,6 +62,12 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     /// <summary>The name of the tool that replaces whole lines within a memory file.</summary>
     public const string ReplaceLinesToolName = "file_memory_replace_lines";
 
+    // The file-access wording sends the model to read_lines, which this provider does not register.
+    private const string MisalignedMemoryMessage =
+        "This store's line numbers do not line up with the numbering used by file_memory_replace_lines, " +
+        "so editing by the reported numbers would change the wrong lines (or a file changed while the " +
+        "search ran). Use file_memory_read to locate the content before editing.";
+
     private const string DescriptionSuffix = "_description.md";
     private const string MemoryIndexFileName = "memories.md";
     private const int MaxIndexEntries = 50;
@@ -217,7 +223,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     /// <param name="fileName">The name of the file to read.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The file content or a not-found message.</returns>
-    [Description("Read the content of a memory file by name. Returns the file content or a message indicating the file was not found.")]
+    [Description("Read the content of a memory file by name. Returns the file content or a message indicating the file was not found. To edit by line number afterwards, count lines terminated by \\n, \\r\\n, or a lone \\r; each line keeps its own terminator, and content ending in a terminator has no extra empty line after it.")]
     private async Task<string> ReadAsync(string fileName, CancellationToken cancellationToken = default)
     {
         string normalized = StorePaths.NormalizeRelativePath(fileName);
@@ -358,7 +364,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     /// <param name="edits">The list of 1-based line numbers and their literal replacement text.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A confirmation message including the number of lines replaced, or a failure message.</returns>
-    [Description("Replace lines in a memory file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers.")]
+    [Description("Replace lines in a memory file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers. Line numbers count lines terminated by \\n, \\r\\n, or a lone \\r; each line keeps its own terminator, and content ending in a terminator has no extra empty line after it.")]
     private async Task<string> ReplaceLinesAsync(string fileName, List<FileLineEdit> edits, CancellationToken cancellationToken = default)
     {
         string normalized = StorePaths.NormalizeRelativePath(fileName);
@@ -405,7 +411,8 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
 
         if (!this._disableSearchAlignmentCheck)
         {
-            await SearchAlignment.ThrowIfMisalignedAsync(this._fileStore, state.WorkingFolder, results, regexPattern, cancellationToken).ConfigureAwait(false);
+            await SearchAlignment.ThrowIfMisalignedAsync(
+                this._fileStore, state.WorkingFolder, results, regexPattern, cancellationToken, MisalignedMemoryMessage).ConfigureAwait(false);
         }
 
         // Filter out internal files (description sidecars and memory index) so they stay hidden.

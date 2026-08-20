@@ -288,7 +288,7 @@ public class AgentFileStoreContractTests
         // Act + Assert: giving up at the trap would let cfg.txt through unchecked.
         InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
             () => SearchAlignment.ThrowIfMisalignedAsync(
-                store, string.Empty, results, Pathological, CancellationToken.None, TimeSpan.FromMilliseconds(1)));
+                store, string.Empty, results, Pathological, CancellationToken.None, matchTimeout: TimeSpan.FromMilliseconds(1)));
         Assert.Contains("do not line up", error.Message, StringComparison.Ordinal);
     }
 

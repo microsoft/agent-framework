@@ -304,7 +304,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <param name="fileName">The name of the file to read.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The file content or a not-found message.</returns>
-    [Description("Read the content of a file by name. Returns the file content or a message indicating the file was not found.")]
+    [Description("Read the content of a file by name. Returns the file content or a message indicating the file was not found. To edit by line number afterwards, count lines terminated by \\n, \\r\\n, or a lone \\r; each line keeps its own terminator, and content ending in a terminator has no extra empty line after it.")]
     private async Task<string> ReadAsync(string fileName, CancellationToken cancellationToken = default)
     {
         string path = StorePaths.NormalizeRelativePath(fileName);
@@ -330,7 +330,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// Thrown when either bound is not positive, when <paramref name="endLine"/> precedes
     /// <paramref name="startLine"/>, or when <paramref name="startLine"/> is past the last line.
     /// </exception>
-    [Description("Read part of a file by 1-based inclusive line number; omit endLine to read to the end of the file, and an endLine past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line.")]
+    [Description("Read part of a file by 1-based inclusive line number; omit endLine to read to the end of the file, and an endLine past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line. Line numbers count lines terminated by \\n, \\r\\n, or a lone \\r, and content ending in a terminator has no extra empty line after it.")]
     private async Task<string> ReadLinesAsync(string fileName, int startLine, int? endLine = null, CancellationToken cancellationToken = default)
     {
         string path = StorePaths.NormalizeRelativePath(fileName);
@@ -433,7 +433,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <param name="edits">The list of 1-based line numbers and their literal replacement text.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A confirmation message including the number of lines replaced, or a failure message.</returns>
-    [Description("Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers.")]
+    [Description("Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers. Line numbers count lines terminated by \\n, \\r\\n, or a lone \\r; each line keeps its own terminator, and content ending in a terminator has no extra empty line after it.")]
     private async Task<string> ReplaceLinesAsync(string fileName, List<FileLineEdit> edits, CancellationToken cancellationToken = default)
     {
         await this._writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -473,6 +473,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
         - '**' matches across subdirectories, so use \"**/*.md\" to match markdown files at any depth, or \"reports/**\" to restrict the search to the 'reports' subtree.
 
         Returns matching results whose file names are paths relative to the store root (usable with file_access_read), along with snippets and matching lines with line numbers.
+        Line numbers count lines terminated by \n, \r\n, or a lone \r, and content ending in a terminator has no extra empty line after it.
         """)]
     private async Task<List<FileSearchResult>> GrepAsync(string regexPattern, string? globPattern = null, string? directory = null, CancellationToken cancellationToken = default)
     {
