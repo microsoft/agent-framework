@@ -47,8 +47,8 @@ async def poem_workflow(topic: str) -> str:
 
 
 async def main() -> None:
-    workflow_instance = poem_workflow.build()
-    result = await workflow_instance.run("a cat learning to code")
+    poem = poem_workflow.build()
+    result = await poem.run("a cat learning to code")
     print(result.get_outputs()[0])
 
 

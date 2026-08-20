@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 
+from dotenv import load_dotenv
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
@@ -15,12 +17,13 @@ Microsoft Foundry project endpoint, and runs it in both non-streaming and stream
 There are XML tags in all of the get started samples, those are used to display the same code in the docs repo.
 """
 
+load_dotenv()  # Load environment variables from .env file
 
 async def main() -> None:
     # <create_agent>
     client = FoundryChatClient(
-        project_endpoint="https://your-project.services.ai.azure.com",
-        model="gpt-4o",
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 

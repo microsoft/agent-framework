@@ -1,7 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import Any
+
+from dotenv import load_dotenv
 
 from agent_framework import Agent, AgentSession, ContextProvider, SessionContext
 from agent_framework.foundry import FoundryChatClient
@@ -14,6 +17,8 @@ Context providers inject dynamic context into each agent call. This sample
 shows a provider that stores the user's name in session state and personalizes
 responses — the name persists across turns via the session.
 """
+
+load_dotenv()  # Load environment variables from .env file
 
 
 # <context_provider>
@@ -67,8 +72,8 @@ class UserMemoryProvider(ContextProvider):
 async def main() -> None:
     # <create_agent>
     client = FoundryChatClient(
-        project_endpoint="https://your-project.services.ai.azure.com",
-        model="gpt-4o",
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 

@@ -43,8 +43,8 @@ async def text_workflow(text: str) -> str:
 
 async def main() -> None:
     # <run_workflow>
-    workflow_instance = text_workflow.build()
-    result = await workflow_instance.run("hello world")
+    pipeline = text_workflow.build()
+    result = await pipeline.run("hello world")
     print(f"Output: {result.get_outputs()}")
     print(f"Final state: {result.get_final_state()}")
     # </run_workflow>

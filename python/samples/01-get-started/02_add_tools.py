@@ -1,8 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from random import randint
 from typing import Annotated
+
+from dotenv import load_dotenv
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
@@ -15,6 +18,8 @@ Add Tools — Give your agent a function tool
 This sample shows how to define a function tool with the @tool decorator
 and wire it into an agent so the model can call it.
 """
+
+load_dotenv()  # Load environment variables from .env file
 
 
 # <define_tool>
@@ -34,8 +39,8 @@ def get_weather(
 
 async def main() -> None:
     client = FoundryChatClient(
-        project_endpoint="https://your-project.services.ai.azure.com",
-        model="gpt-4o",
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
