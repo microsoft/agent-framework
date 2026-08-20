@@ -7812,7 +7812,7 @@ def test_prepare_call_kwargs_rejects_invalid_meta_key_names(key: str) -> None:
 
 
 async def test_call_tool_forwards_only_declared_arguments() -> None:
-    """End-to-end: framework runtime kwargs are stripped before reaching the server."""
+    """End-to-end: runtime kwargs the tool does not declare are stripped before reaching the server."""
 
     class TestServer(MCPTool):
         async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
@@ -7854,6 +7854,56 @@ async def test_call_tool_forwards_only_declared_arguments() -> None:
         session_mock.call_tool.assert_called_once()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         _, call_kwargs = session_mock.call_tool.call_args  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         assert call_kwargs["arguments"] == {"param": "value", "conversation_id": "c"}
+
+
+async def test_call_tool_forwards_runtime_kwargs_the_server_declares() -> None:
+    """A runtime kwarg is forwarded when the server declares a property of the same name.
+
+    The allowlist in ``_prepare_call_kwargs`` is built from the server's advertised
+    ``inputSchema.properties``, and runtime kwargs are indistinguishable from model-supplied
+    arguments by that point. So declaring an optional property is enough for the server to
+    receive that runtime value, without the name appearing in ``additional_tool_argument_names``
+    and without the model supplying it. This test pins that behavior so the documented guidance
+    around ``function_invocation_kwargs`` stays accurate.
+    """
+
+    class TestServer(MCPTool):
+        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {
+                                    "param": {"type": "string"},
+                                    # Declared but not required, so the model never supplies it.
+                                    "api_token": {"type": "string"},
+                                },
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        session_mock = server.session
+        await server.call_tool("test_tool", param="value", api_token="runtime-value")
+
+        _, call_kwargs = session_mock.call_tool.call_args  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert call_kwargs["arguments"] == {"param": "value", "api_token": "runtime-value"}
 
 
 # endregion

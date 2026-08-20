@@ -27,6 +27,17 @@ formats headers as needed, allowing for flexible authentication schemes.
 For more complex scenarios, you could implement token refresh logic or support multiple authentication methods
 within the header provider function.
 
+Note on ``function_invocation_kwargs`` and MCP servers:
+The dict passed as ``function_invocation_kwargs`` is shared with every tool invoked during the run, including
+every attached MCP server. Before each ``tools/call`` the framework filters arguments against an allowlist made
+up of the tool's declared ``inputSchema.properties`` (advertised by the server) plus any names opted in via
+``additional_tool_argument_names``. Because the declared half of that allowlist is server-controlled, a server
+that declares a property named ``mcp_api_key`` receives that runtime value as an ordinary tool argument, even
+though the model never mentions it. Treat every key in ``function_invocation_kwargs`` as visible to all attached
+MCP servers, and only put credentials there when you control the servers involved. The ``header_provider`` hook
+below is the narrower channel: it reads the value and turns it into a request header scoped to this server's
+own origin, without the value becoming a tool argument.
+
 For more authentication examples including OAuth 2.0 flows, see:
 - https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/clients/simple-auth-client
 - https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/servers/simple-auth
