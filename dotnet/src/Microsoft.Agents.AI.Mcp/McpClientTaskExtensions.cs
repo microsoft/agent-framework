@@ -31,8 +31,7 @@ public static class McpClientTaskExtensions
     /// <param name="cancellationToken">Token used to cancel listing the server's tools.</param>
     /// <returns>The tools, ready to pass to <c>AsAIAgent(tools: …)</c>.</returns>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// <paramref name="options"/> specifies a non-positive
-    /// <see cref="McpTaskOptions.MaxConsecutiveStuckPolls"/>.
+    /// <paramref name="options"/> specifies a non-positive lifecycle limit.
     /// </exception>
     public static async Task<IReadOnlyList<AIFunction>> ListAgentToolsWithTasksAsync(
         this McpClient client,
@@ -48,6 +47,14 @@ public static class McpClientTaskExtensions
                 nameof(options),
                 effectiveOptions.MaxConsecutiveStuckPolls,
                 "MaxConsecutiveStuckPolls must be greater than zero.");
+        }
+
+        if (effectiveOptions.MaxTotalInputRequests <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                effectiveOptions.MaxTotalInputRequests,
+                "MaxTotalInputRequests must be greater than zero.");
         }
 
         IList<McpClientTool> tools = await client.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);

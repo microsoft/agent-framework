@@ -26,4 +26,14 @@ public sealed class McpTaskOptions
     /// <value>The default is 60.</value>
     /// <remarks>The value must be greater than zero.</remarks>
     public int MaxConsecutiveStuckPolls { get; set; } = 60;
+
+    /// <summary>
+    /// Gets or sets the maximum number of unique input requests a task may publish.
+    /// </summary>
+    /// <value>The default is 100.</value>
+    /// <remarks>
+    /// This per-task resource-safety limit bounds retained request keys and user or model
+    /// interactions. The value must be greater than zero.
+    /// </remarks>
+    public int MaxTotalInputRequests { get; set; } = 100;
 }

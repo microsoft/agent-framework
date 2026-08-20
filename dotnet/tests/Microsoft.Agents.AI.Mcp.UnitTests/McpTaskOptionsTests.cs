@@ -15,5 +15,6 @@ public class McpTaskOptionsTests
         // Assert
         options.CancelRemoteTaskOnLocalCancellation.Should().BeTrue();
         options.MaxConsecutiveStuckPolls.Should().Be(60);
+        options.MaxTotalInputRequests.Should().Be(100);
     }
 }

@@ -31,12 +31,17 @@ namespace Microsoft.Agents.AI.Mcp;
 /// </remarks>
 internal sealed class TaskAwareMcpClientAIFunction : AIFunction
 {
+    private const long DefaultPollIntervalMs = 1000;
+    private const long MinimumPollIntervalMs = 10;
+    private const long MaximumPollIntervalMs = uint.MaxValue - 1L;
+
     private static readonly TimeSpan s_remoteCancellationTimeout = TimeSpan.FromSeconds(5);
 
     private readonly McpClient _client;
     private readonly McpClientTool _inner;
     private readonly bool _cancelRemoteTaskOnLocalCancellation;
     private readonly int _maxConsecutiveStuckPolls;
+    private readonly int _maxTotalInputRequests;
 
     internal TaskAwareMcpClientAIFunction(McpClient client, McpClientTool inner, McpTaskOptions options)
     {
@@ -48,6 +53,7 @@ internal sealed class TaskAwareMcpClientAIFunction : AIFunction
         this._inner = inner;
         this._cancelRemoteTaskOnLocalCancellation = options.CancelRemoteTaskOnLocalCancellation;
         this._maxConsecutiveStuckPolls = options.MaxConsecutiveStuckPolls;
+        this._maxTotalInputRequests = options.MaxTotalInputRequests;
     }
 
     /// <inheritdoc />
@@ -87,18 +93,7 @@ internal sealed class TaskAwareMcpClientAIFunction : AIFunction
         }
         else
         {
-            string taskId = invocation.TaskCreated!.TaskId;
-            try
-            {
-                result = await this.PollTaskToCompletionAsync(invocation.TaskCreated, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (
-                this._cancelRemoteTaskOnLocalCancellation &&
-                cancellationToken.IsCancellationRequested)
-            {
-                await this.TryCancelTaskAsync(taskId).ConfigureAwait(false);
-                throw;
-            }
+            result = await this.PollTaskToCompletionAsync(invocation.TaskCreated!, cancellationToken).ConfigureAwait(false);
         }
 
         return ProjectResult(result, this.JsonSerializerOptions);
@@ -112,108 +107,140 @@ internal sealed class TaskAwareMcpClientAIFunction : AIFunction
         CancellationToken cancellationToken)
     {
         string taskId = createdTask.TaskId;
-        long pollIntervalMs = createdTask.PollIntervalMs ?? 1000;
-        HashSet<string>? resolvedRequestKeys = null;
+        long pollIntervalMs = createdTask.PollIntervalMs ?? DefaultPollIntervalMs;
+        HashSet<string>? observedInputRequestKeys = null;
         bool isFirstPoll = true;
         int consecutiveStuckPolls = 0;
+        bool isTerminal = false;
 
-        while (true)
+        try
         {
-            if (!isFirstPoll)
+            while (true)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(pollIntervalMs), cancellationToken).ConfigureAwait(false);
-            }
+                if (!isFirstPoll)
+                {
+                    await Task.Delay(GetValidatedPollDelay(taskId, pollIntervalMs), cancellationToken).ConfigureAwait(false);
+                }
 
-            isFirstPoll = false;
+                isFirstPoll = false;
 
-            GetTaskResult taskResult = await this._client.GetTaskAsync(taskId, cancellationToken).ConfigureAwait(false);
-            if (taskResult.PollIntervalMs is { } updatedPollIntervalMs)
-            {
-                pollIntervalMs = updatedPollIntervalMs;
-            }
+                GetTaskResult taskResult = await this._client.GetTaskAsync(taskId, cancellationToken).ConfigureAwait(false);
+                if (taskResult.PollIntervalMs is { } updatedPollIntervalMs)
+                {
+                    pollIntervalMs = updatedPollIntervalMs;
+                }
 
-            switch (taskResult)
-            {
-                case CompletedTaskResult completed:
-                    return JsonSerializer.Deserialize(
-                        completed.Result,
-                        McpJsonUtilities.DefaultOptions.GetTypeInfo<CallToolResult>())
-                        ?? throw new JsonException("Failed to deserialize CallToolResult from completed task.");
+                switch (taskResult)
+                {
+                    case CompletedTaskResult completed:
+                        isTerminal = true;
+                        return JsonSerializer.Deserialize(
+                            completed.Result,
+                            McpJsonUtilities.DefaultOptions.GetTypeInfo<CallToolResult>())
+                            ?? throw new JsonException("Failed to deserialize CallToolResult from completed task.");
 
-                case FailedTaskResult failed:
-                    throw new McpException($"Task '{taskId}' failed: {failed.Error}");
+                    case FailedTaskResult failed:
+                        isTerminal = true;
+                        throw new McpException($"Task '{taskId}' failed: {failed.Error}");
 
-                case CancelledTaskResult:
-                    throw new OperationCanceledException($"Task '{taskId}' was cancelled by the server.");
+                    case CancelledTaskResult:
+                        isTerminal = true;
+                        throw new OperationCanceledException($"Task '{taskId}' was cancelled by the server.");
 
-                case InputRequiredTaskResult inputRequired:
-                    Dictionary<string, InputRequest> newRequests = [];
-                    if (inputRequired.InputRequests is { } incomingRequests)
-                    {
-                        foreach (KeyValuePair<string, InputRequest> request in incomingRequests)
+                    case InputRequiredTaskResult inputRequired:
+                        Dictionary<string, InputRequest> newRequests = [];
+                        int observedCount = observedInputRequestKeys?.Count ?? 0;
+                        int remainingInputRequests = this._maxTotalInputRequests - observedCount;
+                        if (inputRequired.InputRequests is { } incomingRequests)
                         {
-                            if (resolvedRequestKeys?.Contains(request.Key) is not true)
+                            foreach (KeyValuePair<string, InputRequest> request in incomingRequests)
                             {
-                                newRequests.Add(request.Key, request.Value);
+                                if (observedInputRequestKeys?.Contains(request.Key) is not true)
+                                {
+                                    if (newRequests.Count >= remainingInputRequests)
+                                    {
+                                        throw new McpException(
+                                            $"Task '{taskId}' exceeded the limit of " +
+                                            $"{this._maxTotalInputRequests} unique input requests.");
+                                    }
+
+                                    newRequests.Add(request.Key, request.Value);
+                                }
                             }
                         }
-                    }
 
-                    if (newRequests.Count > 0)
-                    {
-                        consecutiveStuckPolls = 0;
-
-                        IDictionary<string, InputResponse> inputResponses;
-                        try
+                        if (newRequests.Count > 0)
                         {
-                            inputResponses = await this._client.ResolveInputRequestsAsync(
-                                newRequests,
+                            observedInputRequestKeys ??= new(StringComparer.Ordinal);
+                            foreach (string key in newRequests.Keys)
+                            {
+                                _ = observedInputRequestKeys.Add(key);
+                            }
+
+                            consecutiveStuckPolls = 0;
+                            IDictionary<string, InputResponse> inputResponses =
+                                await this._client.ResolveInputRequestsAsync(
+                                    newRequests,
+                                    cancellationToken).ConfigureAwait(false);
+
+                            _ = await this._client.UpdateTaskAsync(
+                                new UpdateTaskRequestParams
+                                {
+                                    TaskId = taskId,
+                                    InputResponses = inputResponses,
+                                },
                                 cancellationToken).ConfigureAwait(false);
                         }
-                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        else if (++consecutiveStuckPolls >= this._maxConsecutiveStuckPolls)
                         {
-                            throw;
-                        }
-                        catch
-                        {
-                            await this.TryCancelTaskAsync(taskId).ConfigureAwait(false);
-                            throw;
+                            throw new McpException(
+                                $"Task '{taskId}' has remained in '{McpTaskStatus.InputRequired}' for " +
+                                $"{this._maxConsecutiveStuckPolls} consecutive polls without publishing new input " +
+                                "requests after all previously requested inputs were resolved.");
                         }
 
-                        _ = await this._client.UpdateTaskAsync(
-                            new UpdateTaskRequestParams
-                            {
-                                TaskId = taskId,
-                                InputResponses = inputResponses,
-                            },
-                            cancellationToken).ConfigureAwait(false);
+                        break;
 
-                        resolvedRequestKeys ??= new(StringComparer.Ordinal);
-                        foreach (string key in inputResponses.Keys)
-                        {
-                            _ = resolvedRequestKeys.Add(key);
-                        }
-                    }
-                    else if (++consecutiveStuckPolls >= this._maxConsecutiveStuckPolls)
-                    {
-                        await this.TryCancelTaskAsync(taskId).ConfigureAwait(false);
+                    case WorkingTaskResult:
+                        consecutiveStuckPolls = 0;
+                        break;
+
+                    default:
                         throw new McpException(
-                            $"Task '{taskId}' has remained in '{McpTaskStatus.InputRequired}' for " +
-                            $"{this._maxConsecutiveStuckPolls} consecutive polls without publishing new input " +
-                            "requests after all previously requested inputs were resolved.");
-                    }
-
-                    break;
-
-                case WorkingTaskResult:
-                    consecutiveStuckPolls = 0;
-                    break;
-
-                default:
-                    throw new McpException(
-                        $"Unexpected task result type '{taskResult.GetType().Name}' for task '{taskId}'.");
+                            $"Unexpected task result type '{taskResult.GetType().Name}' for task '{taskId}'.");
+                }
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (!isTerminal && this._cancelRemoteTaskOnLocalCancellation)
+            {
+                await this.TryCancelTaskAsync(taskId).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+        catch
+        {
+            if (!isTerminal)
+            {
+                await this.TryCancelTaskAsync(taskId).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+    }
+
+    private static TimeSpan GetValidatedPollDelay(string taskId, long pollIntervalMs)
+    {
+        if (pollIntervalMs is < MinimumPollIntervalMs or > MaximumPollIntervalMs)
+        {
+            throw new McpException(
+                $"Task '{taskId}' returned an unusable pollIntervalMs of {pollIntervalMs}. " +
+                $"The supported range is {MinimumPollIntervalMs} through {MaximumPollIntervalMs} milliseconds.");
+        }
+
+        return TimeSpan.FromMilliseconds(pollIntervalMs);
     }
 
     private static object ProjectResult(CallToolResult result, JsonSerializerOptions serializerOptions)
