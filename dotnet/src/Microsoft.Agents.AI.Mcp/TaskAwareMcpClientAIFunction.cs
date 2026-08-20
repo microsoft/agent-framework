@@ -32,16 +32,15 @@ namespace Microsoft.Agents.AI.Mcp;
 internal sealed class TaskAwareMcpClientAIFunction : AIFunction
 {
     private const long DefaultPollIntervalMs = 1000;
-    private const long MinimumPollIntervalMs = 10;
-    private const long MaximumPollIntervalMs = uint.MaxValue - 1L;
-
-    private static readonly TimeSpan s_remoteCancellationTimeout = TimeSpan.FromSeconds(5);
 
     private readonly McpClient _client;
     private readonly McpClientTool _inner;
     private readonly bool _cancelRemoteTaskOnLocalCancellation;
     private readonly int _maxConsecutiveStuckPolls;
     private readonly int _maxTotalInputRequests;
+    private readonly TimeSpan _remoteCancellationTimeout;
+    private readonly long _minimumPollIntervalMs;
+    private readonly long _maximumPollIntervalMs;
 
     internal TaskAwareMcpClientAIFunction(McpClient client, McpClientTool inner, McpTaskOptions options)
     {
@@ -54,6 +53,9 @@ internal sealed class TaskAwareMcpClientAIFunction : AIFunction
         this._cancelRemoteTaskOnLocalCancellation = options.CancelRemoteTaskOnLocalCancellation;
         this._maxConsecutiveStuckPolls = options.MaxConsecutiveStuckPolls;
         this._maxTotalInputRequests = options.MaxTotalInputRequests;
+        this._remoteCancellationTimeout = options.RemoteCancellationTimeout;
+        this._minimumPollIntervalMs = (long)Math.Ceiling(options.MinimumPollingInterval.TotalMilliseconds);
+        this._maximumPollIntervalMs = (long)Math.Floor(options.MaximumPollingInterval.TotalMilliseconds);
     }
 
     /// <inheritdoc />
@@ -107,7 +109,8 @@ internal sealed class TaskAwareMcpClientAIFunction : AIFunction
         CancellationToken cancellationToken)
     {
         string taskId = createdTask.TaskId;
-        long pollIntervalMs = createdTask.PollIntervalMs ?? DefaultPollIntervalMs;
+        long pollIntervalMs = createdTask.PollIntervalMs ??
+            Math.Clamp(DefaultPollIntervalMs, this._minimumPollIntervalMs, this._maximumPollIntervalMs);
         HashSet<string>? observedInputRequestKeys = null;
         bool isFirstPoll = true;
         int consecutiveStuckPolls = 0;
@@ -119,16 +122,12 @@ internal sealed class TaskAwareMcpClientAIFunction : AIFunction
             {
                 if (!isFirstPoll)
                 {
-                    await Task.Delay(GetValidatedPollDelay(taskId, pollIntervalMs), cancellationToken).ConfigureAwait(false);
+                    await Task.Delay(this.GetValidatedPollDelay(taskId, pollIntervalMs), cancellationToken).ConfigureAwait(false);
                 }
 
                 isFirstPoll = false;
 
                 GetTaskResult taskResult = await this._client.GetTaskAsync(taskId, cancellationToken).ConfigureAwait(false);
-                if (taskResult.PollIntervalMs is { } updatedPollIntervalMs)
-                {
-                    pollIntervalMs = updatedPollIntervalMs;
-                }
 
                 switch (taskResult)
                 {
@@ -148,6 +147,7 @@ internal sealed class TaskAwareMcpClientAIFunction : AIFunction
                         throw new OperationCanceledException($"Task '{taskId}' was cancelled by the server.");
 
                     case InputRequiredTaskResult inputRequired:
+                        pollIntervalMs = inputRequired.PollIntervalMs ?? pollIntervalMs;
                         Dictionary<string, InputRequest> newRequests = [];
                         int observedCount = observedInputRequestKeys?.Count ?? 0;
                         int remainingInputRequests = this._maxTotalInputRequests - observedCount;
@@ -202,6 +202,7 @@ internal sealed class TaskAwareMcpClientAIFunction : AIFunction
                         break;
 
                     case WorkingTaskResult:
+                        pollIntervalMs = taskResult.PollIntervalMs ?? pollIntervalMs;
                         consecutiveStuckPolls = 0;
                         break;
 
@@ -231,13 +232,14 @@ internal sealed class TaskAwareMcpClientAIFunction : AIFunction
         }
     }
 
-    private static TimeSpan GetValidatedPollDelay(string taskId, long pollIntervalMs)
+    private TimeSpan GetValidatedPollDelay(string taskId, long pollIntervalMs)
     {
-        if (pollIntervalMs is < MinimumPollIntervalMs or > MaximumPollIntervalMs)
+        if (pollIntervalMs < this._minimumPollIntervalMs || pollIntervalMs > this._maximumPollIntervalMs)
         {
             throw new McpException(
                 $"Task '{taskId}' returned an unusable pollIntervalMs of {pollIntervalMs}. " +
-                $"The supported range is {MinimumPollIntervalMs} through {MaximumPollIntervalMs} milliseconds.");
+                $"The configured range is {this._minimumPollIntervalMs} through " +
+                $"{this._maximumPollIntervalMs} milliseconds.");
         }
 
         return TimeSpan.FromMilliseconds(pollIntervalMs);
@@ -269,7 +271,7 @@ internal sealed class TaskAwareMcpClientAIFunction : AIFunction
     {
         try
         {
-            using var cts = new CancellationTokenSource(s_remoteCancellationTimeout);
+            using var cts = new CancellationTokenSource(this._remoteCancellationTimeout);
             _ = await this._client.CancelTaskAsync(taskId, cts.Token).ConfigureAwait(false);
         }
         catch

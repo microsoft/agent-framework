@@ -17,7 +17,7 @@ The decorator drives the lifecycle internally:
 
 The transparent adapter retains the created task handle while it polls. By default, cancelling the local invocation also sends a best-effort `tasks/cancel` so abandoned server work can stop cooperatively. Set `McpTaskOptions.CancelRemoteTaskOnLocalCancellation` to `false` when server work should continue independently after the caller stops waiting.
 
-The adapter also rejects unusable server polling intervals and bounds unique mid-flight input requests. If either safety limit is exceeded while the task may still be active, the adapter fails the invocation and sends a best-effort `tasks/cancel`.
+The adapter also rejects unusable server polling intervals and bounds unique mid-flight input requests. If either safety limit is exceeded while the task may still be active, the adapter fails the invocation and sends a best-effort `tasks/cancel`. `McpTaskOptions` can adjust the remote-cancellation timeout and accepted polling-interval range when deployment requirements differ from the defaults.
 
 The sample exercises both invocation styles against the same wrapper:
 

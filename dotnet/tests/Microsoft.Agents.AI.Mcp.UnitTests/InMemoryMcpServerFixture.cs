@@ -71,6 +71,7 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
         bool ignoreInputResponses = false,
         long initialPollIntervalMs = 10,
         long? updatedPollIntervalMs = null,
+        bool omitPollIntervals = false,
         Exception? getTaskException = null,
         Exception? resolveInputRequestsException = null,
         CancellationToken cancellationToken = default)
@@ -106,6 +107,7 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
                 ignoreInputResponses,
                 initialPollIntervalMs,
                 updatedPollIntervalMs,
+                omitPollIntervals,
                 getTaskException,
                 resolveInputRequestsException);
             builder.WithTasks(taskStore);
@@ -196,6 +198,7 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
         private readonly InMemoryMcpTaskStore _inner;
         private readonly bool _ignoreInputResponses;
         private readonly long? _updatedPollIntervalMs;
+        private readonly bool _omitPollIntervals;
         private readonly Exception? _getTaskException;
         private readonly Exception? _resolveInputRequestsException;
         private readonly TaskCompletionSource<object?> _firstPollObserved =
@@ -212,11 +215,13 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
             bool ignoreInputResponses,
             long initialPollIntervalMs,
             long? updatedPollIntervalMs,
+            bool omitPollIntervals,
             Exception? getTaskException,
             Exception? resolveInputRequestsException)
         {
             this._ignoreInputResponses = ignoreInputResponses;
             this._updatedPollIntervalMs = updatedPollIntervalMs;
+            this._omitPollIntervals = omitPollIntervals;
             this._getTaskException = getTaskException;
             this._resolveInputRequestsException = resolveInputRequestsException;
             this._inner = new InMemoryMcpTaskStore { DefaultPollIntervalMs = initialPollIntervalMs };
@@ -244,6 +249,11 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
         public async Task<McpTaskInfo> CreateTaskAsync(CancellationToken cancellationToken = default)
         {
             McpTaskInfo task = await this._inner.CreateTaskAsync(cancellationToken).ConfigureAwait(false);
+            if (this._omitPollIntervals)
+            {
+                task = task with { PollIntervalMs = null };
+            }
+
             this._latestTaskId = task.TaskId;
             _ = Interlocked.Increment(ref this._createdTaskCount);
             return task;
@@ -259,7 +269,11 @@ internal sealed class InMemoryMcpServerFixture : IAsyncDisposable
             }
 
             McpTaskInfo? task = await this._inner.GetTaskAsync(taskId, cancellationToken).ConfigureAwait(false);
-            if (task is not null && this._updatedPollIntervalMs is { } updatedPollIntervalMs)
+            if (task is not null && this._omitPollIntervals)
+            {
+                task = task with { PollIntervalMs = null };
+            }
+            else if (task is not null && this._updatedPollIntervalMs is { } updatedPollIntervalMs)
             {
                 task = task with { PollIntervalMs = updatedPollIntervalMs };
             }

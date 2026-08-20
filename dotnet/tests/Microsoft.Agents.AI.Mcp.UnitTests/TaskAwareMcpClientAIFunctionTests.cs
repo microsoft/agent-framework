@@ -102,6 +102,89 @@ public class TaskAwareMcpClientAIFunctionTests
     }
 
     [Fact]
+    public async Task InvokeAsync_ConfiguredPollingRange_AcceptsShortServerIntervalAsync()
+    {
+        // Arrange
+        var releaseServer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create("short-interval-tool", async (CancellationToken cancellationToken) =>
+            {
+                await releaseServer.Task.WaitAsync(cancellationToken);
+                return "completed";
+            }),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(
+            tools,
+            initialPollIntervalMs: 1,
+            updatedPollIntervalMs: 1);
+        var options = new McpTaskOptions
+        {
+            MinimumPollingInterval = TimeSpan.FromMilliseconds(1),
+            MaximumPollingInterval = TimeSpan.FromSeconds(1),
+        };
+        AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync(options)).Single();
+        Task<object?> invocation = wrapped.InvokeAsync(arguments: null, CancellationToken.None).AsTask();
+
+        await fixture.FirstPollObserved.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => fixture.PollCount > 1, TimeSpan.FromSeconds(5));
+
+        try
+        {
+            // Act
+            _ = releaseServer.TrySetResult(true);
+            object? result = await invocation;
+
+            // Assert
+            result.Should().BeOfType<TextContent>().Which.Text.Should().Be("completed");
+        }
+        finally
+        {
+            _ = releaseServer.TrySetResult(true);
+        }
+    }
+
+    [Fact]
+    public async Task InvokeAsync_MissingPollInterval_ConstrainsFallbackToConfiguredRangeAsync()
+    {
+        // Arrange
+        var releaseServer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create("missing-interval-tool", async (CancellationToken cancellationToken) =>
+            {
+                await releaseServer.Task.WaitAsync(cancellationToken);
+                return "completed";
+            }),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(
+            tools,
+            omitPollIntervals: true);
+        var options = new McpTaskOptions
+        {
+            MinimumPollingInterval = TimeSpan.FromMilliseconds(10),
+            MaximumPollingInterval = TimeSpan.FromMilliseconds(100),
+        };
+        AIFunction wrapped = (await fixture.Client.ListAgentToolsWithTasksAsync(options)).Single();
+        Task<object?> invocation = wrapped.InvokeAsync(arguments: null, CancellationToken.None).AsTask();
+
+        await fixture.FirstPollObserved.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => fixture.PollCount > 1, TimeSpan.FromSeconds(5));
+
+        try
+        {
+            // Act
+            _ = releaseServer.TrySetResult(true);
+            object? result = await invocation;
+
+            // Assert
+            result.Should().BeOfType<TextContent>().Which.Text.Should().Be("completed");
+        }
+        finally
+        {
+            _ = releaseServer.TrySetResult(true);
+        }
+    }
+
+    [Fact]
     public async Task InvokeAsync_ServerWithoutTasks_ReturnsInlineResultAsync()
     {
         // Arrange
@@ -704,6 +787,15 @@ public class TaskAwareMcpClientAIFunctionTests
         finally
         {
             _ = releaseServer.TrySetResult(true);
+        }
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> predicate, TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+        while (!predicate())
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(10), cts.Token);
         }
     }
 }

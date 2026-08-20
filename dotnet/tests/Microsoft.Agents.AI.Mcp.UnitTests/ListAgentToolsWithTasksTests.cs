@@ -75,4 +75,100 @@ public class ListAgentToolsWithTasksTests
         // Assert
         await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
     }
+
+    [Fact]
+    public async Task ListAgentToolsWithTasks_NonPositiveCancellationTimeout_ThrowsAsync()
+    {
+        // Arrange
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create("tool", () => "result"),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
+        var options = new McpTaskOptions { RemoteCancellationTimeout = TimeSpan.Zero };
+
+        // Act
+        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task ListAgentToolsWithTasks_SubMillisecondCancellationTimeout_ThrowsAsync()
+    {
+        // Arrange
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create("tool", () => "result"),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
+        var options = new McpTaskOptions { RemoteCancellationTimeout = TimeSpan.FromTicks(1) };
+
+        // Act
+        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task ListAgentToolsWithTasks_InvalidPollingIntervalRange_ThrowsAsync()
+    {
+        // Arrange
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create("tool", () => "result"),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
+        var options = new McpTaskOptions
+        {
+            MinimumPollingInterval = TimeSpan.FromMilliseconds(20),
+            MaximumPollingInterval = TimeSpan.FromMilliseconds(10),
+        };
+
+        // Act
+        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task ListAgentToolsWithTasks_PollingRangeWithoutWholeMillisecond_ThrowsAsync()
+    {
+        // Arrange
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create("tool", () => "result"),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
+        var options = new McpTaskOptions
+        {
+            MinimumPollingInterval = TimeSpan.FromTicks(1),
+            MaximumPollingInterval = TimeSpan.FromTicks(TimeSpan.TicksPerMillisecond - 1),
+        };
+
+        // Act
+        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task ListAgentToolsWithTasks_PollingMaximumAboveRuntimeLimit_ThrowsAsync()
+    {
+        // Arrange
+        McpServerPrimitiveCollection<McpServerTool> tools = [
+            TestTools.Create("tool", () => "result"),
+        ];
+        await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
+        var options = new McpTaskOptions
+        {
+            MaximumPollingInterval = TimeSpan.FromMilliseconds(uint.MaxValue),
+        };
+
+        // Act
+        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
 }

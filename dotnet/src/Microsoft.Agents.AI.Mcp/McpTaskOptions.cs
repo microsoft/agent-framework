@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+
 namespace Microsoft.Agents.AI.Mcp;
 
 /// <summary>
@@ -9,6 +11,34 @@ namespace Microsoft.Agents.AI.Mcp;
 /// </summary>
 public sealed class McpTaskOptions
 {
+    /// <summary>
+    /// Gets or sets the timeout for a best-effort <c>tasks/cancel</c> request.
+    /// </summary>
+    /// <value>The default is five seconds.</value>
+    /// <remarks>
+    /// The value must be at least one millisecond and must not exceed the maximum delay
+    /// supported by the targeted .NET runtimes.
+    /// </remarks>
+    public TimeSpan RemoteCancellationTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Gets or sets the minimum server-provided polling interval accepted by the client.
+    /// </summary>
+    /// <value>The default is 10 milliseconds.</value>
+    /// <remarks>The value must be positive and not exceed <see cref="MaximumPollingInterval"/>.</remarks>
+    public TimeSpan MinimumPollingInterval { get; set; } = TimeSpan.FromMilliseconds(10);
+
+    /// <summary>
+    /// Gets or sets the maximum server-provided polling interval accepted by the client.
+    /// </summary>
+    /// <value>The default is the maximum delay supported by the targeted .NET runtimes.</value>
+    /// <remarks>
+    /// The value must be at least <see cref="MinimumPollingInterval"/> and must not exceed
+    /// 4,294,967,294 milliseconds.
+    /// </remarks>
+    public TimeSpan MaximumPollingInterval { get; set; } =
+        TimeSpan.FromMilliseconds(uint.MaxValue - 1L);
+
     /// <summary>
     /// Gets or sets a value indicating whether local cancellation should send
     /// <c>tasks/cancel</c> for a task-backed invocation.
