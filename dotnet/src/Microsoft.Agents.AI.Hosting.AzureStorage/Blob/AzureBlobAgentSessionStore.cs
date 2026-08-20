@@ -158,7 +158,7 @@ public sealed class AzureBlobAgentSessionStore : AgentSessionStore
 
         try
         {
-            await initializationTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await WaitWithCancellationAsync(initializationTask, cancellationToken).ConfigureAwait(false);
         }
         catch when (initializationTask.IsFaulted || initializationTask.IsCanceled)
         {
@@ -187,8 +187,47 @@ public sealed class AzureBlobAgentSessionStore : AgentSessionStore
             : $"{this._blobNamePrefix}/{baseName}";
     }
 
+    private static async Task WaitWithCancellationAsync(Task task, CancellationToken cancellationToken)
+    {
+        if (task.IsCompleted || !cancellationToken.CanBeCanceled)
+        {
+            await task.ConfigureAwait(false);
+            return;
+        }
+
+        var cancellationTaskSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using (cancellationToken.Register(() => cancellationTaskSource.TrySetCanceled()))
+        {
+            Task completedTask = await Task.WhenAny(task, cancellationTaskSource.Task).ConfigureAwait(false);
+            await completedTask.ConfigureAwait(false);
+        }
+    }
+
     private static string ComputeKey(string value)
-        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    {
+        byte[] input = Encoding.UTF8.GetBytes(value);
+#if NET8_0_OR_GREATER
+        return Convert.ToHexString(SHA256.HashData(input));
+#else
+        using SHA256 sha256 = SHA256.Create();
+        byte[] hash = sha256.ComputeHash(input);
+        char[] result = new char[hash.Length * 2];
+
+        for (int index = 0; index < hash.Length; index++)
+        {
+            byte valueByte = hash[index];
+            result[index * 2] = ToHexChar(valueByte >> 4);
+            result[(index * 2) + 1] = ToHexChar(valueByte & 0x0F);
+        }
+
+        return new string(result);
+#endif
+    }
+
+#if !NET8_0_OR_GREATER
+    private static char ToHexChar(int value)
+        => (char)(value < 10 ? '0' + value : 'A' + value - 10);
+#endif
 
     private static string? NormalizePrefix(string? prefix)
     {

@@ -7,7 +7,9 @@ using System.Threading.Tasks;
 using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+#if NET8_0_OR_GREATER
 using Microsoft.Agents.AI.Hosting.AzureStorage.Tests;
+#endif
 
 namespace Microsoft.Agents.AI.Hosting.AzureStorage.UnitTests;
 
@@ -230,15 +232,16 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
         Assert.Equal(16, blobs.Count);
     }
 
+#if NET8_0_OR_GREATER
     [Fact]
-    public async Task HostedAgentThroughFakeKestrel_PersistsSessionInAzuriteAsync()
+    public async Task HostedAgentThroughTestServer_PersistsSessionInAzuriteAsync()
     {
         // Arrange
-        await using FakeKestrelAgentHost host =
-            await FakeKestrelAgentHost.StartAsync(this._containerClient);
+        await using FakeTestAgentHost host =
+            await FakeTestAgentHost.StartAsync(this._containerClient);
 
         // Act
-        FakeKestrelAgentHost.FakeKestrelRunResult result = await host.RunTwoTurnsAsync();
+        FakeTestAgentHost.FakeTestAgentRunResult result = await host.RunTwoTurnsAsync();
         List<BlobItem> blobs = [];
         await foreach (BlobItem blob in this._containerClient.GetBlobsAsync())
         {
@@ -258,6 +261,7 @@ public sealed class AzureBlobAgentSessionStoreTests : IAsyncLifetime
         Assert.Contains("turnCounter", persistedSession, StringComparison.Ordinal);
         Assert.Contains("\"count\":2", persistedSession, StringComparison.Ordinal);
     }
+#endif
 
     [Fact]
     public void Constructor_BlobNamePrefixExceedsAzureLimit_Throws()

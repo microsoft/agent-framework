@@ -1,7 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
     <VersionSuffix>preview</VersionSuffix>
     <InjectSharedThrow>true</InjectSharedThrow>
 

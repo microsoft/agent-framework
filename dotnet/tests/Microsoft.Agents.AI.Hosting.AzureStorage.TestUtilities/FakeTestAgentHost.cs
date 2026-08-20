@@ -21,20 +21,20 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Microsoft.Agents.AI.Hosting.AzureStorage.Tests;
 
-internal sealed class FakeKestrelAgentHost : IAsyncDisposable
+internal sealed class FakeTestAgentHost : IAsyncDisposable
 {
     private const string AgentName = "azure-blob-session-agent";
 
     private readonly WebApplication _app;
     private readonly HttpClient _client;
 
-    private FakeKestrelAgentHost(WebApplication app, HttpClient client)
+    private FakeTestAgentHost(WebApplication app, HttpClient client)
     {
         this._app = app;
         this._client = client;
     }
 
-    public static async Task<FakeKestrelAgentHost> StartAsync(BlobContainerClient containerClient)
+    public static async Task<FakeTestAgentHost> StartAsync(BlobContainerClient containerClient)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -52,16 +52,16 @@ internal sealed class FakeKestrelAgentHost : IAsyncDisposable
         HttpClient client = server.CreateClient();
         client.BaseAddress = new Uri("http://localhost/agent");
 
-        return new FakeKestrelAgentHost(app, client);
+        return new FakeTestAgentHost(app, client);
     }
 
-    public async Task<FakeKestrelRunResult> RunTwoTurnsAsync()
+    public async Task<FakeTestAgentRunResult> RunTwoTurnsAsync()
     {
         var chatClient = new AGUIChatClient(new(this._client, ""));
         AIAgent clientAgent = chatClient.AsAIAgent(
             instructions: null,
             name: "client-agent",
-            description: "Client for the fake Kestrel agent host.",
+            description: "Client for the in-memory test agent host.",
             tools: []);
         AgentSession clientSession = await clientAgent.CreateSessionAsync();
 
@@ -115,7 +115,7 @@ internal sealed class FakeKestrelAgentHost : IAsyncDisposable
         await this._app.DisposeAsync();
     }
 
-    internal sealed record FakeKestrelRunResult(
+    internal sealed record FakeTestAgentRunResult(
         string FirstResponse,
         string SecondResponse);
 

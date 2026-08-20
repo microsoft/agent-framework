@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#if NET8_0_OR_GREATER
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -8,13 +9,15 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Microsoft.Agents.AI.Hosting.AzureStorage.Tests;
 using Shared.IntegrationTests;
+#endif
 
 namespace Microsoft.Agents.AI.Hosting.AzureStorage.IntegrationTests;
 
 public sealed class AzureBlobAgentSessionStoreIntegrationTests
 {
+#if NET8_0_OR_GREATER
     [Fact(Skip = "Requires a provisioned Azure Storage account and data-plane permissions in CI.")]
-    public async Task HostedAgentThroughFakeKestrel_PersistsSessionInLiveBlobStorageAsync()
+    public async Task HostedAgentThroughTestServer_PersistsSessionInLiveBlobStorageAsync()
     {
         // Arrange
         string? endpoint = Environment.GetEnvironmentVariable("AZURE_STORAGE_BLOB_ENDPOINT");
@@ -29,9 +32,9 @@ public sealed class AzureBlobAgentSessionStoreIntegrationTests
         try
         {
             // Act
-            await using FakeKestrelAgentHost host =
-                await FakeKestrelAgentHost.StartAsync(containerClient);
-            FakeKestrelAgentHost.FakeKestrelRunResult result = await host.RunTwoTurnsAsync();
+            await using FakeTestAgentHost host =
+                await FakeTestAgentHost.StartAsync(containerClient);
+            FakeTestAgentHost.FakeTestAgentRunResult result = await host.RunTwoTurnsAsync();
             List<BlobItem> blobs = [];
             await foreach (BlobItem blob in containerClient.GetBlobsAsync())
             {
@@ -57,4 +60,5 @@ public sealed class AzureBlobAgentSessionStoreIntegrationTests
             await containerClient.DeleteIfExistsAsync();
         }
     }
+#endif
 }
