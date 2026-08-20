@@ -376,6 +376,24 @@ class AgentFrameworkExecutor:
                 if session:
                     run_kwargs["session"] = session
 
+                # Forward ``function_invocation_kwargs`` to ``agent.run()`` so tools
+                # reading request-scoped values via ``FunctionInvocationContext.kwargs``
+                # (e.g. tenant id, auth token, user id) behave the same via DevUI as
+                # they do via direct ``agent.run(..., function_invocation_kwargs=...)``.
+                # Accepts both channels already in use on the request payload:
+                # ``extra_body.function_invocation_kwargs`` (the channel already used
+                # for ``response_id`` / ``checkpoint_id``) and a top-level extra field
+                # (``AgentFrameworkRequest`` has ``model_config = ConfigDict(extra="allow")``).
+                # Top-level takes precedence when both are set. Missing/non-dict values
+                # are ignored for backward compatibility.
+                function_invocation_kwargs: dict[str, Any] | None = None
+                if request.extra_body and isinstance(request.extra_body.get("function_invocation_kwargs"), dict):
+                    function_invocation_kwargs = request.extra_body["function_invocation_kwargs"]
+                if request.model_extra and isinstance(request.model_extra.get("function_invocation_kwargs"), dict):
+                    function_invocation_kwargs = request.model_extra["function_invocation_kwargs"]
+                if function_invocation_kwargs is not None:
+                    run_kwargs["function_invocation_kwargs"] = function_invocation_kwargs
+
                 stream = cast(Any, agent.run(user_message, **run_kwargs))
                 async for update in stream:
                     for trace_event in trace_collector.get_pending_events():
