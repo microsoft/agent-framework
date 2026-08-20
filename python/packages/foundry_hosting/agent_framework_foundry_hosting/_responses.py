@@ -8,7 +8,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, suppress
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Generic, Literal, TypeVar, cast
 
@@ -138,7 +138,12 @@ class _SignalledIterator(Generic[_T]):
     If an event and a new item becomes ready at the same time, the event takes priority and the item
     is discarded. Cancelling the background task while it's mid-call is also what actually interrupts
     a suspended model/tool call, since ``ResponseStream`` (what ``SupportsAgentRun.run(stream=True)``
-    returns) has no ``aclose()``.
+    returns) has no ``aclose()`` of its own.
+
+    Callers MUST drive this through ``contextlib.aclosing`` (or an equivalent try/finally calling
+    ``aclose()``): ``__anext__`` only cancels the driver task on its own signalled/exhausted paths, so
+    if the consumer of ``async for`` raises instead (e.g. while processing a yielded item), the driver
+    task -- and the real agent/workflow run it's pumping -- would otherwise be silently abandoned.
     """
 
     def __init__(self, iterator: AsyncIterator[_T], *events: asyncio.Event) -> None:
@@ -213,6 +218,18 @@ class _SignalledIterator(Generic[_T]):
         if isinstance(item, Exception):
             raise item
         return cast(_T, item)
+
+    async def aclose(self) -> None:
+        """Cancel the background driver task, if any, and wait for it to finish.
+
+        Safe to call unconditionally: a no-op if the driver was never started, and cancelling an
+        already-finished task (normal exhaustion or a prior signalled stop) is also a no-op.
+        """
+        if self._driver is None:
+            return
+        self._driver.cancel()
+        with suppress(BaseException):
+            await self._driver
 
 
 # Reserved response metadata key pinning the workflow checkpoint that was current at the moment of
@@ -621,12 +638,13 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 context.shutdown,
                 cancellation_signal,
             )
-            async for update in agent_stream:
-                for content in update.contents:
-                    async for event in tracker.handle(
-                        content, message_id=update.message_id, approval_storage=approval_storage
-                    ):
-                        yield event
+            async with aclosing(agent_stream):
+                async for update in agent_stream:
+                    for content in update.contents:
+                        async for event in tracker.handle(
+                            content, message_id=update.message_id, approval_storage=approval_storage
+                        ):
+                            yield event
         except (asyncio.CancelledError, GeneratorExit):
             request_interrupted = True
             raise
@@ -784,8 +802,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         context.shutdown,
                         cancellation_signal,
                     )
-                    async for _ in restore_iter:
-                        pass
+                    async with aclosing(restore_iter):
+                        async for _ in restore_iter:
+                            pass
                     if restore_iter.signalled:
                         if context.shutdown.is_set():
                             await context.exit_for_recovery()
@@ -804,35 +823,36 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
 
             main_iter = _SignalledIterator(run_stream, context.shutdown, cancellation_signal)
-            async for update in main_iter:
-                if self._resilient_background:
-                    latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
-                    if (
-                        latest_checkpoint is not None
-                        and latest_checkpoint.checkpoint_id
-                        != response_event_stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY)
-                    ):
-                        # A new checkpoint is created when we pull the next item from the stream
-                        # (see RunnerImpl.run_until_convergence). We only take a snapshot of the
-                        # response (response_event_stream.checkpoint()) once the checkpoint is
-                        # durably persisted. This means all items from the previous superstep
-                        # has been pulled thus we can safely close the tracker. The latest checkpoint
-                        # now reflects the state of the workflow that matches the response output.
-                        # Note that if a workflow crashes before any update is created, no response
-                        # snapshot is taken. However, upon recovery the workflow will still be resumed
-                        # from the latest checkpoint.
-                        for event in tracker.close():
-                            yield event
-                        response_event_stream.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = (
-                            latest_checkpoint.checkpoint_id
-                        )
-                        yield response_event_stream.checkpoint()
+            async with aclosing(main_iter):
+                async for update in main_iter:
+                    if self._resilient_background:
+                        latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+                        if (
+                            latest_checkpoint is not None
+                            and latest_checkpoint.checkpoint_id
+                            != response_event_stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY)
+                        ):
+                            # A new checkpoint is created when we pull the next item from the stream
+                            # (see RunnerImpl.run_until_convergence). We only take a snapshot of the
+                            # response (response_event_stream.checkpoint()) once the checkpoint is
+                            # durably persisted. This means all items from the previous superstep
+                            # has been pulled thus we can safely close the tracker. The latest checkpoint
+                            # now reflects the state of the workflow that matches the response output.
+                            # Note that if a workflow crashes before any update is created, no response
+                            # snapshot is taken. However, upon recovery the workflow will still be resumed
+                            # from the latest checkpoint.
+                            for event in tracker.close():
+                                yield event
+                            response_event_stream.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = (
+                                latest_checkpoint.checkpoint_id
+                            )
+                            yield response_event_stream.checkpoint()
 
-                for content in update.contents:
-                    async for event in tracker.handle(
-                        content, message_id=update.message_id, approval_storage=approval_storage
-                    ):
-                        yield event
+                    for content in update.contents:
+                        async for event in tracker.handle(
+                            content, message_id=update.message_id, approval_storage=approval_storage
+                        ):
+                            yield event
             # Cancellation needs no extra action here (the loop above already stopped); shutdown
             # does, but only if it's what actually stopped the loop, not a natural completion.
             if main_iter.signalled and context.shutdown.is_set():

@@ -67,6 +67,7 @@ from agent_framework_foundry_hosting._responses import (
     ConsentError,
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
+    _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     consent_url_from_error,
 )
 from agent_framework_foundry_hosting._state_store import (
@@ -830,6 +831,46 @@ class TestAgentSessionPersistence:
         types = [event.get("type") for event in events if isinstance(event, Mapping)]
         assert "response.output_text.delta" not in types
         assert types[-1] == "response.completed"
+
+    async def test_consumer_failure_cancels_agent_stream_driver_task(self) -> None:
+        """A crash in the consumer (`_OutputItemTracker.handle`) must not leave the background
+        driver task that pumps the agent stream running as an orphaned task."""
+        gate = asyncio.Event()  # Never set: would hang forever if the driver task isn't cancelled.
+        agent = _make_agent()
+
+        async def _stream_gen() -> AsyncIterator[AgentResponseUpdate]:
+            yield AgentResponseUpdate(contents=[Content.from_text("first")], role="assistant")
+            await gate.wait()
+            yield AgentResponseUpdate(contents=[Content.from_text("too late")], role="assistant")
+
+        def run_streaming(*_args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del _args, kwargs
+            return ResponseStream(_stream_gen(), finalizer=AgentResponse.from_updates)
+
+        agent.run = MagicMock(side_effect=run_streaming)
+        server = _make_server(agent)
+        request = CreateResponse(model="m", input="hi", stream=True)
+        context = ResponseContext(response_id="response-1", mode_flags=MagicMock())
+
+        tasks_before = asyncio.all_tasks()
+        with (
+            patch.object(ResponseContext, "get_input_items", new=AsyncMock(return_value=[])),
+            patch.object(ResponseContext, "get_history", new=AsyncMock(return_value=[])),
+            patch.object(_OutputItemTracker, "handle", side_effect=RuntimeError("tracker exploded")),
+        ):
+            handler = cast(
+                AsyncGenerator[Any, None],
+                server._handle_response(request, context, asyncio.Event()),  # pyright: ignore[reportPrivateUsage]
+            )
+            events = [event async for event in handler]
+
+        types = [event.get("type") for event in events if isinstance(event, Mapping)]
+        assert types[-1] == "response.failed"
+
+        # Give any cancellation triggered during teardown a chance to finish propagating.
+        await asyncio.sleep(0)
+        leaked = asyncio.all_tasks() - tasks_before - {asyncio.current_task()}
+        assert not leaked, f"driver task leaked: {leaked}"
 
 
 # endregion
