@@ -2,13 +2,17 @@
 
 using System;
 using System.ClientModel.Primitives;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using Azure.AI.AgentServer.Responses;
 using Azure.Core;
+using Azure.Identity;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.AI;
@@ -19,6 +23,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -58,12 +63,12 @@ public static class FoundryHostingExtensions
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryResponses(this IServiceCollection services, Action<FoundryResponsesOptions>? configure = null)
     {
-        ArgumentNullException.ThrowIfNull(services);
-        services.AddResponsesServer();
+        _ = Throw.IfNull(services);
+        AddResponsesServerOnce(services);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
         ConfigureFoundryResponsesOptions(services, configure);
-        services.TryAddSingleton<AgentSessionStore>(_ => FileSystemAgentSessionStore.CreateDefault());
+        services.TryAddSingleton<AgentSessionStore>(_ => CreateDefaultAgentSessionStore());
         services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
         return services;
     }
@@ -90,7 +95,7 @@ public static class FoundryHostingExtensions
     /// </remarks>
     /// <param name="services">The service collection.</param>
     /// <param name="agent">The agent instance to register.</param>
-    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, a file-system session store is used, rooted at <c>/.checkpoints</c> when running in a Foundry hosted environment and <c>{cwd}/.checkpoints</c> locally.</param>
+    /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, <see cref="FoundryAgentSessionStore"/> is used: the Foundry durable state store when hosted, and the AgentServer SDK's local state-store fallback otherwise.</param>
     /// <param name="configure">
     /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
     /// agent's own service to store the responses it produces.
@@ -102,14 +107,14 @@ public static class FoundryHostingExtensions
         AgentSessionStore? agentSessionStore = null,
         Action<FoundryResponsesOptions>? configure = null)
     {
-        ArgumentNullException.ThrowIfNull(services);
-        ArgumentNullException.ThrowIfNull(agent);
+        _ = Throw.IfNull(services);
+        _ = Throw.IfNull(agent);
 
-        services.AddResponsesServer();
+        AddResponsesServerOnce(services);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
         ConfigureFoundryResponsesOptions(services, configure);
-        agentSessionStore ??= FileSystemAgentSessionStore.CreateDefault();
+        agentSessionStore ??= CreateDefaultAgentSessionStore();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
         {
@@ -127,12 +132,13 @@ public static class FoundryHostingExtensions
     }
 
     /// <summary>
-    /// Applies the caller's <see cref="FoundryResponsesOptions"/> and registers the readiness check that
-    /// reports an agent configured to have its own service store the responses it produces.
+    /// Applies the caller's <see cref="FoundryResponsesOptions"/> and registers the readiness checks
+    /// that report a misconfigured agent: one having its own service store the responses it produces,
+    /// and a workflow agent writing its checkpoints somewhere hosting does not manage.
     /// </summary>
     /// <remarks>
-    /// The check is registered on the same <c>/readiness</c> pipeline that <see cref="MapFoundryResponses"/>
-    /// maps, so a container that would record the conversation twice never takes traffic.
+    /// The checks are registered on the same <c>/readiness</c> pipeline that <see cref="MapFoundryResponses"/>
+    /// maps, so such a container never takes traffic.
     /// <c>AddCheck</c> does not dedupe by name, so a repeated registration is guarded here.
     /// </remarks>
     private static void ConfigureFoundryResponsesOptions(IServiceCollection services, Action<FoundryResponsesOptions>? configure)
@@ -142,24 +148,32 @@ public static class FoundryHostingExtensions
             services.Configure(configure);
         }
 
-        const string HealthCheckName = "foundry-stored-output";
+        AddReadinessCheckOnce(services, "foundry-stored-output", sp => ActivatorUtilities.CreateInstance<HostedStoredOutputHealthCheck>(sp));
+        AddReadinessCheckOnce(services, "foundry-workflow-checkpointing", sp => ActivatorUtilities.CreateInstance<HostedWorkflowCheckpointingHealthCheck>(sp));
+    }
+
+    /// <summary>
+    /// Registers a readiness check under a name, skipping the registration when that name is already
+    /// taken, because <c>AddCheck</c> does not dedupe and both <c>AddFoundryResponses</c> overloads
+    /// are documented as safe to call more than once.
+    /// </summary>
+    private static void AddReadinessCheckOnce(IServiceCollection services, string name, Func<IServiceProvider, IHealthCheck> factory) =>
         services.Configure<HealthCheckServiceOptions>(opts =>
         {
             foreach (var existing in opts.Registrations)
             {
-                if (string.Equals(existing.Name, HealthCheckName, StringComparison.Ordinal))
+                if (string.Equals(existing.Name, name, StringComparison.Ordinal))
                 {
                     return;
                 }
             }
 
             opts.Registrations.Add(new HealthCheckRegistration(
-                name: HealthCheckName,
-                factory: sp => ActivatorUtilities.CreateInstance<HostedStoredOutputHealthCheck>(sp),
+                name: name,
+                factory: factory,
                 failureStatus: HealthStatus.Unhealthy,
                 tags: ["foundry", "responses", "readiness"]));
         });
-    }
 
     /// <summary>
     /// Registers the Foundry Toolbox service, which eagerly connects to the Foundry Toolboxes
@@ -206,8 +220,8 @@ public static class FoundryHostingExtensions
         Action<FoundryToolboxOptions>? configureOptions,
         params string[] toolboxNames)
     {
-        ArgumentNullException.ThrowIfNull(services);
-        ArgumentNullException.ThrowIfNull(credential);
+        _ = Throw.IfNull(services);
+        _ = Throw.IfNull(credential);
 
         if (services.Any(d => d.ServiceType == typeof(FoundryToolboxService)))
         {
@@ -297,8 +311,12 @@ public static class FoundryHostingExtensions
     /// <returns>The endpoint route builder for chaining.</returns>
     public static IEndpointRouteBuilder MapFoundryResponses(this IEndpointRouteBuilder endpoints, string prefix = "")
     {
-        ArgumentNullException.ThrowIfNull(endpoints);
-        endpoints.MapResponsesServer(prefix);
+        _ = Throw.IfNull(endpoints);
+        RouteGroupBuilder responsesEndpoints = endpoints.MapGroup(string.Empty);
+        responsesEndpoints.AddEndpointFilter(new HostedProtocolCompatibilityFilter(
+            endpoints.ServiceProvider.GetRequiredService<IConfiguration>(),
+            endpoints.ServiceProvider.GetRequiredService<ILogger<HostedProtocolCompatibilityFilter>>()));
+        responsesEndpoints.MapResponsesServer(prefix);
         MapReadinessIfMissing(endpoints);
         return endpoints;
     }
@@ -321,10 +339,65 @@ public static class FoundryHostingExtensions
     internal const int DefaultListenPort = 8088;
 
     /// <summary>
+    /// Registers the Responses Server SDK exactly once per service collection.
+    /// </summary>
+    /// <remarks>
+    /// <c>AddResponsesServer</c> registers a resilient task under a fixed name and throws when that
+    /// name is already taken, so calling it a second time on the same service collection fails.
+    /// Both <c>AddFoundryResponses</c> overloads are documented as safe to call more than once, and
+    /// a host that registers several agents naturally does, so the second and later calls are
+    /// skipped here.
+    /// </remarks>
+    private static void AddResponsesServerOnce(IServiceCollection services)
+    {
+        if (services.Any(static d => d.ServiceType == typeof(FoundryResponsesServerMarker)))
+        {
+            return;
+        }
+
+        services.AddSingleton<FoundryResponsesServerMarker>();
+        services.AddResponsesServer();
+    }
+
+    /// <summary>
+    /// Creates the <see cref="AgentSessionStore"/> used when the caller did not supply one.
+    /// </summary>
+    /// <remarks>
+    /// The AgentServer SDK selects the backend. Inside a Foundry container it uses the platform's
+    /// durable state store, which survives replacement and is readable by every instance. Anywhere
+    /// else it uses the SDK's local state-store fallback under <c>~/.agentserver/state_stores</c>.
+    /// </remarks>
+    private static FoundryAgentSessionStore CreateDefaultAgentSessionStore() =>
+        new(credential: CreateStateStoreCredential());
+
+    /// <summary>
+    /// Every agent a container can serve: the ones registered under a name, plus the default.
+    /// </summary>
+    /// <param name="serviceProvider">The provider the agents were registered with.</param>
+    /// <returns>The registered agents, without duplicates.</returns>
+    internal static List<AIAgent> ResolveRegisteredAgents(IServiceProvider serviceProvider)
+    {
+        var agents = new List<AIAgent>(serviceProvider.GetKeyedServices<AIAgent>(KeyedService.AnyKey));
+
+        if (serviceProvider.GetService<AIAgent>() is { } defaultAgent && !agents.Contains(defaultAgent))
+        {
+            agents.Add(defaultAgent);
+        }
+
+        return agents;
+    }
+
+    /// <summary>
     /// Marker registered once per <see cref="IServiceCollection"/> so the Foundry listen-port
     /// configuration is applied at most once, even across multiple <c>AddFoundryResponses</c> calls.
     /// </summary>
     private sealed class FoundryListenPortMarker;
+
+    /// <summary>
+    /// Marker registered once per <see cref="IServiceCollection"/> so the Responses Server SDK is
+    /// registered at most once, even across multiple <c>AddFoundryResponses</c> calls.
+    /// </summary>
+    private sealed class FoundryResponsesServerMarker;
 
     /// <summary>
     /// Binds Kestrel to the port the Foundry hosted runtime probes and routes to, so a plain
@@ -450,6 +523,72 @@ public static class FoundryHostingExtensions
                     .UseOpenTelemetry(sourceName: ResponsesSourceName)
                     .Build();
     }
+
+    /// <summary>
+    /// Points a workflow-hosting agent at the Foundry durable state store for its checkpoints,
+    /// when running inside a Foundry container.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This runs when the agent is resolved for a request rather than when it is registered,
+    /// because a host can register agents as factories that are only built later, and because a
+    /// registered agent is a finished object whose checkpoint storage is fixed at construction.
+    /// </para>
+    /// <para>
+    /// Without this, a hosted workflow keeps every checkpoint of a session inside the saved session
+    /// record, and the platform limits a single record to 1 MB, so a long workflow eventually stops
+    /// being able to save. With it, each checkpoint becomes its own record and the session keeps
+    /// only the pointer to the last one.
+    /// </para>
+    /// <para>
+    /// The method is a no-op when the agent does not host a workflow or when the workflow was built
+    /// with an explicit checkpoint manager. The AgentServer SDK selects the hosted or local
+    /// state-store backend. The redirected agent is cached against the agent it came from, so the
+    /// substitution happens once rather than on every request.
+    /// </para>
+    /// </remarks>
+    /// <param name="agent">The resolved agent.</param>
+    /// <param name="loggerFactory">Creates the logger the checkpoint store reports through.</param>
+    /// <returns>The agent to serve the request with.</returns>
+    internal static AIAgent ApplyWorkflowCheckpointing(AIAgent agent, ILoggerFactory? loggerFactory = null)
+    {
+        return s_workflowCheckpointingAgents.GetValue(
+            agent,
+            source => source.WithCheckpointing(GetFoundryWorkflowCheckpointManager(loggerFactory)));
+    }
+
+    /// <summary>
+    /// The single checkpoint manager shared by every hosted workflow in this process. It is created
+    /// on first use so that no credential is built and no platform call is made when the process is
+    /// not running on the platform, which also means the first caller supplies its logger.
+    /// </summary>
+    private static CheckpointManager GetFoundryWorkflowCheckpointManager(ILoggerFactory? loggerFactory)
+    {
+        lock (s_checkpointManagerGate)
+        {
+            return s_foundryWorkflowCheckpointManager ??= CheckpointManager.CreateJson(
+                new FoundryJsonCheckpointStore(
+                    credential: CreateStateStoreCredential(),
+                    loggerFactory: loggerFactory));
+        }
+    }
+
+    /// <summary>
+    /// Creates the credential required by the hosted state-store backend. The beta.29 SDK requires
+    /// no credential for its local fallback, so local development does not construct one.
+    /// </summary>
+    private static DefaultAzureCredential? CreateStateStoreCredential() =>
+        FoundryEnvironment.IsHosted ? new DefaultAzureCredential() : null;
+
+    private static readonly object s_checkpointManagerGate = new();
+    private static CheckpointManager? s_foundryWorkflowCheckpointManager;
+
+    /// <summary>
+    /// Caches the redirected copy of each agent. Rebuilding it per request would restart the
+    /// agent's protocol validation and throw away the session identifiers it tracks, so the copy
+    /// has to live as long as the agent it was made from.
+    /// </summary>
+    private static readonly ConditionalWeakTable<AIAgent, AIAgent> s_workflowCheckpointingAgents = new();
 
     /// <summary>
     /// Registers the hosted-agent <c>User-Agent</c> supplement policy

@@ -4,6 +4,7 @@
 
 import base64
 import inspect
+import json
 import os
 import unittest.mock
 from collections.abc import Sequence
@@ -419,6 +420,76 @@ class TestGitHubCopilotAgentLifecycle:
 
             kwargs = MockClient.call_args.kwargs
             assert kwargs["base_directory"] == "/custom/copilot/home"
+
+    async def test_start_passes_telemetry_to_client(self) -> None:
+        """Test that telemetry settings are passed to the Copilot client."""
+        telemetry = {
+            "exporter_type": "otlp-http",
+            "otlp_endpoint": "http://localhost:4318",
+            "otlp_protocol": "http/json",
+            "capture_content": True,
+        }
+        with patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent(
+                default_options=copilot_options(cast(GitHubCopilotOptions, {"telemetry": telemetry}))
+            )
+            await agent.start()
+
+            assert MockClient.call_args.kwargs["telemetry"] == telemetry
+
+    async def test_start_parses_json_telemetry_string(self) -> None:
+        """JSON strings from env/.env settings are parsed before reaching the client."""
+        telemetry = {
+            "exporter_type": "otlp-http",
+            "otlp_endpoint": "http://localhost:4318",
+            "capture_content": True,
+        }
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": json.dumps(telemetry)}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            assert MockClient.call_args.kwargs["telemetry"] == telemetry
+
+    async def test_start_ignores_malformed_telemetry_string(self) -> None:
+        """A malformed telemetry JSON value is dropped instead of breaking startup."""
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": "{not json"}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            assert "telemetry" not in MockClient.call_args.kwargs
+
+    async def test_start_ignores_non_object_telemetry_string(self) -> None:
+        """Valid JSON that is not an object cannot be a TelemetryConfig and is dropped."""
+        with (
+            patch("agent_framework_github_copilot._agent.CopilotClient") as MockClient,
+            patch.dict("os.environ", {"GITHUB_COPILOT_TELEMETRY": "[1, 2]"}),
+        ):
+            mock_client = MagicMock()
+            mock_client.start = AsyncMock()
+            MockClient.return_value = mock_client
+
+            agent = GitHubCopilotAgent()
+            await agent.start()
+
+            assert "telemetry" not in MockClient.call_args.kwargs
 
     async def test_start_base_directory_not_set_when_unspecified(self) -> None:
         """Test that base_directory is not included in client kwargs when not specified."""
@@ -1927,10 +1998,28 @@ class TestGitHubCopilotAgentOptionsPassthrough:
 
         agent = GitHubCopilotAgent(client=mock_client)
         # timeout and on_pre_tool_use are consumed by the agent, not create_session.
-        await agent.run("hello", options=cast(Any, {"timeout": 30, "on_pre_tool_use": runtime_hook}))
+        await agent.run(
+            "hello",
+            options=cast(
+                Any,
+                {
+                    "timeout": 30,
+                    "on_pre_tool_use": runtime_hook,
+                    "telemetry": {"exporter_type": "file", "file_path": "/tmp/copilot.jsonl"},
+                },
+            ),
+        )
 
         config = mock_client.create_session.call_args.kwargs
-        for leaked in ("timeout", "on_pre_tool_use", "on_function_approval", "cli_path", "log_level", "base_directory"):
+        for leaked in (
+            "timeout",
+            "on_pre_tool_use",
+            "on_function_approval",
+            "cli_path",
+            "log_level",
+            "base_directory",
+            "telemetry",
+        ):
             assert leaked not in config
         # on_pre_tool_use is still honored via the hooks parameter.
         assert config["hooks"]["on_pre_tool_use"] is runtime_hook

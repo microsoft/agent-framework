@@ -1,14 +1,18 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
+using System.Text;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -30,6 +34,21 @@ public class ServiceCollectionExtensionsTests
             d => d.ServiceType == typeof(ResponseHandler));
         Assert.NotNull(descriptor);
         Assert.Equal(typeof(AgentFrameworkResponseHandler), descriptor.ImplementationType);
+    }
+
+    [Fact]
+    public void AddFoundryResponses_UsesTheStateStoreAdapterByDefault()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        // Act
+        services.AddFoundryResponses();
+        using var provider = services.BuildServiceProvider();
+
+        // Assert: the AgentServer SDK behind this adapter chooses the hosted or local backend.
+        Assert.IsType<FoundryAgentSessionStore>(provider.GetRequiredService<AgentSessionStore>());
     }
 
     [Fact]
@@ -198,10 +217,45 @@ public class ServiceCollectionExtensionsTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-    private static async Task<IHost> BuildTestHostAsync(Action<WebApplication> configure)
+    [Fact]
+    public async Task MapFoundryResponses_HostedCreateWithoutCallId_ReturnsUnsupportedProtocolAsync()
+    {
+        // Arrange: configuration marks the TestServer as hosted without changing the process-wide
+        // environment or starting the AgentServer hosted task infrastructure.
+        using var host = await BuildTestHostAsync(
+            static app => app.MapFoundryResponses(),
+            static builder => builder.Configuration.AddInMemoryCollection(
+                new Dictionary<string, string?>
+                {
+                    [FoundryHostingExtensions.FoundryHostingEnvironmentKey] = "true",
+                }));
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/responses")
+        {
+            Content = new StringContent(
+                """{"model":"test-agent","input":"hello"}""",
+                Encoding.UTF8,
+                "application/json"),
+        };
+
+        // Act
+        using var response = await host.GetTestClient().SendAsync(request);
+        string body = await response.Content.ReadAsStringAsync();
+
+        // Assert: reject before the request enters AgentServer's resilient task boundary, which
+        // wraps handler exceptions and would otherwise turn the intended 501 into a generic 500.
+        Assert.Equal(HttpStatusCode.NotImplemented, response.StatusCode);
+        Assert.Equal("upstream", response.Headers.GetValues("x-platform-error-source").Single());
+        Assert.Contains(HostedProtocolCompatibility.UnsupportedProtocolErrorCode, body, StringComparison.Ordinal);
+        Assert.Contains("2.0.0", body, StringComparison.Ordinal);
+    }
+
+    private static async Task<IHost> BuildTestHostAsync(
+        Action<WebApplication> configure,
+        Action<WebApplicationBuilder>? configureBuilder = null)
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
+        configureBuilder?.Invoke(builder);
 
         var mockAgent = new Mock<AIAgent>();
         mockAgent.SetupGet(a => a.Name).Returns("test-agent");

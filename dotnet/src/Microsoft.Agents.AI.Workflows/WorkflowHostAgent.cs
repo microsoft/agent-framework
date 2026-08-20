@@ -55,6 +55,48 @@ internal sealed class WorkflowHostAgent : AIAgent
     public override string? Name { get; }
     public override string? Description { get; }
 
+    /// <summary>
+    /// Reports whether this agent was built with an execution environment that already names a
+    /// checkpoint manager, meaning the caller chose where its checkpoints are written.
+    /// </summary>
+    internal bool UsesOwnCheckpointStorage => this._executionEnvironment.IsCheckpointingEnabled;
+
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        Throw.IfNull(serviceType);
+
+        return base.GetService(serviceType, serviceKey)
+            ?? (serviceKey is null && serviceType == typeof(WorkflowAgentMetadata)
+                ? this._metadata ??= new WorkflowAgentMetadata(this.UsesOwnCheckpointStorage)
+                : null);
+    }
+
+    private WorkflowAgentMetadata? _metadata;
+
+    /// <summary>
+    /// Builds a copy of this agent that writes its checkpoints to <paramref name="checkpointManager"/>.
+    /// Returns this same instance when the execution environment already names a checkpoint manager,
+    /// because that means the caller made an explicit choice.
+    /// </summary>
+    internal AIAgent WithCheckpointing(CheckpointManager checkpointManager)
+    {
+        if (this._executionEnvironment.IsCheckpointingEnabled ||
+            this._executionEnvironment is not InProcessExecutionEnvironment inProcEnvironment)
+        {
+            return this;
+        }
+
+        return new WorkflowHostAgent(
+            this._workflow,
+            this._id,
+            this.Name,
+            this.Description,
+            inProcEnvironment.WithCheckpointing(checkpointManager),
+            this._includeExceptionDetails,
+            this._includeWorkflowOutputsInResponse);
+    }
+
     private string GenerateNewId()
     {
         string result;

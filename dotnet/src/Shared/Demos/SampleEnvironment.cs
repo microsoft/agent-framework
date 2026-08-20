@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections;
+using System.IO;
 using SystemEnvironment = System.Environment;
 
 namespace SampleHelpers;
@@ -12,6 +13,32 @@ internal static class SampleEnvironment
 {
     public static string? GetEnvironmentVariable(string key)
         => GetEnvironmentVariable(key, EnvironmentVariableTarget.Process);
+
+    // Returns true when the process cannot safely prompt for console input. This is the case for
+    // hosted-agent containers, CI runs, and any invocation with redirected/piped stdin. Callers must
+    // never block on Console.ReadLine in these environments: a hosted agent that blocks on startup
+    // never serves its /readiness endpoint and is reported as never becoming ready. Deployments can
+    // also force this behavior explicitly by setting AF_DEMO_NONINTERACTIVE (useful when a host
+    // allocates a pseudo-terminal so stdin is not detected as redirected).
+    private static bool IsNonInteractive(EnvironmentVariableTarget target)
+    {
+        var forced = SystemEnvironment.GetEnvironmentVariable("AF_DEMO_NONINTERACTIVE", target);
+        if (!string.IsNullOrEmpty(forced) &&
+            forced?.ToUpperInvariant() is "1" or "Y" or "YES" or "TRUE")
+        {
+            return true;
+        }
+
+        try
+        {
+            return Console.IsInputRedirected;
+        }
+        catch (IOException)
+        {
+            // No console is attached at all (for example, some container hosts): treat as non-interactive.
+            return true;
+        }
+    }
 
     public static string? GetEnvironmentVariable(string key, EnvironmentVariableTarget target)
     {
@@ -22,6 +49,16 @@ internal static class SampleEnvironment
         var value = SystemEnvironment.GetEnvironmentVariable(key, target);
         if (string.IsNullOrWhiteSpace(value))
         {
+            // In non-interactive environments (a hosted-agent container, CI, or piped/redirected
+            // stdin) there is no console to prompt at, and Console.ReadLine can block indefinitely
+            // waiting for input that never arrives. For a hosted agent that means the app never
+            // finishes starting and its /readiness endpoint never returns 200. Skip the interactive
+            // prompt in that case and fall back to the default (null) instead of blocking.
+            if (IsNonInteractive(target))
+            {
+                return value;
+            }
+
             var color = Console.ForegroundColor;
             Console.ForegroundColor = ConsoleColor.Green;
             Console.Write("Setting '");
