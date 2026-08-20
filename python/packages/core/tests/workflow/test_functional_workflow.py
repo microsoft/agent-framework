@@ -535,7 +535,7 @@ class TestStreaming:
         await wf.run(1)
         assert streaming_flag is False
 
-    async def test_abandoned_stream_finalizes_without_event_loop_error(self) -> None:
+    async def test_abandoned_stream_finalizes_without_event_loop_error(self, caplog: pytest.LogCaptureFixture) -> None:
         """Breaking out of a streaming run must not leak ContextVar tokens on GC.
 
         Regression for https://github.com/microsoft/agent-framework/issues/7787:
@@ -555,24 +555,61 @@ class TestStreaming:
                 original_handler(_loop, context)
 
         loop.set_exception_handler(_capture_loop_exception)
+
+        @built_workflow
+        async def pipeline(x: int) -> int:
+            return await add_one(x)
+
         try:
+            with caplog.at_level(logging.ERROR, logger="opentelemetry"):
+                stream = pipeline.run(5, stream=True)
+                async for _event in stream:
+                    break
 
-            @built_workflow
-            async def pipeline(x: int) -> int:
-                return await add_one(x)
-
-            stream = pipeline.run(5, stream=True)
-            async for _event in stream:
-                break
-
-            del stream
-            gc.collect()
-            for _ in range(5):
-                await asyncio.sleep(0)
+                del stream
+                gc.collect()
+                for _ in range(5):
+                    await asyncio.sleep(0)
         finally:
             loop.set_exception_handler(original_handler)
 
         assert loop_errors == [], f"Abandoned stream leaked loop exceptions: {loop_errors!r}"
+        otel_errors = [
+            rec.getMessage()
+            for rec in caplog.records
+            if "Failed to detach context" in rec.getMessage()
+            or "was created in a different Context" in rec.getMessage()
+        ]
+        assert otel_errors == [], f"Abandoned stream leaked OpenTelemetry errors: {otel_errors!r}"
+
+        follow_up = await pipeline.run(6)
+        assert follow_up.get_outputs() == [7]
+
+    async def test_nested_processing_span_parents_under_workflow_run(self, span_exporter: Any) -> None:
+        """Spans opened during ``_execute`` must parent under the unattached ``workflow.run`` span."""
+        from agent_framework.observability import OtelAttr, create_processing_span
+
+        @step
+        async def traced_add(x: int) -> int:
+            with create_processing_span("traced_add", "StepWrapper", "int", "int"):
+                return x + 1
+
+        @built_workflow
+        async def pipeline(x: int) -> int:
+            return await traced_add(x)
+
+        span_exporter.clear()  # type: ignore[attr-defined]
+        result = await pipeline.run(5)
+        assert result.get_outputs() == [6]
+
+        spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
+        run_spans = [s for s in spans if s.name == OtelAttr.WORKFLOW_RUN_SPAN]
+        process_spans = [s for s in spans if s.name == f"{OtelAttr.EXECUTOR_PROCESS_SPAN} traced_add"]
+        assert len(run_spans) == 1
+        assert len(process_spans) == 1
+        process_parent = process_spans[0].parent
+        assert process_parent is not None
+        assert process_parent.span_id == run_spans[0].context.span_id
 
     async def test_started_event_origin_is_framework_after_origin_manager_closes(self) -> None:
         """Framework lifecycle events stay tagged FRAMEWORK even when yielded outside the origin CM."""

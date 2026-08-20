@@ -1137,6 +1137,10 @@ class FunctionalWorkflow:
             capture_exception(span, exception=exc)
             raise
         finally:
+            # ResponseStream cleanup_hooks do not run when the generator is
+            # closed by GC. Release the run lock here so a follow-up run
+            # after an abandoned stream is not rejected as concurrent.
+            self._release_run_guard()
             span.end()
 
     async def _execute(self, ctx: RunContext, message: Any) -> Any:
@@ -1300,8 +1304,11 @@ class FunctionalWorkflow:
             raise RuntimeError("Workflow is already running. Concurrent executions are not allowed.")
         self._is_running = True
 
-    async def _run_cleanup(self) -> None:
+    def _release_run_guard(self) -> None:
         self._is_running = False
+
+    async def _run_cleanup(self) -> None:
+        self._release_run_guard()
 
 
 # ---------------------------------------------------------------------------
