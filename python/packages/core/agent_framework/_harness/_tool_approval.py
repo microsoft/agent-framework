@@ -7,7 +7,6 @@ import inspect
 import json
 from asyncio import sleep
 from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, MutableMapping, Sequence
-from functools import partial
 from typing import Any, Literal, cast
 
 from .._middleware import AgentContext, AgentMiddleware
@@ -461,6 +460,12 @@ class ToolApprovalMiddleware(AgentMiddleware):
         call_next: Callable[[], Awaitable[None]],
         state: ToolApprovalState,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        # Last inner AgentResponse. Its already-parsed structured value is carried
+        # over by the outer finalizer so an auto-approved preamble that
+        # AgentResponse.from_updates coalesces into the JSON message cannot mask it.
+        holder: dict[str, AgentResponse | None] = {"final": None}
+        response_format = _structured_response_format(context)
+
         async def _stream() -> AsyncIterable[AgentResponseUpdate]:
             if context.session is None:
                 raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
@@ -496,7 +501,7 @@ class ToolApprovalMiddleware(AgentMiddleware):
                     buffered_update = copy.copy(update)
                     buffered_update.contents = list(update.contents)
                     buffered_approval_updates.append(buffered_update)
-                await context.result.get_final_response()
+                holder["final"] = await context.result.get_final_response()
                 if not approval_requests:
                     return
 
@@ -528,13 +533,20 @@ class ToolApprovalMiddleware(AgentMiddleware):
                 context.messages = []
                 context.result = None
 
-        return ResponseStream(
-            _stream(),
-            finalizer=partial(
-                AgentResponse.from_updates,
-                output_format_type=_structured_response_format(context),
-            ),
-        )
+        def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            # Build the response from the streamed updates so the middleware's
+            # approval / user-input handling is preserved, then carry over the
+            # structured value already parsed by the inner response. The coalesced
+            # update text can include preamble from auto-approved turns, which would
+            # otherwise mask the parsed value (#7418).
+            response = AgentResponse.from_updates(updates, output_format_type=response_format)
+            final = holder["final"]
+            if final is not None and final._value_parsed:  # pyright: ignore[reportPrivateUsage]
+                response._value = final._value  # pyright: ignore[reportPrivateUsage]
+                response._value_parsed = True  # pyright: ignore[reportPrivateUsage]
+            return response
+
+        return ResponseStream(_stream(), finalizer=_finalize)
 
     def _prepare_inbound_messages(
         self,
