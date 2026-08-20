@@ -34,10 +34,18 @@ jobs:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
       - name: Set environment variables
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
           # Extract package name from tag (format: python-<package>-<version>)
-          TAG="${{ github.event.release.tag_name }}"
+          TAG="$TAG_NAME"
           PACKAGE=$(echo "$TAG" | sed 's/^python-\([^-]*\)-.*$/\1/')
+
+          # Validate the extracted package name is a plain identifier
+          if [[ ! "$PACKAGE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            echo "Error: could not derive a valid package name from tag '$TAG'"
+            exit 1
+          fi
 
           # Validate package exists
           if [[ ! -d "packages/$PACKAGE" ]]; then
@@ -50,11 +58,13 @@ jobs:
           echo "Building package: $PACKAGE"
 
       - name: Check version
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
-          echo "Building and uploading Python package version: ${{ github.event.release.tag_name }}"
-          echo "Package directory: packages/${{ env.PACKAGE }}"
+          echo "Building and uploading Python package version: $TAG_NAME"
+          echo "Package directory: packages/$PACKAGE"
       - name: Build the package
-        run: uv run poe --directory packages/${{ env.PACKAGE }} build
+        run: uv run poe --directory "packages/$PACKAGE" build
       - name: Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
