@@ -4784,10 +4784,10 @@ async def test_generated_mcp_function_ignores_model_supplied_remote_tool_name() 
     )
 
     tool.session.call_tool.assert_awaited_once()  # ty: ignore[unresolved-attribute]
-    called_name = tool.session.call_tool.await_args.args[0]  # ty: ignore[unresolved-attribute]
-    called_arguments = tool.session.call_tool.await_args.kwargs["arguments"]  # ty: ignore[unresolved-attribute]
-    assert called_name == "search_docs"
-    assert called_arguments == {"query": "quarterly report"}
+    await_args = tool.session.call_tool.await_args  # ty: ignore[unresolved-attribute]
+    assert await_args is not None
+    assert await_args.args[0] == "search_docs"
+    assert await_args.kwargs["arguments"] == {"query": "quarterly report"}
 
 
 async def test_mcp_tool_get_prompt_requires_loaded_prompts() -> None:
