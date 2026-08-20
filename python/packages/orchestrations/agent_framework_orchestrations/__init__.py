@@ -17,10 +17,14 @@ try:
 except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"  # Fallback for development mode
 
+from agent_framework import register_checkpoint_type
+
 from ._base_group_chat_orchestrator import (
     BaseGroupChatOrchestrator,
+    GroupChatParticipantMessage,
     GroupChatRequestMessage,
     GroupChatRequestSentEvent,
+    GroupChatResponseMessage,
     GroupChatResponseReceivedEvent,
     TerminationCondition,
 )
@@ -59,6 +63,7 @@ from ._magentic import (
     MagenticProgressLedgerItem,
     MagenticResetSignal,
     StandardMagenticManager,
+    _MagenticTaskLedger,
 )
 from ._orchestration_request_info import AgentRequestInfoResponse
 from ._orchestration_state import OrchestrationState
@@ -108,3 +113,24 @@ __all__ = [
     "clean_conversation_for_handoff",
     "create_completion_message",
 ]
+
+# Framework-owned types that cross a checkpoint boundary: executor-to-executor message
+# envelopes and request_info payloads/responses. Registering them here means built-in
+# orchestrations restore without users maintaining their own `allowed_checkpoint_types`
+# list of framework module paths.
+for _checkpoint_type in (
+    GroupChatRequestMessage,
+    GroupChatParticipantMessage,
+    GroupChatResponseMessage,
+    HandoffAgentUserRequest,
+    AgentRequestInfoResponse,
+    MagenticResetSignal,
+    MagenticPlanReviewRequest,
+    MagenticPlanReviewResponse,
+    MagenticProgressLedger,
+    MagenticProgressLedgerItem,
+    _MagenticTaskLedger,
+):
+    register_checkpoint_type(_checkpoint_type)
+
+del _checkpoint_type
