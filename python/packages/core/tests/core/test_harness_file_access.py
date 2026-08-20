@@ -1845,14 +1845,71 @@ async def test_provider_can_disable_the_alignment_check(
 def test_stores_do_not_declare_alignment_by_default() -> None:
     """Nothing ships with the declaration set, including the two stores that are trusted.
 
-    They are trusted through ``_ALIGNED_SEARCH_IMPLEMENTATIONS`` instead, keyed on the
-    ``search`` function itself. Declaring the attribute on them would be inherited by any
-    subclass, so a store extending one and overriding ``search`` would keep the declaration
-    and be trusted with numbers it computed itself — pinned by the next test.
+    They are trusted through ``_ALIGNED_STORE_TYPES`` instead, matched by exact type.
+    Declaring the attribute on them would be inherited by any subclass, so a store extending
+    one would keep the declaration and be trusted with numbers it computed itself — pinned by
+    the next two tests.
     """
     assert AgentFileStore.reports_aligned_line_numbers is False
     assert InMemoryAgentFileStore.reports_aligned_line_numbers is False
     assert FileSystemAgentFileStore.reports_aligned_line_numbers is False
+
+
+async def test_subclassing_a_shipped_store_and_overriding_read_is_verified(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A shipped store's ``search`` scans its own storage, so an overridden ``read`` can disagree with it.
+
+    ``search`` is untouched here, so keying trust on the ``search`` function alone would let this
+    through: grep numbers the backing dictionary while ``read_lines`` and ``replace_lines`` index
+    the prepended text.
+    """
+
+    class _PrependingSubclass(InMemoryAgentFileStore):
+        async def read(self, path: str) -> str | None:
+            content = await super().read(path)
+            return None if content is None else "banner\n" + content
+
+    store = _PrependingSubclass()
+    await store.write("cfg.txt", "alpha\nkeep me\n")
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+
+    result = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
+    assert "do not line up" in result
+
+
+async def test_search_alignment_refuses_a_non_positive_line_number(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Line 0 must be refused rather than indexing from the end of the file.
+
+    ``FileSearchMatch.__init__`` rejects it, so this store sets the attribute afterwards. The file
+    deliberately ends without a newline and its last line matches the pattern, so an unchecked
+    ``lines[-1]`` verifies successfully and the skew goes unnoticed.
+    """
+
+    class _ZeroLineStore(InMemoryAgentFileStore):
+        async def search(
+            self,
+            directory: str,
+            regex_pattern: str,
+            glob_pattern: str | None = None,
+            *,
+            recursive: bool = False,
+        ) -> list[FileSearchResult]:
+            del directory, glob_pattern, recursive
+            match = FileSearchMatch(line_number=1, line=regex_pattern)
+            match.line_number = 0
+            return [FileSearchResult(file_name="cfg.txt", snippet="", matching_lines=[match])]
+
+    store = _ZeroLineStore()
+    await store.write("cfg.txt", "alpha\nkeep me")
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+
+    result = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
+    assert "do not line up" in result
 
 
 async def test_subclassing_a_shipped_store_does_not_inherit_its_trust(

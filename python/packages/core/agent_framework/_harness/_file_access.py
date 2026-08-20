@@ -265,9 +265,10 @@ def _split_lines_keepends(content: str) -> list[str]:
     This is the single definition of a line used by ``read_lines``, ``replace_lines`` and the
     :class:`AgentFileStore` implementations in this package, so for those stores a ``line_number``
     obtained from ``grep`` always targets the same line in the others and stays in range. A custom
-    store supplies its own :meth:`AgentFileStore.search`, whose contract does not require this
-    split, so the alignment does not follow automatically for one. Splitting solely on ``\n``
-    (a trailing ``\r``
+    store supplies its own :meth:`AgentFileStore.search`, which must number by this split but does
+    not inherit it, so the alignment does not follow automatically and the providers verify it.
+
+    Splitting solely on ``\n`` (a trailing ``\r``
     stays attached to the line) means the result has ``len(content.split("\n"))``
     elements: a trailing ``\n`` yields a final empty (editable) line, and empty content
     yields a single empty line. ``"".join(...)`` reproduces ``content`` verbatim.
@@ -749,8 +750,8 @@ class AgentFileStore(ABC):
         returning a file that turns out not to match is harmless — the base
         :meth:`search` re-scans every candidate and discards it — while omitting
         a file loses the match. A backend with a native search index should
-        override this and push ``regex_pattern`` down to it, accepting that a
-        dialect mismatch costs recall and nothing else.
+        override this and push ``regex_pattern`` down to it, widening rather than
+        guessing where the dialect cannot express the pattern.
 
         The default implementation has no index to narrow with, so it walks :meth:`list_children`
         and returns every file in scope. Overriding :meth:`search` instead is also
@@ -1383,20 +1384,27 @@ class FileSystemAgentFileStore(AgentFileStore):
         await asyncio.to_thread(lambda: full_path.mkdir(parents=True, exist_ok=True))
 
 
-#: ``search`` implementations known to number lines with :meth:`AgentFileStore.split_lines`: the
-#: base implementation by construction, and the two stores shipped here because they report through
-#: :meth:`AgentFileStore.scan_content`. Anything else is verified before its numbers reach the model.
-#:
-#: Keyed on the function object rather than declared with
-#: :attr:`AgentFileStore.reports_aligned_line_numbers`, because that attribute is inherited: a store
-#: subclassing one of these and overriding ``search`` would keep the declaration and be trusted with
-#: numbers it computed itself. Dropping out of this set is automatic. (The .NET port declares the
-#: property instead, which is safe there only because both of its shipped stores are sealed.)
-_ALIGNED_SEARCH_IMPLEMENTATIONS: frozenset[Any] = frozenset({
-    AgentFileStore.search,
-    InMemoryAgentFileStore.search,
-    FileSystemAgentFileStore.search,
+#: Store types whose ``search`` numbers lines with :meth:`AgentFileStore.split_lines`. Matched by
+#: exact type rather than ``isinstance``: both scan their own storage instead of going through
+#: ``read``, so a subclass overriding only ``read`` would have grep and the line editor looking at
+#: different text while inheriting the trust. (The .NET port declares a property instead, which is
+#: safe there only because both of its shipped stores are sealed.)
+_ALIGNED_STORE_TYPES: frozenset[type[AgentFileStore]] = frozenset({
+    InMemoryAgentFileStore,
+    FileSystemAgentFileStore,
 })
+
+
+def _numbers_are_trusted(store: AgentFileStore) -> bool:
+    """Whether ``store``'s line numbers are known to be :meth:`AgentFileStore.split_lines` coordinates."""
+    if store.reports_aligned_line_numbers:
+        return True
+    # The base ``search`` numbers whatever ``self.read`` returns, which is the text the editor
+    # indexes, so it stays aligned however a subclass overrides ``read``.
+    if type(store).search is AgentFileStore.search:
+        return True
+    return type(store) in _ALIGNED_STORE_TYPES
+
 
 _MISALIGNED_SEARCH_MESSAGE = (
     "Could not search files: this store's line numbers do not line up with the numbering used by "
@@ -1411,6 +1419,7 @@ async def _verify_search_alignment(
     directory: str,
     results: list[FileSearchResult],
     regex_pattern: str,
+    message: str = _MISALIGNED_SEARCH_MESSAGE,
 ) -> str | None:
     """Check that a store's reported line numbers address the lines the editor will edit.
 
@@ -1425,10 +1434,18 @@ async def _verify_search_alignment(
     even if the numbering is skewed — and it is deliberately whole-call: a single
     skewed file means the store's coordinates cannot be trusted anywhere.
 
+    Args:
+        store: The store whose numbers are being checked.
+        directory: The directory the search ran in.
+        results: The results to check.
+        regex_pattern: The pattern the search ran with.
+        message: Returned on a mismatch. The default names the file-access tools; the memory
+            provider passes its own, because it registers neither of them.
+
     Returns:
         ``None`` when the numbers are trustworthy, otherwise a message for the model.
     """
-    if not results or store.reports_aligned_line_numbers or type(store).search in _ALIGNED_SEARCH_IMPLEMENTATIONS:
+    if not results or _numbers_are_trusted(store):
         return None
 
     async def collect() -> list[tuple[FileSearchResult, str]]:
@@ -1452,7 +1469,9 @@ async def _verify_search_alignment(
         for result, content in scanned:
             lines = AgentFileStore.split_lines(content)
             for match in result.matching_lines:
-                if match.line_number > len(lines):
+                # Both bounds: 0 or negative would index from the end and could match, passing a
+                # store whose numbers the editor will reject.
+                if not 1 <= match.line_number <= len(lines):
                     return False
                 if regex.search(_strip_line_terminator(lines[match.line_number - 1])) is None:
                     return False
@@ -1468,8 +1487,8 @@ async def _verify_search_alignment(
         # and an unbounded verification pass would hang grep for as long as they take.
         aligned = await asyncio.wait_for(verify(), timeout=_SEARCH_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
-        return _MISALIGNED_SEARCH_MESSAGE
-    return None if aligned else _MISALIGNED_SEARCH_MESSAGE
+        return message
+    return None if aligned else message
 
 
 class _WriteFileInput(BaseModel):
@@ -1882,7 +1901,7 @@ class FileAccessProvider(ContextProvider):
 
         @tool(name=FileAccessProvider.READ_TOOL_NAME, schema=_ReadFileInput, approval_mode=readonly_approval)
         async def file_access_read(file_name: str) -> str:
-            """Read the content of a file by name. Returns the file content or a message indicating the file could not be read."""  # ruff:ignore[line-too-long]
+            r"""Read the content of a file by name. Returns the file content or a message indicating the file could not be read. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 content = await self.store.read(normalized)
@@ -1898,7 +1917,7 @@ class FileAccessProvider(ContextProvider):
             approval_mode=readonly_approval,
         )
         async def file_access_read_lines(file_name: str, start_line: int, end_line: int | None = None) -> str:
-            """Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line."""  # ruff:ignore[line-too-long]
+            r"""Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 content = await self.store.read(normalized)
@@ -1970,7 +1989,7 @@ class FileAccessProvider(ContextProvider):
             approval_mode=write_approval,
         )
         async def file_access_replace_lines(file_name: str, edits: list[_LineEdit]) -> str:
-            """Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers."""  # ruff:ignore[line-too-long]
+            r"""Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
                 async with self._write_lock:
@@ -1991,7 +2010,7 @@ class FileAccessProvider(ContextProvider):
             glob_pattern: str | None = None,
             directory: str | None = None,
         ) -> list[dict[str, Any]] | str:
-            """Search the contents of files in the store using a case-insensitive regular expression.
+            r"""Search the contents of files in the store using a case-insensitive regular expression.
 
             The search runs recursively across all subdirectories. Optionally restrict the search to a
             ``directory`` (relative path), and filter which files to search using a glob ``glob_pattern``
@@ -2002,7 +2021,11 @@ class FileAccessProvider(ContextProvider):
             Leave empty or omit to search all files.
             Returns matching results whose file_name values are paths relative to the store root
             (directly usable with file_access_read), along with snippets and matching lines with line numbers.
-            Each matching line is verbatim, including its own line terminator.
+            For the stores in this package each matching line is verbatim, including its own line
+            terminator, so it can be reused as a file_access_replace_lines new_line; a custom store is
+            not bound to report it verbatim, though its line numbers must address the same lines.
+            Line numbers count lines split on \n only, with a final empty line when content ends in a
+            newline.
             The regex_pattern must be 256 characters or fewer.
             """
             glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None

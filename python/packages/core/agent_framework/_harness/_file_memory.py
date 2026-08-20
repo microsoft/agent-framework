@@ -74,6 +74,15 @@ DEFAULT_FILE_MEMORY_INSTRUCTIONS = (
     "compacted or truncated. This ensures important data remains accessible across long-running sessions."
 )
 
+#: The file-access wording names tools this provider does not register: there is no
+#: ``file_memory_read_lines``, so the model is pointed at ``file_memory_read`` instead.
+_MISALIGNED_MEMORY_SEARCH_MESSAGE = (
+    "Could not search memory files: this store's line numbers do not line up with the numbering "
+    "used by file_memory_replace_lines, so editing by the reported numbers would change the wrong "
+    "lines (or a file changed while the search ran). Use file_memory_read to locate the content "
+    "before editing."
+)
+
 _DESCRIPTION_SUFFIX = "_description.md"
 _MEMORY_INDEX_FILE_NAME = "memories.md"
 _MAX_INDEX_ENTRIES = 50
@@ -373,7 +382,7 @@ class FileMemoryProvider(ContextProvider):
 
         @tool(name="file_memory_read", schema=_ReadFileInput, approval_mode="never_require")
         async def file_memory_read(file_name: str) -> str:
-            """Read the content of a memory file by name. Returns the file content or a message indicating the file was not found."""  # ruff:ignore[line-too-long]
+            r"""Read the content of a memory file by name. Returns the file content or a message indicating the file was not found. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
             except ValueError as exc:
@@ -466,7 +475,7 @@ class FileMemoryProvider(ContextProvider):
 
         @tool(name="file_memory_replace_lines", schema=_ReplaceLinesInput, approval_mode="never_require")
         async def file_memory_replace_lines(file_name: str, edits: list[_LineEdit]) -> str:
-            """Replace lines in a memory file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers."""  # ruff:ignore[line-too-long]
+            r"""Replace lines in a memory file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
             except ValueError as exc:
@@ -507,7 +516,9 @@ class FileMemoryProvider(ContextProvider):
                 if not self.disable_search_alignment_check:
                     # Inside the same guard: the check compiles the pattern itself, so a store that
                     # accepts one this package would reject must not throw out of the tool.
-                    misaligned = await _verify_search_alignment(self.store, working_folder, visible, regex_pattern)
+                    misaligned = await _verify_search_alignment(
+                        self.store, working_folder, visible, regex_pattern, _MISALIGNED_MEMORY_SEARCH_MESSAGE
+                    )
                     if misaligned is not None:
                         return misaligned
             except ValueError as exc:
