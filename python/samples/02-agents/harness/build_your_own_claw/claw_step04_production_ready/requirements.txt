@@ -1,0 +1,10 @@
+agent-framework-core
+agent-framework-foundry
+agent-framework-foundry-hosting>=1.0.0a260630
+agent-framework-tools
+agent-framework-monty
+agent-framework-purview
+mcp
+httpx
+azure-identity
+python-dotenv
