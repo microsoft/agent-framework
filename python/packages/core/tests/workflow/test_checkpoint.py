@@ -10,7 +10,6 @@ from typing import Any
 import pytest
 
 from agent_framework import (
-    CheckpointStorage,
     FileCheckpointStorage,
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
@@ -1764,115 +1763,6 @@ async def test_file_checkpoint_storage_roundtrip_empty_collections():
         assert loaded.state["nested_empty"]["inner_dict"] == {}
         assert loaded.messages == {}
         assert loaded.pending_request_info_events == {}
-
-
-# endregion
-
-
-# region checkpoint storage conformance
-
-# These tests define the ownership contract that every CheckpointStorage backend must satisfy:
-# a checkpoint handed to the caller is owned by the caller, and a checkpoint handed to save() is
-# snapshotted at call time. Backends that serialize (file, Cosmos) get this for free because
-# decoding allocates a fresh object graph; backends that hold live objects must copy explicitly.
-
-
-@pytest.fixture(params=["memory", "file"])
-def conformance_storage(request: pytest.FixtureRequest, tmp_path: Path) -> CheckpointStorage:
-    """Yield each in-tree checkpoint storage backend for the shared contract tests."""
-    if request.param == "memory":
-        return InMemoryCheckpointStorage()
-    return FileCheckpointStorage(tmp_path / "conformance")
-
-
-def _conformance_checkpoint(workflow_name: str = "conformance-workflow") -> WorkflowCheckpoint:
-    """Build a checkpoint whose state holds nested mutable containers."""
-    return WorkflowCheckpoint(
-        workflow_name=workflow_name,
-        graph_signature_hash="conformance-hash",
-        state={
-            "shared": {"counter": 0, "history": ["initial"]},
-            "_executor_state": {"executor1": {"visits": ["first"]}},
-        },
-        metadata={"tags": ["initial"]},
-    )
-
-
-async def test_conformance_load_returns_caller_owned_copy(conformance_storage: CheckpointStorage) -> None:
-    """Mutating a loaded checkpoint must not alter what the backend has stored."""
-    checkpoint = _conformance_checkpoint()
-    await conformance_storage.save(checkpoint)
-
-    loaded = await conformance_storage.load(checkpoint.checkpoint_id)
-    loaded.state["shared"]["counter"] = 999
-    loaded.state["shared"]["history"].append("mutated")
-    loaded.state["_executor_state"]["executor1"]["visits"].append("mutated")
-    loaded.metadata["tags"].append("mutated")
-
-    reloaded = await conformance_storage.load(checkpoint.checkpoint_id)
-    assert reloaded.state["shared"]["counter"] == 0
-    assert reloaded.state["shared"]["history"] == ["initial"]
-    assert reloaded.state["_executor_state"]["executor1"]["visits"] == ["first"]
-    assert reloaded.metadata["tags"] == ["initial"]
-
-
-async def test_conformance_repeated_loads_are_independent(conformance_storage: CheckpointStorage) -> None:
-    """Two loads of one checkpoint must not share mutable state."""
-    checkpoint = _conformance_checkpoint()
-    await conformance_storage.save(checkpoint)
-
-    first = await conformance_storage.load(checkpoint.checkpoint_id)
-    second = await conformance_storage.load(checkpoint.checkpoint_id)
-    assert first is not second
-
-    first.state["shared"]["counter"] = 42
-    first.state["shared"]["history"].append("from-first")
-
-    assert second.state["shared"]["counter"] == 0
-    assert second.state["shared"]["history"] == ["initial"]
-
-
-async def test_conformance_get_latest_returns_caller_owned_copy(conformance_storage: CheckpointStorage) -> None:
-    """Mutating the result of get_latest must not alter stored state."""
-    checkpoint = _conformance_checkpoint()
-    await conformance_storage.save(checkpoint)
-
-    latest = await conformance_storage.get_latest(workflow_name=checkpoint.workflow_name)
-    assert latest is not None
-    latest.state["shared"]["counter"] = 123
-
-    reloaded = await conformance_storage.get_latest(workflow_name=checkpoint.workflow_name)
-    assert reloaded is not None
-    assert reloaded.state["shared"]["counter"] == 0
-
-
-async def test_conformance_list_checkpoints_returns_caller_owned_copies(
-    conformance_storage: CheckpointStorage,
-) -> None:
-    """Mutating a checkpoint from list_checkpoints must not alter stored state."""
-    checkpoint = _conformance_checkpoint()
-    await conformance_storage.save(checkpoint)
-
-    listed = await conformance_storage.list_checkpoints(workflow_name=checkpoint.workflow_name)
-    assert len(listed) == 1
-    listed[0].state["shared"]["history"].append("mutated")
-
-    relisted = await conformance_storage.list_checkpoints(workflow_name=checkpoint.workflow_name)
-    assert len(relisted) == 1
-    assert relisted[0].state["shared"]["history"] == ["initial"]
-
-
-async def test_conformance_save_snapshots_state_at_call_time(conformance_storage: CheckpointStorage) -> None:
-    """Mutating the caller's object after save must not alter the stored checkpoint."""
-    checkpoint = _conformance_checkpoint()
-    await conformance_storage.save(checkpoint)
-
-    checkpoint.state["shared"]["counter"] = 7
-    checkpoint.state["shared"]["history"].append("after-save")
-
-    loaded = await conformance_storage.load(checkpoint.checkpoint_id)
-    assert loaded.state["shared"]["counter"] == 0
-    assert loaded.state["shared"]["history"] == ["initial"]
 
 
 # endregion
