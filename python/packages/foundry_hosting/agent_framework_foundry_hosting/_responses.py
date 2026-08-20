@@ -24,7 +24,9 @@ from agent_framework import (
     RawAgent,
     SessionStore,
     SupportsAgentRun,
+    UsageDetails,
     WorkflowAgent,
+    add_usage_details,
 )
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
@@ -51,6 +53,9 @@ from azure.ai.agentserver.responses.models import (
     OutputItemReasoningItem,
     OutputMessageContent,
     ResponseStreamEvent,
+    ResponseUsage,
+    ResponseUsageInputTokensDetails,
+    ResponseUsageOutputTokensDetails,
 )
 from azure.ai.agentserver.responses.streaming._builders import (
     OutputItemBuilder,
@@ -552,7 +557,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in tracker.close():
                 yield event
 
-            yield response_event_stream.emit_completed()
+            yield response_event_stream.emit_completed(usage=tracker.usage)
         except Exception as ex:
             logger.error("Failed to produce response for agent", exc_info=(type(ex), ex, ex.__traceback__))
             for event in tracker.close():
@@ -914,7 +919,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             except Exception:
                 logger.exception("Error while closing streaming tracker after failure")
         message = str(ex) or type(ex).__name__
-        yield response_event_stream.emit_failed(message=message)
+        yield response_event_stream.emit_failed(message=message, usage=tracker.usage if tracker is not None else None)
 
 
 # endregion ResponsesHostServer
@@ -934,6 +939,7 @@ class _OutputItemTracker:
 
     def __init__(self, stream: ResponseEventStream) -> None:
         self._stream = stream
+        self._usage_details: UsageDetails | None = None
         self._active_type: str | None = None
         self._active_id: str | None = None
         # message_id of the update that opened the active text item, used to detect a new
@@ -951,6 +957,27 @@ class _OutputItemTracker:
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
         self._outstanding_function_calls: dict[str, str | None] = {}
+
+    @property
+    def usage(self) -> ResponseUsage | None:
+        """Return accumulated usage in the Responses API schema."""
+        if self._usage_details is None:
+            return None
+
+        input_tokens = int(self._usage_details.get("input_token_count") or 0)
+        output_tokens = int(self._usage_details.get("output_token_count") or 0)
+        total_tokens = self._usage_details.get("total_token_count")
+        return ResponseUsage(
+            input_tokens=input_tokens,
+            input_tokens_details=ResponseUsageInputTokensDetails(
+                cached_tokens=int(self._usage_details.get("cache_read_input_token_count") or 0)
+            ),
+            output_tokens=output_tokens,
+            output_tokens_details=ResponseUsageOutputTokensDetails(
+                reasoning_tokens=int(self._usage_details.get("reasoning_output_token_count") or 0)
+            ),
+            total_tokens=int(total_tokens) if total_tokens is not None else input_tokens + output_tokens,
+        )
 
     async def handle(
         self,
@@ -1167,6 +1194,9 @@ class _OutputItemTracker:
                     "Approval request was not saved to approval storage because the approval request ID "
                     "could not be extracted from the stream event."
                 )
+
+        elif content.type == "usage":
+            self._usage_details = add_usage_details(self._usage_details, content.usage_details)
 
         else:
             for event in self._close():

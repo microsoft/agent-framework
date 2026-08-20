@@ -1140,6 +1140,57 @@ class TestStreaming:
         assert len(done_events) == 1
         assert done_events[0]["data"]["text"] == "Hello world!"
 
+    async def test_usage_is_aggregated_in_completed_response(self, caplog: pytest.LogCaptureFixture) -> None:
+        agent = _make_agent(
+            stream_updates=[
+                AgentResponseUpdate(contents=[Content.from_text("Hello ")], role="assistant"),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_usage({
+                            "input_token_count": 10,
+                            "output_token_count": 2,
+                            "total_token_count": 12,
+                            "cache_read_input_token_count": 3,
+                            "reasoning_output_token_count": 1,
+                        })
+                    ],
+                    role="assistant",
+                ),
+                AgentResponseUpdate(contents=[Content.from_text("world!")], role="assistant"),
+                AgentResponseUpdate(
+                    contents=[
+                        Content.from_usage({
+                            "input_token_count": 5,
+                            "output_token_count": 4,
+                            "total_token_count": 9,
+                            "cache_read_input_token_count": 2,
+                            "reasoning_output_token_count": 2,
+                        })
+                    ],
+                    role="assistant",
+                ),
+            ]
+        )
+        server = _make_server(agent)
+
+        resp = await _post(server, stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+        assert types[-1] == "response.completed"
+        assert types.count("response.output_item.added") == 1
+        assert types.count("response.output_text.delta") == 2
+        completed = events[-1]["data"]["response"]
+        assert completed["usage"] == {
+            "input_tokens": 15,
+            "input_tokens_details": {"cached_tokens": 5},
+            "output_tokens": 6,
+            "output_tokens_details": {"reasoning_tokens": 3},
+            "total_tokens": 21,
+        }
+        assert "Content type 'usage' is not supported yet" not in caplog.text
+
     async def test_function_call_streaming(self) -> None:
         agent = _make_agent(
             stream_updates=[
@@ -4091,6 +4142,50 @@ class TestResponseFailedSurfacing:
         types = _sse_event_types(events)
         assert types.count("response.output_item.added") == types.count("response.output_item.done")
         assert types[-1] == "response.failed"
+
+    async def test_streaming_run_failure_includes_usage(self) -> None:
+        agent = _make_agent()
+
+        def run_failure(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            del args, kwargs
+            return ResponseStream(
+                _raising_updates(
+                    "usage failure",
+                    initial_updates=[
+                        AgentResponseUpdate(
+                            contents=[
+                                Content.from_usage({
+                                    "input_token_count": 8,
+                                    "output_token_count": 3,
+                                    "cache_read_input_token_count": 2,
+                                    "reasoning_output_token_count": 1,
+                                })
+                            ],
+                            role="assistant",
+                        )
+                    ],
+                ),
+                finalizer=AgentResponse.from_updates,
+            )
+
+        agent.run = MagicMock(side_effect=run_failure)
+        server = _make_server(agent)
+
+        resp = await _post(server, input_text="hello", stream=True)
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        types = _sse_event_types(events)
+        assert types[-1] == "response.failed"
+        assert "response.completed" not in types
+        failed_response = events[-1]["data"]["response"]
+        assert failed_response["usage"] == {
+            "input_tokens": 8,
+            "input_tokens_details": {"cached_tokens": 2},
+            "output_tokens": 3,
+            "output_tokens_details": {"reasoning_tokens": 1},
+            "total_tokens": 11,
+        }
 
     async def test_workflow_agent_run_failure_emits_response_failed(self) -> None:
         """Exceptions raised by a hosted ``WorkflowAgent`` are converted into a
