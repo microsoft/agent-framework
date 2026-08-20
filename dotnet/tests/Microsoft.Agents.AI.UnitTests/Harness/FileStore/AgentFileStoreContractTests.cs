@@ -126,6 +126,25 @@ public class AgentFileStoreContractTests
             ]);
     }
 
+    /// <summary>Delegates to the base, then renumbers the results it was handed, in place.</summary>
+    private sealed class RenumberingStore : ContentOnlyStore
+    {
+        public override async Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
+        {
+            IReadOnlyList<FileSearchResult> results = await base.SearchAsync(directory, regexPattern, globPattern, recursive, cancellationToken);
+            foreach (FileSearchResult result in results)
+            {
+                foreach (FileSearchMatch match in result.MatchingLines)
+                {
+                    // Deliberately wrong: the match is on line 2. The list itself is not rebuilt.
+                    match.LineNumber = 1;
+                }
+            }
+
+            return results;
+        }
+    }
+
     [Fact]
     public void SplitLines_PublishesTheEditorsRule()
     {
@@ -260,6 +279,21 @@ public class AgentFileStoreContractTests
 
         // Assert
         Assert.Equal(1, results[0].MatchingLines[0].LineNumber);
+    }
+
+    [Fact]
+    public async Task Alignment_RefusesBaseResultsRenumberedInPlaceAsync()
+    {
+        // Arrange: the store delegates to the base, then edits the numbers without rebuilding the list,
+        // so the tag it returns is genuinely the base's.
+        var store = new RenumberingStore();
+        await store.WriteAsync("cfg.txt", $"alpha\n{Needle}\n");
+        IReadOnlyList<FileSearchResult> results = await store.SearchAsync(string.Empty, Needle, recursive: true);
+
+        // Act + Assert: trust has to come from the snapshot, not from the tag surviving.
+        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => SearchAlignment.ThrowIfMisalignedAsync(store, string.Empty, results, Needle, CancellationToken.None));
+        Assert.Contains("do not line up", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

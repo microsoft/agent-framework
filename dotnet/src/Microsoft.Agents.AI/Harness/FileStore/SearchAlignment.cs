@@ -121,7 +121,9 @@ internal static class SearchAlignment
     {
         // Trusted when the store declares alignment, or when these particular results carry the
         // base implementation's tag -- which is per call, so an earlier delegation to
-        // base.SearchAsync cannot vouch for results the store numbered itself.
-        return store.ReportsAlignedLineNumbers || results is BaseSearchResults;
+        // base.SearchAsync cannot vouch for results the store numbered itself. The tag says who
+        // built the list; IsUnmodified says the numbers in it are still theirs.
+        return store.ReportsAlignedLineNumbers ||
+            (results is BaseSearchResults tagged && tagged.IsUnmodified());
     }
 }
