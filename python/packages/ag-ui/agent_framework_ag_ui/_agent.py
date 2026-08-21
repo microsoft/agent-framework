@@ -7,9 +7,11 @@ from typing import Any, cast
 
 from ag_ui.core import BaseEvent
 from agent_framework import SupportsAgentRun
+from agent_framework._telemetry import mark_feature_used
 
-from ._agent_run import PendingApprovalEntry, PendingApprovalKey, run_agent_stream
+from ._agent_run import run_agent_stream
 from ._approval_state import InMemoryAGUIApprovalStateStore
+from ._feature_usage import FeatureIndex
 from ._snapshots import AGUIThreadSnapshotStore
 
 
@@ -120,10 +122,6 @@ class AgentFrameworkAgent:
         # Server-side Approval State. Populated when approval requests are emitted
         # and consumed when resume decisions arrive.
         self._approval_state_store = InMemoryAGUIApprovalStateStore()
-        self._pending_approvals = cast(
-            dict[PendingApprovalKey, PendingApprovalEntry],
-            self._approval_state_store.pending_approvals,
-        )
 
     @property
     def snapshot_store(self) -> AGUIThreadSnapshotStore | None:
@@ -142,11 +140,11 @@ class AgentFrameworkAgent:
         Yields:
             AG-UI events
         """
+        mark_feature_used(FeatureIndex.AG_UI)
         async for event in run_agent_stream(
             input_data,
             self.agent,
             self.config,
-            pending_approvals=self._pending_approvals,
             approval_state_store=self._approval_state_store,
         ):
             yield event

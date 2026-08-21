@@ -94,6 +94,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(context);
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryMemory);
 
         State state = this._sessionState.GetOrInitializeState(context.Session);
         FoundryMemoryProviderScope scope = state.Scope;
@@ -181,6 +182,8 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     /// <inheritdoc />
     protected override async ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryMemory);
+
         State state = this._sessionState.GetOrInitializeState(context.Session);
         FoundryMemoryProviderScope scope = state.Scope;
 
@@ -251,6 +254,8 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     public async Task EnsureStoredMemoriesDeletedAsync(AgentSession session, CancellationToken cancellationToken = default)
     {
         Throw.IfNull(session);
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryMemory);
+
         State state = this._sessionState.GetOrInitializeState(session);
         FoundryMemoryProviderScope scope = state.Scope;
 
@@ -292,6 +297,8 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         string? description = null,
         CancellationToken cancellationToken = default)
     {
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryMemory);
+
         bool created = await this._client.CreateMemoryStoreIfNotExistsAsync(
             this._memoryStoreName,
             description,
@@ -334,6 +341,8 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         TimeSpan? pollingInterval = null,
         CancellationToken cancellationToken = default)
     {
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryMemory);
+
         string? updateId = Volatile.Read(ref this._lastPendingUpdateId);
         if (updateId is null)
         {

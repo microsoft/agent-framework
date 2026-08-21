@@ -114,7 +114,7 @@ project conversation and returns an `AgentSession` that can be passed to
 `agent.run(...)` without reaching into the raw OpenAI client.
 
 ```python
-from agent_framework.foundry import FoundryAgent
+from agent_framework.foundry import FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY, FoundryAgent
 
 agent = FoundryAgent(
     project_endpoint=project_endpoint,
@@ -126,9 +126,11 @@ session = await agent.create_conversation()
 response = await agent.run("Help me plan a trip to Seattle.", session=session)
 ```
 
-This is separate from hosted-agent `isolation_key` sessions: the created
-conversation ID is stored on `AgentSession.service_session_id`, while the local
-`session_id` remains available for application/session storage.
+For HostedAgents, start with a normal `AgentSession`. When no hosted-agent
+session ID is supplied, the service creates one and the agent stores it in
+`session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY]`. The response conversation
+ID or response ID remains separate in `session.service_session_id` and is used
+as the next request's continuation handle.
 
 ## Publishing an agent as a Foundry prompt agent
 

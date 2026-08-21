@@ -5,7 +5,7 @@
 import logging
 
 import pytest
-from ag_ui.core import EventType
+from ag_ui.core import EventType, StateSnapshotEvent
 from ag_ui.core.events import (
     ReasoningMessageContentEvent,
     ReasoningMessageStartEvent,
@@ -14,7 +14,7 @@ from ag_ui.core.events import (
 from agent_framework import Content
 
 from agent_framework_ag_ui import state_update
-from agent_framework_ag_ui._orchestration._predictive_state import PredictiveStateHandler
+from agent_framework_ag_ui._predictive_state import PredictiveStateHandler
 from agent_framework_ag_ui._run_common import (
     FlowState,
     _build_run_finished_event,
@@ -379,6 +379,38 @@ class TestEmitToolResultWithState:
 
         events = _emit_tool_result(content, flow)
         assert all(e.type != EventType.STATE_SNAPSHOT for e in events)
+
+    def test_predictive_handler_without_pending_updates_emits_no_snapshot(self):
+        """A configured predictive handler must not emit unchanged state for unrelated tools."""
+        flow = FlowState(current_state={"existing": "value"})
+        handler = PredictiveStateHandler(
+            predict_state_config={"draft": {"tool": "write_draft", "tool_argument": "body"}},
+            current_state=flow.current_state,
+        )
+        content = Content.from_function_result(call_id="c1", result="plain")
+
+        events = _emit_tool_result(content, flow, predictive_handler=handler)
+
+        assert all(e.type != EventType.STATE_SNAPSHOT for e in events)
+        assert flow.current_state == {"existing": "value"}
+
+    def test_predictive_handler_with_pending_updates_emits_snapshot(self):
+        """A pending predictive update is applied and emitted as one snapshot."""
+        flow = FlowState(current_state={"existing": "value"})
+        handler = PredictiveStateHandler(
+            predict_state_config={"draft": {"tool": "write_draft", "tool_argument": "body"}},
+            current_state=flow.current_state,
+        )
+        deltas = handler.emit_streaming_deltas("write_draft", '{"body":"updated"}')
+        content = Content.from_function_result(call_id="c1", result="plain")
+
+        events = _emit_tool_result(content, flow, predictive_handler=handler)
+
+        assert len(deltas) == 1
+        snapshots = [event for event in events if isinstance(event, StateSnapshotEvent)]
+        assert len(snapshots) == 1
+        assert snapshots[0].snapshot == {"existing": "value", "draft": "updated"}
+        assert flow.current_state == {"existing": "value", "draft": "updated"}
 
     def test_tool_result_content_text_unchanged(self):
         """The text sent to the LLM must not leak the state marker."""

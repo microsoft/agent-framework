@@ -5,36 +5,18 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
-using Microsoft.AspNetCore.Http.Json;
-using Microsoft.AspNetCore.HttpLogging;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.Options;
 using OpenAI.Chat;
-using ServerFunctionApproval;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-
-builder.Services.AddHttpLogging(logging =>
-{
-    logging.LoggingFields = HttpLoggingFields.RequestPropertiesAndHeaders | HttpLoggingFields.RequestBody
-        | HttpLoggingFields.ResponsePropertiesAndHeaders | HttpLoggingFields.ResponseBody;
-    logging.RequestBodyLogLimit = int.MaxValue;
-    logging.ResponseBodyLogLimit = int.MaxValue;
-});
-
-builder.Services.AddHttpClient().AddLogging();
-builder.Services.ConfigureHttpJsonOptions(options =>
-    options.SerializerOptions.TypeInfoResolverChain.Add(ApprovalJsonContext.Default));
 builder.Services.AddAGUIServer();
 
 // WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
-// make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
+// make sure to also register an AgentIsolationKeyProvider to scope sessions by principal in multi-user
 // deployments, e.g.:
-// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+// builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 WebApplication app = builder.Build();
-
-app.UseHttpLogging();
 
 string endpoint = builder.Configuration["AZURE_OPENAI_ENDPOINT"]
     ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
@@ -48,13 +30,12 @@ static string ApproveExpenseReport(string expenseReportId)
     return $"Expense report {expenseReportId} approved";
 }
 
-// Get JsonSerializerOptions
-var jsonOptions = app.Services.GetRequiredService<IOptions<JsonOptions>>().Value;
-
-// Create approval-required tool
-#pragma warning disable MEAI001 // Type is for evaluation purposes only
-AITool[] tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(ApproveExpenseReport))];
-#pragma warning restore MEAI001
+// Wrap the tool in ApprovalRequiredAIFunction so the run interrupts for approval before it executes.
+AITool[] tools =
+[
+    new ApprovalRequiredAIFunction(
+        AIFunctionFactory.Create(ApproveExpenseReport, name: "approve_expense_report"))
+];
 
 // Create base agent
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
@@ -70,8 +51,7 @@ ChatClientAgent baseAgent = openAIChatClient.AsAIAgent(
     instructions: "You are a helpful assistant in charge of approving expenses",
     tools: tools);
 
-// Wrap with ServerFunctionApprovalAgent
-var agent = new ServerFunctionApprovalAgent(baseAgent, jsonOptions.SerializerOptions);
-
-app.MapAGUIServer("/", agent);
+// No custom approval protocol is required: MapAGUIServer emits the approval interrupt natively when the
+// model calls the approval-required tool, and resumes the run when the client sends the decision back.
+app.MapAGUIServer("/", baseAgent);
 await app.RunAsync();

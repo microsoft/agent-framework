@@ -6,9 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import AgentResponseUpdate, AgentSession, Content, Message, tool
 from agent_framework._settings import load_settings
+from agent_framework.exceptions import AgentInvalidRequestException
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
 from agent_framework_claude._agent import TOOLS_MCP_SERVER_NAME
+from agent_framework_claude._feature_usage import FeatureIndex
 
 # region Test ClaudeAgentSettings
 
@@ -231,9 +233,13 @@ class TestClaudeAgentRun:
         ]
         mock_client = self._create_mock_client(messages)
 
-        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+        with (
+            patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client),
+            patch("agent_framework_claude._agent.mark_feature_used") as mark_feature_used,
+        ):
             agent = ClaudeAgent()
             response = await agent.run("Hello")
+            mark_feature_used.assert_called_once_with(FeatureIndex.CLAUDE)
             assert response.text == "Hello!"
 
     async def test_run_captures_session_id(self) -> None:
@@ -553,59 +559,146 @@ class TestClaudeAgentSessionManagement:
         session = agent.create_session(session_id="existing-session-123")
         assert isinstance(session, AgentSession)
 
-    async def test_ensure_session_creates_client(self) -> None:
-        """Test _ensure_session creates client when not started."""
-        with patch("agent_framework_claude._agent.ClaudeSDKClient") as mock_client_class:
-            mock_client = MagicMock()
-            mock_client.connect = AsyncMock()
-            mock_client_class.return_value = mock_client
+    @staticmethod
+    async def _create_async_generator(items: list[Any]) -> Any:
+        """Yield the given items as an async generator (a mock provider response)."""
+        for item in items:
+            yield item
 
+    def _make_mock_client(self) -> MagicMock:
+        """Build a mock ClaudeSDKClient exposing the methods a run exercises."""
+        mock_client = MagicMock()
+        mock_client.connect = AsyncMock()
+        mock_client.disconnect = AsyncMock()
+        mock_client.query = AsyncMock()
+        mock_client.set_model = AsyncMock()
+        mock_client.set_permission_mode = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=self._create_async_generator([]))
+        return mock_client
+
+    async def test_acquire_client_creates_fresh_owned_client(self) -> None:
+        """A fresh run creates and owns a newly connected client."""
+        mock_client = self._make_mock_client()
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
-            await agent._ensure_session(None)  # type: ignore[reportPrivateUsage]
+            client, owns_client = await agent._acquire_client(agent.create_session())  # type: ignore[reportPrivateUsage]
 
-            assert agent._started  # type: ignore[reportPrivateUsage]
-            mock_client.connect.assert_called_once()
+        assert client is mock_client
+        assert owns_client is True
+        mock_client.connect.assert_awaited_once()
 
-    async def test_ensure_session_recreates_for_different_session(self) -> None:
-        """Test _ensure_session recreates client for different session ID."""
-        with patch("agent_framework_claude._agent.ClaudeSDKClient") as mock_client_class:
-            mock_client1 = MagicMock()
-            mock_client1.connect = AsyncMock()
-            mock_client1.disconnect = AsyncMock()
-
-            mock_client2 = MagicMock()
-            mock_client2.connect = AsyncMock()
-
-            mock_client_class.side_effect = [mock_client1, mock_client2]
-
+    async def test_acquire_client_forwards_resume_id(self) -> None:
+        """An existing provider conversation id is forwarded as the resume id."""
+        mock_client = self._make_mock_client()
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
             agent = ClaudeAgent()
+            session = agent.get_session(service_session_id="provider-session-1")
+            with patch.object(
+                agent,
+                "_prepare_client_options",
+                wraps=agent._prepare_client_options,  # type: ignore[reportPrivateUsage]
+            ) as prepare:
+                _, owns_client = await agent._acquire_client(session)  # type: ignore[reportPrivateUsage]
 
-            # First session
-            await agent._ensure_session(None)  # type: ignore[reportPrivateUsage]
-            assert agent._started  # type: ignore[reportPrivateUsage]
+        assert owns_client is True
+        prepare.assert_called_once_with(resume_session_id="provider-session-1")
 
-            # Different session should recreate client
-            await agent._ensure_session("new-session-id")  # type: ignore[reportPrivateUsage]
-            assert agent._current_session_id == "new-session-id"  # type: ignore[reportPrivateUsage]
-            mock_client1.disconnect.assert_called_once()
+    async def test_acquire_client_reuses_injected_client_for_same_session(self) -> None:
+        """An injected client is reused across runs of one session and never owned by the run."""
+        injected = self._make_mock_client()
+        agent = ClaudeAgent(client=injected)
+        session = agent.create_session()
 
-    async def test_ensure_session_reuses_for_same_session(self) -> None:
-        """Test _ensure_session reuses client for same session ID."""
+        client_a, owns_a = await agent._acquire_client(session)  # type: ignore[reportPrivateUsage]
+        client_b, owns_b = await agent._acquire_client(session)  # type: ignore[reportPrivateUsage]
+
+        assert client_a is injected
+        assert client_b is injected
+        assert owns_a is False
+        assert owns_b is False
+        # Connected once and reused; never disconnected by the run.
+        injected.connect.assert_awaited_once()
+        injected.disconnect.assert_not_called()
+
+    async def test_injected_client_rejects_second_session(self) -> None:
+        """An injected client is bound to one session and rejects a different one."""
+        injected = self._make_mock_client()
+        agent = ClaudeAgent(client=injected)
+
+        await agent._acquire_client(agent.create_session())  # type: ignore[reportPrivateUsage]
+
+        with pytest.raises(AgentInvalidRequestException, match="single Claude conversation"):
+            await agent._acquire_client(agent.create_session())  # type: ignore[reportPrivateUsage]
+
+    async def test_injected_client_allows_reconstructed_same_conversation(self) -> None:
+        """A reconstructed session with the same provider id may reuse the injected client."""
+        injected = self._make_mock_client()
+        agent = ClaudeAgent(client=injected)
+
+        # First run binds the injected client and the session gains a provider id.
+        first = agent.create_session()
+        await agent._acquire_client(first)  # type: ignore[reportPrivateUsage]
+        first.service_session_id = "provider-conversation-1"
+
+        # A new AgentSession (fresh session_id) that targets the same conversation
+        # continues rather than raising.
+        restored = agent.get_session(service_session_id="provider-conversation-1")
+        assert restored.session_id != first.session_id
+        client, owns = await agent._acquire_client(restored)  # type: ignore[reportPrivateUsage]
+        assert client is injected
+        assert owns is False
+
+    async def test_injected_client_rejects_different_conversation(self) -> None:
+        """A session targeting a different provider conversation is rejected."""
+        injected = self._make_mock_client()
+        agent = ClaudeAgent(client=injected)
+
+        first = agent.create_session()
+        await agent._acquire_client(first)  # type: ignore[reportPrivateUsage]
+        first.service_session_id = "provider-conversation-1"
+
+        other = agent.get_session(service_session_id="provider-conversation-2")
+        with pytest.raises(AgentInvalidRequestException, match="single Claude conversation"):
+            await agent._acquire_client(other)  # type: ignore[reportPrivateUsage]
+
+    async def test_injected_client_reused_across_runs_without_session(self) -> None:
+        """No-session runs on an injected client share its one bound conversation."""
+        injected = self._make_mock_client()
         with patch("agent_framework_claude._agent.ClaudeSDKClient") as mock_client_class:
-            mock_client = MagicMock()
-            mock_client.connect = AsyncMock()
-            mock_client_class.return_value = mock_client
+            agent = ClaudeAgent(client=injected)
+            await agent.run("first")
+            await agent.run("second")
 
+        # No new clients were constructed; the injected one served both runs.
+        mock_client_class.assert_not_called()
+        injected.connect.assert_awaited_once()
+        injected.disconnect.assert_not_called()
+
+    async def test_two_fresh_sessions_use_separate_clients(self) -> None:
+        """Two distinct fresh sessions on one agent get isolated, separately-owned clients."""
+        mock_client1 = self._make_mock_client()
+        mock_client2 = self._make_mock_client()
+        with patch(
+            "agent_framework_claude._agent.ClaudeSDKClient",
+            side_effect=[mock_client1, mock_client2],
+        ) as mock_client_class:
             agent = ClaudeAgent()
+            await agent.run("hello", session=agent.create_session())
+            await agent.run("hello", session=agent.create_session())
 
-            # First call
-            await agent._ensure_session("session-123")  # type: ignore[reportPrivateUsage]
+        assert mock_client_class.call_count == 2
+        # Each per-run client is released when its run completes.
+        mock_client1.disconnect.assert_awaited_once()
+        mock_client2.disconnect.assert_awaited_once()
 
-            # Same session should not recreate
-            await agent._ensure_session("session-123")  # type: ignore[reportPrivateUsage]
+    async def test_owned_client_disconnected_after_run(self) -> None:
+        """A per-run owned client is disconnected when the run finishes."""
+        mock_client = self._make_mock_client()
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent()
+            await agent.run("hello")
 
-            # Only called once
-            assert mock_client_class.call_count == 1
+        mock_client.disconnect.assert_awaited_once()
 
 
 # region Test ClaudeAgent Tool Conversion
@@ -992,9 +1085,8 @@ class TestApplyRuntimeOptions:
         mock_client.set_permission_mode = AsyncMock()
 
         agent = ClaudeAgent()
-        agent._client = mock_client  # type: ignore[reportPrivateUsage]
 
-        await agent._apply_runtime_options({"model": "opus"})  # type: ignore[reportPrivateUsage]
+        await agent._apply_runtime_options(mock_client, {"model": "opus"})  # type: ignore[reportPrivateUsage]
         mock_client.set_model.assert_called_once_with("opus")
 
     async def test_apply_runtime_permission_mode(self) -> None:
@@ -1004,9 +1096,8 @@ class TestApplyRuntimeOptions:
         mock_client.set_permission_mode = AsyncMock()
 
         agent = ClaudeAgent()
-        agent._client = mock_client  # type: ignore[reportPrivateUsage]
 
-        await agent._apply_runtime_options({"permission_mode": "acceptEdits"})  # type: ignore[reportPrivateUsage]
+        await agent._apply_runtime_options(mock_client, {"permission_mode": "acceptEdits"})  # type: ignore[reportPrivateUsage]
         mock_client.set_permission_mode.assert_called_once_with("acceptEdits")
 
     async def test_apply_runtime_options_none(self) -> None:
@@ -1016,9 +1107,8 @@ class TestApplyRuntimeOptions:
         mock_client.set_permission_mode = AsyncMock()
 
         agent = ClaudeAgent()
-        agent._client = mock_client  # type: ignore[reportPrivateUsage]
 
-        await agent._apply_runtime_options(None)  # type: ignore[reportPrivateUsage]
+        await agent._apply_runtime_options(mock_client, None)  # type: ignore[reportPrivateUsage]
         mock_client.set_model.assert_not_called()
         mock_client.set_permission_mode.assert_not_called()
 
@@ -1029,10 +1119,9 @@ class TestApplyRuntimeOptions:
         mock_client.set_permission_mode = AsyncMock()
 
         agent = ClaudeAgent()
-        agent._client = mock_client  # type: ignore[reportPrivateUsage]
 
         with pytest.raises(ValueError, match="on_function_approval"):
-            await agent._apply_runtime_options({"on_function_approval": lambda _c: True})  # type: ignore[reportPrivateUsage]
+            await agent._apply_runtime_options(mock_client, {"on_function_approval": lambda _c: True})  # type: ignore[reportPrivateUsage]
         mock_client.set_model.assert_not_called()
         mock_client.set_permission_mode.assert_not_called()
 

@@ -106,6 +106,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
             .WithName(endpointAgentName + "/ListResponseInputItems")
             .WithSummary("Lists the input items for a response");
 
+        MarkFeatureUsed();
         return group;
     }
 
@@ -159,7 +160,15 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
             .WithName("ListResponseInputItems")
             .WithSummary("Lists the input items for a response");
 
+        MarkFeatureUsed();
         return group;
+    }
+
+    private static void MarkFeatureUsed()
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.HostingOpenAI);
+#pragma warning restore MAAI001
     }
 
     private static void ValidateAgentName([NotNull] string agentName)

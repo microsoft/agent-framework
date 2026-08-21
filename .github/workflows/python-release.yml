@@ -23,7 +23,7 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up python and install the project
         id: python-setup
         uses: ./.github/actions/python-setup
@@ -33,28 +33,97 @@ jobs:
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
-      - name: Set environment variables
+      - name: Resolve the package to build
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
-          # Extract package name from tag (format: python-<package>-<version>)
-          TAG="${{ github.event.release.tag_name }}"
-          PACKAGE=$(echo "$TAG" | sed 's/^python-\([^-]*\)-.*$/\1/')
+          set -euo pipefail
 
-          # Validate package exists
-          if [[ ! -d "packages/$PACKAGE" ]]; then
-            echo "Error: Package '$PACKAGE' not found in packages/ directory"
-            echo "Available packages: $(ls packages/)"
+          TAG="$TAG_NAME"
+
+          # Release tags are either python-<version> for the whole workspace, or
+          # python-<package>-<version> for a single package. Package names may
+          # themselves contain hyphens (hosting-a2a, azure-ai-search), so the
+          # package part cannot be found by splitting on the first hyphen.
+          #
+          # Versions follow the lifecycle patterns in the python-package-management
+          # skill: X.Y.Z, X.Y.ZaYYMMDD, X.Y.ZbYYMMDD, X.Y.ZrcN, each optionally
+          # carrying a .N or .postN re-cut suffix.
+          VERSION_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+([ab][0-9]+|rc[0-9]+)?(\.[0-9]+|\.post[0-9]+)?$'
+
+          REST="${TAG#python-}"
+
+          if [[ -z "$REST" ]]; then
+            echo "Error: tag '$TAG' has no version or package component"
             exit 1
           fi
 
-          echo "PACKAGE=$PACKAGE" >> $GITHUB_ENV
-          echo "Building package: $PACKAGE"
+          if [[ "$REST" =~ $VERSION_PATTERN ]]; then
+            # python-<version>: build every workspace package plus the root meta package.
+            PACKAGE="all"
+            echo "Resolved tag '$TAG' to the full workspace build"
+          else
+            # python-<package>-<version>: split off the trailing version component and
+            # require it to be a real version, so a malformed tag fails here rather
+            # than being mistaken for another kind of release.
+            CANDIDATE="${REST%-*}"
+            VERSION="${REST##*-}"
+
+            if [[ "$CANDIDATE" == "$REST" || -z "$CANDIDATE" ]]; then
+              echo "Error: tag '$TAG' is neither python-<version> nor python-<package>-<version>"
+              exit 1
+            fi
+
+            if [[ ! "$VERSION" =~ $VERSION_PATTERN ]]; then
+              echo "Error: tag '$TAG' does not end in a supported version"
+              echo "Derived version: '$VERSION'"
+              exit 1
+            fi
+
+            # Resolve the package part against the real package directories. Tags use
+            # hyphens even where the directory uses underscores
+            # (python-github-copilot -> github_copilot).
+            PACKAGE=""
+
+            for dir in packages/*/; do
+              name="${dir#packages/}"
+              name="${name%/}"
+              if [[ "$name" == "$CANDIDATE" || "${name//_/-}" == "$CANDIDATE" ]]; then
+                PACKAGE="$name"
+                break
+              fi
+            done
+
+            if [[ -z "$PACKAGE" ]]; then
+              echo "Error: tag '$TAG' does not map to a directory in packages/"
+              echo "Derived package name: '$CANDIDATE'"
+              echo "Available packages: $(ls packages/)"
+              exit 1
+            fi
+
+            echo "Resolved tag '$TAG' to package '$PACKAGE'"
+          fi
+
+          echo "PACKAGE=$PACKAGE" >> "$GITHUB_ENV"
 
       - name: Check version
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
-          echo "Building and uploading Python package version: ${{ github.event.release.tag_name }}"
-          echo "Package directory: packages/${{ env.PACKAGE }}"
+          echo "Building and uploading Python release: $TAG_NAME"
+          if [[ "$PACKAGE" == "all" ]]; then
+            echo "Build scope: all workspace packages and the root meta package"
+          else
+            echo "Build scope: packages/$PACKAGE"
+          fi
       - name: Build the package
-        run: uv run poe --directory packages/${{ env.PACKAGE }} build
+        run: |
+          set -euo pipefail
+          if [[ "$PACKAGE" == "all" ]]; then
+            uv run poe build
+          else
+            uv run poe --directory "packages/$PACKAGE" build
+          fi
       - name: Release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:

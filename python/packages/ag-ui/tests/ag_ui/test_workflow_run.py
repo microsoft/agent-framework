@@ -4,18 +4,22 @@
 
 import json
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, make_dataclass
 from enum import Enum
 from types import SimpleNamespace
 from typing import Any, cast
 
-from ag_ui.core import EventType, StateSnapshotEvent
+import pytest
+from ag_ui.core import EventType, RunFinishedEvent, RunStartedEvent, StateSnapshotEvent
 from agent_framework import (
     Agent,
+    AgentContext,
     AgentResponse,
     AgentResponseUpdate,
     ChatResponseUpdate,
     Content,
     Executor,
+    InMemoryCheckpointStorage,
     Message,
     WorkflowBuilder,
     WorkflowContext,
@@ -25,7 +29,9 @@ from agent_framework import (
     response_handler,
     tool,
 )
+from agent_framework.orchestrations import MagenticPlanReviewResponse
 from conftest import StreamingChatClientStub  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+from pydantic import BaseModel
 
 from agent_framework_ag_ui._workflow_run import (
     _coerce_content,
@@ -112,6 +118,125 @@ async def test_workflow_run_maps_custom_and_text_events():
     custom_events = [event for event in events if event.type == "CUSTOM" and event.name == "custom_progress"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     assert len(custom_events) == 1
     assert custom_events[0].value == {"progress": 10}  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+
+async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Workflow spans use supplied AG-UI threads without replacing provider fallback behavior."""
+    import agent_framework.observability as observability
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+    monkeypatch.setattr(
+        observability,
+        "OBSERVABILITY_SETTINGS",
+        SimpleNamespace(
+            ENABLED=True,
+            SENSITIVE_DATA_ENABLED=False,
+            use_latest_experimental_gen_ai_semconv=True,
+        ),
+    )
+    monkeypatch.setattr(observability, "get_tracer", lambda *args, **kwargs: tracer_provider.get_tracer("test"))
+
+    call_count = 0
+
+    async def scripted_stream(
+        messages: Any,
+        options: Any,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatResponseUpdate]:
+        nonlocal call_count
+        del messages, options, kwargs
+        call_count += 1
+        yield ChatResponseUpdate(
+            contents=[Content.from_text(text=f"Reply {call_count}")],
+            conversation_id="provider-conversation",
+        )
+
+    async def passthrough_middleware(_context: AgentContext, call_next: Any) -> None:
+        await call_next()
+
+    participant = Agent(
+        client=StreamingChatClientStub(scripted_stream),
+        name="workflow-agent",
+        middleware=[passthrough_middleware],
+    )
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+
+    for run_number in (1, 2):
+        events = [
+            event
+            async for event in run_workflow_stream(
+                {
+                    "thread_id": "ag-ui-workflow-thread",
+                    "run_id": f"run-{run_number}",
+                    "messages": [{"role": "user", "content": f"Turn {run_number}"}],
+                },
+                workflow,
+            )
+        ]
+        run_started = next(event for event in events if isinstance(event, RunStartedEvent))
+        run_finished = next(event for event in events if isinstance(event, RunFinishedEvent))
+        assert (run_started.thread_id, run_started.run_id) == (
+            "ag-ui-workflow-thread",
+            f"run-{run_number}",
+        )
+        assert (run_finished.thread_id, run_finished.run_id) == (
+            "ag-ui-workflow-thread",
+            f"run-{run_number}",
+        )
+
+    spans_by_operation: dict[str, list[Any]] = {"invoke_agent": [], "chat": []}
+    for span in exporter.get_finished_spans():
+        if span.attributes is None:
+            continue
+        operation = span.attributes.get("gen_ai.operation.name")
+        if isinstance(operation, str) and operation in spans_by_operation:
+            spans_by_operation[operation].append(span)
+
+    for spans in spans_by_operation.values():
+        assert len(spans) == 2
+        assert [span.attributes.get("gen_ai.conversation.id") for span in spans if span.attributes is not None] == [
+            "ag-ui-workflow-thread",
+            "ag-ui-workflow-thread",
+        ]
+
+    workflow_spans = [span for span in exporter.get_finished_spans() if span.name == "workflow.run"]
+    assert len(workflow_spans) == 2
+    workflow_conversation_ids = []
+    for span in workflow_spans:
+        assert span.attributes is not None
+        workflow_conversation_ids.append(span.attributes.get("gen_ai.conversation.id"))
+
+    assert workflow_conversation_ids == [
+        "ag-ui-workflow-thread",
+        "ag-ui-workflow-thread",
+    ]
+
+    exporter.clear()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "Provider fallback"}]},
+            workflow,
+        )
+    ]
+    assert any(isinstance(event, RunFinishedEvent) for event in events)
+
+    fallback_agent_span = next(
+        span
+        for span in exporter.get_finished_spans()
+        if span.attributes is not None and span.attributes.get("gen_ai.operation.name") == "invoke_agent"
+    )
+    assert fallback_agent_span.attributes is not None
+    assert fallback_agent_span.attributes.get("gen_ai.conversation.id") == "provider-conversation"
+
+    fallback_workflow_span = next(span for span in exporter.get_finished_spans() if span.name == "workflow.run")
+    assert fallback_workflow_span.attributes is not None
+    assert "gen_ai.conversation.id" not in fallback_workflow_span.attributes
 
 
 async def test_workflow_run_request_info_emits_interrupt_and_resume_works():
@@ -328,6 +453,190 @@ async def test_workflow_run_resume_content_response_from_json_payload() -> None:
     assert "interrupt" not in resumed_finished
     text_deltas = [event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT"]
     assert any("approved" in delta for delta in text_deltas)
+
+
+async def test_workflow_run_resume_content_response_after_checkpoint_restore() -> None:
+    """A JSON function_approval_response resumes correctly through a cold checkpoint restore.
+
+    Regression test: on a checkpoint restore the pending approval request only reappears
+    after the checkpoint is restored, so resume responses must be coerced against the
+    post-restore pending set. Without that, the raw JSON payload reaches core uncoerced
+    and is rejected with "Response type mismatch ... expected Content, got dict" -- the
+    same payload that already resumes cleanly on the non-checkpoint path.
+    """
+
+    class ApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": "$89.99"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request
+            status = "approved" if bool(response.approved) else "rejected"
+            await ctx.yield_output(f"Refund tool call {status}.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=ApprovalExecutor(), checkpoint_storage=storage).build()
+
+    # First run: hit the approval interrupt and let core checkpoint the pending state.
+    first_events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "go"}]},
+            workflow,
+            checkpoint_storage=storage,
+        )
+    ]
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the interrupted run to create a checkpoint"
+    resume_checkpoint_id = checkpoints[-1].checkpoint_id
+
+    # Resume on a FRESH workflow instance so no pending requests exist in memory until
+    # the checkpoint is restored -- a cold restore, as after a process restart.
+    resumed_workflow = WorkflowBuilder(start_executor=ApprovalExecutor()).build()
+    resumed_events: list[Any] = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [],
+                "resume": {
+                    "interrupts": [
+                        {
+                            "id": "approval-1",
+                            "value": {
+                                "type": "function_approval_response",
+                                "approved": True,
+                                "id": interrupt_value.get("id", "approval-1"),
+                                "function_call": interrupt_value.get("function_call"),
+                            },
+                        }
+                    ]
+                },
+            },
+            resumed_workflow,
+            checkpoint_id=resume_checkpoint_id,
+            checkpoint_storage=storage,
+        )
+    ]
+
+    resumed_types = [event.type for event in resumed_events]
+    assert "RUN_ERROR" not in resumed_types
+    assert "TEXT_MESSAGE_CONTENT" in resumed_types
+    text_deltas = [event.delta for event in resumed_events if event.type == "TEXT_MESSAGE_CONTENT"]
+    assert any("approved" in delta for delta in text_deltas)
+
+
+async def test_workflow_run_resume_restores_checkpoint_exactly_once() -> None:
+    """A checkpointed AG-UI resume must restore -- and run on_checkpoint_restore -- once.
+
+    Custom ``on_checkpoint_restore`` hooks are not required to be idempotent. Coercing the
+    resume responses against the checkpoint's pending requests must therefore read the
+    persisted pending set without a second restore. This asserts the resumed executor's
+    restore hook fires exactly once (it would fire twice under a pre-restore-then-run
+    approach that hydrates pending requests by restoring the whole checkpoint first).
+    """
+
+    class CountingApprovalExecutor(Executor):
+        def __init__(self) -> None:
+            super().__init__(id="approval_executor")
+            self.restore_count = 0
+
+        @handler
+        async def start(self, message: Any, ctx: WorkflowContext) -> None:
+            del message
+            function_call = Content.from_function_call(
+                call_id="refund-call",
+                name="submit_refund",
+                arguments={"order_id": "12345", "amount": "$89.99"},
+            )
+            approval_request = Content.from_function_approval_request(id="approval-1", function_call=function_call)
+            await ctx.request_info(approval_request, Content, request_id="approval-1")
+
+        @response_handler
+        async def handle_approval(self, original_request: Content, response: Content, ctx: WorkflowContext) -> None:
+            del original_request
+            status = "approved" if bool(response.approved) else "rejected"
+            await ctx.yield_output(f"Refund tool call {status}.")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+        async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+            self.restore_count += 1
+
+    storage = InMemoryCheckpointStorage()
+    workflow = WorkflowBuilder(start_executor=CountingApprovalExecutor(), checkpoint_storage=storage).build()
+
+    # First run: hit the approval interrupt and let core checkpoint the pending state.
+    first_events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "go"}]},
+            workflow,
+            checkpoint_storage=storage,
+        )
+    ]
+    assert "RUN_ERROR" not in [event.type for event in first_events]
+    first_finished = [event for event in first_events if event.type == "RUN_FINISHED"][0]
+    interrupt_payload = _interrupts_from_run_finished(first_finished)
+    interrupt_value = _interrupt_metadata_value(interrupt_payload[0])
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name=workflow.name),
+        key=lambda checkpoint: checkpoint.timestamp,
+    )
+    assert checkpoints, "expected the interrupted run to create a checkpoint"
+    resume_checkpoint_id = checkpoints[-1].checkpoint_id
+
+    # Resume on a FRESH workflow instance (cold restore, as after a process restart) so the
+    # restore hook count starts at zero and reflects only restores performed by this resume.
+    resumed_executor = CountingApprovalExecutor()
+    resumed_workflow = WorkflowBuilder(start_executor=resumed_executor).build()
+    resumed_events: list[Any] = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "messages": [],
+                "resume": {
+                    "interrupts": [
+                        {
+                            "id": "approval-1",
+                            "value": {
+                                "type": "function_approval_response",
+                                "approved": True,
+                                "id": interrupt_value.get("id", "approval-1"),
+                                "function_call": interrupt_value.get("function_call"),
+                            },
+                        }
+                    ]
+                },
+            },
+            resumed_workflow,
+            checkpoint_id=resume_checkpoint_id,
+            checkpoint_storage=storage,
+        )
+    ]
+
+    assert "RUN_ERROR" not in [event.type for event in resumed_events]
+    assert resumed_executor.restore_count == 1, (
+        f"expected exactly one checkpoint restore per resume, got {resumed_executor.restore_count}"
+    )
 
 
 async def test_workflow_run_resume_message_list_from_json_payload() -> None:
@@ -731,6 +1040,65 @@ async def test_workflow_run_empty_turn_with_pending_request_emits_run_error():
     assert getattr(run_error, "code") == "WORKFLOW_RESUME_REQUIRED"
 
 
+async def test_workflow_run_does_not_cancel_until_resolved_siblings_validate() -> None:
+    """A malformed resolved workflow sibling leaves a cancelled request pending."""
+    cancelled_call = Content.from_function_call(
+        call_id="call-cancelled",
+        name="write_record",
+        arguments={"value": "cancelled"},
+    )
+    resolved_call = Content.from_function_call(
+        call_id="call-resolved",
+        name="write_record",
+        arguments={"value": "resolved"},
+    )
+    pending = {
+        "approval-cancelled": SimpleNamespace(
+            request_id="approval-cancelled",
+            data=Content.from_function_approval_request(id="approval-cancelled", function_call=cancelled_call),
+            response_type=Content,
+        ),
+        "approval-resolved": SimpleNamespace(
+            request_id="approval-resolved",
+            data=Content.from_function_approval_request(id="approval-resolved", function_call=resolved_call),
+            response_type=Content,
+        ),
+    }
+
+    async def get_pending_request_info_events() -> dict[str, Any]:
+        return dict(pending)
+
+    runner_context = SimpleNamespace(
+        get_pending_request_info_events=get_pending_request_info_events,
+        _pending_request_info_events=pending,
+    )
+    workflow = SimpleNamespace(_runner_context=runner_context)
+
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "runId": "run-mixed-invalid",
+                "threadId": "thread-mixed-invalid",
+                "messages": [],
+                "resume": [
+                    {"interruptId": "approval-cancelled", "status": "cancelled"},
+                    {
+                        "interruptId": "approval-resolved",
+                        "status": "resolved",
+                        "payload": {"approved": True, "editedArgs": "not an object"},
+                    },
+                ],
+            },
+            cast(Any, workflow),
+        )
+    ]
+
+    assert [event.type for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+    assert getattr(events[-1], "code") == "WORKFLOW_RESUME_INVALID_RESPONSE"
+    assert set(runner_context._pending_request_info_events) == {"approval-cancelled", "approval-resolved"}
+
+
 async def test_workflow_run_agent_response_output_uses_latest_assistant_message_only() -> None:
     """Conversation payload outputs should not flatten full history into one assistant message."""
 
@@ -951,6 +1319,93 @@ def test_coerce_response_for_request_bool_int_float_and_mismatch() -> None:
 
     dict_request = SimpleNamespace(response_type=dict)
     assert _coerce_response_for_request(dict_request, "[1,2,3]") is None
+
+
+def test_coerce_response_for_request_builds_dataclass_from_json() -> None:
+    """JSON objects should map onto dataclass response types such as plan review."""
+    request = SimpleNamespace(response_type=MagenticPlanReviewResponse)
+
+    approved = _coerce_response_for_request(request, {"review": []})
+    assert isinstance(approved, MagenticPlanReviewResponse)
+    assert approved.review == []
+
+    revised = _coerce_response_for_request(request, '{"review": [{"role": "user", "content": "add tests"}]}')
+    assert isinstance(revised, MagenticPlanReviewResponse)
+    assert len(revised.review) == 1
+    assert revised.review[0].text == "add tests"
+
+    from_strings = _coerce_response_for_request(request, {"review": ["add tests"]})
+    assert isinstance(from_strings, MagenticPlanReviewResponse)
+    assert from_strings.review[0].text == "add tests"
+
+    assert _coerce_response_for_request(request, {"unknown": 1}) is None
+    assert _coerce_response_for_request(request, "approve") is None
+
+
+def test_coerce_response_for_request_leaves_non_message_fields_untouched() -> None:
+    """Message normalization must follow field annotations, not payload shape."""
+
+    @dataclass
+    class Tagged:
+        note: Message
+        revision: Message | None
+        metadata: dict[str, str]
+
+    request = SimpleNamespace(response_type=Tagged)
+    message_shaped = {"role": "admin", "content": "keep raw"}
+
+    tagged = _coerce_response_for_request(
+        request,
+        {
+            "note": {"role": "user", "content": "translate me"},
+            "revision": {"role": "user", "content": "optional fields too"},
+            "metadata": message_shaped,
+        },
+    )
+    assert isinstance(tagged, Tagged)
+    assert tagged.note.text == "translate me"
+    assert tagged.revision is not None
+    assert tagged.revision.text == "optional fields too"
+    assert tagged.metadata == message_shaped
+
+
+def test_coerce_response_for_request_rejects_malformed_message_field_payloads() -> None:
+    """A Message-typed field that is not message-shaped must fail, not crash normalization."""
+
+    @dataclass
+    class Review:
+        notes: list[Message]
+
+    request = SimpleNamespace(response_type=Review)
+
+    assert _coerce_response_for_request(request, {"notes": "not-a-list"}) is None
+    assert _coerce_response_for_request(request, {"notes": [42]}) is None
+
+
+def test_coerce_response_for_request_skips_normalization_without_resolvable_hints() -> None:
+    """Unresolvable annotations skip message normalization instead of failing the resume."""
+
+    mystery_type = make_dataclass("Mystery", [("value", "DoesNotExist")])
+    request = SimpleNamespace(response_type=mystery_type)
+
+    mystery = _coerce_response_for_request(request, {"value": 1})
+    assert type(mystery) is mystery_type
+    assert vars(mystery) == {"value": 1}
+
+
+def test_coerce_response_for_request_builds_pydantic_model_from_json() -> None:
+    """JSON objects should validate into pydantic response types."""
+
+    class ReviewDecision(BaseModel):
+        approved: bool
+
+    request = SimpleNamespace(response_type=ReviewDecision)
+
+    decision = _coerce_response_for_request(request, {"approved": True})
+    assert isinstance(decision, ReviewDecision)
+    assert decision.approved is True
+
+    assert _coerce_response_for_request(request, {"approved": "not-a-bool"}) is None
 
 
 async def test_workflow_run_emits_run_error_when_stream_raises() -> None:

@@ -9,6 +9,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Internal;
 
 namespace Microsoft.Agents.AI.Foundry.UnitTests;
 
@@ -30,7 +31,7 @@ public sealed class AgentFrameworkUserAgentPolicyTests
 #pragma warning restore CA5399
         var pipeline = ClientPipeline.Create(
             new ClientPipelineOptions { Transport = new HttpClientPipelineTransport(httpClient) },
-            perCallPolicies: [AgentFrameworkUserAgentPolicy.Instance],
+            perCallPolicies: [FoundryUserAgentPolicies.Registration.BaseUserAgentPolicy],
             perTryPolicies: default,
             beforeTransportPolicies: default);
 
@@ -58,7 +59,7 @@ public sealed class AgentFrameworkUserAgentPolicyTests
 #pragma warning restore CA5399
         var pipeline = ClientPipeline.Create(
             new ClientPipelineOptions { Transport = new HttpClientPipelineTransport(httpClient) },
-            perCallPolicies: [AgentFrameworkUserAgentPolicy.Instance],
+            perCallPolicies: [FoundryUserAgentPolicies.Registration.BaseUserAgentPolicy],
             perTryPolicies: default,
             beforeTransportPolicies: default);
 
@@ -88,7 +89,7 @@ public sealed class AgentFrameworkUserAgentPolicyTests
 #pragma warning restore CA5399
         var pipeline = ClientPipeline.Create(
             new ClientPipelineOptions { Transport = new HttpClientPipelineTransport(httpClient) },
-            perCallPolicies: [new SeedUserAgentPolicy("existing-app/1.0"), AgentFrameworkUserAgentPolicy.Instance],
+            perCallPolicies: [new SeedUserAgentPolicy("existing-app/1.0"), FoundryUserAgentPolicies.Registration.BaseUserAgentPolicy],
             perTryPolicies: default,
             beforeTransportPolicies: default);
 
@@ -116,7 +117,11 @@ public sealed class AgentFrameworkUserAgentPolicyTests
 #pragma warning restore CA5399
         var pipeline = ClientPipeline.Create(
             new ClientPipelineOptions { Transport = new HttpClientPipelineTransport(httpClient) },
-            perCallPolicies: [AgentFrameworkUserAgentPolicy.Instance, AgentFrameworkUserAgentPolicy.Instance],
+            perCallPolicies:
+            [
+                FoundryUserAgentPolicies.Registration.BaseUserAgentPolicy,
+                FoundryUserAgentPolicies.Registration.BaseUserAgentPolicy,
+            ],
             perTryPolicies: default,
             beforeTransportPolicies: default);
 
@@ -141,8 +146,8 @@ public sealed class AgentFrameworkUserAgentPolicyTests
         // Two reads of the static property must return the same instance. The policy is stateless
         // and shared; allocating a fresh instance per registration site would bloat memory and
         // defeat the dedup logic in OpenAIRequestPoliciesReflection.AddPolicyIfMissing.
-        var first = AgentFrameworkUserAgentPolicy.Instance;
-        var second = AgentFrameworkUserAgentPolicy.Instance;
+        AgentFrameworkUserAgentPolicy first = FoundryUserAgentPolicies.Registration.BaseUserAgentPolicy;
+        AgentFrameworkUserAgentPolicy second = FoundryUserAgentPolicies.Registration.BaseUserAgentPolicy;
         Assert.Same(first, second);
     }
 

@@ -19,11 +19,13 @@ from agent_framework import (
     UsageDetails,
     load_settings,
 )
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.observability import EmbeddingTelemetryLayer
 from boto3.session import Session as Boto3Session
 from botocore.client import BaseClient
 from botocore.config import Config as BotoConfig
+
+from ._feature_usage import FeatureIndex
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -180,6 +182,7 @@ class RawBedrockEmbeddingClient(
         if not model:
             raise ValueError("model is required")
 
+        mark_feature_used(FeatureIndex.BEDROCK)
         embedding_results = await asyncio.gather(
             *(self._generate_embedding_for_text(opts, model, text) for text in values)
         )

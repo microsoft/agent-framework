@@ -29,11 +29,14 @@ from agent_framework import (
 )
 from agent_framework._sessions import AgentSession
 from agent_framework._settings import load_settings
+from agent_framework._telemetry import mark_feature_used
 from azure.ai.contentunderstanding import to_llm_input
 from azure.ai.contentunderstanding.aio import ContentUnderstandingClient
 from azure.ai.contentunderstanding.models import AnalysisInput, AnalysisResult
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
+
+from ._feature_usage import FeatureIndex
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
@@ -275,6 +278,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
 
         This method is called automatically by the framework before each LLM invocation.
         """
+        mark_feature_used(FeatureIndex.AZURE_CONTENTUNDERSTANDING)
         documents: dict[str, DocumentEntry] = state.setdefault("documents", {})
 
         # Per-session mutable state — isolated per session to prevent cross-session leakage.
@@ -758,7 +762,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
             result,
             include_markdown="markdown" in self.output_sections,
             include_fields="fields" in self.output_sections,
-            metadata={"source": filename},
+            custom_metadata={"source": filename},
         )
 
     # ------------------------------------------------------------------

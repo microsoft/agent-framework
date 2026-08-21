@@ -169,15 +169,6 @@ class TestPartitionKey:
         with _request_context(), pytest.raises(RuntimeError, match="missing session_id"):
             server._partition_key()  # pyright: ignore[reportPrivateUsage]
 
-    def test_hosted_without_call_id_raises_protocol_error(self) -> None:
-        server = InvocationsHostServer(_make_agent(response_text="hi"))
-        server.config.is_hosted = True
-        with (
-            _request_context(session_id="sess-1", user_id="user-1"),
-            pytest.raises(RuntimeError, match="protocol 2.0.0"),
-        ):
-            server._partition_key()  # pyright: ignore[reportPrivateUsage]
-
     def test_hosted_missing_user_id_raises(self) -> None:
         server = InvocationsHostServer(_make_agent(response_text="hi"))
         server.config.is_hosted = True

@@ -10,10 +10,14 @@ from agent_framework import (
     Agent,
     ChatMiddlewareLayer,
     ChatOptions,
+    ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    InlineSkill,
     Message,
+    SkillFrontmatter,
+    SkillsProvider,
     SupportsChatGetResponse,
     tool,
 )
@@ -22,14 +26,16 @@ from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic.types.beta import (
     BetaMessage,
+    BetaMessageDeltaUsage,
     BetaTextBlock,
     BetaToolUseBlock,
     BetaUsage,
 )
 from pydantic import BaseModel, Field
 
-from agent_framework_anthropic import AnthropicClient, RawAnthropicClient
+from agent_framework_anthropic import AnthropicChatOptions, AnthropicClient, RawAnthropicClient
 from agent_framework_anthropic._chat_client import AnthropicSettings
+from agent_framework_anthropic._feature_usage import FeatureIndex
 
 # Test constants
 VALID_PNG_BASE64 = b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
@@ -1074,6 +1080,109 @@ async def test_prepare_options_structured_system_blocks_reject_conflicts(
         client._prepare_options(messages, options)
 
 
+async def test_prepare_options_wraps_appended_text_instructions_as_system_blocks(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Text appended to structured blocks should become an additional text block."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    cached_block = {
+        "type": "text",
+        "text": "Stable instructions",
+        "cache_control": {"type": "ephemeral", "ttl": "1h"},
+    }
+
+    run_options = client._prepare_options(messages, {"instructions": [cached_block, "Appended instructions"]})
+
+    assert run_options["system"] == [cached_block, {"type": "text", "text": "Appended instructions"}]
+
+
+async def test_prepare_options_wraps_a_single_structured_mapping_as_system_blocks(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A lone system block mapping should be normalized into a one-element block list."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    block = {"type": "text", "text": "Stable instructions"}
+
+    run_options = client._prepare_options(messages, {"instructions": block})
+
+    assert run_options["system"] == [block]
+
+
+@pytest.mark.parametrize("with_skills", [False, True], ids=["without_skills_provider", "with_skills_provider"])
+async def test_agent_run_preserves_structured_system_blocks(with_skills: bool) -> None:
+    """Regression test for #7700.
+
+    Structured system blocks must survive the public ``Agent.run()`` path whether or not a context
+    provider contributes instructions. Contributed instructions are appended as an extra system block
+    instead of collapsing the blocks into a string, which would disable Anthropic prompt caching.
+    """
+    requests: list[dict[str, Any]] = []
+
+    async def create(**kwargs: Any) -> BetaMessage:
+        requests.append(kwargs)
+        return BetaMessage(
+            id="msg_test",
+            content=[BetaTextBlock(type="text", text="ok")],
+            model="claude-3-5-sonnet-20241022",
+            role="assistant",
+            stop_reason="end_turn",
+            type="message",
+            usage=BetaUsage(input_tokens=1, output_tokens=1),
+        )
+
+    transport = MagicMock()
+    transport.base_url = "https://example.invalid"
+    transport.beta.messages.create = create
+
+    system_blocks = [
+        {
+            "type": "text",
+            "text": "Stable instructions that should be cached.",
+            "cache_control": {"type": "ephemeral", "ttl": "1h"},
+        },
+        {"type": "text", "text": "Dynamic request context that should not be cached."},
+    ]
+    context_providers = []
+    if with_skills:
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="example-skill", description="A generic standalone example skill."),
+            instructions="Use this generic skill when asked for an example.",
+        )
+        context_providers.append(
+            SkillsProvider(
+                [skill],
+                disable_load_skill_approval=True,
+                disable_read_skill_resource_approval=True,
+            )
+        )
+
+    agent = Agent(
+        client=AnthropicClient(anthropic_client=transport, model="claude-3-5-sonnet-20241022"),
+        default_options=cast(
+            AnthropicChatOptions,
+            {"model": "claude-3-5-sonnet-20241022", "max_tokens": 64, "instructions": system_blocks},
+        ),
+        context_providers=context_providers,
+    )
+
+    async with agent:
+        await agent.run("Hello")
+
+    system = requests[0]["system"]
+    # The cached prefix must stay byte-identical so the cache breakpoint keeps matching.
+    assert system[: len(system_blocks)] == system_blocks
+
+    if not with_skills:
+        assert system == system_blocks
+        return
+
+    assert len(system) == len(system_blocks) + 1
+    assert system[-1]["type"] == "text"
+    assert "example-skill" in system[-1]["text"]
+
+
 async def test_prepare_options_splits_assistant_embedded_tool_results(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -1603,10 +1712,12 @@ async def test_inner_get_response(mock_anthropic_client: MagicMock) -> None:
     messages = [Message(role="user", contents=["Hi"])]
     chat_options = ChatOptions(max_tokens=10)
 
-    response = await client._inner_get_response(  # type: ignore[attr-defined]
-        messages=messages, options=chat_options
-    )
+    with patch("agent_framework_anthropic._chat_client.mark_feature_used") as mark_feature_used:
+        response = await client._inner_get_response(  # type: ignore[attr-defined]
+            messages=messages, options=chat_options
+        )
 
+    mark_feature_used.assert_called_once_with(FeatureIndex.ANTHROPIC)
     assert response is not None
     assert response.response_id == "msg_test"
     assert len(response.messages) == 1
@@ -1714,6 +1825,82 @@ def test_process_stream_event_message_start_sets_assistant_role(mock_anthropic_c
 
     assert result is not None
     assert result.role == "assistant"
+
+
+def _usage_message_start_event(*, input_tokens: int, output_tokens: int) -> MagicMock:
+    event = MagicMock()
+    event.type = "message_start"
+    event.message.id = "msg_usage"
+    event.message.role = "assistant"
+    event.message.model = "claude-3-5-sonnet-20241022"
+    event.message.content = []
+    event.message.stop_reason = None
+    event.message.usage = BetaUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+    return event
+
+
+def _usage_message_delta_event(*, output_tokens: int, input_tokens: int | None = None) -> MagicMock:
+    event = MagicMock()
+    event.type = "message_delta"
+    event.usage = BetaMessageDeltaUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_creation_input_tokens=None,
+        cache_read_input_tokens=None,
+    )
+    event.delta.stop_reason = "end_turn"
+    return event
+
+
+def test_streaming_usage_not_double_counted(mock_anthropic_client: MagicMock) -> None:
+    """message_start's seed usage must not be summed onto message_delta's cumulative total.
+
+    Anthropic reports cumulative usage on message_delta (per their streaming docs), while
+    message_start carries an output_tokens=1 seed. ChatResponse.from_updates sums every
+    usage Content, which used to inflate output_token_count by the seed — 26 when the API
+    reported 25.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    emitted: dict[str, int] = {}
+    updates = [
+        u
+        for u in (
+            client._process_stream_event(_usage_message_start_event(input_tokens=10, output_tokens=1), emitted),
+            client._process_stream_event(_usage_message_delta_event(output_tokens=25), emitted),
+        )
+        if u is not None
+    ]
+
+    response = ChatResponse.from_updates(updates)
+
+    assert response.usage_details is not None
+    assert response.usage_details["output_token_count"] == 25
+    assert response.usage_details["input_token_count"] == 10
+
+
+def test_streaming_usage_delta_input_not_double_counted(mock_anthropic_client: MagicMock) -> None:
+    """When message_delta also reports cumulative input tokens, the input must not double.
+
+    Server-tool turns report cumulative input_tokens on message_delta; summing them onto
+    message_start's input snapshot double-counted the prompt. The final input_token_count
+    should equal the last cumulative value message_delta reports.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+    emitted: dict[str, int] = {}
+    updates = [
+        u
+        for u in (
+            client._process_stream_event(_usage_message_start_event(input_tokens=10, output_tokens=1), emitted),
+            client._process_stream_event(_usage_message_delta_event(input_tokens=12, output_tokens=25), emitted),
+        )
+        if u is not None
+    ]
+
+    response = ChatResponse.from_updates(updates)
+
+    assert response.usage_details is not None
+    assert response.usage_details["output_token_count"] == 25
+    assert response.usage_details["input_token_count"] == 12
 
 
 def test_process_stream_event_message_start_role_prevents_tool_use_collapse() -> None:

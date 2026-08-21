@@ -13,11 +13,12 @@ from agent_framework import (
     Content,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
+    Message,
     load_settings,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._feature_stage import ExperimentalFeature, experimental
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import IS_TELEMETRY_ENABLED, get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -56,6 +57,11 @@ from azure.core.credentials_async import AsyncTokenCredential
 
 from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 
+from ._feature_usage import (
+    FeatureIndex,
+    create_feature_usage_policy,
+    create_foundry_feature_usage_http_client,
+)
 from ._tools import _sanitize_foundry_response_tool  # pyright: ignore[reportPrivateUsage]
 
 if sys.version_info >= (3, 13):
@@ -151,6 +157,7 @@ class RawFoundryChatClient(
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.foundry"
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = False
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.FOUNDRY_CHAT_CLIENT
 
     def __init__(
         self,
@@ -203,12 +210,13 @@ class RawFoundryChatClient(
 
         project_endpoint = foundry_settings.get("project_endpoint")
 
+        owns_project_client = project_client is None
         if project_endpoint is None and project_client is None:
             raise ValueError(
                 "Either 'project_endpoint' or 'project_client' is required. "
                 "Set project_endpoint via parameter or 'FOUNDRY_PROJECT_ENDPOINT' environment variable."
             )
-        if not project_client:
+        if project_client is None:
             if not project_endpoint:
                 raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
@@ -220,8 +228,10 @@ class RawFoundryChatClient(
             project_client_kwargs: dict[str, Any] = {
                 "endpoint": project_endpoint,
                 "credential": credential,
-                "user_agent": get_user_agent(),
+                "per_retry_policies": [create_feature_usage_policy()],
             }
+            if IS_TELEMETRY_ENABLED:
+                project_client_kwargs["user_agent"] = get_user_agent()
             if allow_preview is not None:
                 project_client_kwargs["allow_preview"] = allow_preview
             project_client = AIProjectClient(**project_client_kwargs)
@@ -229,6 +239,8 @@ class RawFoundryChatClient(
         openai_kwargs: dict[str, Any] = {}
         if default_headers:
             openai_kwargs["default_headers"] = default_headers
+        if owns_project_client:
+            openai_kwargs["http_client"] = create_foundry_feature_usage_http_client()
 
         super().__init__(
             model=resolved_model,
@@ -240,6 +252,23 @@ class RawFoundryChatClient(
             additional_properties=additional_properties,
         )
         self.project_client = project_client
+
+    @override
+    async def _prepare_options(
+        self,
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Prepare Foundry options without implicitly requesting encrypted reasoning."""
+        caller_requested_encrypted_reasoning = "reasoning.encrypted_content" in (options.get("include") or [])
+        run_options = await super()._prepare_options(messages, options)
+        if not caller_requested_encrypted_reasoning and isinstance(run_options.get("include"), list):
+            include = [item for item in run_options["include"] if item != "reasoning.encrypted_content"]
+            if include:
+                run_options["include"] = include
+            else:
+                run_options.pop("include")
+        return run_options
 
     @override
     def _check_model_presence(self, options: dict[str, Any]) -> None:

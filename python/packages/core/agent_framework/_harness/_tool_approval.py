@@ -12,6 +12,7 @@ from typing import Any, Literal, cast
 from .._middleware import AgentContext, AgentMiddleware
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession
+from .._telemetry import FeatureIndex, mark_feature_used
 from .._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -379,12 +380,13 @@ class ToolApprovalMiddleware(AgentMiddleware):
 
     async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
         """Process one agent invocation."""
+        mark_feature_used(FeatureIndex.CORE_TOOL_APPROVAL)
         if context.session is None:
             raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
 
         state = _get_state(context.session, source_id=self.source_id)
         context.client_kwargs.setdefault(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, {})
-        context.messages = self._prepare_inbound_messages(context.messages, state)
+        context.messages = self._prepare_inbound_messages(context.messages, state, context.session)
         await self._drain_auto_approvable_queue(state)
         if next_queued := self._pop_next_queued_request(state):
             _save_state(context.session, state, source_id=self.source_id)
@@ -499,14 +501,22 @@ class ToolApprovalMiddleware(AgentMiddleware):
 
         return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
-    def _prepare_inbound_messages(self, messages: Sequence[Message], state: ToolApprovalState) -> list[Message]:
+    def _prepare_inbound_messages(
+        self,
+        messages: Sequence[Message],
+        state: ToolApprovalState,
+        session: AgentSession,
+    ) -> list[Message]:
         prepared: list[Message] = []
         for message in messages:
             replacement_contents: list[Content] = []
             changed = False
             for content in message.contents:
                 if content.type == "function_approval_response":
-                    replacement = self._handle_inbound_approval_response(content, state)
+                    replacement = self._handle_inbound_approval_response(content, state, session)
+                    if replacement is None:
+                        changed = True
+                        continue
                     state.collected_approval_responses.append(replacement)
                     changed = True
                     continue
@@ -521,9 +531,23 @@ class ToolApprovalMiddleware(AgentMiddleware):
                 prepared.append(cloned)
         return prepared
 
-    def _handle_inbound_approval_response(self, response: Content, state: ToolApprovalState) -> Content:
+    def _handle_inbound_approval_response(
+        self,
+        response: Content,
+        state: ToolApprovalState,
+        session: AgentSession,
+    ) -> Content | None:
+        from .._tools import (
+            _bind_approval_response_to_pending_request,  # pyright: ignore[reportPrivateUsage]
+            _is_approval_granted,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        bound_response = _bind_approval_response_to_pending_request(response, session, consume=False)
+        if bound_response is None:
+            return None
+        response = bound_response
         scope = _get_always_approve_scope(response)
-        if scope is None or not response.approved:
+        if scope is None or not _is_approval_granted(response.approved):
             return response
 
         function_call = response.function_call

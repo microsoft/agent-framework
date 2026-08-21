@@ -28,16 +28,24 @@ just a matter of changing `AZURE_AI_AGENT_NAME`.
 
 ## Local HTTP dev
 
-When the target is a local `http://localhost:8088` dev server, the REPLs install a small
-`HttpSchemeRewritePolicy`: `AIProjectClient`/`BearerTokenPolicy` require HTTPS, so the client
-presents the endpoint as `https://` to satisfy the TLS check, then rewrites the scheme back to
-`http://` right before the request hits the wire. This is local-development only.
+`AIProjectClient` authenticates with a bearer token, and the client pipeline refuses to attach one
+to a plain `http://` endpoint, failing with `InvalidOperationException: Bearer token authentication
+is not permitted for non TLS protected (https) endpoints.` before the request is even sent. To
+target a local dev server over HTTP, the REPLs install a small `HttpSchemeRewritePolicy`: the
+client is pointed at an `https://` URI to satisfy that check, and the policy puts the scheme back
+to `http://` right before the request hits the wire. This is local-development only.
+
+`SimpleAgent` applies it only on the Foundry path, and only when `FOUNDRY_PROJECT_ENDPOINT` is an
+`http://` URL. Its `--local` path needs nothing of the sort: it points an `OpenAIClient` at the
+server's standard `POST /responses` route with an api key, which carries no bearer token and so
+never hits the TLS check.
 
 ## The clients
 
 | Client | What it targets | Notes |
 |---|---|---|
 | [`SimpleAgent/`](./SimpleAgent/) | Any hosted agent | Generic, agent-agnostic REPL. Point it at any `Hosted-*` server via `AZURE_AI_AGENT_NAME`. Used by `Hosted-Toolbox`, `Hosted-Toolbox-AuthPaths`, and `Hosted-McpTools`. |
+| [`Hosted-Toolbox-AuthPaths-Client/`](./Hosted-Toolbox-AuthPaths-Client/) | Hosted toolbox agents | Handles OAuth consent, function-tool approvals, and native MCP approvals. Use it with `Hosted-Toolbox-AuthPaths` or `Hosted-ToolboxMcpSkills`. |
 | [`SessionFilesClient/`](./SessionFilesClient/) | [`Hosted-Files`](../Hosted-Files/) | Same shape as `SimpleAgent`, framed around the bundled-files demo. |
 
 ## Configuration (common to all clients)

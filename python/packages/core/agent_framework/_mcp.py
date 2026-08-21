@@ -29,6 +29,7 @@ from ._feature_stage import (
     _warn_on_feature_use,  # pyright: ignore[reportPrivateUsage]
     experimental,
 )
+from ._telemetry import FeatureIndex, mark_feature_used
 from ._tools import FunctionTool
 from ._types import (
     ChatOptions,
@@ -237,6 +238,34 @@ def _mcp_config_candidate_names(*, local_name: str, normalized_name: str, remote
     if normalized_name == remote_name and local_name != remote_name:
         names.append(local_name)
     return tuple(names)
+
+
+def _make_mcp_tool_caller(
+    mcp_tool: MCPTool, remote_tool_name: str
+) -> Callable[..., Coroutine[Any, Any, str | list[Content]]]:
+    """Build the callable backing a generated MCP ``FunctionTool``.
+
+    The remote tool name is captured in this factory's closure rather than declared as a
+    parameter of the returned callable. Model-supplied arguments are splatted into that
+    callable, so any name it declares could be bound - and overridden - by the model. Keeping
+    the call target out of the signature means it can only ever be reached through ``**kwargs``,
+    which is forwarded as tool arguments and can never redirect the call to another tool.
+    """
+
+    async def _call_tool_with_runtime_kwargs(
+        ctx: FunctionInvocationContext,
+        **kwargs: Any,
+    ) -> str | list[Content]:
+        trusted_meta = ctx.kwargs.get("_meta")
+        call_kwargs = dict(ctx.kwargs)
+        call_kwargs.update(kwargs)
+        if trusted_meta is not None:
+            call_kwargs["_meta"] = trusted_meta
+        else:
+            call_kwargs.pop("_meta", None)
+        return await mcp_tool.call_tool(remote_tool_name, **call_kwargs)
+
+    return _call_tool_with_runtime_kwargs
 
 
 def _validate_mcp_meta_key(key: str) -> None:
@@ -1268,6 +1297,7 @@ class MCPTool:
         await self._run_on_lifecycle_owner("connect", reset=True, load_configured=False)
 
     async def connect(self, *, reset: bool = False) -> None:
+        mark_feature_used(FeatureIndex.CORE_MCP)
         if self._is_lifecycle_owner_task():
             await self._connect_on_owner(reset=reset)
             return
@@ -1892,24 +1922,9 @@ class MCPTool:
                     )
                 )
 
-                async def _call_tool_with_runtime_kwargs(
-                    ctx: FunctionInvocationContext,
-                    *,
-                    _remote_tool_name: str = tool.name,
-                    **kwargs: Any,
-                ) -> str | list[Content]:
-                    trusted_meta = ctx.kwargs.get("_meta")
-                    call_kwargs = dict(ctx.kwargs)
-                    call_kwargs.update(kwargs)
-                    if trusted_meta is not None:
-                        call_kwargs["_meta"] = trusted_meta
-                    else:
-                        call_kwargs.pop("_meta", None)
-                    return await self.call_tool(_remote_tool_name, **call_kwargs)
-
                 # Create FunctionTools out of each tool
                 func: FunctionTool = FunctionTool(
-                    func=_call_tool_with_runtime_kwargs,
+                    func=_make_mcp_tool_caller(self, tool.name),
                     name=local_name,
                     description=tool.description or "",
                     approval_mode=approval_mode,
@@ -3124,8 +3139,36 @@ class MCPStreamableHTTPTool(MCPTool):
                         return
                     # The transport may send this request from a task whose context was
                     # captured before call_tool set the ContextVar; fall back to the
-                    # instance-level snapshot of the active call's headers.
-                    headers = _mcp_call_headers.get({}) or self._active_call_headers or {}
+                    # instance-level snapshot of the active call's headers. Both are None
+                    # only when this is an ambient request outside call_tool; an active
+                    # call that legitimately produced no headers yields an empty dict and
+                    # must not trigger the ambient fallback below.
+                    headers = _mcp_call_headers.get(None)
+                    if headers is None:
+                        headers = self._active_call_headers
+                    if headers is None:
+                        # Ambient request made outside call_tool (the initialize handshake,
+                        # load_tools/load_prompts discovery, or background pings). Invoke the
+                        # provider with empty kwargs so static providers can authenticate these
+                        # requests too. A provider that indexes a required per-call kwarg (e.g.
+                        # kwargs["api_key"]) raises KeyError on the empty dict; that specific
+                        # case is tolerated so connect still succeeds. Any other error is a
+                        # genuine provider failure and is left to propagate, matching the
+                        # call_tool path which does not catch header_provider exceptions.
+                        if self._header_provider is None:
+                            raise RuntimeError("Header injection hook invoked without a header_provider.")
+                        try:
+                            headers = self._header_provider({})
+                        except KeyError:
+                            # A kwargs-dependent provider raises on every ambient request
+                            # (initialize, discovery, and recurring pings).
+                            logger.debug(
+                                "header_provider raised KeyError for MCP server %r on an ambient "
+                                "request (missing per-call kwargs); proceeding without headers.",
+                                self.name,
+                                exc_info=True,
+                            )
+                            headers = {}
                     for key, value in headers.items():
                         request.headers[key] = value
 

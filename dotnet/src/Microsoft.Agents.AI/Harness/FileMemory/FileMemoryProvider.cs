@@ -69,8 +69,9 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     private const string DefaultInstructions =
         """
         ## File Based Memory
-        You have access to a session-scoped, file-based memory system via the `file_memory_*` tools for storing and retrieving information across interactions.
-        These files act as your working memory for the current session and are isolated from other sessions.
+        You have access to a file-based memory system via the `file_memory_*` tools for storing and retrieving information across interactions.
+        These files act as your working memory and persist beyond the current conversation, so they may already contain memories written earlier,
+        and anything you write now may remain available later.
         Use these tools to store plans, memories, processing results, or downloaded data.
 
         - Use descriptive file names (e.g., "projectarchitecture.md", "userpreferences.md").
@@ -126,6 +127,10 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreFileMemoryProvider);
+#pragma warning restore MAAI001
+
         FileMemoryState state = this._sessionState.GetOrInitializeState(context.Session);
 
         // Ensure the working folder exists in the store.
@@ -267,7 +272,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     /// <param name="globPattern">An optional glob pattern (e.g., "*.md") matched against file names to filter the listing.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A list of file entries with names and optional descriptions.</returns>
-    [Description("List all memory files with their descriptions (if available). Optionally filter file names with a glob_pattern (e.g. \"*.md\"). Internal files (description sidecars and the memory index) are not shown.")]
+    [Description("List all memory files with their descriptions (if available). Optionally filter file names with a globPattern (e.g. \"*.md\"). Internal files (description sidecars and the memory index) are not shown.")]
     private async Task<List<FileListEntry>> LsAsync(string? globPattern = null, CancellationToken cancellationToken = default)
     {
         FileMemoryState state = this._sessionState.GetOrInitializeState(AIAgent.CurrentRunContext?.Session);
@@ -318,7 +323,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     /// <param name="replaceAll">When <see langword="true"/>, replace every occurrence; otherwise fail unless exactly one occurrence exists.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A confirmation message including the number of occurrences replaced, or a failure message.</returns>
-    [Description("Replace occurrences of old_string with new_string in a memory file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced.")]
+    [Description("Replace occurrences of oldString with newString in a memory file. Fails if oldString is not found, or if it occurs more than once and replaceAll is false. Returns the number of occurrences replaced.")]
     private async Task<string> ReplaceAsync(string fileName, string oldString, string newString, bool replaceAll = false, CancellationToken cancellationToken = default)
     {
         string normalized = StorePaths.NormalizeRelativePath(fileName);
@@ -393,7 +398,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     /// <param name="globPattern">An optional glob pattern to filter which files to search (e.g., "*.md", "research*"). Leave empty or omit to search all files.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A list of search results with matching file names, snippets, and matching lines.</returns>
-    [Description("Search memory file contents using a regular expression pattern (case-insensitive). Optionally filter which files to search using a glob_pattern (e.g., \"*.md\", \"research*\"). Returns matching file names, content snippets, and matching lines with line numbers.")]
+    [Description("Search memory file contents using a regular expression pattern (case-insensitive). Optionally filter which files to search using a globPattern (e.g., \"*.md\", \"research*\"). Returns matching file names, content snippets, and matching lines with line numbers.")]
     private async Task<List<FileSearchResult>> GrepAsync(string regexPattern, string? globPattern = null, CancellationToken cancellationToken = default)
     {
         FileMemoryState state = this._sessionState.GetOrInitializeState(AIAgent.CurrentRunContext?.Session);
@@ -447,8 +452,8 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
             .ToList();
 
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("# Memory Index");
-        sb.AppendLine();
+        sb.AppendLine("# Memory Index")
+            .AppendLine();
 
         int count = 0;
         foreach (string file in sortedFiles)
@@ -507,10 +512,10 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
 
     /// <summary>
     /// Returns <see langword="true"/> if the normalized file name points into a subdirectory.
-    /// File memory is a flat, session-scoped space, so nested names are rejected up front.
+    /// File memory is a flat namespace within the working folder, so nested names are rejected up front.
     /// </summary>
     private static bool IsNestedPath(string normalizedFileName) =>
-        normalizedFileName.IndexOf('/') >= 0;
+        normalizedFileName.Contains('/');
 
     /// <summary>
     /// Validates that a normalized memory file name is acceptable for write operations,

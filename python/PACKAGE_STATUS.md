@@ -22,7 +22,6 @@ Status is grouped into these buckets:
 | `agent-framework-azure-ai-search` | `python/packages/azure-ai-search` | `beta` |
 | `agent-framework-azure-cosmos` | `python/packages/azure-cosmos` | `beta` |
 | `agent-framework-azure-cosmos-memory` | `python/packages/azure-cosmos-memory` | `alpha` |
-| `agent-framework-azurefunctions` | `python/packages/azurefunctions` | `beta` |
 | `agent-framework-bedrock` | `python/packages/bedrock` | `beta` |
 | `agent-framework-chatkit` | `python/packages/chatkit` | `beta` |
 | `agent-framework-claude` | `python/packages/claude` | `beta` |
@@ -30,12 +29,11 @@ Status is grouped into these buckets:
 | `agent-framework-core` | `python/packages/core` | `released` |
 | `agent-framework-declarative` | `python/packages/declarative` | `released` |
 | `agent-framework-devui` | `python/packages/devui` | `beta` |
-| `agent-framework-durabletask` | `python/packages/durabletask` | `beta` |
 | `agent-framework-foundry` | `python/packages/foundry` | `released` |
 | `agent-framework-foundry-hosting` | `python/packages/foundry_hosting` | `beta` |
 | `agent-framework-foundry-local` | `python/packages/foundry_local` | `beta` |
 | `agent-framework-gemini` | `python/packages/gemini` | `beta` |
-| `agent-framework-github-copilot` | `python/packages/github_copilot` | `rc` |
+| `agent-framework-github-copilot` | `python/packages/github_copilot` | `released` |
 | `agent-framework-hosting` | `python/packages/hosting` | `alpha` |
 | `agent-framework-hosting-a2a` | `python/packages/hosting-a2a` | `alpha` |
 | `agent-framework-hosting-mcp` | `python/packages/hosting-mcp` | `alpha` |
@@ -66,6 +64,19 @@ listed below.
 
 ### Experimental features
 
+#### `AGENT_HOOKS`
+
+- `agent-framework-core`: `create_agent_hooks_middleware` and
+  `create_agent_hooks_middleware_from_emitter` from `agent_framework/_agent_hooks.py`,
+  the AGENT-HOOKS-0.1 enforcement middleware bundle, and the `MiddlewareBundle`
+  container from `agent_framework/_middleware.py` that both factories produce
+  (`MiddlewareBundle` itself needs no extra). Requires the opt-in
+  `agent-framework-core[agent-hooks]` extra (`agent-hooks-sdk`), which is deliberately
+  not part of `agent-framework-core[all]`. Known limitation: service-side (hosted) tool
+  execution never passes through the framework's function-invocation seam, so the
+  `pre_tool_call`/`post_tool_call` points cannot intercept it; hosted tool calls and
+  outputs are surfaced in the `post_model_call` content projection instead.
+
 #### `DECLARATIVE_AGENTS`
 
 - `agent-framework-declarative`: declarative agent loading APIs from
@@ -80,11 +91,63 @@ listed below.
   helper checks defined in `agent_framework/_evaluation.py`
 - `agent-framework-foundry`: `FoundryEvals`, `evaluate_traces`, and `evaluate_foundry_target`
 
-#### `SKILLS`
+#### `FILE_HISTORY`
 
-- `agent-framework-core`: exported skills APIs from `agent_framework`, including `Skill`,
-  `SkillResource`, `SkillScript`, `SkillScriptRunner`, and `SkillsProvider` from
+- `agent-framework-core`: `FileHistoryProvider` from `agent_framework/_sessions.py`
+
+#### `FIDES`
+
+- `agent-framework-core`: security labeling, content indirection, policy enforcement, and secure MCP
+  APIs from `agent_framework/security.py`, including `IntegrityLabel`, `ConfidentialityLabel`,
+  `ContentLabel`, `ContentVariableStore`, `SecureAgentConfig`, and `SecureMCPToolProxy`
+
+#### `FOUNDRY_TOOLS`
+
+- `agent-framework-foundry`: released-service tool helpers on `FoundryChatClient`, currently
+  `get_bing_grounding_tool` and `get_azure_ai_search_tool`
+
+#### `FOUNDRY_PREVIEW_TOOLS`
+
+- `agent-framework-foundry`: preview-service tool helpers on `FoundryChatClient`, including Bing
+  Custom Search, SharePoint, Fabric, Memory Search, Computer Use, Browser Automation, and A2A
+
+#### `FUNCTIONAL_WORKFLOWS`
+
+- `agent-framework-core`: functional workflow APIs from
+  `agent_framework/_workflows/_functional.py`, including `RunContext`, `step`,
+  `FunctionalWorkflowDefinition`, `FunctionalWorkflow`, `workflow`, and
+  `FunctionalWorkflowAgent`
+
+#### `HARNESS`
+
+- `agent-framework-core`: experimental harness APIs for background agents, file access, looping,
+  memory, and file-backed todo storage under `agent_framework/_harness/`
+
+#### `MCP_LONG_RUNNING_TASKS`
+
+- `agent-framework-core`: `MCPTaskOptions` from `agent_framework/_mcp.py`
+
+#### `MCP_SKILLS`
+
+- `agent-framework-core`: `MCPSkillResource`, `MCPSkill`, and `MCPSkillsSource` from
   `agent_framework/_skills.py`
+
+#### `PROGRESSIVE_TOOLS`
+
+- `agent-framework-core`: `FunctionInvocationContext.add_tools` and
+  `FunctionInvocationContext.remove_tools` from `agent_framework/_middleware.py`
+
+#### `SESSION_STORE`
+
+- `agent-framework-core`: `SessionStore` and `FileSessionStore` from
+  `agent_framework/_sessions.py`
+- `agent-framework-foundry-hosting`: `FoundryAgentSessionStore` from
+  `agent_framework_foundry_hosting/_state_store.py`
+
+#### `TO_PROMPT_AGENT`
+
+- `agent-framework-foundry`: `to_prompt_agent` from
+  `agent_framework_foundry/_to_prompt_agent.py`
 
 ### Release-candidate features
 

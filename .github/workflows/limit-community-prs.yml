@@ -27,7 +27,7 @@ jobs:
       is_team_member: ${{ steps.check.outputs.is_team_member }}
     steps:
       - name: Checkout scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           sparse-checkout: |
@@ -53,7 +53,7 @@ jobs:
 
       - name: Check PR author team membership
         id: check
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
           TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -82,7 +82,7 @@ jobs:
     if: ${{ needs.team_check.outputs.is_team_member == 'false' }}
     steps:
       - name: Checkout scripts
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           sparse-checkout: |
@@ -107,7 +107,7 @@ jobs:
           fallback-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
 
       - name: Enforce open PR limit
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           github-token: ${{ steps.github-auth.outputs.token }}
           script: |

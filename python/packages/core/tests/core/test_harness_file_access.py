@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -25,6 +28,7 @@ from agent_framework import (
     Message,
     SupportsChatGetResponse,
 )
+from agent_framework._filesystem import is_link_or_reparse_point
 from agent_framework._harness import _file_access as _file_access_module
 from agent_framework._harness._file_access import (
     DEFAULT_FILE_ACCESS_INSTRUCTIONS,
@@ -33,6 +37,8 @@ from agent_framework._harness._file_access import (
     _normalize_relative_path,
     _run_search_with_timeout,
 )
+
+from .conftest import create_junction_or_skip
 
 
 async def _list_files(store: AgentFileStore, directory: str = "") -> list[str]:
@@ -420,6 +426,31 @@ async def test_filesystem_store_search_and_list_skip_symlinked_directories(tmp_p
     assert {result.file_name for result in results} == {"inside.md"}
 
 
+async def test_filesystem_store_search_and_list_skip_junctioned_directories(tmp_path: Path) -> None:
+    """Recursive search and listing must not follow Windows junctions outside the root."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("ERROR outside the root", encoding="utf-8")
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "inside.md").write_text("ERROR inside", encoding="utf-8")
+    junction = root / "linked"
+    create_junction_or_skip(link=junction, target=outside)
+
+    try:
+        store = FileSystemAgentFileStore(root)
+
+        with pytest.raises(ValueError):
+            await store.read("linked/secret.md")
+        assert await _list_dirs(store) == []
+
+        results = await store.search("", "error", recursive=True)
+        assert {result.file_name for result in results} == {"inside.md"}
+    finally:
+        junction.rmdir()
+
+
 async def test_filesystem_store_search_skips_non_utf8_files(tmp_path: Path) -> None:
     """The filesystem store should silently skip non-UTF-8 files instead of aborting the search."""
     store = FileSystemAgentFileStore(tmp_path)
@@ -773,17 +804,37 @@ async def test_run_search_with_timeout_raises_value_error(monkeypatch: pytest.Mo
 async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """If ``Path.is_symlink`` raises during the probe, the operation must be refused."""
+    """If ``Path.lstat`` raises during the probe, the operation must be refused."""
     store = FileSystemAgentFileStore(tmp_path)
-    await store.write("ok.txt", "content")
+    await store.write("same/same/ok.txt", "content")
 
-    def boom(self: Path) -> bool:
-        raise PermissionError("access denied")
+    original_lstat = Path.lstat
+    failing_path = store.root_path / "same" / "same"
 
-    monkeypatch.setattr(Path, "is_symlink", boom)
+    def fail_for_target(self: Path) -> os.stat_result:
+        if self == failing_path:
+            raise PermissionError("access denied")
+        return original_lstat(self)
 
-    with pytest.raises(ValueError, match="symbolic link or reparse point"):
-        await store.read("ok.txt")
+    monkeypatch.setattr(Path, "lstat", fail_for_target)
+
+    with pytest.raises(ValueError, match=r"'same/same'"):
+        await store.read("same/same/ok.txt")
+
+
+def test_link_probe_detects_windows_reparse_attribute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Python 3.10/3.11 Windows fallback should detect the reparse-point file attribute."""
+    path = tmp_path / "entry"
+    path.write_text("content", encoding="utf-8")
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    assert reparse_attribute
+
+    def fake_lstat(self: Path) -> SimpleNamespace:
+        return SimpleNamespace(st_mode=stat.S_IFREG, st_file_attributes=reparse_attribute)
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+
+    assert is_link_or_reparse_point(path) is True
 
 
 def test_file_access_harness_classes_are_marked_experimental() -> None:

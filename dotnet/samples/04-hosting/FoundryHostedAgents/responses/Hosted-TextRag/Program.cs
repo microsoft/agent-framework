@@ -2,33 +2,33 @@
 
 // This sample shows how to use TextSearchProvider to add retrieval augmented generation (RAG)
 // capabilities to a hosted agent. The provider runs a search against an external knowledge base
-// before each model invocation and injects the results into the model context.
+// before each model invocation and injects the results into the model context. It is deployed to
+// Foundry directly from source (code / ZIP upload), so the platform builds and runs your code with
+// no container image.
 
 using Azure.AI.Projects;
-using Azure.Core;
 using Azure.Identity;
 using DotNetEnv;
-using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
-// Load .env file if present (for local development)
+// Load a local .env file when present (local development only). In Foundry the
+// platform injects the required environment variables at runtime.
 Env.TraversePath().Load();
 
-string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
+var endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
-string deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-4o";
 
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-// Use a chained credential: try a temporary dev token first (for local Docker debugging),
-// then fall back to DefaultAzureCredential (for local dev via dotnet run / managed identity in production).
-TokenCredential credential = new ChainedTokenCredential(
-    new DevTemporaryTokenCredential(),
-    new DefaultAzureCredential());
+// Environment variables can arrive set but blank: azd substitutes an empty string when the azd
+// environment does not define the variable referenced from azure.yaml. An empty string is not
+// null, so a plain ?? chain would pass the blank straight through and fail deep inside the SDK.
+var deploymentName = FirstNonBlank(
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
+    System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    "gpt-4o");
+
+var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-text-rag";
 
 TextSearchProviderOptions textSearchOptions = new()
 {
@@ -36,10 +36,14 @@ TextSearchProviderOptions textSearchOptions = new()
     RecentMessageMemoryLimit = 6,
 };
 
-AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
+// WARNING: DefaultAzureCredential is convenient for development but requires careful
+// consideration in production. Consider a specific credential (for example
+// ManagedIdentityCredential) to avoid latency, unintended credential probing, and
+// fallback security risks.
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
     .AsAIAgent(new ChatClientAgentOptions
     {
-        Name = Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-text-rag",
+        Name = agentName,
         ChatOptions = new ChatOptions
         {
             ModelId = deploymentName,
@@ -48,19 +52,18 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), credential)
         AIContextProviders = [new TextSearchProvider(MockSearchAsync, textSearchOptions)]
     });
 
-// Host the agent as a Foundry Hosted Agent using the Responses API.
+// Host the agent using the Responses protocol.
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();
 
-// Contributor-only: in Development, also map the per-agent OpenAI route shape that live Foundry uses
-// so a local REPL client can target this server via AIProjectClient.AsAIAgent(Uri agentEndpoint).
-// Do not use this in production. Hosted Foundry agents only support the agent-endpoint path.
-app.MapDevTemporaryLocalAgentEndpoint();
-
 app.Run();
+
+// Returns the first candidate that has an actual value, ignoring null and blank entries.
+static string FirstNonBlank(params string?[] candidates) =>
+    Array.Find(candidates, c => !string.IsNullOrWhiteSpace(c))!;
 
 // ── Mock search function ─────────────────────────────────────────────────────
 // In production, replace this with a real search provider (e.g., Azure AI Search).

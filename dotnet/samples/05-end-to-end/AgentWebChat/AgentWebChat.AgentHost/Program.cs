@@ -3,6 +3,7 @@
 using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Custom;
 using AgentWebChat.AgentHost.Utilities;
+using Azure.Storage.Blobs;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
@@ -28,10 +29,10 @@ builder.AddDevUI();
 builder.AddOpenAIChatCompletions();
 builder.AddOpenAIResponses();
 
-// IMPORTANT: In production, register a SessionIsolationKeyProvider to isolate sessions by authenticated caller.
-// Without this, contextId alone is the session key — any caller who knows a contextId can access that session.
+// IMPORTANT: In production, register an AgentIsolationKeyProvider to isolate sessions and tasks by authenticated caller.
+// Without this, contextId/taskId alone are the lookup keys — any caller who knows them can access another caller's data.
 // Example using claims-based identity:
-// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+// builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 // By default, NoopAgentSessionStore is used — sessions are not persisted across requests.
 // To enable multi-turn conversations, register a session store explicitly, e.g.:
@@ -43,8 +44,26 @@ var pirateAgentBuilder = builder.AddAIAgent(
     description: "An agent that speaks like a pirate.",
     chatClientServiceKey: "chat-model")
     .WithAITool(new CustomAITool())
-    .WithAITool(new CustomFunctionTool())
-    .WithInMemorySessionStore();
+    .WithAITool(new CustomFunctionTool());
+
+// Set both environment variables to replace development-only in-memory storage with Azure Blob Storage.
+string? blobConnectionString = Environment.GetEnvironmentVariable("AZURE_STORAGE_BLOB_CONNECTION_STRING");
+if (string.IsNullOrWhiteSpace(blobConnectionString))
+{
+    pirateAgentBuilder.WithInMemorySessionStore();
+}
+else
+{
+    string? blobContainerName = Environment.GetEnvironmentVariable("AZURE_STORAGE_BLOB_CONTAINER_NAME");
+    if (string.IsNullOrWhiteSpace(blobContainerName))
+    {
+        throw new InvalidOperationException(
+            "AZURE_STORAGE_BLOB_CONTAINER_NAME must be set when AZURE_STORAGE_BLOB_CONNECTION_STRING is configured.");
+    }
+
+    BlobContainerClient containerClient = new(blobConnectionString, blobContainerName);
+    pirateAgentBuilder.WithAzureBlobSessionStore(containerClient);
+}
 
 var knightsKnavesAgentBuilder = builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {
@@ -157,15 +176,15 @@ builder.Services.AddKeyedSingleton<AIAgent>("my-di-matchingname-agent", (sp, nam
 pirateAgentBuilder.AddA2AServer();
 knightsKnavesAgentBuilder.AddA2AServer();
 
-// IMPORTANT: In production, register a SessionIsolationKeyProvider to isolate sessions by authenticated caller.
-// Without this, contextId alone is the session key — any caller who knows a contextId can access that session.
+// IMPORTANT: In production, register an AgentIsolationKeyProvider to isolate sessions and tasks by authenticated caller.
+// Without this, contextId/taskId alone are the lookup keys — any caller who knows them can access another caller's data.
 // Example using claims-based identity:
-// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+// builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 var app = builder.Build();
 
 app.MapOpenApi();
-app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents API"));
+app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "Agents API")); // CodeQL [SM04686] Swagger UI is intentionally enabled because this is a sample application, not a production deployment.
 
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();

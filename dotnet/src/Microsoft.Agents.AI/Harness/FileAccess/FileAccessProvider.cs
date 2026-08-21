@@ -22,7 +22,8 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// The <see cref="FileAccessProvider"/> gives agents the ability to work with files
 /// in a folder that the user has granted access to. Unlike <see cref="FileMemoryProvider"/>,
-/// which provides session-scoped memory that may be isolated per session, <see cref="FileAccessProvider"/>
+/// which provides agent-managed memory files whose scope is determined by the working folder it is
+/// configured with, <see cref="FileAccessProvider"/>
 /// operates on a shared, persistent folder whose contents are visible across sessions and agents.
 /// This makes it suitable for reading input data, writing output artifacts, and working with
 /// files that have a lifetime beyond any single agent session.
@@ -243,6 +244,10 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <inheritdoc />
     protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreFileAccessProvider);
+#pragma warning restore MAAI001
+
         return new ValueTask<AIContext>(new AIContext
         {
             Instructions = this._instructions,
@@ -326,7 +331,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <param name="globPattern">An optional glob pattern (e.g., "*.md") matched against entry names to filter the listing.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A list of entries, each with a name and a type of "file" or "directory" (subdirectories first).</returns>
-    [Description("List the direct child files and subdirectories of a directory. Omit the directory (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example \"reports\" or \"reports/2024\". Optionally filter entries with a glob_pattern (e.g. \"*.md\"). Subdirectories are listed before files, and each entry has a name and a type of \"file\" or \"directory\".")]
+    [Description("List the direct child files and subdirectories of a directory. Omit the directory (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example \"reports\" or \"reports/2024\". Optionally filter entries with a globPattern (e.g. \"*.md\"). Subdirectories are listed before files, and each entry has a name and a type of \"file\" or \"directory\".")]
     private async Task<List<FileStoreEntry>> LsAsync(string? directory = null, string? globPattern = null, CancellationToken cancellationToken = default)
     {
         string target = string.IsNullOrWhiteSpace(directory) ? string.Empty : directory!;
@@ -345,7 +350,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <param name="replaceAll">When <see langword="true"/>, replace every occurrence; otherwise fail unless exactly one occurrence exists.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A confirmation message including the number of occurrences replaced, or a failure message.</returns>
-    [Description("Replace occurrences of old_string with new_string in a file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced.")]
+    [Description("Replace occurrences of oldString with newString in a file. Fails if oldString is not found, or if it occurs more than once and replaceAll is false. Returns the number of occurrences replaced.")]
     private async Task<string> ReplaceAsync(string fileName, string oldString, string newString, bool replaceAll = false, CancellationToken cancellationToken = default)
     {
         await this._writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -428,7 +433,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
         string prefix = target;
         if (prefix.Length == 0)
         {
-            return new List<FileSearchResult>(results);
+            return [.. results];
         }
 
         var rerooted = new List<FileSearchResult>(results.Count);

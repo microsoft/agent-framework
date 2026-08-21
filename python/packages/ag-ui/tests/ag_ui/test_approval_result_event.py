@@ -1,23 +1,26 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Tests for TOOL_CALL_RESULT event emission on approval resume flows."""
+"""Public event-stream tests for approval result projection."""
 
 from __future__ import annotations
 
 import json
 from typing import Any
 
+from ag_ui.core import ToolCallResultEvent
 from agent_framework import AgentResponseUpdate, Content, FunctionTool
+from agent_framework.exceptions import UserInputRequiredException
 from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 from agent_framework_ag_ui._agent import AgentConfig
 from agent_framework_ag_ui._agent_run import run_agent_stream
+from agent_framework_ag_ui._approval_lifecycle import ApprovalExecutionOwner, ApprovalStatus
+from agent_framework_ag_ui._approval_state import InMemoryAGUIApprovalStateStore
 
 
-def _make_weather_tool() -> FunctionTool:
-    """Create a real executable weather tool with approval_mode='always_require'."""
-
+def _weather_tool(executions: list[str]) -> FunctionTool:
     def get_weather(city: str) -> str:
+        executions.append(city)
         return f"Sunny in {city}"
 
     return FunctionTool(
@@ -28,91 +31,30 @@ def _make_weather_tool() -> FunctionTool:
     )
 
 
-async def test_approval_resume_emits_tool_call_result() -> None:
-    """After approving a tool call, the resume stream should contain a TOOL_CALL_RESULT event.
-
-    The message format follows the AG-UI approval pattern:
-    - assistant message with tool_calls
-    - tool message with {"accepted": true} content and toolCallId
-    """
-    tool_name = "get_weather"
-    call_id = "call_abc123"
-    weather_tool = _make_weather_tool()
-
-    agent = StubAgent(
-        updates=[AgentResponseUpdate(contents=[Content.from_text(text="The weather is sunny.")], role="assistant")],
-        default_options={"tools": [weather_tool]},
-    )
-    config = AgentConfig()
-
-    # Build resume messages: user query, assistant tool call, approval response
-    resume_messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "What's the weather in Seattle?"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps({"city": "Seattle"}),
-                    },
-                }
-            ],
-        },
-        {
-            "role": "tool",
-            "content": json.dumps({"accepted": True}),
-            "toolCallId": call_id,
-        },
-    ]
-
-    input_data: dict[str, Any] = {
-        "thread_id": "thread-approval-result",
-        "run_id": "run-resume",
-        "messages": resume_messages,
-    }
-
-    events: list[Any] = []
-    async for event in run_agent_stream(input_data, agent, config):
-        events.append(event)
-
-    event_types = [getattr(e, "type", None) for e in events]
-
-    assert "RUN_STARTED" in event_types, f"Expected RUN_STARTED, got types: {event_types}"
-    assert "RUN_FINISHED" in event_types, f"Expected RUN_FINISHED, got types: {event_types}"
-
-    # TOOL_CALL_RESULT must be present for the approved tool
-    tool_result_events = [e for e in events if getattr(e, "type", None) == "TOOL_CALL_RESULT"]
-
-    assert len(tool_result_events) > 0, (
-        f"Expected at least one TOOL_CALL_RESULT event for the approved tool, "
-        f"but found none. Event types in stream: {event_types}"
-    )
-
-    result_event = tool_result_events[0]
-    assert result_event.tool_call_id == call_id, (
-        f"Expected TOOL_CALL_RESULT with tool_call_id={call_id}, got tool_call_id={result_event.tool_call_id}"
-    )
-    # Verify the result contains the actual tool execution output
-    assert result_event.content == "Sunny in Seattle"
-
-
-async def test_approval_resume_result_has_content() -> None:
-    """TOOL_CALL_RESULT event from an approved tool should contain the execution result."""
-    tool_name = "get_weather"
-    call_id = "call_content_check"
-    weather_tool = _make_weather_tool()
-
+async def _run_resume(
+    *,
+    thread_id: str,
+    calls: list[tuple[str, str]],
+    decisions: list[tuple[str, bool]],
+    executions: list[str],
+) -> list[Any]:
+    tool = _weather_tool(executions)
     agent = StubAgent(
         updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
-        default_options={"tools": [weather_tool]},
+        default_options={"tools": [tool]},
     )
-    config = AgentConfig()
+    store = InMemoryAGUIApprovalStateStore()
+    for call_id, city in calls:
+        store.register(
+            owner=ApprovalExecutionOwner.LOCAL,
+            thread_ids=[thread_id],
+            name="get_weather",
+            arguments=json.dumps({"city": city}, sort_keys=True, separators=(",", ":")),
+            request_id=call_id,
+            interrupt_id=call_id,
+        )
 
-    resume_messages: list[dict[str, Any]] = [
+    messages: list[dict[str, Any]] = [
         {"role": "user", "content": "Check the weather"},
         {
             "role": "assistant",
@@ -121,438 +63,232 @@ async def test_approval_resume_result_has_content() -> None:
                 {
                     "id": call_id,
                     "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps({"city": "Portland"}),
-                    },
+                    "function": {"name": "get_weather", "arguments": json.dumps({"city": city})},
                 }
+                for call_id, city in calls
             ],
         },
-        {
-            "role": "tool",
-            "content": json.dumps({"accepted": True}),
-            "toolCallId": call_id,
-        },
     ]
-
-    input_data: dict[str, Any] = {
-        "thread_id": "thread-result-content",
-        "run_id": "run-resume-2",
-        "messages": resume_messages,
-    }
-
-    events: list[Any] = []
-    async for event in run_agent_stream(input_data, agent, config):
-        events.append(event)
-
-    tool_result_events = [e for e in events if getattr(e, "type", None) == "TOOL_CALL_RESULT"]
-    assert len(tool_result_events) == 1
-
-    result_event = tool_result_events[0]
-    assert result_event.tool_call_id == call_id
-    assert result_event.role == "tool"
-    # Verify the result contains the actual tool execution output (string returned directly)
-    assert result_event.content == "Sunny in Portland"
-
-
-async def test_approval_resume_snapshot_replaces_approval_payload_with_tool_result() -> None:
-    """Approved HITL tools persist their executed result in MESSAGES_SNAPSHOT for replay."""
-    from agent_framework_ag_ui._message_adapters import normalize_agui_input_messages
-
-    call_id = "call_snapshot_replay"
-    weather_tool = _make_weather_tool()
-    agent = StubAgent(
-        updates=[AgentResponseUpdate(contents=[Content.from_text(text="The weather is sunny.")], role="assistant")],
-        default_options={"tools": [weather_tool]},
-    )
-    config = AgentConfig()
-    resume_messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "What's the weather in Seattle?"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": "get_weather",
-                        "arguments": json.dumps({"city": "Seattle"}),
-                    },
-                }
-            ],
-        },
-        {
-            "role": "tool",
-            "content": json.dumps({"accepted": True}),
-            "toolCallId": call_id,
-        },
-    ]
-
     events: list[Any] = []
     async for event in run_agent_stream(
         {
-            "thread_id": "thread-snapshot-replay",
-            "run_id": "run-snapshot-replay",
-            "messages": resume_messages,
+            "thread_id": thread_id,
+            "run_id": "resume-run",
+            "messages": messages,
+            "resume": [
+                {"interruptId": call_id, "status": "resolved", "payload": {"accepted": accepted}}
+                for call_id, accepted in decisions
+            ],
         },
         agent,
-        config,
+        AgentConfig(),
+        approval_state_store=store,
     ):
         events.append(event)
-
-    snapshots = [event.messages for event in events if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"]
-    assert snapshots
-    snapshot_messages = [
-        message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message
-        for message in snapshots[-1]
-    ]
-    tool_messages = [message for message in snapshot_messages if message.get("role") == "tool"]
-    assert any(
-        message.get("toolCallId") == call_id and message.get("content") == "Sunny in Seattle"
-        for message in tool_messages
-    )
-    assert not any(message.get("content") == json.dumps({"accepted": True}) for message in tool_messages)
-
-    replay_messages = snapshot_messages + [{"role": "user", "content": "What is the weather now?"}]
-    provider_messages, _ = normalize_agui_input_messages(replay_messages)
-
-    assert not any(
-        content.type == "function_approval_response"
-        for message in provider_messages
-        for content in message.contents or []
-    )
-    assert any(
-        content.type == "function_result" and content.call_id == call_id and content.result == "Sunny in Seattle"
-        for message in provider_messages
-        for content in message.contents or []
-    )
+    return events
 
 
-async def test_no_approval_no_extra_tool_result() -> None:
-    """When no approval response is present, no extra TOOL_CALL_RESULT events should be emitted."""
-    agent = StubAgent(updates=[AgentResponseUpdate(contents=[Content.from_text(text="Hello.")], role="assistant")])
-    config = AgentConfig()
-
-    input_data: dict[str, Any] = {
-        "thread_id": "thread-no-approval",
-        "run_id": "run-normal",
-        "messages": [{"role": "user", "content": "Hi"}],
-    }
-
-    events: list[Any] = []
-    async for event in run_agent_stream(input_data, agent, config):
-        events.append(event)
-
-    tool_result_events = [e for e in events if getattr(e, "type", None) == "TOOL_CALL_RESULT"]
-    assert len(tool_result_events) == 0, f"Unexpected TOOL_CALL_RESULT events: {tool_result_events}"
-
-
-async def test_rejection_does_not_emit_tool_call_result() -> None:
-    """Rejected tool calls should not produce TOOL_CALL_RESULT events."""
-    tool_name = "get_weather"
-    call_id = "call_rejected"
-    weather_tool = _make_weather_tool()
-
+async def _run_custom_approval(tool: FunctionTool) -> tuple[list[Any], StubAgent]:
     agent = StubAgent(
-        updates=[AgentResponseUpdate(contents=[Content.from_text(text="OK, I won't check.")], role="assistant")],
-        default_options={"tools": [weather_tool]},
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
+        default_options={"tools": [tool]},
     )
-    config = AgentConfig()
-
-    resume_messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "What's the weather?"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps({"city": "Denver"}),
-                    },
-                }
-            ],
-        },
-        {
-            "role": "tool",
-            "content": json.dumps({"accepted": False}),
-            "toolCallId": call_id,
-        },
+    store = InMemoryAGUIApprovalStateStore()
+    store.register(
+        owner=ApprovalExecutionOwner.LOCAL,
+        thread_ids=["thread-custom"],
+        name=tool.name,
+        arguments="{}",
+        request_id="approval-custom",
+        interrupt_id="call-custom",
+    )
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "thread_id": "thread-custom",
+                "run_id": "resume-custom",
+                "messages": [{"role": "user", "content": "Continue"}],
+                "resume": [{"interruptId": "call-custom", "status": "resolved", "payload": {"approved": True}}],
+            },
+            agent,
+            AgentConfig(),
+            approval_state_store=store,
+        )
     ]
+    return events, agent
 
-    input_data: dict[str, Any] = {
-        "thread_id": "thread-rejection",
-        "run_id": "run-rejected",
-        "messages": resume_messages,
-    }
 
-    events: list[Any] = []
-    async for event in run_agent_stream(input_data, agent, config):
-        events.append(event)
+async def test_approved_call_emits_one_live_result_under_original_identity() -> None:
+    executions: list[str] = []
 
-    tool_result_events = [e for e in events if getattr(e, "type", None) == "TOOL_CALL_RESULT"]
-    assert len(tool_result_events) == 0, (
-        f"Expected no TOOL_CALL_RESULT for rejected tool, got {len(tool_result_events)}"
+    events = await _run_resume(
+        thread_id="thread-approved",
+        calls=[("call-weather", "Seattle")],
+        decisions=[("call-weather", True)],
+        executions=executions,
     )
 
+    results = [event for event in events if isinstance(event, ToolCallResultEvent)]
+    assert executions == ["Seattle"]
+    assert [(event.tool_call_id, event.content) for event in results] == [("call-weather", "Sunny in Seattle")]
 
-def _make_temperature_tool() -> FunctionTool:
-    """Create a real executable temperature tool with approval_mode='always_require'."""
 
-    def get_temperature(city: str) -> str:
-        return f"72F in {city}"
+async def test_rejected_call_does_not_execute_or_emit_live_result() -> None:
+    executions: list[str] = []
 
-    return FunctionTool(
-        name="get_temperature",
-        description="Get the temperature for a city",
-        func=get_temperature,
-        approval_mode="always_require",
+    events = await _run_resume(
+        thread_id="thread-rejected",
+        calls=[("call-weather", "Seattle")],
+        decisions=[("call-weather", False)],
+        executions=executions,
     )
 
+    assert executions == []
+    assert not [event for event in events if getattr(event, "type", None) == "TOOL_CALL_RESULT"]
 
-async def test_mixed_approve_reject_emits_only_approved_tool_result() -> None:
-    """When one tool call is approved and another rejected, only the approved one produces a TOOL_CALL_RESULT event."""
-    weather_tool = _make_weather_tool()
-    temperature_tool = _make_temperature_tool()
-    approved_call_id = "call_approved"
-    rejected_call_id = "call_rejected"
 
+async def test_resolve_approval_responses_treats_non_boolean_decision_as_rejection() -> None:
+    """A malformed decision completes the pending call as an explicit rejection."""
+    executions: list[str] = []
+
+    def guarded_write(value: str) -> str:
+        executions.append(value)
+        return f"wrote:{value}"
+
+    tool = FunctionTool(name="guarded_write", description="Write", func=guarded_write)
+    function_call = Content.from_function_call(
+        call_id="call-bool",
+        name="guarded_write",
+        arguments={"value": "safe"},
+    )
+    response = Content.from_function_approval_response(
+        approved=True,
+        id="approval-bool",
+        function_call=function_call,
+    )
+    response.approved = "true"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIApprovalStateStore()
+    store.set_tool_approval_state(
+        "thread-bool",
+        {"collected_approval_responses": [response]},
+    )
     agent = StubAgent(
-        updates=[AgentResponseUpdate(contents=[Content.from_text(text="Here are the results.")], role="assistant")],
-        default_options={"tools": [weather_tool, temperature_tool]},
+        updates=[AgentResponseUpdate(contents=[Content.from_text(text="Done.")], role="assistant")],
+        default_options={"tools": [tool]},
     )
-    config = AgentConfig()
 
-    resume_messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "Weather and temperature in Seattle?"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": approved_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": "get_weather",
-                        "arguments": json.dumps({"city": "Seattle"}),
-                    },
-                },
-                {
-                    "id": rejected_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": "get_temperature",
-                        "arguments": json.dumps({"city": "Seattle"}),
-                    },
-                },
-            ],
-        },
-        {
-            "role": "tool",
-            "content": json.dumps({"accepted": True}),
-            "toolCallId": approved_call_id,
-        },
-        {
-            "role": "tool",
-            "content": json.dumps({"accepted": False}),
-            "toolCallId": rejected_call_id,
-        },
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "thread_id": "thread-bool",
+                "run_id": "run-bool",
+                "messages": [{"role": "user", "content": "Continue"}],
+            },
+            agent,
+            AgentConfig(),
+            approval_state_store=store,
+        )
     ]
 
-    input_data: dict[str, Any] = {
-        "thread_id": "thread-mixed",
-        "run_id": "run-mixed",
-        "messages": resume_messages,
-    }
-
-    events: list[Any] = []
-    async for event in run_agent_stream(input_data, agent, config):
-        events.append(event)
-
-    tool_result_events = [e for e in events if getattr(e, "type", None) == "TOOL_CALL_RESULT"]
-
-    # Only the approved tool call should produce a TOOL_CALL_RESULT event
-    assert len(tool_result_events) == 1, (
-        f"Expected exactly 1 TOOL_CALL_RESULT (approved only), got {len(tool_result_events)}"
+    occurrence = store.lifecycle.occurrence_for_alias(
+        thread_id="thread-bool",
+        interrupt_id="approval-bool",
     )
-    assert tool_result_events[0].tool_call_id == approved_call_id
-    assert tool_result_events[0].content == "Sunny in Seattle"
-
-
-async def test_approval_resume_zero_updates_emits_tool_result() -> None:
-    """When the agent produces zero updates, TOOL_CALL_RESULT events should still be emitted via the fallback path."""
-    tool_name = "get_weather"
-    call_id = "call_zero_updates"
-    weather_tool = _make_weather_tool()
-
-    agent = StubAgent(
-        updates=[],
-        default_options={"tools": [weather_tool]},
-    )
-    config = AgentConfig()
-
-    resume_messages: list[dict[str, Any]] = [
-        {"role": "user", "content": "What's the weather?"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps({"city": "Boston"}),
-                    },
-                }
-            ],
-        },
-        {
-            "role": "tool",
-            "content": json.dumps({"accepted": True}),
-            "toolCallId": call_id,
-        },
+    rejection_results = [
+        content
+        for message in agent.messages_received
+        for content in message.contents
+        if content.type == "function_result" and content.call_id == "call-bool"
     ]
+    assert executions == []
+    assert occurrence is not None
+    assert occurrence.status is ApprovalStatus.REJECTED
+    assert [(result.call_id, result.result) for result in rejection_results] == [
+        ("call-bool", "Error: Tool call invocation was rejected by user.")
+    ]
+    assert not [event for event in events if getattr(event, "type", None) == "TOOL_CALL_RESULT"]
 
-    input_data: dict[str, Any] = {
-        "thread_id": "thread-zero-updates",
-        "run_id": "run-zero-updates",
-        "messages": resume_messages,
-    }
 
-    events: list[Any] = []
-    async for event in run_agent_stream(input_data, agent, config):
-        events.append(event)
+async def test_mixed_batch_preserves_approved_result_identity_and_order() -> None:
+    executions: list[str] = []
 
-    event_types = [getattr(e, "type", None) for e in events]
-    assert "RUN_STARTED" in event_types
-
-    tool_result_events = [e for e in events if getattr(e, "type", None) == "TOOL_CALL_RESULT"]
-    assert len(tool_result_events) == 1, (
-        f"Expected 1 TOOL_CALL_RESULT in zero-updates fallback path, got {len(tool_result_events)}"
+    events = await _run_resume(
+        thread_id="thread-mixed",
+        calls=[("call-seattle", "Seattle"), ("call-portland", "Portland")],
+        decisions=[("call-seattle", True), ("call-portland", False)],
+        executions=executions,
     )
-    assert tool_result_events[0].tool_call_id == call_id
-    assert tool_result_events[0].content == "Sunny in Boston"
+
+    results = [event for event in events if isinstance(event, ToolCallResultEvent)]
+    assert executions == ["Seattle"]
+    assert [(event.tool_call_id, event.content) for event in results] == [("call-seattle", "Sunny in Seattle")]
 
 
-async def test_resolve_approval_responses_returns_only_approved() -> None:
-    """_resolve_approval_responses should return only approved results; rejection results go into messages only."""
-    from agent_framework import Message
+async def test_approval_follow_up_group_remains_in_history_without_live_tool_result() -> None:
+    """Approval-time user-input requests remain grouped without becoming terminal tool results."""
 
-    from agent_framework_ag_ui._agent_run import _resolve_approval_responses
-
-    weather_tool = _make_weather_tool()
-    temperature_tool = _make_temperature_tool()
-    approved_call_id = "call_a"
-    rejected_call_id = "call_r"
-
-    messages: list[Any] = [
-        Message(role="user", contents=[Content.from_text(text="Hi")]),
-        Message(
-            role="assistant",
+    def request_consent() -> str:
+        raise UserInputRequiredException(
             contents=[
-                Content(
-                    type="function_approval_request",
-                    id=approved_call_id,
-                    function_call=Content(
-                        type="function_call",
-                        name="get_weather",
-                        call_id=approved_call_id,
-                        arguments='{"city": "NYC"}',
-                    ),
-                ),
-                Content(
-                    type="function_approval_request",
-                    id=rejected_call_id,
-                    function_call=Content(
-                        type="function_call",
-                        name="get_temperature",
-                        call_id=rejected_call_id,
-                        arguments='{"city": "NYC"}',
-                    ),
-                ),
-            ],
-        ),
-        Message(
-            role="user",
-            contents=[
-                Content(
-                    type="function_approval_response",
-                    id=approved_call_id,
-                    approved=True,
-                    function_call=Content(
-                        type="function_call",
-                        name="get_weather",
-                        call_id=approved_call_id,
-                        arguments='{"city": "NYC"}',
-                    ),
-                ),
-                Content(
-                    type="function_approval_response",
-                    id=rejected_call_id,
-                    approved=False,
-                    function_call=Content(
-                        type="function_call",
-                        name="get_temperature",
-                        call_id=rejected_call_id,
-                        arguments='{"city": "NYC"}',
-                    ),
-                ),
-            ],
-        ),
-    ]
+                Content.from_oauth_consent_request(consent_link="https://example.com/first"),
+                Content.from_oauth_consent_request(consent_link="https://example.com/second"),
+            ]
+        )
 
-    agent = StubAgent(
-        updates=[],
-        default_options={"tools": [weather_tool, temperature_tool]},
+    events, agent = await _run_custom_approval(
+        FunctionTool(name="request_consent", description="Request consent", func=request_consent)
     )
 
-    results = await _resolve_approval_responses(messages, [weather_tool, temperature_tool], agent, {})
+    assert not [event for event in events if getattr(event, "type", None) == "TOOL_CALL_RESULT"]
+    requests = [
+        content
+        for message in agent.messages_received
+        for content in message.contents
+        if isinstance(content, Content) and content.user_input_request
+    ]
+    assert [request.consent_link for request in requests] == [
+        "https://example.com/first",
+        "https://example.com/second",
+    ]
 
-    # Return value should only contain approved results
-    assert len(results) == 1
-    assert results[0].call_id == approved_call_id
-    assert results[0].type == "function_result"
 
-    # Rejection result should be written into messages (by _replace_approval_contents_with_results)
-    all_contents = [c for msg in messages for c in msg.contents]
-    rejection_results = [c for c in all_contents if c.type == "function_result" and c.call_id == rejected_call_id]
-    assert len(rejection_results) == 1
-    assert "rejected" in str(rejection_results[0].result).lower()
+async def test_approval_execution_failure_emits_one_terminal_error_result() -> None:
+    """An approved tool failure produces one deterministic terminal result."""
+
+    def fail() -> str:
+        raise RuntimeError("secret failure detail")
+
+    events, _ = await _run_custom_approval(FunctionTool(name="fail", description="Fail", func=fail))
+
+    results = [event for event in events if isinstance(event, ToolCallResultEvent)]
+    assert [(event.tool_call_id, event.content) for event in results] == [("call-custom", "Error: Function failed.")]
 
 
-class TestApprovalToolResultDisplayChannel:
-    """Approved tools using ``state_update(..., tool_result=...)`` must route the
-    display payload to the UI event while ``flow.tool_results`` still receives
-    the LLM-bound text. The HITL approval emitter is separate from the standard
-    streaming emitter, so it gets its own coverage.
-    """
+async def test_no_approval_path_emits_no_approval_specific_duplicate_result() -> None:
+    """An ordinary provider tool result is projected once without approval bookkeeping."""
+    agent = StubAgent(
+        updates=[
+            AgentResponseUpdate(
+                contents=[Content.from_function_result(call_id="call-ordinary", result="ordinary result")],
+                role="tool",
+            )
+        ]
+    )
 
-    def test_approval_emits_display_payload_when_marker_present(self) -> None:
-        from agent_framework_ag_ui import state_update
-        from agent_framework_ag_ui._agent_run import _make_approval_tool_result_events
+    events = [
+        event
+        async for event in run_agent_stream(
+            {
+                "thread_id": "thread-ordinary",
+                "run_id": "run-ordinary",
+                "messages": [{"role": "user", "content": "Run it"}],
+            },
+            agent,
+            AgentConfig(),
+        )
+    ]
 
-        display_payload = {"city": "Seattle", "temp": 14, "conditions": "foggy"}
-        inner = state_update(text="14°C, foggy", tool_result=display_payload)
-        resolved = Content.from_function_result(call_id="call_disp", result=[inner])
-
-        events = _make_approval_tool_result_events([resolved])
-
-        assert len(events) == 1
-        # UI event must carry the serialized display payload, NOT the LLM text.
-        assert json.loads(events[0].content) == display_payload
-        assert events[0].content != "14°C, foggy"
-
-    def test_approval_falls_back_to_text_when_no_marker(self) -> None:
-        """Backward compat: without a display marker, behaviour is unchanged."""
-        from agent_framework_ag_ui._agent_run import _make_approval_tool_result_events
-
-        resolved = Content.from_function_result(call_id="call_plain", result="Sunny in Seattle")
-
-        events = _make_approval_tool_result_events([resolved])
-
-        assert len(events) == 1
-        assert events[0].content == "Sunny in Seattle"
+    results = [event for event in events if isinstance(event, ToolCallResultEvent)]
+    assert [(event.tool_call_id, event.content) for event in results] == [("call-ordinary", "ordinary result")]

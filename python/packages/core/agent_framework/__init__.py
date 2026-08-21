@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from typing import Any, Final
 
 try:
-    _version = importlib.metadata.version(__name__)
+    _version = importlib.metadata.version("agent-framework-core")
 except importlib.metadata.PackageNotFoundError:
     _version = "0.0.0"  # Fallback for development mode
 __version__: Final[str] = _version
@@ -41,6 +41,7 @@ from .exceptions import (
 )
 
 _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
+    "._agent_hooks": ("create_agent_hooks_middleware", "create_agent_hooks_middleware_from_emitter"),
     "._agents": ("Agent", "BaseAgent", "RawAgent", "SupportsAgentRun"),
     "._clients": (
         "BaseChatClient",
@@ -183,6 +184,8 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "FunctionInvocationContext",
         "FunctionMiddleware",
         "FunctionMiddlewareTypes",
+        "MiddlewareBundle",
+        "MiddlewareFailure",
         "MiddlewareTermination",
         "MiddlewareType",
         "MiddlewareTypes",
@@ -194,11 +197,13 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "AgentSession",
         "ContextProvider",
         "FileHistoryProvider",
+        "FileSessionStore",
         "HistoryProvider",
         "InMemoryHistoryProvider",
         "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
         "MessageInjectionMiddleware",
         "ServiceSessionId",
+        "SessionStore",
         "SessionContext",
         "enqueue_messages",
         "register_state_type",
@@ -289,7 +294,11 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "InMemoryCheckpointStorage",
         "WorkflowCheckpoint",
     ),
-    "._workflows._const": ("DEFAULT_MAX_ITERATIONS",),
+    "._workflows._checkpoint_encoding": ("register_checkpoint_type",),
+    "._workflows._const": (
+        "DEFAULT_MAX_ITERATIONS",
+        "INTERNAL_SOURCE_ID",
+    ),
     "._workflows._edge": (
         "Case",
         "Default",
@@ -314,6 +323,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
     "._workflows._function_executor": ("FunctionExecutor", "executor"),
     "._workflows._functional": (
         "FunctionalWorkflow",
+        "FunctionalWorkflowDefinition",
         "FunctionalWorkflowAgent",
         "RunContext",
         "StepWrapper",
@@ -369,6 +379,7 @@ __all__ = [
     "GROUP_INDEX_KEY",
     "GROUP_KIND_KEY",
     "GROUP_TOKEN_COUNT_KEY",
+    "INTERNAL_SOURCE_ID",
     "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
     "SKIP_PARSING",
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
@@ -451,6 +462,7 @@ __all__ = [
     "FileMemoryProvider",
     "FileSearchMatch",
     "FileSearchResult",
+    "FileSessionStore",
     "FileSkill",
     "FileSkillScript",
     "FileSkillsSource",
@@ -469,6 +481,7 @@ __all__ = [
     "FunctionTool",
     "FunctionalWorkflow",
     "FunctionalWorkflowAgent",
+    "FunctionalWorkflowDefinition",
     "GeneratedEmbeddings",
     "GraphConnectivityError",
     "HistoryProvider",
@@ -496,7 +509,9 @@ __all__ = [
     "MemoryTopicRecord",
     "Message",
     "MessageInjectionMiddleware",
+    "MiddlewareBundle",
     "MiddlewareException",
+    "MiddlewareFailure",
     "MiddlewareTermination",
     "MiddlewareType",
     "MiddlewareTypes",
@@ -516,6 +531,7 @@ __all__ = [
     "SelectiveToolCallCompactionStrategy",
     "ServiceSessionId",
     "SessionContext",
+    "SessionStore",
     "SingleEdgeGroup",
     "Skill",
     "SkillFrontmatter",
@@ -591,6 +607,8 @@ __all__ = [
     "background_tasks_running",
     "background_tasks_running_message",
     "chat_middleware",
+    "create_agent_hooks_middleware",
+    "create_agent_hooks_middleware_from_emitter",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
     "create_edge_runner",
@@ -616,6 +634,7 @@ __all__ = [
     "normalize_tools",
     "prepend_agent_framework_to_user_agent",
     "prepend_instructions_to_messages",
+    "register_checkpoint_type",
     "register_state_type",
     "resolve_agent_id",
     "response_handler",

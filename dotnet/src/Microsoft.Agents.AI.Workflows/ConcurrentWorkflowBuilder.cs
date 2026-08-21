@@ -99,6 +99,6 @@ public sealed class ConcurrentWorkflowBuilder : OrchestrationBuilderBase<Concurr
             builder.WithIntermediateOutputFrom([.. agentExecutors, .. accumulators]);
         });
 
-        return builder.Build();
+        return builder.BuildForFeature((int)FeatureIndex.OrchestrationConcurrent);
     }
 }

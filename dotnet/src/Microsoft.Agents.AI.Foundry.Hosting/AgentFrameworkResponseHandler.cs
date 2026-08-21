@@ -11,7 +11,16 @@ using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
+
+// The terminal stream events are named the same in two namespaces this file pulls in, and the short
+// name binds to the one the event objects are not. Naming them here keeps `is` checks against the
+// types the response stream actually produces.
+using ResponseCompletedEvent = Azure.AI.AgentServer.Responses.Models.ResponseCompletedEvent;
+using ResponseFailedEvent = Azure.AI.AgentServer.Responses.Models.ResponseFailedEvent;
+using ResponseIncompleteEvent = Azure.AI.AgentServer.Responses.Models.ResponseIncompleteEvent;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -45,8 +54,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         ILogger<AgentFrameworkResponseHandler> logger,
         FoundryToolboxService? toolboxService = null)
     {
-        ArgumentNullException.ThrowIfNull(serviceProvider);
-        ArgumentNullException.ThrowIfNull(logger);
+        _ = Throw.IfNull(serviceProvider);
+        _ = Throw.IfNull(logger);
 
         this._serviceProvider = serviceProvider;
         this._logger = logger;
@@ -63,20 +72,6 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var agent = this.ResolveAgent(request);
         var sessionStore = this.ResolveSessionStore(request);
 
-        // Fail fast with a clear, actionable error when this 2.0.0-only image is served container
-        // protocol 1.0.0. The x-agent-foundry-call-id header is exclusive to protocol 2.0.0, so when the
-        // container is hosted by Foundry yet receives no call id, the platform is talking 1.0.0 to an
-        // image that does not support it. Detecting this here turns an opaque 500 into a 501 that names
-        // the cause and the fix instead of bubbling up as a generic server error on every request.
-        var unsupportedProtocolError = HostedProtocolCompatibility.GetUnsupportedProtocolError(
-            FoundryEnvironment.IsHosted, context.PlatformContext?.CallId);
-        if (unsupportedProtocolError is not null)
-        {
-            this._logger.LogError(
-                "Hosted container served unsupported Responses protocol 1.0.0 (no x-agent-foundry-call-id header); this image requires protocol 2.0.0.");
-            throw unsupportedProtocolError;
-        }
-
         // 2. Resolve the per-request hosted session identity context, so the session can be
         // loaded from a per-user partition. Fresh sessions are tagged once; resumed sessions are
         // validated against the live request to detect cross-user session leaks and in-process tampering.
@@ -85,8 +80,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var resolvedHostedContext = await isolationKeyProvider.GetKeysAsync(context, request, cancellationToken).ConfigureAwait(false);
         if (resolvedHostedContext is null && FoundryEnvironment.IsHosted)
         {
-            // Hosted by Foundry yet the provider produced no user identity. Protocol 1.0.0 (no call id)
-            // was already turned into a clear 501 above, so this is the unexpected case of a 2.0.0
+            // Hosted by Foundry yet the provider produced no user identity. The endpoint filter
+            // already rejected protocol 1.0.0, so this is the unexpected case of a 2.0.0
             // request that carried a call id but no x-agent-user-id, or a custom provider that returned
             // null in production. Reject rather than silently persist an unscoped, cross-user session.
             throw new InvalidOperationException(
@@ -112,16 +107,31 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // (resolvedUserId is null) there is no user to partition on, so the session is unscoped/shared
         // by design — per-user isolation applies only when a user identity was resolved (hosted).
         var conversationId = request.GetConversationId();
-        var sessionConversationId = HostedConversationKey.Resolve(
+        var agentSessionId = HostedConversationKey.Resolve(
             conversationId, request.PreviousResponseId, context.ResponseId);
 
-        var chatClientAgent = agent.GetService<ChatClientAgent>();
+        var agentOptions = agent.GetService<ChatClientAgentOptions>();
+        var hostingOptions = this._serviceProvider.GetService<IOptions<FoundryResponsesOptions>>()?.Value;
+        var allowStoredOutputEnabled = hostingOptions?.AllowStoredOutputEnabled ?? false;
 
-        AgentSession? session = !string.IsNullOrWhiteSpace(sessionConversationId)
-            ? await sessionStore.GetSessionAsync(agent, sessionConversationId, resolvedUserId, cancellationToken).ConfigureAwait(false)
-                : chatClientAgent is not null
-                ? await chatClientAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false)
-                : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        // Load the session for this conversation, or start a new one. The store returns null when
+        // nothing is persisted for the key, so a fresh conversation and a resumed one both end up with
+        // a session to run against.
+        AgentSession? session;
+        if (string.IsNullOrWhiteSpace(agentSessionId))
+        {
+            session = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            session = await sessionStore.GetSessionAsync(
+                agent,
+                agentSessionId,
+                resolvedUserId,
+                cancellationToken).ConfigureAwait(false);
+
+            session ??= await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         // Capture the platform per-request call id (x-agent-foundry-call-id, protocol 2.0.0 only).
         // It is re-applied to the ambient HostedCallContext immediately before each outbound egress
@@ -160,23 +170,9 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         yield return stream.EmitCreated();
         yield return stream.EmitInProgress();
 
-        // 4. Convert input: history + current input → ChatMessage[]
+        // 4. Convert input: the current input items become the run's messages. Earlier turns are not
+        // added here; whatever holds the history for this agent supplies them, see step 5.
         var messages = new List<ChatMessage>();
-
-        // Load conversation history only for fresh sessions. When a session already exists
-        // (e.g. resuming a workflow paused at an external-input port), the workflow's
-        // checkpointed state already contains the prior turns' messages — replaying history
-        // would re-drive completed actions and break HITL resume semantics.
-        var isResume = (!string.IsNullOrWhiteSpace(conversationId) || !string.IsNullOrWhiteSpace(request.PreviousResponseId))
-            && session?.StateBag?.Count > 0;
-        if (!isResume)
-        {
-            var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
-            if (history.Count > 0)
-            {
-                messages.AddRange(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag));
-            }
-        }
 
         // Load and convert current input items
         var inputItems = await context.GetInputItemsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -191,7 +187,10 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         }
 
         // 5. Build chat options
-        var chatOptions = InputConverter.ConvertToChatOptions(request);
+        var chatOptions = InputConverter.ConvertToChatOptions(
+            request,
+            agentOptions?.ChatOptions?.RawRepresentationFactory,
+            hostingOptions);
         chatOptions.Instructions = request.Instructions;
 
         // Inject Foundry Toolbox tools when the toolbox service is available.
@@ -338,6 +337,23 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var options = new ChatClientAgentRunOptions(chatOptions);
 
+        // We only use a volatile provider for the conversation history if the agent is a ChatClientAgent and the allow setting is not intentionally set or not custom chat history provider is intentionally supplied.
+        var useVolatileChatHistoryProvider =
+            !allowStoredOutputEnabled
+            && agent.GetService<ChatClientAgent>() is not null
+            && agentOptions?.ChatHistoryProvider is null;
+
+        // This will create a temporary in-memory provider for the conversation history, which will be dropped at the end of this run.
+        // This is used to avoid storing the conversation history as the SDK will by default do the same via the (InMemory/Foundry)ResponsesProvider internal implementation.
+        if (useVolatileChatHistoryProvider)
+        {
+            var history = await context.GetHistoryAsync(cancellationToken).ConfigureAwait(false);
+
+            options.AdditionalProperties ??= [];
+            options.AdditionalProperties.Add<ChatHistoryProvider>(
+                new VolatileChatHistoryProvider(InputConverter.ConvertOutputItemsToMessages(history, session?.StateBag)));
+        }
+
         // 6. Set up consent context for -32006 OAuth consent interception.
         //    We create a linked CTS so the consent-aware tool wrapper can cancel the agent
         //    run mid-loop when a -32006 error is returned by the proxy. The RequestConsentState
@@ -350,6 +366,22 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // NOTE: C# forbids 'yield return' inside a try block that has a catch clause,
         // and inside catch blocks. We use a flag to defer the yield to outside the try/catch.
         bool emittedTerminal = false;
+        bool notAllowedStoreUsageDetected = false;
+
+        // Set when this turn is being failed, so its session is not kept. A turn that ends incomplete,
+        // waiting on OAuth consent or interrupted by a shutdown, is not a failure: the caller comes back
+        // for it and needs the state that was built up, the tool approval ids among it.
+        bool turnFailed = false;
+
+        // A successful terminal event, held until the run is wound up and the session can be checked.
+        ResponseStreamEvent? completedEvent = null;
+
+        // Check whenever the agent is storing messages when it should not.
+        bool CheckNotAllowedStoreUsage() =>
+            // For IChatClients implementations when the backend is set to not store (store = false) the returned responseMessage.ConversationId comes null.
+            // If for any reason this property is set it means that the storage setting was enabled when it shouldn't.
+            !allowStoredOutputEnabled && session is ChatClientAgentSession { ConversationId: not null };
+
         var enumerator = OutputConverter.ConvertUpdatesToEventsAsync(
             agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
             stream,
@@ -418,6 +450,17 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
                 if (failedEvent is not null)
                 {
+                    // The run may have failed precisely because the agent stored the turn: the session
+                    // picks up that conversation id before the agent goes on to complain about having
+                    // two history managers. Report the cause rather than the symptom.
+                    if (CheckNotAllowedStoreUsage())
+                    {
+                        notAllowedStoreUsageDetected = true;
+                        turnFailed = true;
+                        throw HostedStoredOutputCompatibility.CreateMisconfiguredAgentError();
+                    }
+
+                    turnFailed = true;
                     yield return failedEvent;
                     yield break;
                 }
@@ -430,10 +473,21 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     yield break;
                 }
 
+                // A completed event is held back rather than sent straight out. The id of any
+                // conversation the agent's own service kept only lands on the session once the run is
+                // fully wound up, which is after this point, so sending the event now could tell the
+                // caller the turn finished and then hand them a failure for the very same turn.
+                if (evt is ResponseCompletedEvent)
+                {
+                    completedEvent = evt;
+                    emittedTerminal = true;
+                    continue;
+                }
+
                 // yield is in the outer try (finally-only) — allowed by C#
                 yield return evt!;
 
-                if (evt is ResponseCompletedEvent or ResponseFailedEvent or ResponseIncompleteEvent)
+                if (evt is ResponseFailedEvent or ResponseIncompleteEvent)
                 {
                     emittedTerminal = true;
                 }
@@ -443,12 +497,40 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         {
             await enumerator.DisposeAsync().ConfigureAwait(false);
 
-            // Persist session after streaming completes (successful or not). The user id partitions the
-            // persisted session per end user, mirroring the load above so multi-turn continuity is preserved.
-            if (session is not null && !string.IsNullOrWhiteSpace(sessionConversationId))
+            // Only after the the agent ran when can check precisely if the session had been used to store messages in the backend for validation.
+            if (CheckNotAllowedStoreUsage())
             {
-                await sessionStore.SaveSessionAsync(agent, sessionConversationId, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
+                notAllowedStoreUsageDetected = true;
+                turnFailed = true;
             }
+
+            // Persist the session for the next turn of this conversation, unless this one is being failed.
+            if (session is not null && !turnFailed)
+            {
+                await sessionStore.SaveSessionAsync(
+                    agent,
+                    agentSessionId!,
+                    session,
+                    resolvedUserId,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        if (notAllowedStoreUsageDetected)
+        {
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError(
+                    "Agent '{AgentName}' should not have server side storage enabled. This produced a new untracked conversation/response in the server while the hosted agent also generated a conversation for the request of the agent.",
+                    agent.Name);
+            }
+
+            throw HostedStoredOutputCompatibility.CreateMisconfiguredAgentError();
+        }
+
+        if (completedEvent is not null)
+        {
+            yield return completedEvent;
         }
     }
 
@@ -505,8 +587,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             var agent = this._serviceProvider.GetKeyedService<AIAgent>(agentName);
             if (agent is not null)
             {
-                FoundryHostingExtensions.TryApplyUserAgent(agent);
-                return FoundryHostingExtensions.ApplyOpenTelemetry(agent);
+                string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(
+                    agent,
+                    agentName,
+                    this._serviceProvider.GetService<AIAgent>());
+                return this.PrepareResolvedAgent(agent, storageIdentity);
             }
 
             if (this._logger.IsEnabled(LogLevel.Warning))
@@ -519,8 +604,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var defaultAgent = this._serviceProvider.GetService<AIAgent>();
         if (defaultAgent is not null)
         {
-            FoundryHostingExtensions.TryApplyUserAgent(defaultAgent);
-            return FoundryHostingExtensions.ApplyOpenTelemetry(defaultAgent);
+            string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(
+                defaultAgent,
+                registrationKey: null,
+                defaultAgent);
+            return this.PrepareResolvedAgent(defaultAgent, storageIdentity);
         }
 
         var errorMessage = string.IsNullOrEmpty(agentName)
@@ -528,6 +616,18 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             : $"Agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
+    }
+
+    private AIAgent PrepareResolvedAgent(AIAgent agent, string sessionStorageIdentity)
+    {
+        FoundryHostingExtensions.TryApplyUserAgent(agent);
+
+        AIAgent prepared = FoundryHostingExtensions.ApplyWorkflowCheckpointing(
+            agent,
+            this._serviceProvider.GetService<ILoggerFactory>());
+        prepared = new FoundryHostingAgent(prepared, sessionStorageIdentity);
+
+        return FoundryHostingExtensions.ApplyOpenTelemetry(prepared);
     }
 
     /// <summary>

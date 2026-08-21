@@ -2806,6 +2806,50 @@ async def test_chat_agent_context_provider_adds_instructions_when_agent_has_none
     assert options.get("instructions") == "Context-provided instructions"
 
 
+@pytest.mark.asyncio
+async def test_chat_agent_context_provider_appends_to_structured_instructions(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Context provider instructions must not stringify provider-native structured instructions.
+
+    Chat clients may widen ``instructions`` to a structured, provider-native form such as a sequence
+    of typed instruction blocks. Merging contributed instructions must append to that structure
+    rather than collapse it into text.
+    """
+
+    class InstructionContextProvider(ContextProvider):
+        def __init__(self):
+            super().__init__(source_id="instruction-context")
+
+        async def before_run(self, *, agent, session, context, state):
+            context.extend_instructions("instruction-context", "Context-provided instructions")
+
+    blocks = [
+        {"type": "text", "text": "Stable.", "block_options": {"pinned": True}},
+        {"type": "text", "text": "Dynamic."},
+    ]
+    agent = Agent(
+        client=chat_client_base,
+        default_options=cast(ChatOptions, {"instructions": blocks}),
+        context_providers=[InstructionContextProvider()],
+    )
+
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=None, input_messages=[Message(role="user", contents=["Hello"])]
+    )
+
+    assert options.get("instructions") == [*blocks, "Context-provided instructions"]
+
+
+def test_merge_options_preserves_structured_instructions() -> None:
+    """Run-level instructions append to structured default instructions without stringifying them."""
+    blocks = [{"type": "text", "text": "Stable.", "block_options": {"pinned": True}}]
+
+    merged = _merge_options({"instructions": blocks}, {"instructions": "Run-level instructions"})
+
+    assert merged["instructions"] == [*blocks, "Run-level instructions"]
+
+
 async def test_chat_agent_context_provider_adds_middleware_when_agent_has_none(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
@@ -2983,6 +3027,8 @@ async def test_persist_only_history_provider_still_injects_inmemory(
 
 async def test_shared_local_storage_cross_provider_responses_history_does_not_leak_fc_id() -> None:
     """Responses-specific replay metadata should stay local to Responses when session storage is shared."""
+    pytest.importorskip("agent_framework_openai")
+
     from openai.types.chat.chat_completion import ChatCompletion, Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 

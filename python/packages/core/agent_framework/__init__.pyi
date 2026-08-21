@@ -4,6 +4,7 @@ from typing import Final
 
 __version__: Final[str]
 
+from ._agent_hooks import create_agent_hooks_middleware, create_agent_hooks_middleware_from_emitter
 from ._agents import Agent, BaseAgent, RawAgent, SupportsAgentRun
 from ._clients import (
     BaseChatClient,
@@ -142,6 +143,8 @@ from ._middleware import (
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionMiddlewareTypes,
+    MiddlewareBundle,
+    MiddlewareFailure,
     MiddlewareTermination,
     MiddlewareType,
     MiddlewareTypes,
@@ -154,11 +157,13 @@ from ._sessions import (
     AgentSession,
     ContextProvider,
     FileHistoryProvider,
+    FileSessionStore,
     HistoryProvider,
     InMemoryHistoryProvider,
     MessageInjectionMiddleware,
     ServiceSessionId,
     SessionContext,
+    SessionStore,
     enqueue_messages,
     register_state_type,
 )
@@ -255,7 +260,8 @@ from ._workflows._checkpoint import (
     InMemoryCheckpointStorage,
     WorkflowCheckpoint,
 )
-from ._workflows._const import DEFAULT_MAX_ITERATIONS
+from ._workflows._checkpoint_encoding import register_checkpoint_type
+from ._workflows._const import DEFAULT_MAX_ITERATIONS, INTERNAL_SOURCE_ID
 from ._workflows._edge import (
     Case,
     Default,
@@ -281,6 +287,7 @@ from ._workflows._function_executor import FunctionExecutor, executor
 from ._workflows._functional import (
     FunctionalWorkflow,
     FunctionalWorkflowAgent,
+    FunctionalWorkflowDefinition,
     RunContext,
     StepWrapper,
     get_run_context,
@@ -336,6 +343,7 @@ __all__ = [
     "GROUP_INDEX_KEY",
     "GROUP_KIND_KEY",
     "GROUP_TOKEN_COUNT_KEY",
+    "INTERNAL_SOURCE_ID",
     "MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY",
     "SKIP_PARSING",
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
@@ -418,6 +426,7 @@ __all__ = [
     "FileMemoryProvider",
     "FileSearchMatch",
     "FileSearchResult",
+    "FileSessionStore",
     "FileSkill",
     "FileSkillScript",
     "FileSkillsSource",
@@ -436,6 +445,7 @@ __all__ = [
     "FunctionTool",
     "FunctionalWorkflow",
     "FunctionalWorkflowAgent",
+    "FunctionalWorkflowDefinition",
     "GeneratedEmbeddings",
     "GraphConnectivityError",
     "HistoryProvider",
@@ -463,7 +473,9 @@ __all__ = [
     "MemoryTopicRecord",
     "Message",
     "MessageInjectionMiddleware",
+    "MiddlewareBundle",
     "MiddlewareException",
+    "MiddlewareFailure",
     "MiddlewareTermination",
     "MiddlewareType",
     "MiddlewareTypes",
@@ -483,6 +495,7 @@ __all__ = [
     "SelectiveToolCallCompactionStrategy",
     "ServiceSessionId",
     "SessionContext",
+    "SessionStore",
     "SingleEdgeGroup",
     "Skill",
     "SkillFrontmatter",
@@ -558,6 +571,8 @@ __all__ = [
     "background_tasks_running",
     "background_tasks_running_message",
     "chat_middleware",
+    "create_agent_hooks_middleware",
+    "create_agent_hooks_middleware_from_emitter",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
     "create_edge_runner",
@@ -583,6 +598,7 @@ __all__ = [
     "normalize_tools",
     "prepend_agent_framework_to_user_agent",
     "prepend_instructions_to_messages",
+    "register_checkpoint_type",
     "register_state_type",
     "resolve_agent_id",
     "response_handler",
