@@ -32,9 +32,9 @@ from agent_framework import (
     background_tasks_running,
     background_tasks_running_message,
     set_agent_mode,
-    tool,
     todos_remaining,
     todos_remaining_message,
+    tool,
 )
 from agent_framework._harness._loop import (
     DEFAULT_JUDGE_MAX_ITERATIONS,

@@ -713,11 +713,7 @@ class WorkflowAgent(BaseAgent):
         Note:
             Text requests use the function-call envelope so callers can reply with a matching function result.
         """
-        if (
-            isinstance(event.data, Content)
-            and event.data.user_input_request
-            and event.data.type != "text"
-        ):
+        if isinstance(event.data, Content) and event.data.user_input_request and event.data.type != "text":
             # Preserve specialized requests that callers already understand how to present.
             return event.data
 

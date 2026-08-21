@@ -34,7 +34,9 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from pydantic import BaseModel, Field
 from typing_extensions import Self
 
-from .._agents import _LOOP_ITERATION_TOKEN_KEY  # pyright: ignore[reportPrivateUsage] -- shared loop-turn marker, see _agents.py
+from .._agents import (
+    _LOOP_ITERATION_TOKEN_KEY,  # pyright: ignore[reportPrivateUsage] -- shared loop-turn marker, see _agents.py
+)
 from .._feature_stage import ExperimentalFeature, experimental
 from .._middleware import AgentContext, AgentMiddleware, MiddlewareTermination
 from .._sessions import SessionContext
@@ -490,8 +492,7 @@ class AgentLoopMiddleware(AgentMiddleware):
         if response is None or run_after is None:
             return
         if not any(
-            getattr(provider, "after_run_once_per_turn", False)
-            for provider in getattr(agent, "context_providers", [])
+            getattr(provider, "after_run_once_per_turn", False) for provider in getattr(agent, "context_providers", [])
         ):
             return
         session_context = SessionContext(
