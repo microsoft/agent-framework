@@ -29,7 +29,7 @@ Routing Pattern:
     User -> Coordinator -> Specialist (iterates N times) -> Handoff -> Final Output
 
 Prerequisites:
-    - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+    - FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
     - Azure OpenAI configured for FoundryChatClient with required environment variables.
     - Authentication via azure-identity. Use AzureCliCredential and run `az login` before executing the sample.
 

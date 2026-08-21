@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Dependency-injection helpers that register a <see cref="FoundryMemoryProvider"/> wired with a
 /// <see cref="HostedFoundryMemoryProviderScopes"/> strategy.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public static class HostedFoundryMemoryProviderServiceCollectionExtensions
 {
     /// <summary>

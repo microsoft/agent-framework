@@ -148,19 +148,68 @@ internal static class FoundryEvalConverter
     /// <summary>
     /// Builds the <c>testing_criteria</c> array for <c>evals.create()</c>.
     /// </summary>
-    /// <param name="evaluators">Evaluator names (short or fully-qualified).</param>
+    /// <param name="evaluators">
+    /// Evaluator specs — built-in evaluator names (short or fully-qualified) and/or
+    /// <see cref="GeneratedEvaluatorRef"/> instances for pre-existing rubric evaluators.
+    /// </param>
     /// <param name="model">Model deployment name for the LLM judge.</param>
     /// <param name="includeDataMapping">
     /// Whether to include field-level data mapping (required for JSONL data source).
     /// </param>
+    /// <param name="includeToolDefinitions">
+    /// Whether the mapped data items include tool definitions. Used to add a
+    /// <c>tool_definitions</c> mapping entry for rubric evaluators (built-in evaluators
+    /// derive this from their own <see cref="ToolEvaluators"/> membership).
+    /// </param>
     internal static List<WireTestingCriterion> BuildTestingCriteria(
-        IEnumerable<string> evaluators,
+        IEnumerable<FoundryEvaluatorSpec> evaluators,
         string model,
-        bool includeDataMapping = false)
+        bool includeDataMapping = false,
+        bool includeToolDefinitions = false)
     {
         var criteria = new List<WireTestingCriterion>();
-        foreach (var name in evaluators)
+        foreach (var spec in evaluators)
         {
+            if (spec.IsRubric)
+            {
+                var @ref = spec.GeneratedRef!;
+                Dictionary<string, string>? refMapping = null;
+                if (includeDataMapping)
+                {
+                    // Rubric evaluators accept conversation arrays like agent evaluators,
+                    // plus tool_definitions when items are tool-aware.
+                    refMapping = new Dictionary<string, string>
+                    {
+                        ["query"] = "{{item.query_messages}}",
+                        ["response"] = "{{item.response_messages}}",
+                    };
+
+                    if (includeToolDefinitions)
+                    {
+                        refMapping["tool_definitions"] = "{{item.tool_definitions}}";
+                    }
+                }
+
+                criteria.Add(new WireTestingCriterion
+                {
+                    Name = @ref.DisplayName ?? @ref.Name,
+                    EvaluatorName = @ref.Name,
+                    EvaluatorVersion = @ref.Version,
+                    InitializationParameters = new WireInitParams { DeploymentName = model },
+                    DataMapping = refMapping,
+                });
+
+                if (@ref.Version is null)
+                {
+                    System.Diagnostics.Trace.TraceWarning(
+                        "GeneratedEvaluatorRef '{0}' has no pinned version; the eval run will resolve to whichever version is current at execution time. Pin the version for reproducible runs.",
+                        @ref.Name);
+                }
+
+                continue;
+            }
+
+            var name = spec.BuiltinName!;
             var qualified = ResolveEvaluator(name);
             var shortName = name.StartsWith("builtin.", StringComparison.Ordinal)
                 ? name.Substring("builtin.".Length)
@@ -248,8 +297,12 @@ internal static class FoundryEvalConverter
     /// Returns the subset of <paramref name="evaluators"/> that require a ground-truth
     /// (reference) value but cannot be evaluated because no item provided one.
     /// </summary>
+    /// <remarks>
+    /// Rubric references (<see cref="GeneratedEvaluatorRef"/>) are skipped — they are not
+    /// ground-truth–dependent on the wire.
+    /// </remarks>
     internal static List<string> FindMissingGroundTruthEvaluators(
-        IEnumerable<string> evaluators,
+        IEnumerable<FoundryEvaluatorSpec> evaluators,
         bool hasGroundTruth)
     {
         if (hasGroundTruth)
@@ -258,8 +311,14 @@ internal static class FoundryEvalConverter
         }
 
         var missing = new List<string>();
-        foreach (var name in evaluators)
+        foreach (var spec in evaluators)
         {
+            if (spec.IsRubric)
+            {
+                continue;
+            }
+
+            var name = spec.BuiltinName!;
             if (GroundTruthEvaluators.Contains(ResolveEvaluator(name)))
             {
                 missing.Add(name);

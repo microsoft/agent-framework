@@ -14,6 +14,58 @@ This sample demonstrates how to use a `CompactionProvider` with a `PipelineCompa
 
 ## Concepts
 
+### Choosing between `CompactionProvider` and `IChatReducer`
+
+Both abstractions reduce the messages sent to a model, but they run at different layers and have different effects on stored history.
+
+| Choose | When you need | Effect on stored history | Function-calling loop |
+|---|---|---|---|
+| `CompactionProvider` on `ChatClientBuilder.UseAIContextProviders(...)` | Request-context management that preserves the original conversation | The compacted view is forwarded to the inner chat client; the source history remains unchanged | Runs for each inner chat-client call, including calls made while tools are being invoked |
+| `CompactionProvider` in `ChatClientAgentOptions.AIContextProviders` | Agent-specific compaction without decorating a shared chat client | Runs before chat history is stored, so generated replacement messages can become part of the persisted history | Runs at the agent boundary, not for each call inside the tool loop |
+| `IChatReducer` in `InMemoryChatHistoryProviderOptions.ChatReducer` | Storage management where the reduced list should replace the session's in-memory history | Permanently replaces the provider's stored message list with the reducer output | Runs at the configured history-provider event, not for each call inside the tool loop |
+
+Use a builder-level `CompactionProvider` when the primary goal is to fit each model request within a context window while retaining the complete conversation for auditing, replay, or a different downstream policy. Use an `IChatReducer` when the primary goal is to bound the history retained in `InMemoryChatHistoryProvider` itself. If the reduced history is serialized with the session, the discarded messages are no longer present after the session is restored.
+
+`InMemoryChatHistoryProvider` can run its reducer at either of these events:
+
+- `BeforeMessagesRetrieval` (the default) reduces stored history immediately before it is supplied to the agent.
+- `AfterMessageAdded` reduces stored history after each request/response pair is added.
+
+The event controls *when* reduction occurs; the `IChatReducer` implementation controls *how* messages are reduced. By contrast, a `CompactionStrategy` supplies its own `CompactionTrigger` and operates on message groups that preserve tool-call/result pairs.
+
+#### Adapting between the abstractions
+
+The adapters support existing implementations at either integration point. Pick the direction that matches the layer where you want reduction to run.
+
+To use a `CompactionStrategy` for persistent in-memory history reduction, adapt it to `IChatReducer`:
+
+```csharp
+CompactionStrategy strategy =
+    new SlidingWindowCompactionStrategy(CompactionTriggers.TurnsExceed(20));
+
+InMemoryChatHistoryProviderOptions historyOptions = new()
+{
+    ChatReducer = strategy.AsChatReducer(),
+    ReducerTriggerEvent = InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval
+};
+
+InMemoryChatHistoryProvider historyProvider = new(historyOptions);
+```
+
+To use an existing `IChatReducer` in a compaction pipeline or for in-run request compaction, adapt it to `CompactionStrategy`:
+
+```csharp
+IChatReducer existingReducer = /* your MEAI reducer */;
+
+CompactionStrategy strategy = new ChatReducerCompactionStrategy(
+    existingReducer,
+    CompactionTriggers.TokensExceed(4000));
+
+CompactionProvider provider = new(strategy);
+```
+
+Do not wrap a strategy with `AsChatReducer()` and immediately wrap that reducer in `ChatReducerCompactionStrategy`. That round trip adds no capability; choose the original strategy directly and register it at the appropriate layer.
+
 ### Message groups
 
 The compaction engine organizes messages into atomic *groups* that are treated as indivisible units during compaction. A group is either:
@@ -130,3 +182,13 @@ AIAgent agent = agentChatClient
 This places the compaction provider at the agent level instead of the chat client level, which allows you to use different compaction strategies for different agents that share the same chat client.
 
 > Note: In this mode the `CompactionProvider` is not engaged during the tool calling loop. Agent-level `AIContextProviders` run before chat history is stored, so any synthetic summary messages produced by `CompactionProvider` can become part of the persisted history when using `ChatHistoryProvider`. If you want to compact only the request context while preserving the original stored history, register `CompactionProvider` on the `ChatClientBuilder` via `UseAIContextProviders(...)` instead of on `ChatClientAgentOptions`.
+
+## Security Considerations
+
+Most compaction strategies in this pipeline (tool-result summarization, sliding window, truncation) only
+remove or reorder existing messages and carry no additional risk. `SummarizationCompactionStrategy` is
+the exception: it calls out to an LLM to produce replacement summary content that permanently becomes
+part of chat history. A compromised or malicious summarization service could return a summary containing
+unsafe instructions, creating a persistent indirect-prompt-injection vector. Using
+`SummarizationCompactionStrategy` is optional and requires explicit configuration — only point its
+`IChatClient` at a summarization service you trust as much as the primary model.

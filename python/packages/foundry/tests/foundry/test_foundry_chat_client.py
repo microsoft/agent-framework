@@ -8,23 +8,28 @@ import sys
 import warnings
 from functools import wraps
 from pathlib import Path
-from typing import Annotated, Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Annotated, Any, cast
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+import agent_framework._telemetry as telemetry
 import pytest
-from agent_framework import ChatResponse, Content, Message, SupportsChatGetResponse, tool
-from agent_framework._telemetry import get_user_agent
+from agent_framework import Agent, ChatResponse, Content, Message, SupportsChatGetResponse, tool
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework_openai import OpenAIContentFilterException
 from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.exceptions import ResourceNotFoundError
+from azure.core.pipeline import Pipeline
+from azure.core.pipeline.policies import RedirectPolicy, UserAgentPolicy
+from azure.core.pipeline.transport import HttpRequest, HttpResponse, HttpTransport
 from azure.identity import AzureCliCredential
 from openai import BadRequestError
 from pydantic import BaseModel
 from pytest import param
 
 from agent_framework_foundry import FoundryChatClient, RawFoundryChatClient
+from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
 
 
 class OutputStruct(BaseModel):
@@ -32,6 +37,74 @@ class OutputStruct(BaseModel):
 
     location: str
     weather: str | None = None
+
+
+def test_foundry_feature_usage_policy_refreshes_user_agent() -> None:
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+    mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
+    request = MagicMock()
+    request.http_request.url = "https://project.services.ai.azure.com/api/projects/test"
+    request.http_request.headers = {"User-Agent": "azsdk-python-ai-projects/1.0 agent-framework-python/1.0"}
+    FeatureUsagePolicy().on_request(request)
+
+    assert request.http_request.headers["User-Agent"] == (
+        "azsdk-python-ai-projects/1.0 agent-framework-python/1.0 (feat=v1.1000000000000)"
+    )
+
+
+def test_foundry_feature_usage_policy_removes_token_on_cross_origin_redirect() -> None:
+    class _Response(HttpResponse):
+        def body(self) -> bytes:
+            return b""
+
+    class _RedirectTransport(HttpTransport[HttpRequest, HttpResponse]):
+        def __init__(self) -> None:
+            self.sent_headers: list[dict[str, str]] = []
+
+        def __enter__(self) -> _RedirectTransport:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            self.close()
+
+        def open(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+        def send(self, request: HttpRequest, **kwargs: Any) -> HttpResponse:
+            self.sent_headers.append(dict(request.headers))
+            response = _Response(request, None)
+            if len(self.sent_headers) == 1:
+                response.status_code = 302
+                response.headers = {"location": "https://example.com/redirected"}
+            else:
+                response.status_code = 200
+                response.headers = {}
+            return response
+
+    with telemetry._feature_mask_lock:
+        telemetry._feature_mask = 0
+    mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
+    transport = _RedirectTransport()
+    pipeline = cast(Any, Pipeline)(
+        transport, [UserAgentPolicy(user_agent=get_user_agent()), RedirectPolicy(), FeatureUsagePolicy()]
+    )
+
+    pipeline.run(HttpRequest("GET", "https://project.services.ai.azure.com/api/projects/test"))
+
+    assert "(feat=v1." in transport.sent_headers[0]["User-Agent"]
+    assert "(feat=v1." not in transport.sent_headers[1]["User-Agent"]
+
+
+def test_foundry_feature_index_does_not_own_toolbox() -> None:
+    assert not hasattr(FeatureIndex, "FOUNDRY_TOOLBOX")
+
+
+def test_raw_foundry_chat_client_owns_foundry_feature_bit() -> None:
+    assert RawFoundryChatClient._FEATURE_USAGE_INDEX is FeatureIndex.FOUNDRY_CHAT_CLIENT
 
 
 @tool(approval_mode="never_require")
@@ -75,7 +148,7 @@ def _with_foundry_debug() -> Any:
                     f"model={os.getenv('FOUNDRY_MODEL', '<unset>')}"
                 )
                 if hasattr(exc, "add_note"):
-                    exc.add_note(debug_message)
+                    cast(Any, exc).add_note(debug_message)
                 elif exc.args:
                     exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
                 else:
@@ -155,8 +228,9 @@ def test_init() -> None:
     client = FoundryChatClient(project_client=mock_project_client, model=_TEST_FOUNDRY_MODEL)
 
     assert client.model == _TEST_FOUNDRY_MODEL
-    assert isinstance(client, SupportsChatGetResponse)
     assert client.project_client is mock_project_client
+    assert isinstance(client, SupportsChatGetResponse)
+    mock_project_client.get_openai_client.assert_called_once_with()
 
 
 def test_raw_foundry_chat_client_init_uses_explicit_parameters() -> None:
@@ -196,6 +270,7 @@ def test_init_with_default_header() -> None:
         assert client.default_headers is not None
         assert key in client.default_headers
         assert client.default_headers[key] == value
+    project_client.get_openai_client.assert_called_once_with(default_headers=default_headers)
 
 
 def test_init_with_project_endpoint_creates_project_client() -> None:
@@ -218,6 +293,11 @@ def test_init_with_project_endpoint_creates_project_client() -> None:
     assert factory.call_args.kwargs["credential"] is credential
     assert factory.call_args.kwargs["allow_preview"] is True
     assert factory.call_args.kwargs["user_agent"] == get_user_agent()
+    policies = factory.call_args.kwargs["per_retry_policies"]
+    assert len(policies) == 1
+    assert isinstance(policies[0], FeatureUsagePolicy)
+    assert "custom_hook_policy" not in factory.call_args.kwargs
+    project_client.get_openai_client.assert_called_once_with(http_client=ANY)
 
 
 def test_init_with_empty_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -360,6 +440,71 @@ async def test_get_response_with_invalid_input() -> None:
         await client.get_response(messages=[])
 
 
+async def test_get_response_does_not_request_encrypted_reasoning_by_default() -> None:
+    """Foundry chat calls must not opt into encrypted reasoning unless requested."""
+    mock_response = MagicMock(
+        id="response_123",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[],
+        usage=None,
+        finish_reason=None,
+        conversation=None,
+        status="completed",
+    )
+
+    async def create_response(**kwargs: Any) -> Any:
+        if "reasoning.encrypted_content" in kwargs.get("include", []):
+            raise ValueError("Encrypted content is not supported with this model.")
+        return _as_raw(mock_response)
+
+    mock_openai_client = _make_mock_openai_client()
+    mock_openai_client.responses.with_raw_response.create.side_effect = create_response
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response = await client.get_response([Message(role="user", contents=["Hello"])])
+
+    assert response.response_id == "response_123"
+
+
+async def test_get_response_preserves_explicit_encrypted_reasoning_opt_in() -> None:
+    """Capable Foundry deployments can receive an explicit encrypted-reasoning opt-in."""
+    mock_response = MagicMock(
+        id="response_123",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[],
+        usage=None,
+        finish_reason=None,
+        conversation=None,
+        status="completed",
+    )
+
+    async def create_response(**kwargs: Any) -> Any:
+        if "reasoning.encrypted_content" not in kwargs.get("include", []):
+            raise ValueError("Encrypted reasoning opt-in was not forwarded.")
+        return _as_raw(mock_response)
+
+    mock_openai_client = _make_mock_openai_client()
+    mock_openai_client.responses.with_raw_response.create.side_effect = create_response
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response = await client.get_response(
+        [Message(role="user", contents=["Hello"])],
+        options={"include": ["reasoning.encrypted_content"]},
+    )
+
+    assert response.response_id == "response_123"
+
+
 async def test_web_search_tool_with_location() -> None:
     mock_openai_client = _make_mock_openai_client()
     project_client = MagicMock()
@@ -375,6 +520,7 @@ async def test_web_search_tool_with_location() -> None:
         }
     )
 
+    assert web_search_tool.user_location is not None
     assert web_search_tool.user_location.city == "Seattle"
     assert web_search_tool.user_location.country == "US"
     _, run_options, _ = await client._prepare_request(
@@ -393,7 +539,7 @@ async def test_code_interpreter_tool_variations() -> None:
     client = FoundryChatClient(project_client=project_client, model="test-model")
 
     code_tool = FoundryChatClient.get_code_interpreter_tool()
-    assert code_tool.container["type"] == "auto"
+    assert cast(dict[str, Any], code_tool.container)["type"] == "auto"
 
     _, run_options, _ = await client._prepare_request(
         messages=[Message("user", ["Run some code"])],
@@ -403,7 +549,7 @@ async def test_code_interpreter_tool_variations() -> None:
     assert run_options["tools"] == [code_tool]
 
     code_tool_with_files = FoundryChatClient.get_code_interpreter_tool(file_ids=["file1", "file2"])
-    assert code_tool_with_files.container.file_ids == ["file1", "file2"]
+    assert cast(Any, code_tool_with_files.container).file_ids == ["file1", "file2"]
 
     _, run_options, _ = await client._prepare_request(
         messages=[Message(role="user", contents=["Process these files"])],
@@ -487,7 +633,7 @@ async def test_content_filter_exception() -> None:
         body={"error": {"code": "content_filter", "message": "Content filter error"}},
     )
     mock_error.code = "content_filter"
-    client.client.responses.with_raw_response.create.side_effect = mock_error
+    cast(Any, client.client.responses.with_raw_response.create).side_effect = mock_error
 
     with pytest.raises(OpenAIContentFilterException) as exc_info:
         await client.get_response(messages=[Message(role="user", contents=["Test message"])])
@@ -852,7 +998,7 @@ async def test_integration_options(
     option_value: Any,
     needs_validation: bool,
 ) -> None:
-    client = FoundryChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(credential=cast(Any, AzureCliCredential()))
     client.function_invocation_configuration["max_iterations"] = 2
 
     if option_name.startswith("tools") or option_name.startswith("tool_choice"):
@@ -867,7 +1013,9 @@ async def test_integration_options(
     if option_name.startswith("tool_choice"):
         options["tools"] = [get_weather]
 
-    response = await client.get_response(messages=messages, options=options, stream=True).get_final_response()
+    response = await client.get_response(
+        messages=messages, options=cast(Any, options), stream=True
+    ).get_final_response()
 
     assert isinstance(response, ChatResponse)
     assert response.text is not None
@@ -893,19 +1041,19 @@ async def test_integration_options(
 @skip_if_foundry_integration_tests_disabled
 @_with_foundry_debug()
 async def test_integration_web_search() -> None:
-    client = FoundryChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(credential=cast(Any, AzureCliCredential()))
 
     web_search_tool = FoundryChatClient.get_web_search_tool()
-    content = {
-        "messages": [
-            Message(
-                role="user",
-                contents=["Where is Microsoft's headquarters? Do a web search to find the answer."],
-            )
-        ],
-        "options": {"tool_choice": "auto", "tools": [web_search_tool]},
-    }
-    response = await client.get_response(stream=True, **content).get_final_response()
+    messages = [
+        Message(
+            role="user",
+            contents=["Where is Microsoft's headquarters? Do a web search to find the answer."],
+        )
+    ]
+    options: dict[str, Any] = {"tool_choice": "auto", "tools": [web_search_tool]}
+    response = await client.get_response(
+        messages=messages, options=cast(Any, options), stream=True
+    ).get_final_response()
 
     assert isinstance(response, ChatResponse)
     assert "redmond" in response.text.lower()
@@ -913,7 +1061,7 @@ async def test_integration_web_search() -> None:
 
 @pytest.mark.flaky
 @pytest.mark.integration
-@pytest.mark.xfail(reason="Azure AI Foundry stopped accepting array-format output in function_call_output ~2026-04-03")
+@pytest.mark.xfail(reason="Microsoft Foundry stopped accepting array-format output in function_call_output ~2026-04-03")
 @skip_if_foundry_integration_tests_disabled
 @_with_foundry_debug()
 async def test_integration_tool_rich_content_image() -> None:
@@ -924,13 +1072,15 @@ async def test_integration_tool_rich_content_image() -> None:
     def get_test_image() -> Content:
         return Content.from_data(data=image_bytes, media_type="image/jpeg")
 
-    client = FoundryChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(credential=cast(Any, AzureCliCredential()))
     client.function_invocation_configuration["max_iterations"] = 2
 
     messages = [Message(role="user", contents=["Call the get_test_image tool and describe what you see."])]
     options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
 
-    response = await client.get_response(messages=messages, options=options, stream=True).get_final_response()
+    response = await client.get_response(
+        messages=messages, options=cast(Any, options), stream=True
+    ).get_final_response()
 
     assert isinstance(response, ChatResponse)
     assert response.text is not None
@@ -950,6 +1100,31 @@ def test_get_code_interpreter_tool_with_file_ids() -> None:
 
     tool_obj = RawFoundryChatClient.get_code_interpreter_tool(file_ids=["file-abc123"])
     assert tool_obj is not None
+
+
+def test_code_interpreter_tool_serializes_to_otel_tool_definitions() -> None:
+    """Hosted code interpreter tools must serialize into OTel tool definitions.
+
+    Regression test: ``CodeInterpreterTool`` is an Azure SDK model (a non-dict ``Mapping``)
+    whose nested ``container`` (``AutoCodeInterpreterToolParam``) is itself a non-dict
+    ``Mapping``. Capturing telemetry for a request carrying this tool previously raised
+    ``TypeError: Object of type AutoCodeInterpreterToolParam is not JSON serializable``.
+    """
+    import json
+
+    from agent_framework.observability import OtelAttr, _get_span_attributes
+
+    tool_obj = RawFoundryChatClient.get_code_interpreter_tool(file_ids=["assistant-abc123"])
+
+    attributes = _get_span_attributes(operation_name="chat", provider_name="foundry", tools=tool_obj)
+
+    definitions = json.loads(attributes[OtelAttr.TOOL_DEFINITIONS])
+    assert definitions == [
+        {
+            "type": "code_interpreter",
+            "name": "code_interpreter",
+        }
+    ]
 
 
 def test_get_file_search_tool() -> None:
@@ -1407,3 +1582,17 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert consent_contents[0].consent_link == "https://consent-host.example.com/authorize?code=xyz"
     assert update.role == "assistant"
     assert update.raw_representation is mock_event
+
+
+def test_agent_accepts_foundry_chat_clients() -> None:
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    raw_client = RawFoundryChatClient(project_client=mock_project, model="test-model")
+    raw_agent = Agent(client=raw_client, instructions="test agent")
+    assert raw_agent.client is raw_client
+
+    client = FoundryChatClient(project_client=mock_project, model="test-model")
+    agent = Agent(client=client, instructions="test agent")
+    assert agent.client is client

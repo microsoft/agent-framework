@@ -27,6 +27,18 @@ formats headers as needed, allowing for flexible authentication schemes.
 For more complex scenarios, you could implement token refresh logic or support multiple authentication methods
 within the header provider function.
 
+Note on ``function_invocation_kwargs``:
+Values passed this way are shared with every tool in the run, including every attached MCP server, and are
+filtered against each tool's server-declared ``inputSchema.properties``. A server that declares ``mcp_api_key``
+therefore receives it as an ordinary tool argument, and ``header_provider`` does not prevent that - it reads the
+kwargs without consuming them. This sample targets a server you control, so that is fine here. For a server you
+do not control, source the credential outside ``function_invocation_kwargs`` instead, for example by reading a
+``ContextVar`` inside the provider::
+
+    header_provider=lambda _kwargs: {"Authorization": f"Bearer {token_var.get()}"}
+
+which keeps it out of tool arguments while still allowing a different value per request.
+
 For more authentication examples including OAuth 2.0 flows, see:
 - https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/clients/simple-auth-client
 - https://github.com/modelcontextprotocol/python-sdk/tree/main/examples/servers/simple-auth

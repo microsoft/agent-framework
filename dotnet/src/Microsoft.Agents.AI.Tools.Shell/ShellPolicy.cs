@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace Microsoft.Agents.AI.Tools.Shell;
@@ -118,24 +119,31 @@ public readonly struct ShellPolicyOutcome : IEquatable<ShellPolicyOutcome>
 /// </para>
 /// <para>
 /// <b>No default patterns.</b> A <see cref="ShellPolicy"/> constructed
-/// with no arguments has an empty deny list and an empty allow list —
-/// it will allow any non-empty command. Operators who want pre-execution
-/// rejection of specific shapes must supply their own
-/// <paramref>denyList</paramref>.
+/// with no arguments has an empty deny list and no allow list (allow list
+/// disabled) — it will allow any non-empty command. Operators who want
+/// pre-execution rejection of specific shapes must supply their own
+/// <paramref>denyList</paramref>, or an <paramref>allowList</paramref> to
+/// deny everything except the explicitly allowed commands.
 /// </para>
 /// <para>
-/// <b>Evaluation order — allow short-circuits deny.</b> Allow patterns are
-/// checked first; a match returns immediately without consulting the deny
-/// list. Use allow patterns sparingly (and prefer narrowly anchored regexes
-/// like <c>^git\s+status$</c> rather than substring matches), because an
-/// over-broad allow pattern can re-enable a command that the deny list was
-/// supposed to block.
+/// <b>Evaluation order — deny-first, the allow list is exclusive.</b> Deny
+/// patterns are checked first and a match wins immediately. If an allow list
+/// is supplied, it is treated as exclusive: any command that matches
+/// <em>none</em> of the allow patterns is denied. Supplying an empty allow
+/// list therefore denies every command; leaving the allow list
+/// <see langword="null"/> disables the allow list entirely. An optional
+/// <c>custom</c> callback runs last — after the deny and allow lists have
+/// passed — and may override the default allow (for example, turning it into
+/// a deny); it cannot re-enable a command already rejected by the deny list
+/// or the allow list. Prefer narrowly anchored regexes (like
+/// <c>^git\s+status$</c>) over substring matches when building an allow list.
 /// </para>
 /// </remarks>
 public sealed class ShellPolicy
 {
-    private readonly IReadOnlyList<Regex> _denies;
-    private readonly IReadOnlyList<Regex> _allows;
+    private readonly IReadOnlyList<Regex> _denyList;
+    private readonly IReadOnlyList<Regex>? _allowList;
+    private readonly Func<ShellRequest, ShellPolicyOutcome?>? _custom;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ShellPolicy"/> class.
@@ -145,39 +153,40 @@ public sealed class ShellPolicy
     /// empty collection disables the deny list entirely.
     /// </param>
     /// <param name="allowList">
-    /// Optional explicit-allow patterns. A match here short-circuits the
-    /// deny list and is useful when the caller knows the command is safe.
+    /// Optional allow-list patterns. When <see langword="null"/> the allow
+    /// list is disabled. When supplied (including as an empty collection) any
+    /// command matching none of the patterns is denied — an empty collection
+    /// therefore denies every command.
     /// </param>
-    public ShellPolicy(IEnumerable<string>? denyList = null, IEnumerable<string>? allowList = null)
+    /// <param name="custom">
+    /// Optional callback that gets the final say. It runs after the deny and
+    /// allow lists have passed; returning a non-<see langword="null"/> outcome
+    /// overrides the default allow, while <see langword="null"/> leaves the
+    /// default in place.
+    /// </param>
+    public ShellPolicy(
+        IEnumerable<string>? denyList = null,
+        IEnumerable<string>? allowList = null,
+        Func<ShellRequest, ShellPolicyOutcome?>? custom = null)
     {
-        var deny = new List<Regex>();
-        if (denyList is not null)
-        {
-            foreach (var pattern in denyList)
-            {
-                deny.Add(new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase));
-            }
-        }
-        this._denies = deny;
+        this._denyList = denyList?
+            .Select(pattern => new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase))
+            .ToArray() ?? Array.Empty<Regex>();
 
-        var allow = new List<Regex>();
-        if (allowList is not null)
-        {
-            foreach (var pattern in allowList)
-            {
-                allow.Add(new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase));
-            }
-        }
-        this._allows = allow;
+        this._allowList = allowList?
+            .Select(pattern => new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase))
+            .ToArray();
+
+        this._custom = custom;
     }
 
     /// <summary>
     /// Evaluate <paramref name="request"/> and return an outcome.
     /// </summary>
     /// <remarks>
-    /// Order of operations: empty-command guard → explicit allow patterns
-    /// (a match short-circuits with <see cref="ShellPolicyOutcome.Allow"/>)
-    /// → deny patterns (first match wins) → default allow.
+    /// Order of operations (first hit wins): empty-command guard → deny
+    /// patterns → allow list (deny when supplied and unmatched) →
+    /// <c>custom</c> callback override → default allow.
     /// </remarks>
     /// <param name="request">The request to evaluate.</param>
     /// <returns>An allow or deny outcome.</returns>
@@ -189,19 +198,29 @@ public sealed class ShellPolicy
             return ShellPolicyOutcome.Deny("empty command");
         }
 
-        foreach (var allow in this._allows)
-        {
-            if (allow.IsMatch(command))
-            {
-                return new ShellPolicyOutcome(true, "matched allow pattern");
-            }
-        }
-
-        foreach (var deny in this._denies)
+        foreach (var deny in this._denyList)
         {
             if (deny.IsMatch(command))
             {
                 return ShellPolicyOutcome.Deny($"matched deny pattern: {deny}");
+            }
+        }
+
+        if (this._allowList is not null)
+        {
+            var matched = this._allowList.Any(allow => allow.IsMatch(command));
+            if (!matched)
+            {
+                return ShellPolicyOutcome.Deny("command does not match allow list");
+            }
+        }
+
+        if (this._custom is not null)
+        {
+            var overrideOutcome = this._custom(request);
+            if (overrideOutcome is { } outcome)
+            {
+                return outcome;
             }
         }
 

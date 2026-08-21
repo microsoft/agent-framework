@@ -1,0 +1,42 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <VersionSuffix>preview</VersionSuffix>
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework - Local CodeAct integration</Title>
+    <Description>Provides local Python code execution (CodeAct) with AST validation for Microsoft Agent Framework. Requires external sandboxing (e.g., container, VM).</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.LocalCodeAct.UnitTests" />
+  </ItemGroup>
+
+  <!-- Embed Python runner and validator scripts as resources -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\**\*.py" />
+  </ItemGroup>
+
+</Project>

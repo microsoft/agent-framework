@@ -13,7 +13,6 @@ namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 public class HostedFoundryMemoryProviderServiceCollectionExtensionsTests
 {
     private const string TestUserId = "ext-user-1";
-    private const string TestChatId = "ext-chat-1";
     private const string MemoryStoreName = "test-memory-store";
 
     [Fact]
@@ -107,7 +106,7 @@ public class HostedFoundryMemoryProviderServiceCollectionExtensionsTests
     private static BareAgentSession CreateTaggedSession()
     {
         var session = new BareAgentSession();
-        session.SetHostedContext(new HostedSessionContext(TestUserId, TestChatId));
+        session.SetHostedContext(new HostedSessionContext(TestUserId));
         return session;
     }
 

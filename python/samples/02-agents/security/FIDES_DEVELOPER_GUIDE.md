@@ -1,8 +1,8 @@
-# FIDES: Deterministic Prompt Injection Defense System
+# FIDES: Deterministic Prompt Injection Defense System ([Costa et al., 2025](https://arxiv.org/abs/2505.23643))
 
 **FIDES**  is a comprehensive security system for AI agents. This developer guide describes the deterministic prompt injection defense system implemented in the agent framework. The system provides label-based security mechanisms to defend against prompt injection attacks by tracking integrity and confidentiality of content throughout agent execution.
 
-## 🚀 NEW: Context Provider Pattern with SecureAgentConfig!
+## Context Provider Pattern with SecureAgentConfig!
 
 **`SecureAgentConfig` is now a `ContextProvider`** — add it to any agent with a single `context_providers=[config]` line. It automatically injects security tools, instructions, and middleware via the `before_run()` hook. No security knowledge required from developers.
 
@@ -25,6 +25,7 @@ The defense system consists of eight main components:
 5. **Security Tools** - Specialized tools for safe handling of untrusted content (`quarantined_llm`, `inspect_variable`)
 6. **SecureAgentConfig** - Helper class for easy secure agent configuration
 7. **Message-Level Label Tracking** - Track labels on every message in the conversation (Phase 1)
+8. **MCP Auto-Labeling and Result IFC Parsing** - Auto-label MCP tools from hints and parse server `_meta.ifc` labels
 
 ## Architecture
 
@@ -142,8 +143,8 @@ async def fetch_emails(count: int = 5) -> list[Content]:
     }
 )
 async def calculate_stats(data: dict) -> dict:
-    # If 'data' argument contains untrusted labels, output becomes UNTRUSTED
-    # even though source_integrity is trusted (data-flow propagation)
+    # Because source_integrity is declared, output trust comes from the tool
+    # declaration (tier 2), not from argument label joins.
     return {"mean": 42}
 
 # Recommended: Use SecureAgentConfig as a context provider
@@ -249,8 +250,8 @@ async def fetch_external_data(query: str) -> dict:
 
 `PolicyEnforcementFunctionMiddleware` enforces security policies based on the **context label**:
 
-- Uses the **context label** (not just call label) for policy decisions
-- If context is UNTRUSTED, blocks tools that don't accept untrusted inputs
+- Uses the **context label** for policy decisions
+- If context is UNTRUSTED, blocks tools that are not allowed in untrusted context
 - Validates confidentiality requirements against context confidentiality
 - Logs all violations for audit purposes
 
@@ -269,24 +270,6 @@ policy_enforcer = PolicyEnforcementFunctionMiddleware(
 # only tools in allow_untrusted_tools can be called.
 # Other tools will be BLOCKED to prevent privilege escalation.
 ```
-- Logs all violations for audit purposes
-
-```python
-from agent_framework.security import PolicyEnforcementFunctionMiddleware
-
-policy_enforcer = PolicyEnforcementFunctionMiddleware(
-    allow_untrusted_tools={"search_web", "get_news"},
-    block_on_violation=True,
-    enable_audit_log=True
-)
-
-agent = Agent(
-    client=client,
-    name="assistant",
-    instructions="You are a helpful assistant.",
-    middleware=[label_tracker, policy_enforcer],
-)
-```
 
 ### 5. Automatic Variable Indirection
 
@@ -300,50 +283,101 @@ The middleware now automatically handles variable indirection for UNTRUSTED cont
 
 **No manual `store_untrusted_content()` calls needed!**
 
-**How It Works:**
+### 6. MCP Integration: SecureMCPToolProxy in a Real App
+
+`SecureMCPToolProxy` is the recommended wrapper for local MCP execution with FIDES enforcement.
+
+Use it when you need all of the following together:
+
+1. Direct connection to a remote MCP URL from your app process
+2. Automatic labeling of tools from MCP annotations (`readOnlyHint`, `openWorldHint`, and related hints)
+3. Parsing server result labels from `_meta.ifc`
+4. Local policy enforcement and auto-hide middleware on every tool call
+
+**Why this matters:**
+`client.get_mcp_tool(...)` is hosted MCP execution and bypasses your local middleware.
+`SecureMCPToolProxy(...)` keeps tool execution local so FIDES can inspect, label, hide, and block.
+
+#### End-to-end pattern (based on `github_mcp_example.py`)
 
 ```python
-# 1. Configure middleware with automatic hiding (enabled by default)
-label_tracker = LabelTrackingFunctionMiddleware(
-    auto_hide_untrusted=True,  # Default
-    hide_threshold=IntegrityLabel.UNTRUSTED
-)
+from contextlib import AsyncExitStack
 
-# 2. Your tool returns data and labels it
-@tool
-def search_web(query: str) -> str:
-    result = external_api.search(query)
-    # Label the result as UNTRUSTED
-    return ContentLabel(integrity=IntegrityLabel.UNTRUSTED).apply(result)
-
-# 3. Middleware automatically:
-#    - Detects UNTRUSTED label
-#    - Stores actual content in variable store: {"var_abc123": "actual content"}
-#    - Replaces result with: VariableReferenceContent(variable_name="var_abc123")
-#    - LLM sees: "Content stored in variable var_abc123"
-#    - Actual content: NEVER reaches LLM context!
-
-from agent_framework.security import inspect_variable
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
+from agent_framework.security import SecureAgentConfig, SecureMCPToolProxy
+from azure.identity import AzureCliCredential
 
 
-# 4. If LLM needs to inspect (with audit trail):
-async def inspect_content() -> None:
-    result = await inspect_variable(variable_id="var_abc123")
-    print(result)
+async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
+    credential = AzureCliCredential()
+    main_client = FoundryChatClient(
+        project_endpoint=endpoint,
+        model="o4-mini",
+        credential=credential,
+    )
+    quarantine_client = FoundryChatClient(
+        project_endpoint=endpoint,
+        model="gpt-4o-mini",
+        credential=credential,
+    )
 
-# Returns: {"content": "actual content", "label": {...}, "audit": [...]}
+    config = SecureAgentConfig(
+        auto_hide_untrusted=True,
+        enable_policy_enforcement=True,
+        approval_on_violation=True,
+        quarantine_chat_client=quarantine_client,
+    )
+
+    async with AsyncExitStack() as stack:
+        secure_mcp = await stack.enter_async_context(
+            SecureMCPToolProxy(
+                url="https://api.githubcopilot.com/mcp/",
+                headers={"Authorization": f"Bearer {github_pat}", "X-MCP-Features": "ifc_labels"},
+                name="GitHub",
+                description="GitHub MCP server over Streamable HTTP",
+            )
+        )
+
+        agent = await stack.enter_async_context(
+            Agent(
+                client=main_client,
+                name="GitHubSecureMcpUrlAgent",
+                instructions="Use tools to answer accurately. Never fabricate data.",
+                tools=secure_mcp.tools,
+                context_providers=[config],
+            )
+        )
+
+        result = await agent.run(
+            "Fetch 3 most recent open pull requests in microsoft/agent-framework."
+        )
+        print(result.text)
+
+        # Optional auditing surface for policy decisions
+        for entry in config.get_audit_log():
+            print(entry)
 ```
 
-**Benefits:**
+#### What the proxy applies automatically
 
-- Zero developer effort - works automatically
-- No manual variable management
-- Consistent security enforcement
-- Audit trail for all access
-- Easy to enable/disable per middleware instance
+- Tool metadata labels from MCP hints:
+  - `source_integrity`
+  - `accepts_untrusted`
+  - `max_allowed_confidentiality`
+- Sink-hardening: non-read-only tools are treated as write-capable and capped to `PUBLIC` confidentiality by default
+- Per-result label mapping from `_meta.ifc` into FIDES `security_label`
+
+#### Operational checklist
+
+1. Prefer `async with SecureMCPToolProxy(...)` so connection and label application happen together.
+2. Pass `secure_mcp.tools` into `Agent(..., tools=...)`.
+3. Use `context_providers=[SecureAgentConfig(...)]` instead of manual security wiring.
+4. Keep `auto_hide_untrusted=True` unless you have a very specific reason to expose untrusted content.
+5. If write-like actions are blocked, inspect `config.get_audit_log()` first.
 
 
-### 6. Security Tools
+### 7. Security Tools
 
 #### quarantined_llm
 
@@ -406,27 +440,27 @@ security framework and not visible to the developer. Instead of gating on approv
 by `SecureAgentConfig(..., approval_on_violation=True)`, which only request approval when a
 call would otherwise be blocked by the current security context.
 
-### 7. SecureAgentConfig (Context Provider)
+### 8. SecureAgentConfig (Context Provider)
 
 The easiest way to configure a secure agent with all security features. `SecureAgentConfig` extends `ContextProvider` and automatically injects tools, instructions, and middleware via the `before_run()` hook:
 
 ```python
 from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.security import SecureAgentConfig
 from azure.identity import AzureCliCredential
 
 # Create main chat client
-main_client = OpenAIChatClient(
+main_client = FoundryChatClient(
     model="gpt-4o",
-    azure_endpoint="https://your-endpoint.openai.azure.com",
+    project_endpoint="https://your-project.services.ai.azure.com/api/projects/your-project",
     credential=AzureCliCredential()
 )
 
 # Create a SEPARATE client for quarantined LLM calls (uses cheaper model)
-quarantine_client = OpenAIChatClient(
+quarantine_client = FoundryChatClient(
     model="gpt-4o-mini",  # Cheaper model for processing untrusted content
-    azure_endpoint="https://your-endpoint.openai.azure.com",
+    project_endpoint="https://your-project.services.ai.azure.com/api/projects/your-project",
     credential=AzureCliCredential()
 )
 
@@ -452,7 +486,7 @@ agent = Agent(
 - `auto_hide_untrusted` → Automatically hide UNTRUSTED content in variable store
 - `allow_untrusted_tools` → Set of tools that can run in untrusted context
 - `block_on_violation` → Block tool calls that violate security policies
-- `quarantine_chat_client` → **NEW!** Provide a separate chat client for real LLM calls in `quarantined_llm`. Without this, `quarantined_llm` returns placeholder responses.
+- `quarantine_chat_client` → Provide a separate chat client for real LLM calls in `quarantined_llm`. Without this, `quarantined_llm` returns placeholder responses.
 
 **SecureAgentConfig Methods:**
 - `get_tools()` → Returns `[quarantined_llm, inspect_variable]`
@@ -463,7 +497,7 @@ agent = Agent(
 
 > **Note:** When using `context_providers=[config]`, you do NOT need to manually call `get_tools()`, `get_instructions()`, or `get_middleware()`. The context provider handles everything via `before_run()`.
 
-### 8. Security Instructions for Agents
+### 9. Security Instructions for Agents
 
 The `SECURITY_TOOL_INSTRUCTIONS` constant provides detailed guidance that teaches agents how to work with hidden content. When using `SecureAgentConfig` as a context provider, these instructions are **automatically injected** into the agent context:
 
@@ -495,7 +529,7 @@ The instructions explain:
 - How to pass `variable_ids` to reference hidden content
 - Best practices for secure content handling
 
-### 9. LabeledMessage Class
+### 10. LabeledMessage Class
 
 **LabeledMessage** automatically infers security labels based on message role:
 - User/system messages → TRUSTED
@@ -621,51 +655,7 @@ result = await quarantined_llm(
 # 8. Original untrusted content was NEVER exposed to LLM context!
 ```
 
-### Example 4: Handling External Data with Automatic Hiding
-
-```python
-from agent_framework import tool
-from agent_framework.security import (
-    LabelTrackingFunctionMiddleware,
-    quarantined_llm,
-    ContentLabel,
-    IntegrityLabel,
-)
-
-# Configure middleware with automatic hiding
-label_tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=True)
-
-# Define tool that fetches and labels external data
-@tool(description="Fetch data from external API")
-async def fetch_external_data(query: str) -> str:
-    """Fetch data from external API."""
-    external_response = await external_api.fetch(query)
-    # Result is automatically labeled UNTRUSTED (AI-generated call)
-    return external_response
-
-# Create agent with automatic hiding
-agent = Agent(
-    client=client,
-    name="secure_assistant",
-    instructions="You are a helpful assistant.",
-    tools=[fetch_external_data],
-    middleware=[label_tracker],
-)
-
-# Run agent - external data is automatically hidden from LLM context
-response = await agent.run(messages=[
-    {"role": "user", "content": "Fetch and summarize external data"}
-])
-
-# If you need to process untrusted data in isolation:
-result = await quarantined_llm(
-    prompt="Extract key insights",
-    variable_ids=["var_abc123"]  # Pass the variable ID from VariableReferenceContent
-)
-```
-
-
-### Example 5: Tool Configuration with Per-Item Labels
+### Example 4: Tool Configuration with Per-Item Labels
 
 ```python
 import json
@@ -947,8 +937,8 @@ Configure tool security requirements in the `@tool` decorator:
 3. **Don't use source_integrity for action tools**: Tools like `send_email` or `delete_file` are sinks, not data sources - their results inherit labels from inputs
 4. **Always use middleware stack**: Enable both label tracking and policy enforcement
 5. **Enable automatic hiding**: Keep `auto_hide_untrusted=True` (default) for automatic protection
-6. **Add security tools to agents**: Include `quarantined_llm` and `inspect_variable` in your agent's tools
-7. **Add security instructions**: Use `SECURITY_TOOL_INSTRUCTIONS` or `config.get_instructions()` to teach agents how to handle hidden content
+6. **Do not manually wire security tools/instructions when using context providers**: `SecureAgentConfig` injects them for you
+7. **Use manual wiring only for advanced customization**: If not using context providers, include security tools, instructions, and middleware explicitly
 8. **Configure tool permissions**: Mark which tools can accept untrusted inputs
 9. **Use variable_ids**: Prefer passing `variable_ids` to `quarantined_llm` over raw content
 10. **Process in quarantine**: Use `quarantined_llm` for untrusted data processing
@@ -997,10 +987,13 @@ for var_name, label in metadata.items():
 
 ## Testing
 
-Run the example:
+Run the maintained security samples from `python/`:
 
 ```bash
-python examples/prompt_injection_defense_example.py
+uv run samples/02-agents/security/email_security_example.py --cli
+uv run samples/02-agents/security/repo_confidentiality_example.py --cli
+uv run samples/02-agents/security/github_mcp_example.py --cli
+uv run samples/02-agents/security/github_mcp_example.py --cli --attack
 ```
 
 This demonstrates:
@@ -1086,16 +1079,24 @@ LabeledMessage.from_message(msg, index) -> LabeledMessage  # Wrap standard messa
 ```python
 config = SecureAgentConfig(
     auto_hide_untrusted: bool = True,         # Auto-hide UNTRUSTED content
-    hide_threshold: IntegrityLabel = UNTRUSTED,  # Threshold for hiding
+    default_integrity: IntegrityLabel = UNTRUSTED,
+    default_confidentiality: ConfidentialityLabel = PUBLIC,
     allow_untrusted_tools: Set[str] = None,   # Tools that accept untrusted input
     block_on_violation: bool = True,          # Block or warn on policy violations
+    approval_on_violation: bool = False,      # Request approval instead of hard block
     enable_audit_log: bool = True,            # Enable audit logging
+    enable_policy_enforcement: bool = True,   # Toggle policy middleware
+    quarantine_chat_client: SupportsChatGetResponse | None = None,
+    source_id: str | None = None,
 )
 
 # Methods
 config.get_tools() -> List[FunctionTool]      # Returns [quarantined_llm, inspect_variable]
 config.get_instructions() -> str              # Returns SECURITY_TOOL_INSTRUCTIONS
 config.get_middleware() -> List[FunctionMiddleware]  # Returns configured middleware
+config.get_audit_log() -> List[Dict[str, Any]]
+config.get_variable_store() -> ContentVariableStore
+config.list_variables() -> List[str]
 ```
 
 ### quarantined_llm
@@ -1144,18 +1145,6 @@ async def inspect_content() -> None:
 # }
 ```
 
-## Future Enhancements
-
-Potential improvements:
-
-1. **Per-session variable stores**: Isolate variables by conversation/session
-2. ~~**Automatic label propagation**: Track labels through all message types and agent state~~ ✅ IMPLEMENTED (Phase 1 & 2)
-3. **Fine-grained policies**: More complex policy rules (e.g., based on user roles, time-based)
-4. **Integration with IAM**: Connect confidentiality labels to identity/permission systems
-5. **Cryptographic isolation**: Encrypt stored variables for additional protection
-6. **Variable lifetime management**: Auto-expire or garbage collect old variables
-7. ~~**Cross-turn tracking**: Maintain label consistency across multiple agent turns~~ ✅ IMPLEMENTED (Context Label Tracking)
-8. **Real quarantined LLM**: Implement actual isolated LLM context
 
 ## References
 

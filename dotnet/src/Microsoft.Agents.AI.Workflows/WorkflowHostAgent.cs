@@ -55,6 +55,48 @@ internal sealed class WorkflowHostAgent : AIAgent
     public override string? Name { get; }
     public override string? Description { get; }
 
+    /// <summary>
+    /// Reports whether this agent was built with an execution environment that already names a
+    /// checkpoint manager, meaning the caller chose where its checkpoints are written.
+    /// </summary>
+    internal bool UsesOwnCheckpointStorage => this._executionEnvironment.IsCheckpointingEnabled;
+
+    /// <inheritdoc/>
+    public override object? GetService(Type serviceType, object? serviceKey = null)
+    {
+        Throw.IfNull(serviceType);
+
+        return base.GetService(serviceType, serviceKey)
+            ?? (serviceKey is null && serviceType == typeof(WorkflowAgentMetadata)
+                ? this._metadata ??= new WorkflowAgentMetadata(this.UsesOwnCheckpointStorage)
+                : null);
+    }
+
+    private WorkflowAgentMetadata? _metadata;
+
+    /// <summary>
+    /// Builds a copy of this agent that writes its checkpoints to <paramref name="checkpointManager"/>.
+    /// Returns this same instance when the execution environment already names a checkpoint manager,
+    /// because that means the caller made an explicit choice.
+    /// </summary>
+    internal AIAgent WithCheckpointing(CheckpointManager checkpointManager)
+    {
+        if (this._executionEnvironment.IsCheckpointingEnabled ||
+            this._executionEnvironment is not InProcessExecutionEnvironment inProcEnvironment)
+        {
+            return this;
+        }
+
+        return new WorkflowHostAgent(
+            this._workflow,
+            this._id,
+            this.Name,
+            this.Description,
+            inProcEnvironment.WithCheckpointing(checkpointManager),
+            this._includeExceptionDetails,
+            this._includeWorkflowOutputsInResponse);
+    }
+
     private string GenerateNewId()
     {
         string result;
@@ -116,16 +158,16 @@ internal sealed class WorkflowHostAgent : AIAgent
         await this.ValidateWorkflowAsync().ConfigureAwait(false);
 
         WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
-        MessageMerger merger = new();
+        ResponseMergeState mergeState = new();
 
         await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
                                                                      .ConfigureAwait(false)
                                                                      .WithCancellation(cancellationToken))
         {
-            merger.AddUpdate(update);
+            mergeState.AddUpdate(update, this.IsTerminalWorkflowOutputUpdate(update));
         }
 
-        AgentResponse response = merger.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
+        AgentResponse response = mergeState.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
         workflowSession.ChatHistoryProvider.AddMessages(workflowSession, response.Messages);
         workflowSession.ChatHistoryProvider.UpdateBookmark(workflowSession);
 
@@ -142,18 +184,55 @@ internal sealed class WorkflowHostAgent : AIAgent
         await this.ValidateWorkflowAsync().ConfigureAwait(false);
 
         WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
-        MessageMerger merger = new();
+        ResponseMergeState mergeState = new();
 
         await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
                                                                       .ConfigureAwait(false)
                                                                       .WithCancellation(cancellationToken))
         {
-            merger.AddUpdate(update);
+            mergeState.AddUpdate(update, this.IsTerminalWorkflowOutputUpdate(update));
             yield return update;
         }
 
-        AgentResponse response = merger.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
+        AgentResponse response = mergeState.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
         workflowSession.ChatHistoryProvider.AddMessages(workflowSession, response.Messages);
         workflowSession.ChatHistoryProvider.UpdateBookmark(workflowSession);
+    }
+
+    private sealed class ResponseMergeState
+    {
+        private readonly MessageMerger _allUpdates = new();
+        private readonly MessageMerger _terminalWorkflowOutputs = new();
+        private bool _hasTerminalWorkflowOutputs;
+
+        public void AddUpdate(AgentResponseUpdate update, bool isTerminalWorkflowOutput)
+        {
+            this._allUpdates.AddUpdate(update);
+            if (isTerminalWorkflowOutput)
+            {
+                this._terminalWorkflowOutputs.AddUpdate(update);
+                this._hasTerminalWorkflowOutputs = true;
+            }
+        }
+
+        public AgentResponse ComputeMerged(string responseId, string? agentId, string? agentName)
+        {
+            MessageMerger merger = this._hasTerminalWorkflowOutputs
+                ? this._terminalWorkflowOutputs
+                : this._allUpdates;
+            return merger.ComputeMerged(responseId, agentId, agentName);
+        }
+    }
+
+    private bool IsTerminalWorkflowOutputUpdate(AgentResponseUpdate update)
+    {
+        if (update.RawRepresentation is not WorkflowOutputEvent output
+            || output is AgentResponseUpdateEvent
+            || output is AgentResponseEvent)
+        {
+            return false;
+        }
+
+        return this._workflow.IsTerminalOutput(output.ExecutorId);
     }
 }

@@ -6,22 +6,22 @@ using Microsoft.Extensions.AI;
 namespace Harness.Shared.Console.ToolFormatters;
 
 /// <summary>
-/// Formats <c>BackgroundAgents_*</c> tool calls with human-readable details
+/// Formats <c>background_agents_*</c> tool calls with human-readable details
 /// for task start, continue, wait, and result retrieval operations.
 /// </summary>
 public sealed class BackgroundAgentToolFormatter : ToolCallFormatter
 {
     /// <inheritdoc/>
-    public override bool CanFormat(FunctionCallContent call) => call.Name.StartsWith("BackgroundAgents_", StringComparison.Ordinal);
+    public override bool CanFormat(FunctionCallContent call) => call.Name.StartsWith("background_agents_", StringComparison.Ordinal);
 
     /// <inheritdoc/>
     public override string? FormatDetail(FunctionCallContent call) => call.Name switch
     {
-        "BackgroundAgents_StartTask" => FormatStartBackgroundTask(call),
-        "BackgroundAgents_WaitForFirstCompletion" => FormatIdList(call, "taskIds", "Wait for"),
-        "BackgroundAgents_GetTaskResults" => FormatSingleId(call, "taskId"),
-        "BackgroundAgents_ContinueTask" => FormatContinueTask(call),
-        "BackgroundAgents_ClearCompletedTask" => FormatSingleId(call, "taskId"),
+        "background_agents_start_task" => FormatStartBackgroundTask(call),
+        "background_agents_wait_for_first_completion" => FormatIdList(call, "taskIds", "Wait for"),
+        "background_agents_get_task_results" => FormatSingleId(call, "taskId"),
+        "background_agents_continue_task" => FormatContinueTask(call),
+        "background_agents_clear_completed_task" => FormatSingleId(call, "taskId"),
         _ => null,
     };
 

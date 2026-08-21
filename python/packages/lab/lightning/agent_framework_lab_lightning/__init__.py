@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import importlib.metadata
 
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.observability import enable_instrumentation
-from agentlightning.tracer import (  # type: ignore[reportMissingImports]
-    AgentOpsTracer,  # type: ignore[reportMissingImports, import-not-found]
+from agent_framework_lab_common._feature_usage import FeatureIndex
+from agentlightning.tracer import (
+    AgentOpsTracer,
 )
 
 try:
@@ -17,7 +19,7 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"  # Fallback for development mode
 
 
-class AgentFrameworkTracer(AgentOpsTracer):  # type: ignore
+class AgentFrameworkTracer(AgentOpsTracer):
     """Tracer for Agent-framework.
 
     Tracer that enables OpenTelemetry observability for the Agent-framework,
@@ -26,12 +28,13 @@ class AgentFrameworkTracer(AgentOpsTracer):  # type: ignore
 
     def init(self) -> None:
         """Initialize the agent-framework-lab-lightning for training."""
+        mark_feature_used(FeatureIndex.LAB)
         enable_instrumentation()
-        super().init()  # pyright: ignore[reportUnknownMemberType]
+        super().init()
 
     def teardown(self) -> None:
         """Teardown the agent-framework-lab-lightning for training."""
-        super().teardown()  # pyright: ignore[reportUnknownMemberType]
+        super().teardown()
 
 
 __all__: list[str] = ["AgentFrameworkTracer"]

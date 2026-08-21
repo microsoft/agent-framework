@@ -188,6 +188,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         using var store = new CosmosCheckpointStore(this._cosmosClient!, s_testDatabaseId, TestContainerId);
         var sessionId = Guid.NewGuid().ToString();
         var checkpointValue = JsonSerializer.SerializeToElement(new { data = "test checkpoint" }, s_jsonOptions);
+        FeatureUsageAssert.Reset();
 
         // Act
         var checkpointInfo = await store.CreateCheckpointAsync(sessionId, checkpointValue);
@@ -197,6 +198,7 @@ public class CosmosCheckpointStoreTests : IAsyncLifetime, IDisposable
         Assert.Equal(sessionId, checkpointInfo.SessionId);
         Assert.NotNull(checkpointInfo.CheckpointId);
         Assert.NotEmpty(checkpointInfo.CheckpointId);
+        FeatureUsageAssert.Marked(58);
     }
 
     [Fact]

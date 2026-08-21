@@ -1,14 +1,17 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
+[Collection(FoundryProjectEndpointEnvFixture.Name)]
 public class FoundryToolboxServiceTests
 {
     [Fact]
@@ -39,15 +42,17 @@ public class FoundryToolboxServiceTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await service.GetToolboxToolsAsync("missing", version: null, CancellationToken.None));
 
-        Assert.Contains("FOUNDRY_AGENT_TOOLSET_ENDPOINT", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("FOUNDRY_PROJECT_ENDPOINT", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task StartAsync_WithoutEndpoint_LeavesToolsEmptyAsync()
     {
-        // Ensure env var is not set (tests may run in any CI environment)
-        var saved = Environment.GetEnvironmentVariable("FOUNDRY_AGENT_TOOLSET_ENDPOINT");
-        Environment.SetEnvironmentVariable("FOUNDRY_AGENT_TOOLSET_ENDPOINT", null);
+        // Ensure neither env var is set (tests may run in any CI environment)
+        var savedFoundry = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT");
+        var savedAzure = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT");
+        Environment.SetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT", null);
+        Environment.SetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT", null);
         try
         {
             var options = new FoundryToolboxOptions();
@@ -59,10 +64,281 @@ public class FoundryToolboxServiceTests
             await service.StartAsync(CancellationToken.None);
 
             Assert.Empty(service.Tools);
+            Assert.Equal(FoundryToolboxStartupStatus.NoEndpoint, service.StartupStatus);
+            Assert.Empty(service.FailedToolboxNames);
         }
         finally
         {
-            Environment.SetEnvironmentVariable("FOUNDRY_AGENT_TOOLSET_ENDPOINT", saved);
+            Environment.SetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT", savedFoundry);
+            Environment.SetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT", savedAzure);
         }
+    }
+
+    [Fact]
+    public async Task StartAsync_AttemptsOpenForPreRegisteredToolboxFromProjectEndpointAsync()
+    {
+        // Arrange: point the service at an unreachable host and confirm StartAsync
+        // attempts to open the pre-registered toolbox (verified via DeferredToolboxNames
+        // recording the attempted name and StartupStatus reflecting the deferral).
+        var saved = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT");
+        Environment.SetEnvironmentVariable(
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "https://example.invalid/api/projects/proj");
+        try
+        {
+            var options = new FoundryToolboxOptions { ApiVersion = "v1" };
+            options.ToolboxNames.Add("my-toolbox");
+            var service = new FoundryToolboxService(
+                Options.Create(options),
+                Mock.Of<TokenCredential>());
+
+            // Act: StartAsync attempts to connect to the invalid endpoint and fails.
+            // The failure path defers the toolbox; the recorded name confirms the resolver ran.
+            await service.StartAsync(CancellationToken.None);
+
+            // Assert: open failed but the container stays routable (deferred, not bricked), and
+            // the deferred name matches — i.e. we attempted the right toolbox.
+            Assert.Equal(FoundryToolboxStartupStatus.Degraded, service.StartupStatus);
+            Assert.Empty(service.FailedToolboxNames);
+            Assert.Single(service.DeferredToolboxNames);
+            Assert.Equal("my-toolbox", service.DeferredToolboxNames[0]);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT", saved);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_TrailingSlashOnProjectEndpoint_AttemptsOpenAsync()
+    {
+        var saved = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT");
+        Environment.SetEnvironmentVariable(
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "https://example.invalid/api/projects/proj/");
+        try
+        {
+            var options = new FoundryToolboxOptions();
+            options.ToolboxNames.Add("tb");
+            var service = new FoundryToolboxService(
+                Options.Create(options),
+                Mock.Of<TokenCredential>());
+
+            await service.StartAsync(CancellationToken.None);
+
+            // Arrange/Act: when trailing-slash normalization works the open still fails
+            // (host is unreachable), but DeferredToolboxNames records the attempted name —
+            // proof that the resolver did not throw on the slash and the URL was built.
+            Assert.Equal(FoundryToolboxStartupStatus.Degraded, service.StartupStatus);
+            Assert.Single(service.DeferredToolboxNames);
+            Assert.Equal("tb", service.DeferredToolboxNames[0]);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT", saved);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_EndpointOverrideWinsOverEnvAsync()
+    {
+        var saved = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT");
+        Environment.SetEnvironmentVariable(
+            "FOUNDRY_PROJECT_ENDPOINT",
+            "https://from-env.invalid/api/projects/proj");
+        try
+        {
+            // EndpointOverride should take precedence over the env var.
+            var options = new FoundryToolboxOptions
+            {
+                EndpointOverride = "http://127.0.0.1:1/from-override",
+            };
+            options.ToolboxNames.Add("tb");
+
+            var service = new FoundryToolboxService(
+                Options.Create(options),
+                Mock.Of<TokenCredential>());
+
+            await service.StartAsync(CancellationToken.None);
+
+            // Override URL is unreachable; we expect Degraded (proving Start did try to open
+            // a toolbox, i.e. did not fall into the NoEndpoint branch) while staying routable.
+            Assert.Equal(FoundryToolboxStartupStatus.Degraded, service.StartupStatus);
+            Assert.Single(service.DeferredToolboxNames);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT", saved);
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_WithEndpointButFailingToolbox_RecordsFailureAndStaysReachableAsync()
+    {
+        // Arrange: a syntactically valid but unreachable endpoint forces OpenToolboxAsync
+        // to throw inside the catch-and-defer path. The service must still complete StartAsync
+        // (so the host doesn't crash) and keep the container routable, deferring the toolbox to
+        // per-request resolution rather than failing readiness.
+        var options = new FoundryToolboxOptions
+        {
+            EndpointOverride = "http://127.0.0.1:1/unreachable",
+        };
+        options.ToolboxNames.Add("broken-toolbox");
+
+        var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>());
+
+        // Act
+        await service.StartAsync(CancellationToken.None);
+
+        // Assert
+        Assert.Equal(FoundryToolboxStartupStatus.Degraded, service.StartupStatus);
+        Assert.Empty(service.FailedToolboxNames);
+        Assert.Single(service.DeferredToolboxNames);
+        Assert.Equal("broken-toolbox", service.DeferredToolboxNames[0]);
+        Assert.Empty(service.Tools);
+
+        // A deferred (non-consent) toolbox is not a consent requirement: ConsentRequiredToolboxNames
+        // must stay empty. RecomputeStatus is the single source that keeps ConsentRequiredToolboxNames
+        // in sync with the pending-consent set, so they never diverge.
+        Assert.Empty(service.ConsentRequiredToolboxNames);
+    }
+
+    [Fact]
+    public async Task RetryDeferredToolboxesAsync_StillUnreachable_StaysDeferredAndRoutableAsync()
+    {
+        // Arrange: a deferred toolbox (open failed at startup against an unreachable endpoint).
+        // A per-request retry that still cannot reach the proxy must keep the toolbox deferred
+        // and the container routable (Degraded), never throwing into the request pipeline.
+        var options = new FoundryToolboxOptions
+        {
+            EndpointOverride = "http://127.0.0.1:1/unreachable",
+        };
+        options.ToolboxNames.Add("broken-toolbox");
+
+        var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>());
+
+        await service.StartAsync(CancellationToken.None);
+        Assert.Single(service.DeferredToolboxNames);
+
+        // Act: retry while the endpoint is still unreachable.
+        await service.RetryDeferredToolboxesAsync(CancellationToken.None);
+
+        // Assert: unchanged — still deferred, still routable, no tools injected.
+        Assert.Equal(FoundryToolboxStartupStatus.Degraded, service.StartupStatus);
+        Assert.Single(service.DeferredToolboxNames);
+        Assert.Equal("broken-toolbox", service.DeferredToolboxNames[0]);
+        Assert.Empty(service.FailedToolboxNames);
+        Assert.Empty(service.Tools);
+    }
+
+    [Fact]
+    public async Task StartAsync_WithEndpointAndNoToolboxes_ReportsHealthyAsync()
+    {
+        // No pre-registered toolboxes is a legitimate "lazy-only" setup. Health-check
+        // should report Healthy so the readiness probe passes.
+        var options = new FoundryToolboxOptions
+        {
+            EndpointOverride = "http://127.0.0.1:1/unused",
+        };
+
+        var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>());
+
+        await service.StartAsync(CancellationToken.None);
+
+        Assert.Equal(FoundryToolboxStartupStatus.Healthy, service.StartupStatus);
+        Assert.Empty(service.FailedToolboxNames);
+        Assert.Empty(service.Tools);
+    }
+
+    [Theory]
+    [InlineData("../../admin")]
+    [InlineData("..%2f..%2fadmin")]
+    [InlineData("%2e%2e/%2e%2e/admin")]
+    [InlineData("%25252525252f")]
+    [InlineData("a/b")]
+    [InlineData("..")]
+    [InlineData(".")]
+    [InlineData("box\\..\\secret")]
+    [InlineData("foo?x=1")]
+    [InlineData("foo#frag")]
+    [InlineData("bad%3fx=1")]
+    [InlineData("tb%23frag")]
+    [InlineData("a%2fb")]
+    public async Task GetToolboxToolsAsync_RejectsNonSingleSegmentToolboxNameAsync(string unsafeName)
+    {
+        // Arrange: non-strict mode with a resolved endpoint and a benign opener seam, so a
+        // well-formed single-segment name would resolve successfully. A name that would move the
+        // request target — path separators, relative-path segments, a query/fragment delimiter that
+        // ends the path early, or any of their percent-encoded forms — must be rejected before any
+        // request URL is built, so it can never carry the managed-identity token to an unintended
+        // endpoint.
+        var options = new FoundryToolboxOptions
+        {
+            StrictMode = false,
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        await using var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (name, _, _) => Task.FromResult(
+                new FoundryToolboxService.ToolboxOpenResult(
+                    new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), []),
+                    Consents: null)),
+        };
+        await service.StartAsync(CancellationToken.None);
+
+        // Act + Assert: resolution is refused for the caller-influenced marker name.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await service.GetToolboxToolsAsync(unsafeName, version: null, CancellationToken.None));
+
+        Assert.Contains(unsafeName, ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("my-toolbox")]
+    [InlineData("sales")]
+    [InlineData("box.v2")]
+    [InlineData("a..b")]
+    [InlineData("tb:v1")]
+    [InlineData("tb@1")]
+    [InlineData("a(b)")]
+    public async Task GetToolboxToolsAsync_AllowsWellFormedSingleSegmentNameAsync(string validName)
+    {
+        // Arrange: a well-formed single-segment name — including names that merely contain a
+        // character which stays inside the path segment (a dot that is not a standalone relative-path
+        // segment, or reserved characters such as ':' , '@' , and parentheses) — must still resolve
+        // through the opener. Validation is effect-based (does the name change the request target?),
+        // so it does not lock out legitimate names.
+        AITool tool = AIFunctionFactory.Create(() => "ok", name: "some_tool");
+        var options = new FoundryToolboxOptions
+        {
+            StrictMode = false,
+            EndpointOverride = "https://proj.example/api/projects/proj",
+        };
+        await using var service = new FoundryToolboxService(
+            Options.Create(options),
+            Mock.Of<TokenCredential>())
+        {
+            ToolboxOpener = (name, _, _) => Task.FromResult(
+                new FoundryToolboxService.ToolboxOpenResult(
+                    new FoundryToolboxService.CachedToolbox(Client: null, new HttpClient(), [tool]),
+                    Consents: null)),
+        };
+        await service.StartAsync(CancellationToken.None);
+
+        // Act
+        var resolution = await service.GetToolboxToolsAsync(validName, version: null, CancellationToken.None);
+
+        // Assert
+        Assert.Empty(resolution.Consents);
+        Assert.Single(resolution.Tools);
+        Assert.Same(tool, resolution.Tools[0]);
     }
 }

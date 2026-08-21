@@ -26,7 +26,7 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
     private readonly ConcurrentDictionary<string, string> _files = new(StringComparer.OrdinalIgnoreCase);
 
     /// <inheritdoc />
-    public override Task WriteFileAsync(string path, string content, CancellationToken cancellationToken = default)
+    public override Task WriteAsync(string path, string content, CancellationToken cancellationToken = default)
     {
         path = StorePaths.NormalizeRelativePath(path);
         this._files[path] = content;
@@ -34,7 +34,7 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
-    public override Task<string?> ReadFileAsync(string path, CancellationToken cancellationToken = default)
+    public override Task<string?> ReadAsync(string path, CancellationToken cancellationToken = default)
     {
         path = StorePaths.NormalizeRelativePath(path);
         this._files.TryGetValue(path, out string? content);
@@ -42,14 +42,14 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
-    public override Task<bool> DeleteFileAsync(string path, CancellationToken cancellationToken = default)
+    public override Task<bool> DeleteAsync(string path, CancellationToken cancellationToken = default)
     {
         path = StorePaths.NormalizeRelativePath(path);
         return Task.FromResult(this._files.TryRemove(path, out _));
     }
 
     /// <inheritdoc />
-    public override Task<IReadOnlyList<string>> ListFilesAsync(string directory, CancellationToken cancellationToken = default)
+    public override Task<IReadOnlyList<FileStoreEntry>> ListChildrenAsync(string directory, CancellationToken cancellationToken = default)
     {
         string prefix = StorePaths.NormalizeRelativePath(directory, isDirectory: true);
         if (prefix.Length > 0 && !prefix.EndsWith("/", StringComparison.Ordinal))
@@ -57,13 +57,43 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
             prefix += "/";
         }
 
-        var files = this._files.Keys
-            .Where(k => k.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            .Select(k => k.Substring(prefix.Length))
-            .Where(k => k.IndexOf("/", StringComparison.Ordinal) < 0)
-            .ToList();
+        // A subdirectory is the first path segment of any key whose remainder (after the prefix)
+        // still contains a separator. Collect distinct first segments, preserving original casing.
+        var directories = new List<string>();
+        var seenDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var files = new List<string>();
 
-        return Task.FromResult<IReadOnlyList<string>>(files);
+        foreach (string key in this._files.Keys)
+        {
+            if (!key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string remainder = key.Substring(prefix.Length);
+            int separatorIndex = remainder.IndexOf("/", StringComparison.Ordinal);
+            if (separatorIndex < 0)
+            {
+                files.Add(remainder);
+            }
+            else if (separatorIndex > 0)
+            {
+                string segment = remainder.Substring(0, separatorIndex);
+                if (seenDirectories.Add(segment))
+                {
+                    directories.Add(segment);
+                }
+            }
+        }
+
+        // Subdirectories first, then files.
+        FileStoreEntry[] entries =
+        [
+            .. directories.Select(d => new FileStoreEntry(d, FileStoreEntry.Directory)),
+            .. files.Select(f => new FileStoreEntry(f, FileStoreEntry.File)),
+        ];
+
+        return Task.FromResult<IReadOnlyList<FileStoreEntry>>(entries);
     }
 
     /// <inheritdoc />
@@ -74,7 +104,7 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
-    public override Task<IReadOnlyList<FileSearchResult>> SearchFilesAsync(string directory, string regexPattern, string? filePattern = null, CancellationToken cancellationToken = default)
+    public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
     {
         // Normalize the directory prefix for path matching.
         string prefix = StorePaths.NormalizeRelativePath(directory, isDirectory: true);
@@ -85,7 +115,7 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
 
         // Compile the regex with a timeout to guard against catastrophic backtracking (ReDoS).
         var regex = new Regex(regexPattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
-        Matcher? matcher = filePattern is not null ? StorePaths.CreateGlobMatcher(filePattern) : null;
+        Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
         var results = new List<FileSearchResult>();
 
         foreach (var kvp in this._files)
@@ -96,14 +126,16 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
                 continue;
             }
 
-            // Exclude files in subdirectories (direct children only).
+            // The file path relative to the search directory.
             string relativeName = kvp.Key.Substring(prefix.Length);
-            if (relativeName.IndexOf("/", StringComparison.Ordinal) >= 0)
+
+            // When not recursive, exclude files in subdirectories (direct children only).
+            if (!recursive && relativeName.IndexOf("/", StringComparison.Ordinal) >= 0)
             {
                 continue;
             }
 
-            // Apply the optional glob filter on the file name.
+            // Apply the optional glob filter on the relative path.
             if (!StorePaths.MatchesGlob(relativeName, matcher))
             {
                 continue;

@@ -40,7 +40,7 @@ async def test_workflow_agent_forwards_intermediate_events_without_content_rewri
         await ctx.send_message("downstream")
 
     @executor
-    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output("FINAL")
 
     workflow = (
@@ -58,8 +58,8 @@ async def test_workflow_agent_forwards_intermediate_events_without_content_rewri
     async for update in agent.run("hi", stream=True):
         updates.append(update)
 
-    text = " ".join(c.text for u in updates for c in u.contents if c.type == "text")
-    reasoning_text = " ".join(c.text for u in updates for c in u.contents if c.type == "text_reasoning")
+    text = " ".join(c.text for u in updates for c in u.contents if c.type == "text")  # type: ignore[misc]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+    reasoning_text = " ".join(c.text for u in updates for c in u.contents if c.type == "text_reasoning")  # type: ignore[misc]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
 
     assert "intermediate progress" in text
     assert "FINAL" in text
@@ -76,7 +76,7 @@ async def test_workflow_agent_text_accessor_includes_forwarded_intermediate_text
         await ctx.send_message("forward")
 
     @executor
-    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output("the-answer")
 
     workflow = (
@@ -106,14 +106,14 @@ async def test_workflow_agent_hidden_yields_do_not_surface_non_streaming() -> No
         await ctx.send_message("forward")
 
     @executor
-    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output("visible-answer")
 
     workflow = WorkflowBuilder(start_executor=hidden, output_from=[terminal]).add_edge(hidden, terminal).build()
     agent = workflow.as_agent("test")
 
     response = await agent.run("hi")
-    all_text = " ".join(c.text for m in response.messages for c in m.contents if hasattr(c, "text"))
+    all_text = " ".join(c.text for m in response.messages for c in m.contents if hasattr(c, "text"))  # type: ignore[misc]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
 
     assert response.text == "visible-answer"
     assert "hidden-progress" not in all_text
@@ -129,7 +129,7 @@ async def test_workflow_agent_hidden_yields_do_not_surface_streaming() -> None:
         await ctx.send_message("forward")
 
     @executor
-    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output("visible-answer")
 
     workflow = WorkflowBuilder(start_executor=hidden, output_from=[terminal]).add_edge(hidden, terminal).build()
@@ -139,7 +139,7 @@ async def test_workflow_agent_hidden_yields_do_not_surface_streaming() -> None:
     async for update in agent.run("hi", stream=True):
         updates.append(update)
 
-    all_text = " ".join(c.text for u in updates for c in u.contents if hasattr(c, "text"))
+    all_text = " ".join(c.text for u in updates for c in u.contents if hasattr(c, "text"))  # type: ignore[misc]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
 
     assert "visible-answer" in all_text
     assert "hidden-progress" not in all_text
@@ -150,7 +150,7 @@ async def test_workflow_agent_data_event_emit_factory_still_forwarded() -> None:
     """Even the deprecated WorkflowEvent.emit() / type='data' path is forwarded."""
 
     @executor
-    async def emit_data_alias(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+    async def emit_data_alias(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
             await ctx.add_event(WorkflowEvent.emit("emit_data_alias", "data-alias-payload"))
@@ -163,7 +163,7 @@ async def test_workflow_agent_data_event_emit_factory_still_forwarded() -> None:
     async for update in agent.run("hi", stream=True):
         updates.append(update)
 
-    text = " ".join(c.text for u in updates for c in u.contents if c.type == "text")
+    text = " ".join(c.text for u in updates for c in u.contents if c.type == "text")  # type: ignore[misc]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
     assert "data-alias-payload" in text
 
 
@@ -186,7 +186,7 @@ async def test_workflow_agent_intermediate_message_preserves_additional_properti
         await ctx.send_message("forward")
 
     @executor
-    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output("done")
 
     workflow = (
@@ -211,7 +211,7 @@ async def test_workflow_agent_terminal_text_stays_text_not_reasoning() -> None:
     """A designated executor's text yield surfaces as Content.text."""
 
     @executor
-    async def only(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+    async def only(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output("the-answer")
 
     workflow = WorkflowBuilder(start_executor=only, output_from=[only]).build()
@@ -228,7 +228,7 @@ async def test_workflow_agent_non_streaming_rejects_terminal_update() -> None:
     """A terminal event carrying AgentResponseUpdate is streaming-only and invalid in run()."""
 
     @executor
-    async def emit(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:
+    async def emit(messages: list[Message], ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output(AgentResponseUpdate(contents=[Content.from_text(text="partial")], role="assistant"))
 
     workflow = WorkflowBuilder(start_executor=emit, output_from=[emit]).build()
@@ -248,7 +248,7 @@ async def test_workflow_agent_non_streaming_rejects_intermediate_update() -> Non
         await ctx.send_message("forward")
 
     @executor
-    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:
+    async def terminal(message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output("FINAL")
 
     workflow = (
@@ -278,7 +278,7 @@ async def test_workflow_agent_streaming_update_payloads_preserve_classification(
         await ctx.send_message("forward")
 
     @executor
-    async def terminal(message: str, ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:
+    async def terminal(message: str, ctx: WorkflowContext[Never, AgentResponseUpdate]) -> None:  # type: ignore[valid-type]
         await ctx.yield_output(
             AgentResponseUpdate(contents=[Content.from_text(text="terminal-chunk")], role="assistant")
         )
@@ -298,8 +298,8 @@ async def test_workflow_agent_streaming_update_payloads_preserve_classification(
     async for update in agent.run("hi", stream=True):
         updates.append(update)
 
-    text = " ".join(c.text for u in updates for c in u.contents if c.type == "text")
-    reasoning_text = " ".join(c.text for u in updates for c in u.contents if c.type == "text_reasoning")
+    text = " ".join(c.text for u in updates for c in u.contents if c.type == "text")  # type: ignore[misc]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+    reasoning_text = " ".join(c.text for u in updates for c in u.contents if c.type == "text_reasoning")  # type: ignore[misc]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
 
     assert "intermediate-chunk" in text
     assert "terminal-chunk" in text
@@ -313,7 +313,7 @@ async def test_workflow_agent_drops_orchestration_internal_events() -> None:
     be stringified by the generic fallback path and leak into response history."""
 
     @executor
-    async def emit(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+    async def emit(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         # Construct typed orchestration-internal events directly to assert they get
         # dropped at the agent boundary regardless of payload.
         await ctx.add_event(WorkflowEvent("group_chat", data={"orchestrator": "details"}))  # type: ignore[arg-type]
@@ -325,7 +325,7 @@ async def test_workflow_agent_drops_orchestration_internal_events() -> None:
     agent = workflow.as_agent("test")
 
     response = await agent.run("hi")
-    all_text = " ".join(c.text for m in response.messages for c in m.contents if hasattr(c, "text"))
+    all_text = " ".join(c.text for m in response.messages for c in m.contents if hasattr(c, "text"))  # type: ignore[misc]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
     assert "orchestrator" not in all_text
     assert "agent_b" not in all_text
     assert "plan" not in all_text
@@ -337,7 +337,7 @@ async def test_workflow_agent_drops_orchestration_internal_events_streaming() ->
     """Streaming counterpart — orchestration-internal events stay inside the workflow."""
 
     @executor
-    async def emit(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+    async def emit(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
         await ctx.add_event(WorkflowEvent("group_chat", data={"orchestrator": "details"}))  # type: ignore[arg-type]
         await ctx.yield_output("FINAL")
 
@@ -348,6 +348,6 @@ async def test_workflow_agent_drops_orchestration_internal_events_streaming() ->
     async for update in agent.run("hi", stream=True):
         updates.append(update)
 
-    all_text = " ".join(c.text for u in updates for c in u.contents if hasattr(c, "text"))
+    all_text = " ".join(c.text for u in updates for c in u.contents if hasattr(c, "text"))  # type: ignore[misc]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
     assert "orchestrator" not in all_text
     assert "FINAL" in all_text

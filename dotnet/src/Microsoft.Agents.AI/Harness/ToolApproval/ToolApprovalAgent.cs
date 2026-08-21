@@ -2,14 +2,14 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
 
@@ -29,6 +29,9 @@ namespace Microsoft.Agents.AI;
 /// first is returned to the caller while the rest are queued. On subsequent calls, queued items are re-evaluated
 /// against rules (which may have been updated by the caller's "always approve" response) and presented one at a time.
 /// Once all queued requests are resolved, the collected responses are injected and the inner agent is called again.
+/// This one-at-a-time behavior no longer applies once the auto-approval cap
+/// (<see cref="ToolApprovalAgentOptions.MaxAutoApprovalIterations"/>) is reached: the final inner turn is returned
+/// as-is, so more than one approval request may be surfaced to the caller at once.
 /// </item>
 /// <item>
 /// <b>Inbound (caller to agent):</b> When the caller sends an <see cref="AlwaysApproveToolApprovalResponseContent"/>,
@@ -46,12 +49,15 @@ namespace Microsoft.Agents.AI;
 /// <item><b>Tool+arguments:</b> Approve all calls to a specific tool with exactly matching arguments.</item>
 /// </list>
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class ToolApprovalAgent : DelegatingAIAgent
 {
+    /// <summary>The default value used for <see cref="ToolApprovalAgentOptions.MaxAutoApprovalIterations"/> when none is specified.</summary>
+    public const int DefaultMaxAutoApprovalIterations = 40;
+
     private readonly ProviderSessionState<ToolApprovalState> _sessionState;
     private readonly JsonSerializerOptions _jsonSerializerOptions;
-    private readonly Func<FunctionCallContent, ValueTask<bool>>[]? _autoApprovalRules;
+    private readonly Func<ToolAutoApprovalRuleContext, ValueTask<bool>>[]? _autoApprovalRules;
+    private readonly int _maxAutoApprovalIterations;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ToolApprovalAgent"/> class.
@@ -67,11 +73,39 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     {
         this._jsonSerializerOptions = options?.JsonSerializerOptions ?? AgentJsonUtilities.DefaultOptions;
         this._autoApprovalRules = options?.AutoApprovalRules?.ToArray();
+        this._maxAutoApprovalIterations = Throw.IfLessThan(
+            options?.MaxAutoApprovalIterations ?? DefaultMaxAutoApprovalIterations, 1);
         this._sessionState = new ProviderSessionState<ToolApprovalState>(
             _ => new ToolApprovalState(),
             "toolApprovalState",
             this._jsonSerializerOptions);
     }
+
+    /// <summary>
+    /// Gets an auto-approval rule that approves every tool call, regardless of tool name or arguments.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Add this rule to <see cref="ToolApprovalAgentOptions.AutoApprovalRules"/> to automatically approve all
+    /// tool calls without prompting the user. This effectively disables approval prompts for every tool, so use
+    /// it only when running in a fully trusted context.
+    /// </para>
+    /// <para>
+    /// For example, to auto-approve every tool call:
+    /// <code>
+    /// builder.UseToolApproval(new ToolApprovalAgentOptions
+    /// {
+    ///     AutoApprovalRules = [ToolApprovalAgent.AllToolsAutoApprovalRule],
+    /// });
+    /// </code>
+    /// </para>
+    /// <para>
+    /// <b>Security note:</b> this rule is name-agnostic and approves <b>every</b> tool call regardless
+    /// of the tool name (<see cref="FunctionCallContent.Name"/>) or arguments. Only use this rule in a fully trusted context.
+    /// </para>
+    /// </remarks>
+    public static Func<ToolAutoApprovalRuleContext, ValueTask<bool>> AllToolsAutoApprovalRule { get; } =
+        _ => new ValueTask<bool>(true);
 
     /// <inheritdoc />
     protected override async Task<AgentResponse> RunCoreAsync(
@@ -80,8 +114,14 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreToolApproval);
+#pragma warning restore MAAI001
+
+        var requestMessages = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+
         // Steps 1–2: Unwrap AlwaysApprove wrappers, process any queued approval requests.
-        var (state, callerMessages, nextQueuedItem) = await this.PrepareInboundMessagesAsync(messages, session).ConfigureAwait(false);
+        var (state, callerMessages, nextQueuedItem) = await this.PrepareInboundMessagesAsync(requestMessages, session, options).ConfigureAwait(false);
 
         if (nextQueuedItem is not null)
         {
@@ -89,23 +129,58 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
             return new AgentResponse(new ChatMessage(ChatRole.Assistant, [nextQueuedItem]));
         }
 
+        // When the caller did not supply a session, create one and use it for every inner call.
+        // The auto-approval loop re-invokes the inner agent with only the injected approval
+        // responses; without a session the inner agent has no conversation history to reconstruct
+        // the original request, which produces an empty request to the underlying service. Threading
+        // a session preserves the history across re-invocations.
+        session ??= await this.InnerAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
         // 3. Call the inner agent in a loop. If the inner agent returns approval requests
         //    that are ALL auto-approved by standing rules, we immediately re-call with the
         //    collected approval responses injected. This avoids returning empty responses.
-        while (true)
+        //
+        //    The loop is bounded by _maxAutoApprovalIterations. Each pass is a fresh inner
+        //    invocation, so a per-request cap (FunctionInvokingChatClient.MaximumIterationsPerRequest)
+        //    restarts every time and cannot bound it; without a cap here a model that keeps
+        //    requesting an auto-approved tool bills indefinitely.
+        //
+        //    Usage is accumulated across every re-invocation so the caller sees the token cost
+        //    of the whole run, not just its final inner call.
+        UsageDetails? aggregatedUsage = null;
+
+        for (int iteration = 0; ; iteration++)
         {
             // Inject any collected approval responses as a user message ahead of the caller's messages.
             var processedMessages = this.InjectCollectedResponses(callerMessages, state, session);
 
+            if (iteration >= this._maxAutoApprovalIterations)
+            {
+                // Cap reached: take one final turn without auto-approving again, so any approval
+                // request it surfaces goes to the caller to decide rather than continuing the chain.
+                // Returning here without this call would hand back a response whose approval requests
+                // were already stripped — the empty response the loop exists to avoid.
+                var cappedResponse = await this.InnerAgent.RunAsync(processedMessages, session, options, cancellationToken).ConfigureAwait(false);
+
+                // This turn is still part of the same run, so its usage joins the aggregate rather
+                // than replacing it; otherwise hitting the cap would discard every prior turn's cost.
+                UsageAggregator.Accumulate(ref aggregatedUsage, cappedResponse.Usage);
+
+                return cappedResponse.ApplyAggregatedUsage(aggregatedUsage);
+            }
+
             var response = await this.InnerAgent.RunAsync(processedMessages, session, options, cancellationToken).ConfigureAwait(false);
 
+            UsageAggregator.Accumulate(ref aggregatedUsage, response.Usage);
+
             // Classify approval requests: auto-approve matching, queue excess, keep first unapproved.
-            bool allAutoApproved = await this.ProcessAndQueueOutboundApprovalRequestsAsync(response.Messages, state, session).ConfigureAwait(false);
+            bool allAutoApproved = await this.ProcessAndQueueOutboundApprovalRequestsAsync(response.Messages, state, session, options, requestMessages).ConfigureAwait(false);
 
             if (!allAutoApproved)
             {
-                // Response has real content or an unapproved approval request — return to caller.
-                return response;
+                // Response has real content or an unapproved approval request — return to caller,
+                // reporting the usage accumulated across every turn of the run.
+                return response.ApplyAggregatedUsage(aggregatedUsage);
             }
 
             // All approval requests were auto-approved. Loop to re-invoke with them injected.
@@ -120,8 +195,14 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreToolApproval);
+#pragma warning restore MAAI001
+
+        var requestMessages = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+
         // Steps 1–2: Unwrap AlwaysApprove wrappers, process any queued approval requests.
-        var (state, callerMessages, nextQueuedItem) = await this.PrepareInboundMessagesAsync(messages, session).ConfigureAwait(false);
+        var (state, callerMessages, nextQueuedItem) = await this.PrepareInboundMessagesAsync(requestMessages, session, options).ConfigureAwait(false);
 
         if (nextQueuedItem is not null)
         {
@@ -130,13 +211,33 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
             yield break;
         }
 
+        // When the caller did not supply a session, create one and use it for every inner call so
+        // conversation history is preserved across auto-approval re-invocations. See the non-streaming
+        // RunCoreAsync for details.
+        session ??= await this.InnerAgent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+
         // 3. Stream from the inner agent in a loop. If all approval requests from the stream
         //    are auto-approved by standing rules, we immediately re-stream with the collected
         //    approval responses injected. This avoids returning empty streams.
-        while (true)
+        //
+        //    Bounded by _maxAutoApprovalIterations for the same reason as the non-streaming path:
+        //    every pass is a fresh inner invocation, so no per-request cap can bound it.
+        for (int iteration = 0; ; iteration++)
         {
             // Inject any collected approval responses as a user message ahead of the caller's messages.
             var processedMessages = this.InjectCollectedResponses(callerMessages, state, session);
+
+            if (iteration >= this._maxAutoApprovalIterations)
+            {
+                // Cap reached: take one final turn without auto-approving again. Updates are yielded
+                // as-is, so any approval request reaches the caller to decide instead of continuing.
+                await foreach (var update in this.InnerAgent.RunStreamingAsync(processedMessages, session, options, cancellationToken).ConfigureAwait(false))
+                {
+                    yield return update;
+                }
+
+                yield break;
+            }
 
             // Stream from the inner agent. Non-approval content is yielded immediately.
             // Approval requests are collected (not yielded) so we can classify the full batch.
@@ -208,7 +309,7 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
                     state.CollectedApprovalResponses.Add(
                         tarc.CreateResponse(approved: true, reason: "Auto-approved by standing rule"));
                 }
-                else if (await this.MatchesAutoApprovalRuleAsync(tarc).ConfigureAwait(false))
+                else if (await this.MatchesAutoApprovalRuleAsync(tarc, session, options, requestMessages).ConfigureAwait(false))
                 {
                     state.CollectedApprovalResponses.Add(
                         tarc.CreateResponse(approved: true, reason: "Auto-approved by auto-approval rule"));
@@ -229,6 +330,10 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
             // 5. Queue excess unapproved requests and yield only the first to the caller.
             if (unapproved.Count > 1)
             {
+                // Record every unapproved request as surfaced so the caller's responses can be bound to a
+                // model-originated request during the queue cycle.
+                RecordSurfacedApprovalRequests(state, unapproved);
+
                 state.QueuedApprovalRequests.AddRange(unapproved.GetRange(1, unapproved.Count - 1));
             }
 
@@ -240,13 +345,18 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
 
     /// <summary>
     /// Extracts <see cref="ToolApprovalResponseContent"/> instances from the caller's messages
-    /// and collects them into <see cref="ToolApprovalState.CollectedApprovalResponses"/>.
-    /// Extracted responses are removed from the messages in-place.
+    /// and collects the ones bound to a request the harness surfaced into
+    /// <see cref="ToolApprovalState.CollectedApprovalResponses"/>.
+    /// Extracted responses are removed from the messages in-place. Only a response whose request id matches a
+    /// surfaced request is honored, and a matched response has its tool call rebound to the surfaced request's
+    /// tool call so an approved call matches exactly what was surfaced for approval.
     /// </summary>
     private static void CollectApprovalResponsesFromMessages(
         List<ChatMessage> messages,
         ToolApprovalState state)
     {
+        var surfaced = state.SurfacedApprovalRequests;
+
         // Walk messages in reverse so we can safely remove by index.
         for (int i = messages.Count - 1; i >= 0; i--)
         {
@@ -268,13 +378,28 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
                 continue;
             }
 
-            // Separate approval responses (→ state) from other content (→ keep in message).
+            // Separate bound approval responses (→ state) from other content (→ keep in message).
+            // Responses not tied to a surfaced request are not collected, so only genuine approvals take effect.
             var remaining = new List<AIContent>(message.Contents.Count);
             foreach (var content in message.Contents)
             {
                 if (content is ToolApprovalResponseContent response)
                 {
-                    state.CollectedApprovalResponses.Add(response);
+                    // Remove on match so a matched request is consumed and a duplicate response for the
+                    // same request in this pass is honored only once.
+                    if (surfaced.TryGetValue(response.RequestId, out var surfacedRequest))
+                    {
+                        surfaced.Remove(response.RequestId);
+
+                        // Rebind to the surfaced request's tool call and record for injection.
+                        state.CollectedApprovalResponses.Add(
+                            new ToolApprovalResponseContent(response.RequestId, response.Approved, surfacedRequest.ToolCall)
+                            {
+                                Reason = response.Reason,
+                            });
+                    }
+
+                    // Bound responses are collected above; either way the response is not kept in the message.
                 }
                 else
                 {
@@ -298,9 +423,47 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     }
 
     /// <summary>
+    /// Records the given approval requests as surfaced to the caller, keyed by request id.
+    /// A snapshot of each request is stored so later mutation of the caller-visible instance cannot change
+    /// the recorded tool call used to bind the response.
+    /// </summary>
+    private static void RecordSurfacedApprovalRequests(ToolApprovalState state, IReadOnlyList<ToolApprovalRequestContent> requests)
+    {
+        // SurfacedApprovalRequests is empty here: this is called when a response comes back from the inner
+        // agent, which cannot happen while approval requests are outstanding.
+        foreach (var request in requests)
+        {
+            state.SurfacedApprovalRequests[request.RequestId] = SnapshotRequest(request);
+        }
+    }
+
+    /// <summary>
+    /// Creates a snapshot of an approval request so a later mutation of the caller-visible instance
+    /// (for example changing the tool call arguments) cannot alter the recorded request used for binding.
+    /// </summary>
+    private static ToolApprovalRequestContent SnapshotRequest(ToolApprovalRequestContent request)
+    {
+        if (request.ToolCall is FunctionCallContent functionCall)
+        {
+            var clonedCall = new FunctionCallContent(
+                functionCall.CallId,
+                functionCall.Name,
+                functionCall.Arguments is null ? null : new Dictionary<string, object?>(functionCall.Arguments));
+
+            return new ToolApprovalRequestContent(request.RequestId, clonedCall);
+        }
+
+        return request;
+    }
+
+    /// <summary>
     /// Re-evaluates queued approval requests against current rules and auto-approval rules, and auto-approves any that now match.
     /// </summary>
-    private async ValueTask DrainAutoApprovableFromQueueAsync(ToolApprovalState state)
+    private async ValueTask DrainAutoApprovableFromQueueAsync(
+        ToolApprovalState state,
+        AgentSession? session,
+        AgentRunOptions? options,
+        IReadOnlyCollection<ChatMessage> requestMessages)
     {
         for (int i = state.QueuedApprovalRequests.Count - 1; i >= 0; i--)
         {
@@ -310,7 +473,7 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
                     state.QueuedApprovalRequests[i].CreateResponse(approved: true, reason: "Auto-approved by standing rule"));
                 state.QueuedApprovalRequests.RemoveAt(i);
             }
-            else if (await this.MatchesAutoApprovalRuleAsync(state.QueuedApprovalRequests[i]).ConfigureAwait(false))
+            else if (await this.MatchesAutoApprovalRuleAsync(state.QueuedApprovalRequests[i], session, options, requestMessages).ConfigureAwait(false))
             {
                 state.CollectedApprovalResponses.Add(
                     state.QueuedApprovalRequests[i].CreateResponse(approved: true, reason: "Auto-approved by auto-approval rule"));
@@ -332,7 +495,7 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     /// When the returned item is non-null, the caller should return/yield it without calling the inner agent.
     /// </returns>
     private async ValueTask<(ToolApprovalState State, List<ChatMessage> CallerMessages, ToolApprovalRequestContent? NextQueuedItem)>
-        PrepareInboundMessagesAsync(IEnumerable<ChatMessage> messages, AgentSession? session)
+        PrepareInboundMessagesAsync(IReadOnlyCollection<ChatMessage> messages, AgentSession? session, AgentRunOptions? options)
     {
         var state = this._sessionState.GetOrInitializeState(session);
 
@@ -350,7 +513,7 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
 
             // Re-evaluate remaining queued items — the caller may have added new rules
             // (e.g., "always approve this tool") that resolve additional items.
-            await this.DrainAutoApprovableFromQueueAsync(state).ConfigureAwait(false);
+            await this.DrainAutoApprovableFromQueueAsync(state, session, options, messages).ConfigureAwait(false);
 
             if (state.QueuedApprovalRequests.Count > 0)
             {
@@ -362,6 +525,9 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
             }
 
             // Queue fully resolved — caller should proceed to call the inner agent.
+            // Surfaced requests are consumed as their responses are collected in
+            // CollectApprovalResponsesFromMessages, so nothing should remain here.
+            Debug.Assert(state.SurfacedApprovalRequests.Count == 0, "Surfaced approval requests should be empty once the queue is resolved.");
         }
 
         return (state, callerMessages, null);
@@ -402,7 +568,9 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     private async ValueTask<bool> ProcessAndQueueOutboundApprovalRequestsAsync(
         IList<ChatMessage> responseMessages,
         ToolApprovalState state,
-        AgentSession? session)
+        AgentSession? session,
+        AgentRunOptions? options,
+        IReadOnlyCollection<ChatMessage> requestMessages)
     {
         // Pass 1: Scan all response messages and classify each approval request.
         //         Auto-approved requests (matching a standing rule or auto-approval rule) have their
@@ -425,7 +593,7 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
                         toRemove.Add(tarc);
                         autoApprovedCount++;
                     }
-                    else if (await this.MatchesAutoApprovalRuleAsync(tarc).ConfigureAwait(false))
+                    else if (await this.MatchesAutoApprovalRuleAsync(tarc, session, options, requestMessages).ConfigureAwait(false))
                     {
                         state.CollectedApprovalResponses.Add(
                             tarc.CreateResponse(approved: true, reason: "Auto-approved by auto-approval rule"));
@@ -459,10 +627,17 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         // Pass 2: Keep only the first unapproved request in the response (for the caller to decide).
         //         Queue the remaining unapproved requests for subsequent one-at-a-time delivery.
         //         Remove all auto-approved and queued items from the response messages.
-        for (int i = 1; i < unapproved.Count; i++)
+        if (unapproved.Count > 1)
         {
-            toRemove.Add(unapproved[i]);
-            state.QueuedApprovalRequests.Add(unapproved[i]);
+            // Record every unapproved request as surfaced so the caller's responses can be bound to a
+            // model-originated request during the queue cycle.
+            RecordSurfacedApprovalRequests(state, unapproved);
+
+            for (int i = 1; i < unapproved.Count; i++)
+            {
+                toRemove.Add(unapproved[i]);
+                state.QueuedApprovalRequests.Add(unapproved[i]);
+            }
         }
 
         // Walk messages in reverse and strip marked items.
@@ -575,7 +750,7 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         ToolApprovalState state,
         JsonSerializerOptions jsonSerializerOptions)
     {
-        var messageList = messages as IList<ChatMessage> ?? new List<ChatMessage>(messages);
+        var messageList = messages as IList<ChatMessage> ?? [.. messages];
         var result = new List<ChatMessage>(messageList.Count);
         bool anyModified = false;
 
@@ -686,7 +861,11 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     /// <see langword="true"/> if any auto-approval rule returns <see langword="true"/> for the function call;
     /// <see langword="false"/> if no rules are configured, the request is not a function call, or no rule approves it.
     /// </returns>
-    private async ValueTask<bool> MatchesAutoApprovalRuleAsync(ToolApprovalRequestContent request)
+    private async ValueTask<bool> MatchesAutoApprovalRuleAsync(
+        ToolApprovalRequestContent request,
+        AgentSession? session,
+        AgentRunOptions? options,
+        IReadOnlyCollection<ChatMessage> requestMessages)
     {
         if (this._autoApprovalRules is not { Length: > 0 })
         {
@@ -698,9 +877,11 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
             return false;
         }
 
+        var context = new ToolAutoApprovalRuleContext(functionCall, this, session, requestMessages, options);
+
         foreach (var rule in this._autoApprovalRules)
         {
-            if (await rule(functionCall).ConfigureAwait(false))
+            if (await rule(context).ConfigureAwait(false))
             {
                 return true;
             }
@@ -741,11 +922,19 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
     /// <summary>
     /// Serializes function call arguments to a string dictionary for storage and comparison.
     /// </summary>
-    private static Dictionary<string, string>? SerializeArguments(IDictionary<string, object?>? arguments, JsonSerializerOptions jsonSerializerOptions)
+    /// <remarks>
+    /// Always returns a non-null dictionary so that an argument-scoped standing approval
+    /// (the <see cref="AlwaysApproveToolApprovalResponseContent.AlwaysApproveToolWithArguments"/>
+    /// path) records an exact-arguments rule. A <see langword="null"/> or empty source dictionary
+    /// yields an empty dictionary, which matches only future no-argument calls. A <see langword="null"/>
+    /// value is reserved on <see cref="ToolApprovalRule.Arguments"/> for tool-level rules and is never
+    /// produced here, preventing an exact-arguments approval from widening into a tool-level approval.
+    /// </remarks>
+    private static Dictionary<string, string> SerializeArguments(IDictionary<string, object?>? arguments, JsonSerializerOptions jsonSerializerOptions)
     {
         if (arguments is null || arguments.Count == 0)
         {
-            return null;
+            return new Dictionary<string, string>(StringComparer.Ordinal);
         }
 
         var serialized = new Dictionary<string, string>(arguments.Count, StringComparer.Ordinal);

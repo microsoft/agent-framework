@@ -491,7 +491,9 @@ class TestErrorMapping:
             result = await handler.invoke_tool(inv)
         assert result.is_error is True
         assert result.error_message == "server says no"
-        assert result.outputs[0].text.startswith("Error:")  # type: ignore[reportAttributeAccessIssue]
+        text = result.outputs[0].text  # type: ignore[reportAttributeAccessIssue]
+        assert text is not None
+        assert text.startswith("Error:")
 
     @pytest.mark.asyncio
     async def test_httpx_error_returns_error_result(self) -> None:
@@ -536,7 +538,9 @@ class TestErrorMapping:
         ):
             result = await handler.invoke_tool(_invocation())
         assert result.is_error is True
-        assert result.outputs[0].text.startswith("Error:")  # type: ignore[reportAttributeAccessIssue]
+        text = result.outputs[0].text  # type: ignore[reportAttributeAccessIssue]
+        assert text is not None
+        assert text.startswith("Error:")
         # Failed connect must clear in-flight + cache entries.
         assert handler._inflight == {}
         assert len(handler._cache) == 0
@@ -609,7 +613,7 @@ class TestListTools:
         with _patch_tool():
             # Prime the cache so the FakeTool session exists.
             await handler.invoke_tool(_invocation())
-            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]
+            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]  # ty: ignore[invalid-assignment]
                 FakeListToolsResult(
                     tools=[
                         FakeMcpTool(
@@ -625,7 +629,9 @@ class TestListTools:
             result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
         assert result.is_error is False
         assert len(result.outputs) == 1
-        payload = json.loads(result.outputs[0].text)  # type: ignore[reportAttributeAccessIssue]
+        text = result.outputs[0].text  # type: ignore[reportAttributeAccessIssue]
+        assert text is not None
+        payload = json.loads(text)
         assert payload == {
             "tools": [
                 {
@@ -649,11 +655,12 @@ class TestListTools:
         handler = DefaultMCPToolHandler()
         with _patch_tool():
             await handler.invoke_tool(_invocation())
-            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]
+            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]  # ty: ignore[invalid-assignment]
                 FakeListToolsResult(tools=[FakeMcpTool(name="t1", description="d")]),
             ]
             result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
         text = result.outputs[0].text  # type: ignore[reportAttributeAccessIssue]
+        assert text is not None
         name_idx = text.find('"name"')
         desc_idx = text.find('"description"')
         input_idx = text.find('"inputSchema"')
@@ -666,11 +673,12 @@ class TestListTools:
         handler = DefaultMCPToolHandler()
         with _patch_tool():
             await handler.invoke_tool(_invocation())
-            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]
+            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]  # ty: ignore[invalid-assignment]
                 FakeListToolsResult(tools=[FakeMcpTool(name="t1")]),
             ]
             result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
         text = result.outputs[0].text  # type: ignore[reportAttributeAccessIssue]
+        assert text is not None
         # Indented output contains newlines and a 2-space indented key.
         assert "\n  " in text
 
@@ -704,13 +712,15 @@ class TestListTools:
         handler = DefaultMCPToolHandler()
         with _patch_tool():
             await handler.invoke_tool(_invocation())
-            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]
+            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]  # ty: ignore[invalid-assignment]
                 FakeListToolsResult(tools=[FakeMcpTool(name="a")], next_cursor="cursor1"),
                 FakeListToolsResult(tools=[FakeMcpTool(name="b")], next_cursor="cursor2"),
                 FakeListToolsResult(tools=[FakeMcpTool(name="c")], next_cursor=None),
             ]
             result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
-        payload = json.loads(result.outputs[0].text)  # type: ignore[reportAttributeAccessIssue]
+        text = result.outputs[0].text  # type: ignore[reportAttributeAccessIssue]
+        assert text is not None
+        payload = json.loads(text)
         assert [t["name"] for t in payload["tools"]] == ["a", "b", "c"]
         session = FakeTool.instances[0].session
         assert session is not None
@@ -736,7 +746,7 @@ class TestListTools:
         handler = DefaultMCPToolHandler()
         with _patch_tool():
             await handler.invoke_tool(_invocation())
-            FakeTool.instances[0].session.list_tools_error = httpx.ReadTimeout("read timed out")  # type: ignore[union-attr]
+            FakeTool.instances[0].session.list_tools_error = httpx.ReadTimeout("read timed out")  # type: ignore[union-attr]  # ty: ignore[invalid-assignment]
             result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))
         assert result.is_error is True
         assert "ReadTimeout" in (result.error_message or "")
@@ -766,7 +776,7 @@ class TestListTools:
         with _patch_tool():
             await handler.invoke_tool(_invocation())
             FakeTool.instances[0].call_handler = fail
-            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]
+            FakeTool.instances[0].session.list_tools_pages = [  # type: ignore[union-attr]  # ty: ignore[invalid-assignment]
                 FakeListToolsResult(tools=[]),
             ]
             result = await handler.invoke_tool(_invocation(tool_name=DefaultMCPToolHandler.LIST_TOOLS_TOOL_NAME))

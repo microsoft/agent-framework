@@ -5,15 +5,14 @@
 // when you want a fixed tool surface for the agent's lifetime and don't need
 // the per-run snapshot/registry semantics of HyperlightCodeActProvider.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hyperlight;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 var guestPath = Environment.GetEnvironmentVariable("HYPERLIGHT_PYTHON_GUEST_PATH") ?? throw new InvalidOperationException("HYPERLIGHT_PYTHON_GUEST_PATH is not set.");
 
 AIFunction calculate = AIFunctionFactory.Create(
@@ -31,10 +30,12 @@ var instructions =
     + "and calling `execute_code` instead of computing values yourself.\n\n"
     + executeCode.BuildInstructions(toolsVisibleToModel: false);
 
-AIAgent agent = new AzureOpenAIClient(
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
-    .AsAIAgent(instructions: instructions, tools: [executeCode]);
+    .AsAIAgent(model: deploymentName, instructions: instructions, tools: [executeCode]);
 
 Console.WriteLine(await agent.RunAsync("What is 12.3 * 4.5? Use the multiply tool from within `execute_code`."));

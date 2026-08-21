@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass
@@ -176,7 +177,12 @@ class RunnerContext(Protocol):
         ...
 
     def reset_for_new_run(self) -> None:
-        """Reset the context for a new workflow run."""
+        """Reset the context for a new workflow run.
+
+        .. deprecated::
+            ``reset_for_new_run`` is deprecated and will be removed in a future version.
+            ``apply_checkpoint`` should reset the context prior to applying a checkpoint.
+        """
         ...
 
     def set_streaming(self, streaming: bool) -> None:
@@ -195,6 +201,34 @@ class RunnerContext(Protocol):
         """
         ...
 
+    async def build_checkpoint(
+        self,
+        workflow_name: str,
+        graph_signature_hash: str,
+        state: State,
+        previous_checkpoint_id: CheckpointID | None,
+        iteration_count: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> WorkflowCheckpoint:
+        """Build a checkpoint and return it for the caller to own.
+
+        The checkpoint is constructed in memory and handed back to the caller; nothing is
+        persisted and no checkpoint storage is required.
+
+        Args:
+            workflow_name: The name of the workflow for which the checkpoint is being created.
+            graph_signature_hash: Hash of the workflow graph topology to
+                validate checkpoint compatibility during restore.
+            state: The state to include in the checkpoint.
+            previous_checkpoint_id: The ID of the previous checkpoint, if any, to form a checkpoint chain.
+            iteration_count: The current iteration count of the workflow.
+            metadata: Optional metadata to associate with the checkpoint.
+
+        Returns:
+            A ``WorkflowCheckpoint`` of the current context state.
+        """
+        ...
+
     async def create_checkpoint(
         self,
         workflow_name: str,
@@ -204,7 +238,7 @@ class RunnerContext(Protocol):
         iteration_count: int,
         metadata: dict[str, Any] | None = None,
     ) -> CheckpointID:
-        """Create a checkpoint of the current workflow state.
+        """Persist a checkpoint of the current workflow state to configured storage and return its ID.
 
         Args:
             workflow_name: The name of the workflow for which the checkpoint is being created.
@@ -219,6 +253,9 @@ class RunnerContext(Protocol):
 
         Returns:
             The ID of the created checkpoint.
+
+        Raises:
+            ValueError: If checkpoint storage is not configured.
         """
         ...
 
@@ -285,8 +322,13 @@ class InProcRunnerContext:
             checkpoint_storage: Optional storage to enable checkpointing.
         """
         self._messages: dict[str, list[WorkflowMessage]] = {}
-        # Event queue for immediate streaming of events
-        self._event_queue: asyncio.Queue[WorkflowEvent] = asyncio.Queue()
+
+        # The queue must be created lazily under the running loop (see ``_get_event_queue``)
+        # in order to support contexts that are constructed outside an event loop and reused
+        # across multiple async loops (e.g., successive ``asyncio.run`` calls on the same workflow).
+        # Binding a single queue to one loop would raise "bound to a different event loop" on reuse.
+        self._event_queue: asyncio.Queue[WorkflowEvent] | None = None
+        self._event_queue_loop: asyncio.AbstractEventLoop | None = None
 
         # An additional storage for pending request info events
         self._pending_request_info_events: dict[str, WorkflowEvent[Any]] = {}
@@ -312,33 +354,42 @@ class InProcRunnerContext:
     async def has_messages(self) -> bool:
         return bool(self._messages)
 
+    def _get_event_queue(self) -> asyncio.Queue[WorkflowEvent]:
+        """Return the event queue bound to the running loop, re-creating it on loop change."""
+        loop = asyncio.get_running_loop()
+        if self._event_queue is None or self._event_queue_loop is not loop:
+            self._event_queue = asyncio.Queue()
+            self._event_queue_loop = loop
+        return self._event_queue
+
     async def add_event(self, event: WorkflowEvent) -> None:
         """Add an event to the context immediately.
 
         Events are enqueued so runners can stream them in real time instead of
         waiting for superstep boundaries.
         """
-        await self._event_queue.put(event)
+        await self._get_event_queue().put(event)
 
     async def drain_events(self) -> list[WorkflowEvent]:
         """Drain all currently queued events without blocking for new ones."""
         events: list[WorkflowEvent] = []
+        queue = self._get_event_queue()
         while True:
             try:
-                events.append(self._event_queue.get_nowait())
-            except asyncio.QueueEmpty:  # type: ignore[attr-defined]
+                events.append(queue.get_nowait())
+            except asyncio.QueueEmpty:
                 break
         return events
 
     async def has_events(self) -> bool:
-        return not self._event_queue.empty()
+        return not self._get_event_queue().empty()
 
     async def next_event(self) -> WorkflowEvent:
         """Wait for and return the next event.
 
         Used by the runner to interleave event emission with ongoing iteration work.
         """
-        return await self._event_queue.get()
+        return await self._get_event_queue().get()
 
     # endregion Messaging and Events
 
@@ -367,6 +418,27 @@ class InProcRunnerContext:
     def has_checkpointing(self) -> bool:
         return self._get_effective_checkpoint_storage() is not None
 
+    async def build_checkpoint(
+        self,
+        workflow_name: str,
+        graph_signature_hash: str,
+        state: State,
+        previous_checkpoint_id: CheckpointID | None,
+        iteration_count: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> WorkflowCheckpoint:
+        return WorkflowCheckpoint(
+            workflow_name=workflow_name,
+            graph_signature_hash=graph_signature_hash,
+            previous_checkpoint_id=previous_checkpoint_id,
+            # Copy the per-source lists so the snapshot is isolated from later context mutations.
+            messages={source_id: list(messages) for source_id, messages in self._messages.items()},
+            state=state.export_state(),
+            pending_request_info_events=dict(self._pending_request_info_events),
+            iteration_count=iteration_count,
+            metadata=metadata or {},
+        )
+
     async def create_checkpoint(
         self,
         workflow_name: str,
@@ -380,15 +452,13 @@ class InProcRunnerContext:
         if not storage:
             raise ValueError("Checkpoint storage not configured")
 
-        checkpoint = WorkflowCheckpoint(
-            workflow_name=workflow_name,
-            graph_signature_hash=graph_signature_hash,
-            previous_checkpoint_id=previous_checkpoint_id,
-            messages=dict(self._messages),
-            state=state.export_state(),
-            pending_request_info_events=dict(self._pending_request_info_events),
-            iteration_count=iteration_count,
-            metadata=metadata or {},
+        checkpoint = await self.build_checkpoint(
+            workflow_name,
+            graph_signature_hash,
+            state,
+            previous_checkpoint_id,
+            iteration_count,
+            metadata,
         )
         checkpoint_id = await storage.save(checkpoint)
         logger.debug(f"Created checkpoint {checkpoint_id}")
@@ -405,14 +475,32 @@ class InProcRunnerContext:
 
         This clears messages, events, and resets streaming flag.
         Runtime checkpoint storage is NOT cleared here as it's managed at the workflow level.
+
+        .. deprecated::
+            ``reset_for_new_run`` is deprecated and will be removed in a future version.
+            ``apply_checkpoint`` should reset the context prior to applying a checkpoint.
         """
+        warnings.warn(
+            (
+                "`reset_for_new_run` is deprecated and will be removed in a future version. "
+                "`apply_checkpoint` should reset the context prior to applying a checkpoint."
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._messages.clear()
-        # Clear any pending events (best-effort) by recreating the queue
-        self._event_queue = asyncio.Queue()
+        # Drop any pending events. The queue and its loop marker are cleared so the queue
+        # rebinds lazily under the running loop on next use.
+        self._event_queue = None
+        self._event_queue_loop = None
         self._streaming = False  # Reset streaming flag
 
     async def apply_checkpoint(self, checkpoint: WorkflowCheckpoint) -> None:
         """Apply a checkpoint to the current context, mutating its state."""
+        # Drop any events left over from a prior run so the restored state starts clean.
+        self._event_queue = None
+        self._event_queue_loop = None
+
         # Restore messages
         self._messages.clear()
         messages_data = checkpoint.messages

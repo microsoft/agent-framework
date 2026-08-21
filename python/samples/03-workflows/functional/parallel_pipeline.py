@@ -36,9 +36,9 @@ async def synthesize(sources: list[str]) -> str:
     return "Research Summary:\n" + "\n".join(f"  - {s}" for s in sources)
 
 
-# @workflow wraps the orchestration logic so you get .run(), streaming,
-# and events. The functions it calls are plain Python — no decorators
-# needed just because they're inside a workflow.
+# @workflow defines the orchestration logic. Build the definition to get a
+# stateful workflow with .run(), streaming, and events. The functions it calls
+# are plain Python — no decorators needed just because they're inside a workflow.
 @workflow
 async def research_pipeline(topic: str) -> str:
     """Fan-out to three research tasks, then synthesize results."""
@@ -58,7 +58,8 @@ async def research_pipeline(topic: str) -> str:
 
 
 async def main():
-    result = await research_pipeline.run("AI agents")
+    workflow_instance = research_pipeline.build()
+    result = await workflow_instance.run("AI agents")
     print(result.get_outputs()[0])
 
 

@@ -6,6 +6,7 @@ import re
 
 import httpx
 from a2a.client import A2ACardResolver
+from agent_framework import Agent
 from agent_framework.a2a import A2AAgent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
@@ -29,7 +30,7 @@ Key concepts demonstrated:
 
 Prerequisites:
 - Set A2A_AGENT_HOST to the URL of a running A2A server
-- Set FOUNDRY_PROJECT_ENDPOINT to your Azure AI Foundry project endpoint
+- Set FOUNDRY_PROJECT_ENDPOINT to your Microsoft Foundry project endpoint
 - Set FOUNDRY_MODEL to the model deployment name (e.g. gpt-4o)
 
 To run this sample:
@@ -86,7 +87,8 @@ async def main() -> None:
             model=model,
             credential=credential,
         )
-        host_agent = client.as_agent(
+        host_agent = Agent(
+            client=client,
             name="assistant",
             instructions="You are a helpful assistant. Use your tools to answer questions.",
             tools=skill_tools,

@@ -6,12 +6,15 @@
 [![MS Learn Documentation](https://img.shields.io/badge/MS%20Learn-Documentation-blue)](https://learn.microsoft.com/en-us/agent-framework/)
 [![PyPI](https://img.shields.io/pypi/v/agent-framework)](https://pypi.org/project/agent-framework/)
 [![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.AI)](https://www.nuget.org/profiles/MicrosoftAgentFramework/)
-[![GitHub stars](https://img.shields.io/github/stars/microsoft/agent-framework?style=social)](https://github.com/microsoft/agent-framework/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/microsoft/agent-framework?style=social)](https://github.com/microsoft/agent-framework)
 
 
 Microsoft Agent Framework (MAF) is an open, multi-language framework for building **production-grade AI agents and multi-agent workflows** in **.NET and Python**.
 
-Microsoft Agent Framework is built for teams taking agents from prototype to production. It provides a consistent foundation for building, orchestrating, and operating agent systems across Python and .NET, while keeping architecture choices open as requirements evolve, and supports a broad ecosystem including Microsoft Foundry, Azure OpenAI, OpenAI, and the GitHub Copilot SDK, with samples and hosting patterns for both local development and cloud deployment.
+Microsoft Agent Framework is built for teams taking agents from prototype to production. It provides a consistent foundation for building, orchestrating, and operating agent systems across Python, .NET and Go, while keeping architecture choices open as requirements evolve, and supports a broad ecosystem including Microsoft Foundry, Azure OpenAI, OpenAI, and the GitHub Copilot SDK, with samples and hosting patterns for both local development and cloud deployment.
+
+> [!NOTE]
+> For the Go SDK, including its documentation, samples, contribution guidance, and issue tracker, visit [microsoft/agent-framework-go](https://github.com/microsoft/agent-framework-go/).
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=AAgdMhftj8w" title="Watch the full Agent Framework introduction (30 min)">
@@ -39,6 +42,7 @@ Explore new MAF capabilities and real implementation patterns on the [official b
 
 - **Python and C#/.NET Support**: Full framework support for both Python and C#/.NET implementations with consistent APIs
   - [Python packages](./python/packages/) | [.NET source](./dotnet/src/)
+- **Go Support**: For the Go SDK, including its documentation, samples, contribution guidance, and issue tracker, visit [microsoft/agent-framework-go](https://github.com/microsoft/agent-framework-go/).
 - **Multiple Agent Provider Support**: Support for various LLM providers with more being added continuously
   - [Python examples](./python/samples/02-agents/providers/) | [.NET examples](./dotnet/samples/02-agents/AgentProviders/)
 - **Middleware**: Flexible middleware system for request/response processing, exception handling, and custom pipelines
@@ -161,19 +165,19 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 
 ### Python
 
-- [Getting Started](./python/samples/01-get-started): progressive tutorial from hello-world to hosting
+- [Getting Started](./python/samples/01-get-started): progressive tutorial from hello-world to workflows
 - [Agent Concepts](./python/samples/02-agents): deep-dive samples by topic (tools, middleware, providers, etc.)
 - [Workflows](./python/samples/03-workflows): workflow creation and integration with agents
-- [Hosting](./python/samples/04-hosting): A2A, Azure Functions, Durable Task hosting
+- [Hosting](./python/samples/04-hosting): A2A, self-hosted protocol helpers, and Foundry hosted agents. Durable Task and Azure Functions samples are in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/python/samples).
 - [End-to-End](./python/samples/05-end-to-end): full applications, evaluation, and demos
 
 ### .NET
 
-- [Getting Started](./dotnet/samples/01-get-started): progressive tutorial from hello agent to hosting
+- [Getting Started](./dotnet/samples/01-get-started): progressive tutorial from hello agent to workflows
 - [Agent Concepts](./dotnet/samples/02-agents/Agents): basic agent creation and tool usage
 - [Agent Providers](./dotnet/samples/02-agents/AgentProviders): samples showing different agent providers
 - [Workflows](./dotnet/samples/03-workflows): advanced multi-agent patterns and workflow orchestration
-- [Hosting](./dotnet/samples/04-hosting): A2A, Durable Agents, Durable Workflows
+- [Hosting](./dotnet/samples/04-hosting): A2A and Foundry hosted agents. Durable agent and workflow samples are in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension/tree/main/dotnet/samples).
 - [End-to-End](./dotnet/samples/05-end-to-end): full applications and demos
 
 ## Community & Feedback
@@ -199,6 +203,7 @@ For environment variable configuration specific to each sample, refer to the REA
 ## Contributor Resources
 
 - [Contributing Guide](./CONTRIBUTING.md)
+- [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Python Development Guide](./python/DEV_SETUP.md)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)

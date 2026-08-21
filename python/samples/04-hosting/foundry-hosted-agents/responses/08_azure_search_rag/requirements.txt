@@ -1,3 +1,0 @@
-agent-framework
-agent-framework-azure-ai-search
-agent-framework-foundry-hosting

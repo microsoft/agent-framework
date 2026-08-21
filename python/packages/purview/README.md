@@ -315,9 +315,10 @@ except (PurviewAuthenticationError, PurviewRateLimitError, PurviewRequestError, 
 ---
 
 ## Notes
-- **User Identification**: Provide a `user_id` per request (e.g. in `Message(..., additional_properties={"user_id": "<guid>"})`) for per-user policy scoping. If no user_id is provided, policy evaluation is skipped entirely.
+- **User Identification**: When the configured credential resolves to a user token, that token's `user_id` is used for per-user policy scoping. For app-token credentials, provide a `user_id` per request (e.g. in `Message(..., additional_properties={"user_id": "<guid>"})`). If no user_id is provided or inferred, policy evaluation is skipped.
 - **Blocking Messages**: Can be customized via `blocked_prompt_message` and `blocked_response_message` in `PurviewSettings`. By default, they are "Prompt blocked by policy" and "Response blocked by policy" respectively.
 - **Streaming Responses**: Post-response policy evaluation presently applies only to non-streaming chat responses.
 - **Error Handling**: Use `ignore_exceptions` and `ignore_payment_required` settings for graceful degradation. When enabled, errors are logged but don't fail the request.
 - **Caching**: Protection scopes responses and 402 errors are cached by default with a 4-hour TTL. Cache is automatically invalidated when protection scope state changes.
+- **Cold-cache parallelization**: On a `ProtectionScopes` cache miss, scopes are refreshed in the background while `ProcessContent` runs in the foreground.
 - **Background Processing**: Content Activities and offline Process Content requests are handled asynchronously using background tasks to avoid blocking the main execution flow.

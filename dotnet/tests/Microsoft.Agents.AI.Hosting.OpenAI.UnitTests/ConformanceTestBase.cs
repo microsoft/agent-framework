@@ -198,8 +198,8 @@ public abstract class ConformanceTestBase : IAsyncDisposable
 
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
-        this._app.MapOpenAIResponses(agent);
-        this._app.MapOpenAIChatCompletions(agent);
+        this._app.MapOpenAIResponses(agent, responsesPath: null, PermissiveMapOptions.Responses());
+        this._app.MapOpenAIChatCompletions(agent, path: null, PermissiveMapOptions.ChatCompletions());
 
         await this._app.StartAsync();
 
@@ -229,8 +229,8 @@ public abstract class ConformanceTestBase : IAsyncDisposable
 
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
-        this._app.MapOpenAIResponses(agent);
-        this._app.MapOpenAIChatCompletions(agent);
+        this._app.MapOpenAIResponses(agent, responsesPath: null, PermissiveMapOptions.Responses());
+        this._app.MapOpenAIChatCompletions(agent, path: null, PermissiveMapOptions.ChatCompletions());
 
         await this._app.StartAsync();
 
@@ -261,8 +261,8 @@ public abstract class ConformanceTestBase : IAsyncDisposable
 
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
-        this._app.MapOpenAIResponses(agent);
-        this._app.MapOpenAIChatCompletions(agent);
+        this._app.MapOpenAIResponses(agent, responsesPath: null, PermissiveMapOptions.Responses());
+        this._app.MapOpenAIChatCompletions(agent, path: null, PermissiveMapOptions.ChatCompletions());
 
         await this._app.StartAsync();
 

@@ -32,6 +32,7 @@ class TestPurviewSettings:
 
         assert settings["graph_base_uri"] == "https://graph.microsoft-ppe.com"
         assert settings["tenant_id"] == "test-tenant-id"
+        assert settings["purview_app_location"] is not None
         assert settings["purview_app_location"].location_value == "app-123"
 
     @pytest.mark.parametrize(

@@ -239,6 +239,7 @@ public class AIAgentTests
     public async Task RunAsync_SetsCurrentRunContext_AccessibleFromRunCoreAsync(string overload)
     {
         // Arrange
+        AgentRunContext? previousContext = AIAgent.CurrentRunContext;
         AgentRunContext? capturedContext = null;
         var session = new TestAgentSession();
         var options = new AgentRunOptions();
@@ -288,6 +289,8 @@ public class AIAgentTests
         {
             Assert.Single(capturedContext.RequestMessages);
         }
+
+        Assert.Same(previousContext, AIAgent.CurrentRunContext);
     }
 
     /// <summary>
@@ -298,6 +301,7 @@ public class AIAgentTests
     public async Task RunStreamingAsync_SetsCurrentRunContext_AccessibleFromRunCoreStreamingAsync(string overload)
     {
         // Arrange
+        AgentRunContext? previousContext = AIAgent.CurrentRunContext;
         AgentRunContext? capturedContext = null;
         var session = new TestAgentSession();
         var options = new AgentRunOptions();
@@ -345,6 +349,161 @@ public class AIAgentTests
         {
             Assert.Single(capturedContext.RequestMessages);
         }
+
+        Assert.Same(previousContext, AIAgent.CurrentRunContext);
+    }
+
+    [Fact]
+    public async Task RunAsync_Exception_RestoresPreviousCurrentRunContextAsync()
+    {
+        // Arrange
+        AgentRunContext? previousContext = AIAgent.CurrentRunContext;
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("Test failure."));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agentMock.Object.RunAsync("Hello"));
+        Assert.Same(previousContext, AIAgent.CurrentRunContext);
+    }
+
+    [Fact]
+    public async Task RunAsync_IncompleteRun_RestoresCallerContextBeforeAndAfterAwaitAsync()
+    {
+        // Arrange
+        AgentRunContext? previousContext = AIAgent.CurrentRunContext;
+        AgentRunContext? capturedContext = null;
+        var completionSource = new TaskCompletionSource<AgentResponse>();
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(() =>
+            {
+                capturedContext = AIAgent.CurrentRunContext;
+                return completionSource.Task;
+            });
+
+        // Act
+        Task<AgentResponse> runTask = agentMock.Object.RunAsync("Hello");
+
+        // Assert
+        Assert.Same(agentMock.Object, capturedContext?.Agent);
+        Assert.Same(previousContext, AIAgent.CurrentRunContext);
+
+        completionSource.SetResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "Response")));
+        await runTask;
+        Assert.Same(previousContext, AIAgent.CurrentRunContext);
+    }
+
+    [Fact]
+    public async Task RunAsync_Cancellation_RestoresPreviousCurrentRunContextAsync()
+    {
+        // Arrange
+        AgentRunContext? previousContext = AIAgent.CurrentRunContext;
+        using var cancellationSource = new CancellationTokenSource();
+        cancellationSource.Cancel();
+
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(Task.FromCanceled<AgentResponse>(cancellationSource.Token));
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => agentMock.Object.RunAsync("Hello", cancellationToken: cancellationSource.Token));
+        Assert.Same(previousContext, AIAgent.CurrentRunContext);
+    }
+
+    [Fact]
+    public async Task RunAsync_NestedRun_RestoresOuterCurrentRunContextAsync()
+    {
+        // Arrange
+        AgentRunContext? previousContext = AIAgent.CurrentRunContext;
+        AgentRunContext? outerContextBeforeInnerRun = null;
+        AgentRunContext? outerContextAfterInnerRun = null;
+        var outerSession = new TestAgentSession();
+        var innerSession = new TestAgentSession();
+
+        var innerAgentMock = new Mock<AIAgent> { CallBase = true };
+        innerAgentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new AgentResponse(new ChatMessage(ChatRole.Assistant, "Inner response")));
+
+        var outerAgentMock = new Mock<AIAgent> { CallBase = true };
+        outerAgentMock
+            .Protected()
+            .Setup<Task<AgentResponse>>("RunCoreAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(async () =>
+            {
+                outerContextBeforeInnerRun = AIAgent.CurrentRunContext;
+                await innerAgentMock.Object.RunAsync("Inner request", innerSession);
+                outerContextAfterInnerRun = AIAgent.CurrentRunContext;
+                return new AgentResponse(new ChatMessage(ChatRole.Assistant, "Outer response"));
+            });
+
+        // Act
+        await outerAgentMock.Object.RunAsync("Outer request", outerSession);
+
+        // Assert
+        Assert.NotNull(outerContextBeforeInnerRun);
+        Assert.Same(outerAgentMock.Object, outerContextBeforeInnerRun.Agent);
+        Assert.Same(outerSession, outerContextBeforeInnerRun.Session);
+        Assert.Same(outerContextBeforeInnerRun, outerContextAfterInnerRun);
+        Assert.Same(previousContext, AIAgent.CurrentRunContext);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_EarlyDisposal_RestoresPreviousCurrentRunContextAsync()
+    {
+        // Arrange
+        AgentRunContext? previousContext = AIAgent.CurrentRunContext;
+        var agentMock = new Mock<AIAgent> { CallBase = true };
+        agentMock
+            .Protected()
+            .Setup<IAsyncEnumerable<AgentResponseUpdate>>("RunCoreStreamingAsync",
+                ItExpr.IsAny<IEnumerable<ChatMessage>>(),
+                ItExpr.IsAny<AgentSession?>(),
+                ItExpr.IsAny<AgentRunOptions?>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(ToAsyncEnumerableAsync(
+                [
+                    new AgentResponseUpdate(ChatRole.Assistant, "First"),
+                    new AgentResponseUpdate(ChatRole.Assistant, "Second"),
+                ]));
+
+        // Act
+        await using (var enumerator = agentMock.Object.RunStreamingAsync("Hello").GetAsyncEnumerator())
+        {
+            Assert.True(await enumerator.MoveNextAsync());
+        }
+
+        // Assert
+        Assert.Same(previousContext, AIAgent.CurrentRunContext);
     }
 
     [Fact]

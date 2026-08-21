@@ -220,9 +220,9 @@ class TestAgentMiddlewarePipeline:
             return ResponseStream(_stream())
 
         updates: list[AgentResponseUpdate] = []
-        stream = await pipeline.execute(context, final_handler)
+        stream = await pipeline.execute(context, final_handler)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         if stream is not None:
-            async for update in stream:
+            async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
                 updates.append(update)
 
         assert len(updates) == 2
@@ -257,8 +257,8 @@ class TestAgentMiddlewarePipeline:
             return ResponseStream(_stream())
 
         updates: list[AgentResponseUpdate] = []
-        stream = await pipeline.execute(context, final_handler)
-        async for update in stream:
+        stream = await pipeline.execute(context, final_handler)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
             updates.append(update)
 
         assert len(updates) == 2
@@ -298,8 +298,8 @@ class TestAgentMiddlewarePipeline:
 
         response = await pipeline.execute(context, final_handler)
         assert response is not None
-        assert len(response.messages) == 1
-        assert response.messages[0].text == "response"
+        assert len(response.messages) == 1  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert response.messages[0].text == "response"  # type: ignore[union-attr]  # pyrefly: ignore[bad-index]  # ty: ignore[unresolved-attribute]
         assert execution_order == ["handler"]
 
     async def test_execute_stream_with_pre_next_termination(self, mock_agent: SupportsAgentRun) -> None:
@@ -321,9 +321,9 @@ class TestAgentMiddlewarePipeline:
             return ResponseStream(_stream())
 
         updates: list[AgentResponseUpdate] = []
-        stream = await pipeline.execute(context, final_handler)
+        stream = await pipeline.execute(context, final_handler)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         if stream is not None:
-            async for update in stream:
+            async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
                 updates.append(update)
 
         # Handler should not be called when terminated before next()
@@ -348,8 +348,8 @@ class TestAgentMiddlewarePipeline:
             return ResponseStream(_stream())
 
         updates: list[AgentResponseUpdate] = []
-        stream = await pipeline.execute(context, final_handler)
-        async for update in stream:
+        stream = await pipeline.execute(context, final_handler)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
             updates.append(update)
 
         assert len(updates) == 2
@@ -366,7 +366,7 @@ class TestAgentMiddlewarePipeline:
         class SessionCapturingMiddleware(AgentMiddleware):
             async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 nonlocal captured_session
-                captured_session = context.session
+                captured_session = context.session  # type: ignore[assignment]
                 await call_next()
 
         middleware = SessionCapturingMiddleware()
@@ -391,7 +391,7 @@ class TestAgentMiddlewarePipeline:
         class SessionCapturingMiddleware(AgentMiddleware):
             async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
                 nonlocal captured_session
-                captured_session = context.session
+                captured_session = context.session  # type: ignore[assignment]
                 await call_next()
 
         middleware = SessionCapturingMiddleware()
@@ -620,7 +620,7 @@ class TestChatMiddlewarePipeline:
 
         updates: list[ChatResponseUpdate] = []
         stream = await pipeline.execute(context, final_handler)
-        async for update in stream:
+        async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
             updates.append(update)
 
         assert len(updates) == 2
@@ -657,7 +657,7 @@ class TestChatMiddlewarePipeline:
 
         updates: list[ChatResponseUpdate] = []
         stream = await pipeline.execute(context, final_handler)
-        async for update in stream:
+        async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
             updates.append(update)
 
         assert len(updates) == 2
@@ -699,8 +699,8 @@ class TestChatMiddlewarePipeline:
 
         response = await pipeline.execute(context, final_handler)
         assert response is not None
-        assert len(response.messages) == 1
-        assert response.messages[0].text == "response"
+        assert len(response.messages) == 1  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert response.messages[0].text == "response"  # type: ignore[union-attr]  # pyrefly: ignore[bad-index]  # ty: ignore[unresolved-attribute]
         assert execution_order == ["handler"]
 
     async def test_execute_stream_with_pre_next_termination(self, mock_chat_client: Any) -> None:
@@ -748,7 +748,7 @@ class TestChatMiddlewarePipeline:
 
         updates: list[ChatResponseUpdate] = []
         stream = await pipeline.execute(context, final_handler)
-        async for update in stream:
+        async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
             updates.append(update)
 
         assert len(updates) == 2
@@ -1261,8 +1261,8 @@ class TestStreamingScenarios:
             return ResponseStream(_stream())
 
         updates: list[AgentResponseUpdate] = []
-        stream = await pipeline.execute(context_stream, final_stream_handler)
-        async for update in stream:
+        stream = await pipeline.execute(context_stream, final_stream_handler)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
             updates.append(update)
 
         # Verify flags: [non-streaming middleware, non-streaming handler, streaming middleware, streaming handler]
@@ -1295,8 +1295,8 @@ class TestStreamingScenarios:
             return ResponseStream(_stream())
 
         updates: list[str] = []
-        stream = await pipeline.execute(context, final_stream_handler)
-        async for update in stream:
+        stream = await pipeline.execute(context, final_stream_handler)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
             updates.append(update.text)
 
         assert updates == ["chunk1", "chunk2"]
@@ -1344,7 +1344,7 @@ class TestStreamingScenarios:
 
         updates: list[ChatResponseUpdate] = []
         stream = await pipeline.execute(context_stream, final_stream_handler)
-        async for update in stream:
+        async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
             updates.append(update)
 
         # Verify flags: [non-streaming middleware, non-streaming handler, streaming middleware, streaming handler]
@@ -1379,7 +1379,7 @@ class TestStreamingScenarios:
 
         updates: list[str] = []
         stream = await pipeline.execute(context, final_stream_handler)
-        async for update in stream:
+        async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
             updates.append(update.text)
 
         assert updates == ["chunk1", "chunk2"]
@@ -1483,7 +1483,7 @@ class TestMiddlewareExecutionControl:
             return ResponseStream(_stream())
 
         # When middleware doesn't call next(), result is None
-        stream = await pipeline.execute(context, final_handler)
+        stream = await pipeline.execute(context, final_handler)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Verify no execution happened - result is None since middleware didn't set it
         assert stream is None
@@ -1613,7 +1613,7 @@ class TestMiddlewareExecutionControl:
         try:
             stream = await pipeline.execute(context, final_handler)
             if stream is not None:
-                async for update in stream:
+                async for update in stream:  # type: ignore[attr-defined, union-attr]  # pyrefly: ignore[not-iterable]  # ty: ignore[not-iterable]
                     updates.append(update)
         except ValueError:
             # Expected - streaming middleware requires a ResponseStream result but middleware didn't call next()
@@ -1723,8 +1723,47 @@ class TestCategorizeMiddleware:
 
     def test_categorize_middleware_with_string_does_not_decompose(self) -> None:
         """Test that a string is not decomposed character-by-character."""
-        result = categorize_middleware("not_a_middleware")
+        result = categorize_middleware("not_a_middleware")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         # String should be treated as a single item, not decomposed into characters
         total_items = len(result["chat"]) + len(result["function"]) + len(result["agent"])
         assert total_items == 1
         assert result["agent"] == ["not_a_middleware"]
+
+    def test_categorize_middleware_supported_categories_skips_bare_with_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A bare middleware outside the supported categories is warned about, not installed."""
+        chat_mw = TestChatMiddleware()
+        agent_mw = TestAgentMiddleware()
+        with caplog.at_level("WARNING", logger="agent_framework._middleware"):
+            result = categorize_middleware([chat_mw, agent_mw], supported_categories=("chat", "function"))
+        assert result["chat"] == [chat_mw]
+        assert result["agent"] == []
+        assert "will not be executed" in caplog.text
+
+    @pytest.mark.filterwarnings("ignore::agent_framework._feature_stage.ExperimentalWarning")
+    def test_categorize_middleware_supported_categories_raises_for_bundle_members(self) -> None:
+        """A bundle member outside the supported categories raises: bundles are indivisible."""
+        from agent_framework import MiddlewareBundle
+        from agent_framework.exceptions import MiddlewareException
+
+        bundle = MiddlewareBundle([TestAgentMiddleware(), TestChatMiddleware(), TestFunctionMiddleware()])
+        with pytest.raises(MiddlewareException, match="cannot be partially installed"):
+            categorize_middleware([bundle], supported_categories=("chat", "function"))
+        # A bundle whose members all fit the supported categories expands normally.
+        chat_only = MiddlewareBundle([TestChatMiddleware(), TestFunctionMiddleware()])
+        result = categorize_middleware([chat_only], supported_categories=("chat", "function"))
+        assert len(result["chat"]) == 1
+        assert len(result["function"]) == 1
+
+    def test_as_middleware_list_owns_the_bare_source_rule(self) -> None:
+        """One owner for bare-source normalization, including the str/bytes exclusion."""
+        from agent_framework._middleware import _as_middleware_list
+
+        agent_mw = TestAgentMiddleware()
+        assert _as_middleware_list(None) == []
+        assert _as_middleware_list(agent_mw) == [agent_mw]
+        assert _as_middleware_list([agent_mw]) == [agent_mw]
+        assert _as_middleware_list((agent_mw,)) == [agent_mw]
+        # Strings are sequences but never element-ized into characters.
+        assert _as_middleware_list("bare-string") == ["bare-string"]  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]

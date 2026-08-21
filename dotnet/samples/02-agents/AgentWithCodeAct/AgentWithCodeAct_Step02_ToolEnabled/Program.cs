@@ -7,15 +7,14 @@
 // ApprovalRequiredAIFunction so any code that reaches it requires user approval
 // for the entire execute_code invocation.
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hyperlight;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 var guestPath = Environment.GetEnvironmentVariable("HYPERLIGHT_PYTHON_GUEST_PATH") ?? throw new InvalidOperationException("HYPERLIGHT_PYTHON_GUEST_PATH is not set.");
 
 AIFunction fetchDocs = AIFunctionFactory.Create(
@@ -39,13 +38,15 @@ options.Tools = [fetchDocs, queryData, sendEmail];
 
 using var codeAct = new HyperlightCodeActProvider(options);
 
-AIAgent agent = new AzureOpenAIClient(
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIAgent agent = new AIProjectClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
     .AsAIAgent(new ChatClientAgentOptions()
     {
-        ChatOptions = new() { Instructions = "You are a helpful assistant. Prefer orchestrating your work in a single `execute_code` block using `call_tool(...)` over issuing many direct tool calls." },
+        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a helpful assistant. Prefer orchestrating your work in a single `execute_code` block using `call_tool(...)` over issuing many direct tool calls." },
         AIContextProviders = [codeAct],
     });
 

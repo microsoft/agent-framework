@@ -25,8 +25,8 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using SampleApp;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4";
 
 const int MaxContextWindowTokens = 1_050_000;
 const int MaxOutputTokens = 128_000;
@@ -79,14 +79,22 @@ AIAgent agent =
     .GetProjectOpenAIClient()
     .GetResponsesClient()
     .AsIChatClient(deploymentName)
-    .AsHarnessAgent(MaxContextWindowTokens, MaxOutputTokens, new HarnessAgentOptions
+    .AsHarnessAgent(new HarnessAgentOptions
     {
+        MaxContextWindowTokens = MaxContextWindowTokens,
+        MaxOutputTokens = MaxOutputTokens,
         Name = "ResearchAgent",
         Description = "A research assistant that plans and executes research tasks.",
-        DisableFileAccess = true,                           // If enabled, this would allow the agent to read/write files in a working directory
         OpenTelemetrySourceName = TracingSourceName,        // Use our custom source name so spans are captured by the TracerProvider above.
         FileMemoryStore = new FileSystemAgentFileStore(     // Configure the file memory provider to store files in a local folder called "agent-files".
             Path.Combine(AppContext.BaseDirectory, "agent-files")),
+        // The built in ModeProvider has two default modes: "plan" and "execute".
+        // Adding a loop evaluator so that in "execute" mode, the harness keeps re-invoking itself until every todo item is complete.
+        LoopEvaluators =
+        [
+            new TodoCompletionLoopEvaluator(new TodoCompletionLoopEvaluatorOptions { Modes = ["execute"] }),
+        ],
+        LoopAgentOptions = new LoopAgentOptions { MaxIterations = 10 }, // Safety cap on the number of autonomous passes per turn.
         ChatOptions = new ChatOptions
         {
             Instructions = instructions,

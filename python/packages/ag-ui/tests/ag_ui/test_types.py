@@ -2,6 +2,9 @@
 
 """Tests for type definitions in _types.py."""
 
+import pytest
+from pydantic import ValidationError
+
 from agent_framework_ag_ui._types import AgentState, AGUIRequest, PredictStateConfig, RunMetadata
 
 
@@ -150,7 +153,7 @@ class TestAGUIRequest:
 
     def test_agui_request_minimal(self) -> None:
         """Test creating AGUIRequest with only required fields."""
-        request = AGUIRequest(messages=[{"role": "user", "content": "Hello"}])
+        request = AGUIRequest.model_validate({"messages": [{"role": "user", "content": "Hello"}]})
 
         assert len(request.messages) == 1
         assert request.messages[0]["content"] == "Hello"
@@ -164,15 +167,17 @@ class TestAGUIRequest:
 
     def test_agui_request_all_fields(self) -> None:
         """Test creating AGUIRequest with all fields populated."""
-        request = AGUIRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            run_id="run-123",
-            thread_id="thread-456",
-            state={"counter": 0},
-            tools=[{"name": "search", "description": "Search tool"}],
-            context=[{"type": "document", "content": "Some context"}],
-            forwarded_props={"custom_key": "custom_value"},
-            parent_run_id="parent-run-789",
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "run_id": "run-123",
+                "thread_id": "thread-456",
+                "state": {"counter": 0},
+                "tools": [{"name": "search", "description": "Search tool"}],
+                "context": [{"type": "document", "content": "Some context"}],
+                "forwarded_props": {"custom_key": "custom_value"},
+                "parent_run_id": "parent-run-789",
+            }
         )
 
         assert request.run_id == "run-123"
@@ -185,12 +190,14 @@ class TestAGUIRequest:
 
     def test_agui_request_camel_case_aliases(self) -> None:
         """Test AGUIRequest accepts camelCase aliases from AG-UI HTTP clients."""
-        request = AGUIRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            runId="run-camel-1",
-            threadId="thread-camel-1",
-            forwardedProps={"k": "v"},
-            parentRunId="parent-camel-1",
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "runId": "run-camel-1",
+                "threadId": "thread-camel-1",
+                "forwardedProps": {"k": "v"},
+                "parentRunId": "parent-camel-1",
+            }
         )
 
         assert request.run_id == "run-camel-1"
@@ -200,10 +207,12 @@ class TestAGUIRequest:
 
     def test_agui_request_model_dump_excludes_none(self) -> None:
         """Test that model_dump(exclude_none=True) excludes None fields."""
-        request = AGUIRequest(
-            messages=[{"role": "user", "content": "test"}],
-            tools=[{"name": "my_tool"}],
-            context=[{"id": "ctx1"}],
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "test"}],
+                "tools": [{"name": "my_tool"}],
+                "context": [{"id": "ctx1"}],
+            }
         )
 
         dumped = request.model_dump(exclude_none=True)
@@ -223,12 +232,14 @@ class TestAGUIRequest:
         This is critical for the fix - ensuring tools, context, forwarded_props,
         and parent_run_id are not stripped during request validation.
         """
-        request = AGUIRequest(
-            messages=[{"role": "user", "content": "test"}],
-            tools=[{"name": "client_tool", "parameters": {"type": "object"}}],
-            context=[{"type": "snippet", "content": "code here"}],
-            forwarded_props={"auth_token": "secret", "user_id": "user-1"},
-            parent_run_id="parent-456",
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "test"}],
+                "tools": [{"name": "client_tool", "parameters": {"type": "object"}}],
+                "context": [{"type": "snippet", "content": "code here"}],
+                "forwarded_props": {"auth_token": "secret", "user_id": "user-1"},
+                "parent_run_id": "parent-456",
+            }
         )
 
         dumped = request.model_dump(exclude_none=True)
@@ -240,13 +251,77 @@ class TestAGUIRequest:
         assert dumped["parent_run_id"] == "parent-456"
 
     def test_agui_request_available_interrupts_alias_round_trip(self) -> None:
-        """availableInterrupts should deserialize, while dumps remain snake_case."""
-        request = AGUIRequest(
-            messages=[{"role": "user", "content": "Hello"}],
-            availableInterrupts=[{"id": "req_1", "value": {"choice": "A"}}],
+        """availableInterrupts should deserialize to canonical Interrupt models."""
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "availableInterrupts": [{"id": "req_1", "reason": "input_required", "message": "Choose"}],
+            }
         )
 
-        assert request.available_interrupts == [{"id": "req_1", "value": {"choice": "A"}}]
+        assert request.available_interrupts is not None
+        assert request.available_interrupts[0].id == "req_1"
+        assert request.available_interrupts[0].reason == "input_required"
         dumped = request.model_dump(exclude_none=True)
-        assert dumped["available_interrupts"] == [{"id": "req_1", "value": {"choice": "A"}}]
+        assert dumped["available_interrupts"] == [{"id": "req_1", "reason": "input_required", "message": "Choose"}]
         assert "availableInterrupts" not in dumped
+
+    def test_agui_request_resume_accepts_canonical_entries(self) -> None:
+        """resume should preserve AG-UI resume arrays at the HTTP trust boundary."""
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "resume": [{"interruptId": "req_1", "status": "resolved", "payload": {"approved": True}}],
+            }
+        )
+
+        assert request.resume is not None
+        assert request.resume[0].interrupt_id == "req_1"
+        assert request.resume[0].status == "resolved"
+        assert request.resume[0].payload == {"approved": True}
+
+    def test_agui_request_resume_schema_advertises_canonical_entries(self) -> None:
+        """resume should advertise the canonical ResumeEntry array shape in JSON schema."""
+        resume_schema = AGUIRequest.model_json_schema()["properties"]["resume"]
+        array_schema = next((schema for schema in resume_schema["anyOf"] if schema.get("type") == "array"), None)
+
+        assert array_schema is not None
+        assert array_schema["items"] == {"$ref": "#/$defs/ResumeEntry"}
+
+    def test_agui_request_resume_accepts_legacy_object_shapes(self) -> None:
+        """resume coerces supported legacy containers to canonical ResumeEntry models."""
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "resume": {"interrupts": [{"id": "req_1", "value": {"approved": True}}]},
+            }
+        )
+
+        assert request.resume is not None
+        assert request.resume[0].interrupt_id == "req_1"
+        assert request.resume[0].status == "resolved"
+        assert request.resume[0].payload == {"approved": True}
+
+    def test_agui_request_resume_accepts_legacy_single_entry_mapping(self) -> None:
+        """resume coerces a supported single legacy entry object to a one-entry canonical list."""
+        request = AGUIRequest.model_validate(
+            {
+                "messages": [{"role": "user", "content": "Hello"}],
+                "resume": {"toolCallId": "call_1", "approved": True},
+            }
+        )
+
+        assert request.resume is not None
+        assert request.resume[0].interrupt_id == "call_1"
+        assert request.resume[0].status == "resolved"
+        assert request.resume[0].payload == {"approved": True}
+
+    def test_agui_request_resume_rejects_malformed_shape(self) -> None:
+        """resume rejects malformed inputs at request validation once the contract shape is advertised."""
+        with pytest.raises(ValidationError):
+            AGUIRequest.model_validate(
+                {
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "resume": {"unexpected": "shape"},
+                }
+            )

@@ -45,7 +45,7 @@ Demonstrate:
 - Resuming workflow execution after approval via run(responses=..., stream=True).
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Basic familiarity with SequentialBuilder and streaming workflow events.
 """

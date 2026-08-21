@@ -32,7 +32,7 @@ def _make_connected_mcp_tool(
     supports_prompts: bool = True,
 ) -> MCPTool:
     """Create an MCPTool with a mocked session, ready for testing."""
-    tool = MCPTool(name=name)
+    tool = MCPTool(name=name)  # type: ignore[abstract]
     tool.session = AsyncMock()
     tool.is_connected = True
     tool._supports_tools = supports_tools
@@ -76,6 +76,7 @@ def _make_call_tool_result(text: str = "result", is_error: bool = False) -> Mock
     result = Mock()
     result.isError = is_error
     result.content = [types.TextContent(type="text", text=text)]
+    result.structuredContent = None
     return result
 
 
@@ -100,7 +101,7 @@ def _make_get_prompt_result(text: str = "prompt result") -> types.GetPromptResul
 
 async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
     """session.initialize() should produce an MCP CLIENT span named 'initialize'."""
-    tool = MCPTool(name="test-server")
+    tool = MCPTool(name="test-server")  # type: ignore[abstract]
 
     mock_session_cls = AsyncMock()
     init_result = Mock()
@@ -146,8 +147,8 @@ async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
     assert len(init_spans) == 1
     span = init_spans[0]
     assert span.kind == SpanKind.CLIENT
-    assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "initialize"
-    assert span.attributes.get(OtelAttr.MCP_PROTOCOL_VERSION) == "2025-06-18"
+    assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "initialize"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes.get(OtelAttr.MCP_PROTOCOL_VERSION) == "2025-06-18"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 # endregion
@@ -159,7 +160,7 @@ async def test_mcp_initialize_span(span_exporter: InMemorySpanExporter):
 async def test_mcp_tools_list_span(span_exporter: InMemorySpanExporter):
     """session.list_tools() should produce an MCP CLIENT span named 'tools/list'."""
     tool = _make_connected_mcp_tool()
-    tool.session.list_tools = AsyncMock(return_value=_make_tool_list_result())
+    tool.session.list_tools = AsyncMock(return_value=_make_tool_list_result())  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
 
     span_exporter.clear()
     await tool.load_tools()
@@ -169,7 +170,7 @@ async def test_mcp_tools_list_span(span_exporter: InMemorySpanExporter):
     assert len(list_spans) == 1
     span = list_spans[0]
     assert span.kind == SpanKind.CLIENT
-    assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "tools/list"
+    assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "tools/list"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 # endregion
@@ -181,7 +182,7 @@ async def test_mcp_tools_list_span(span_exporter: InMemorySpanExporter):
 async def test_mcp_prompts_list_span(span_exporter: InMemorySpanExporter):
     """session.list_prompts() should produce an MCP CLIENT span named 'prompts/list'."""
     tool = _make_connected_mcp_tool()
-    tool.session.list_prompts = AsyncMock(return_value=_make_prompt_list_result())
+    tool.session.list_prompts = AsyncMock(return_value=_make_prompt_list_result())  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
 
     span_exporter.clear()
     await tool.load_prompts()
@@ -191,7 +192,7 @@ async def test_mcp_prompts_list_span(span_exporter: InMemorySpanExporter):
     assert len(list_spans) == 1
     span = list_spans[0]
     assert span.kind == SpanKind.CLIENT
-    assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "prompts/list"
+    assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "prompts/list"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 # endregion
@@ -203,7 +204,7 @@ async def test_mcp_prompts_list_span(span_exporter: InMemorySpanExporter):
 async def test_mcp_tools_call_creates_client_span_when_no_parent(span_exporter: InMemorySpanExporter):
     """Direct call_tool() without FunctionTool wrapper creates new MCP CLIENT span."""
     tool = _make_connected_mcp_tool()
-    tool.session.call_tool = AsyncMock(return_value=_make_call_tool_result("hello"))
+    tool.session.call_tool = AsyncMock(return_value=_make_call_tool_result("hello"))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
 
     span_exporter.clear()
     result = await tool.call_tool("get-weather", city="Seattle")
@@ -215,14 +216,14 @@ async def test_mcp_tools_call_creates_client_span_when_no_parent(span_exporter: 
     span = call_spans[0]
     assert span.kind == SpanKind.CLIENT
     assert span.name == "tools/call get-weather"
-    assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "tools/call"
-    assert span.attributes[OtelAttr.TOOL_NAME] == "get-weather"
+    assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "tools/call"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_NAME] == "get-weather"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 async def test_mcp_tools_call_tool_error_sets_error_type(span_exporter: InMemorySpanExporter):
     """When CallToolResult.isError is true, error.type should be 'tool_error' per MCP spec."""
     tool = _make_connected_mcp_tool()
-    tool.session.call_tool = AsyncMock(return_value=_make_call_tool_result("bad input", is_error=True))
+    tool.session.call_tool = AsyncMock(return_value=_make_call_tool_result("bad input", is_error=True))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
 
     span_exporter.clear()
     with pytest.raises(ToolExecutionException):
@@ -232,14 +233,14 @@ async def test_mcp_tools_call_tool_error_sets_error_type(span_exporter: InMemory
     call_spans = [s for s in spans if "tools/call" in s.name]
     assert len(call_spans) == 1
     span = call_spans[0]
-    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "tool_error"
+    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "tool_error"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert span.status.status_code == StatusCode.ERROR
 
 
 async def test_mcp_tools_call_mcp_error_sets_error_type(span_exporter: InMemorySpanExporter):
     """When session.call_tool() raises McpError, error.type should be the exception class name."""
     tool = _make_connected_mcp_tool()
-    tool.session.call_tool = AsyncMock(side_effect=McpError(ErrorData(code=-32600, message="invalid request")))
+    tool.session.call_tool = AsyncMock(side_effect=McpError(ErrorData(code=-32600, message="invalid request")))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
 
     span_exporter.clear()
     with pytest.raises(ToolExecutionException):
@@ -249,7 +250,7 @@ async def test_mcp_tools_call_mcp_error_sets_error_type(span_exporter: InMemoryS
     call_spans = [s for s in spans if "tools/call" in s.name]
     assert len(call_spans) == 1
     span = call_spans[0]
-    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"
+    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert span.status.status_code == StatusCode.ERROR
 
 
@@ -262,7 +263,7 @@ async def test_mcp_tools_call_mcp_error_sets_error_type(span_exporter: InMemoryS
 async def test_mcp_prompts_get_creates_client_span(span_exporter: InMemorySpanExporter):
     """get_prompt() should always create a new MCP CLIENT span (not enrich execute_tool)."""
     tool = _make_connected_mcp_tool()
-    tool.session.get_prompt = AsyncMock(return_value=_make_get_prompt_result("code analysis"))
+    tool.session.get_prompt = AsyncMock(return_value=_make_get_prompt_result("code analysis"))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
 
     span_exporter.clear()
     result = await tool.get_prompt("analyze-code", language="python")
@@ -274,14 +275,14 @@ async def test_mcp_prompts_get_creates_client_span(span_exporter: InMemorySpanEx
     span = prompt_spans[0]
     assert span.kind == SpanKind.CLIENT
     assert span.name == "prompts/get analyze-code"
-    assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "prompts/get"
-    assert span.attributes[OtelAttr.PROMPT_NAME] == "analyze-code"
+    assert span.attributes[OtelAttr.MCP_METHOD_NAME] == "prompts/get"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.PROMPT_NAME] == "analyze-code"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 async def test_mcp_prompts_get_mcp_error_sets_error_type(span_exporter: InMemorySpanExporter):
     """When session.get_prompt() raises McpError, the span should have error.type and ERROR status."""
     tool = _make_connected_mcp_tool()
-    tool.session.get_prompt = AsyncMock(
+    tool.session.get_prompt = AsyncMock(  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
         side_effect=McpError(ErrorData(code=-32602, message="prompt not found"))
     )
 
@@ -293,7 +294,7 @@ async def test_mcp_prompts_get_mcp_error_sets_error_type(span_exporter: InMemory
     prompt_spans = [s for s in spans if "prompts/get" in s.name]
     assert len(prompt_spans) == 1
     span = prompt_spans[0]
-    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"
+    assert span.attributes.get(OtelAttr.ERROR_TYPE) == "McpError"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
     assert span.status.status_code == StatusCode.ERROR
 
 
@@ -362,8 +363,8 @@ def test_mcp_websocket_tool_default_port():
 async def test_mcp_spans_not_created_when_observability_disabled(span_exporter: InMemorySpanExporter):
     """No MCP spans should be created when observability is disabled."""
     tool = _make_connected_mcp_tool()
-    tool.session.list_tools = AsyncMock(return_value=_make_tool_list_result())
-    tool.session.call_tool = AsyncMock(return_value=_make_call_tool_result("ok"))
+    tool.session.list_tools = AsyncMock(return_value=_make_tool_list_result())  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
+    tool.session.call_tool = AsyncMock(return_value=_make_call_tool_result("ok"))  # type: ignore[method-assign, union-attr]  # ty: ignore[invalid-assignment]
 
     span_exporter.clear()
     await tool.load_tools()

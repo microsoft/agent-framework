@@ -95,7 +95,7 @@ class InputObserverMiddleware(ChatMiddleware):
                 modified_messages.append(message)
 
         # Replace messages in context
-        context.messages[:] = modified_messages
+        context.messages = modified_messages
 
         # Continue to next middleware or AI execution
         await call_next()

@@ -87,6 +87,8 @@ def _prompt_for_approval(request: MCPToolApprovalRequest) -> ToolApprovalRespons
         print(f"  outbound header names: {', '.join(request.header_names)}")
     else:
         print("  outbound header names: (none)")
+    if request.connection_name:
+        print(f"  connection:   {request.connection_name}")
     print("-" * 60)
 
     while True:

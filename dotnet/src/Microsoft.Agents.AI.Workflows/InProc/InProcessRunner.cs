@@ -60,9 +60,6 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this._knownValidInputTypes = knownValidInputTypes != null
                                    ? [.. knownValidInputTypes]
                                    : [];
-
-        // Initialize the runners for each of the edges, along with the state for edges that need it.
-        this.EdgeMap = new EdgeMap(this.RunContext, this.Workflow.Edges, this.Workflow.Ports.Values, this.Workflow.StartExecutorId, this.StepTracer);
     }
 
     /// <inheritdoc cref="ISuperStepRunner.SessionId"/>
@@ -154,7 +151,6 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     private Workflow Workflow { get; init; }
     internal InProcessRunnerContext RunContext { get; init; }
     private ICheckpointManager? CheckpointManager { get; }
-    private EdgeMap EdgeMap { get; init; }
 
     public ConcurrentEventSink OutgoingEvents { get; } = new();
 
@@ -358,7 +354,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         // Create a representation of the current workflow if it does not already exist.
         this._workflowInfoCache ??= this.Workflow.ToWorkflowInfo();
 
-        Dictionary<EdgeId, PortableValue> edgeData = await this.EdgeMap.ExportStateAsync().ConfigureAwait(false);
+        Dictionary<EdgeId, PortableValue> edgeData = await this.RunContext.ExportEdgeStateAsync().ConfigureAwait(false);
 
         await prepareTask.ConfigureAwait(false);
         await this.RunContext.StateManager.PublishUpdatesAsync(this.StepTracer).ConfigureAwait(false);
@@ -422,7 +418,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
         Task executorNotifyTask = this.RunContext.NotifyCheckpointLoadedAsync(cancellationToken);
 
-        await this.EdgeMap.ImportStateAsync(checkpoint).ConfigureAwait(false);
+        await this.RunContext.ImportEdgeStateAsync(checkpoint.EdgeStateData).ConfigureAwait(false);
         await Task.WhenAll(executorNotifyTask,
                            restoreCheckpointIndexTask.AsTask()).ConfigureAwait(false);
 

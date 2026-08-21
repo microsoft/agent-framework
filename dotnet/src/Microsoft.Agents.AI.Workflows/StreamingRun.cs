@@ -77,7 +77,24 @@ public sealed class StreamingRun : CheckpointableRunBase, IAsyncDisposable
         CancellationToken cancellationToken = default)
         => this.WatchStreamAsync(blockOnPendingRequest: true, cancellationToken);
 
-    internal IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(
+    /// <summary>
+    /// Asynchronously streams workflow events as they occur, with control over how the stream behaves when the
+    /// workflow halts awaiting an external response.
+    /// </summary>
+    /// <remarks>
+    /// When <paramref name="blockOnPendingRequest"/> is <see langword="true"/> (the default behavior of
+    /// <see cref="WatchStreamAsync(CancellationToken)"/>), the stream pauses at a pending-request halt and resumes
+    /// once a response is supplied via <see cref="SendResponseAsync"/>. When it is <see langword="false"/>, the
+    /// stream instead ends at that halt, returning control to the caller — matching the non-streaming
+    /// <see cref="Run"/> behavior, which is useful for hosts that drive their own turn loop.
+    /// </remarks>
+    /// <param name="blockOnPendingRequest"><see langword="true"/> to block at a pending-request halt awaiting a
+    /// response; <see langword="false"/> to end the stream at that halt.</param>
+    /// <param name="cancellationToken">A <see cref="CancellationToken"/> that can be used to cancel the streaming
+    /// operation. If cancellation is requested, the stream will end and no further events will be yielded, but this
+    /// will not cancel the workflow execution.</param>
+    /// <returns>An asynchronous stream of <see cref="WorkflowEvent"/> objects representing significant workflow state changes.</returns>
+    public IAsyncEnumerable<WorkflowEvent> WatchStreamAsync(
         bool blockOnPendingRequest,
         CancellationToken cancellationToken = default)
         => this._runHandle.TakeEventStreamAsync(blockOnPendingRequest, cancellationToken);
