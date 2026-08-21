@@ -2,7 +2,7 @@
 
 This sample demonstrates how to use one agent as a function tool for another agent.
 
-Function tools are ideal for scenarios requiring deterministic and predictable behavior, such as API integrations with validation and transformations, database operations, or payment processing. Using .`AsAIFunction()` converts agents into function tools, enabling agent composition and the construction of advanced workflows with reliable execution.
+Function tools expose operations through structured inputs, making them useful for scenarios such as API integrations with validation and transformations, database operations, or payment processing. Using `.AsAIFunction()` exposes an agent as a function tool, enabling agent composition and advanced workflows; because the wrapped agent remains model-driven, this does not make its behavior deterministic.
 
 ## What this sample demonstrates
 
