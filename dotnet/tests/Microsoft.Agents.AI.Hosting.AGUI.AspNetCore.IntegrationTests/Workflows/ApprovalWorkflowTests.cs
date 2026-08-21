@@ -1,13 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
-using AGUI.Abstractions;
 using AGUI.Client;
 using AGUI.WorkflowApproval;
 using FluentAssertions;
@@ -19,61 +17,116 @@ namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.IntegrationTests.Workflows
 public sealed class ApprovalWorkflowTests
 {
     [Fact]
-    public async Task ClientApprovesInterruptionAndWorkflowResumesAsync()
+    public async Task ClientApprovesToolRequestAndWorkflowResumesAsync()
     {
         // Arrange
-        AIAgent workflowAgent = ApprovalWorkflow.Create().AsAIAgent(
-            name: "ApprovalWorkflow",
-            includeWorkflowOutputsInResponse: true);
+        Workflow workflow = ApprovalWorkflow.Create(new DeterministicExpenseReviewer());
+        AIAgent workflowAgent = workflow.AsAIAgent(name: "ApprovalWorkflow");
         await using WorkflowTestHost host = await WorkflowTestHost.StartAsync(workflowAgent, persistSession: true);
-        RunAgentInput initialInput = new()
-        {
-            Messages = new[] { new ChatMessage(ChatRole.User, "submit") }.AsAGUIMessages().ToList(),
-            RunId = "approval-run-1",
-            ThreadId = "approval-thread",
-        };
+        using AGUIChatClient chatClient = new(new(host.Client, ""));
+        ChatOptions options = new();
+        ExpenseReport report = new(
+            "EXP-100",
+            "Taylor",
+            125.00m,
+            "Developer conference registration",
+            ReceiptAttached: true);
 
-        // Act - initial run pauses for approval.
-        List<BaseEvent> firstTurn = await SendAsync(host.Client, initialInput);
-        RunFinishedEvent finished = firstTurn.OfType<RunFinishedEvent>().Single();
-        RunFinishedInterruptOutcome outcome = finished.Outcome.Should()
-            .BeOfType<RunFinishedInterruptOutcome>().Subject;
-        AGUIInterrupt interrupt = outcome.Interrupts.Should().ContainSingle().Subject;
-        interrupt.Reason.Should().Be(InterruptReasons.InputRequired);
+        // Act - the reviewer requests approval to submit the report.
+        List<ChatResponseUpdate> firstTurn = await chatClient
+            .GetStreamingResponseAsync(
+                [new ChatMessage(ChatRole.User, JsonSerializer.Serialize(report))],
+                options)
+            .ToListAsync();
 
-        RunAgentInput resumeInput = new()
-        {
-            Messages = [],
-            ParentRunId = finished.RunId,
-            Resume =
-            [
-                new AGUIResume
-                {
-                    InterruptId = interrupt.Id,
-                    Payload = JsonSerializer.SerializeToElement(new { approved = true }),
-                    Status = "resolved",
-                },
-            ],
-            RunId = "approval-run-2",
-            ThreadId = finished.ThreadId,
-        };
-        List<BaseEvent> secondTurn = await SendAsync(host.Client, resumeInput);
+#pragma warning disable MEAI001 // Tool approval content is experimental.
+        ToolApprovalRequestContent approvalRequest = firstTurn
+            .SelectMany(static update => update.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+        FunctionCallContent toolCall = approvalRequest.ToolCall.Should()
+            .BeOfType<FunctionCallContent>().Subject;
+        toolCall.Name.Should().Be("SubmitExpense");
+
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(
+            approved: true,
+            reason: "Approved by integration test.");
+        List<ChatMessage> approvalMessages =
+        [
+            new(ChatRole.Assistant, [approvalRequest]),
+            new(ChatRole.Tool, [approvalResponse]),
+        ];
+        List<ChatResponseUpdate> secondTurn = await chatClient
+            .GetStreamingResponseAsync(approvalMessages, options)
+            .ToListAsync();
+#pragma warning restore MEAI001
 
         // Assert
-        string text = string.Concat(secondTurn.OfType<TextMessageContentEvent>().Select(static evt => evt.Delta));
-        text.Should().Contain(
-            "Expense approved and submitted.",
-            "events were {0}",
-            string.Join(", ", secondTurn.Select(static evt => evt.GetType().Name)));
-        secondTurn.OfType<StepStartedEvent>()
-            .Should().Contain(static evt => evt.StepName == "ExpenseApproval");
+        secondTurn.Should().Contain(static update => update.Text == "Expense report EXP-100 was submitted.");
     }
 
-    private static async Task<List<BaseEvent>> SendAsync(HttpClient client, RunAgentInput input)
+    private sealed class DeterministicExpenseReviewer : AIAgent
     {
-        using JsonContent content = JsonContent.Create(input, AGUIJsonSerializerContext.Default.RunAgentInput);
-        using HttpResponseMessage response = await client.PostAsync(new Uri("", UriKind.Relative), content);
-        response.EnsureSuccessStatusCode();
-        return await response.ReadAGUIEventStreamAsync().ToListAsync();
+        public override string? Name => "ExpenseReviewer";
+
+        protected override Task<AgentResponse> RunCoreAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            CancellationToken cancellationToken = default)
+            => this.RunStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
+
+        protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+            IEnumerable<ChatMessage> messages,
+            AgentSession? session = null,
+            AgentRunOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+#pragma warning disable MEAI001 // Tool approval content is experimental.
+            ToolApprovalResponseContent? approvalResponse = messages
+                .SelectMany(static message => message.Contents)
+                .OfType<ToolApprovalResponseContent>()
+                .LastOrDefault();
+
+            if (approvalResponse is not null)
+            {
+                yield return CreateUpdate(approvalResponse.Approved
+                    ? new TextContent("Expense report EXP-100 was submitted.")
+                    : new TextContent("Expense report EXP-100 was rejected."));
+                yield break;
+            }
+
+            FunctionCallContent toolCall = new(
+                "submit-expense-call",
+                "SubmitExpense",
+                new Dictionary<string, object?> { ["reportId"] = "EXP-100" });
+            yield return CreateUpdate(new ToolApprovalRequestContent("submit-expense-approval", toolCall));
+#pragma warning restore MEAI001
+            await Task.Yield();
+        }
+
+        protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+            => new(new ExpenseSession());
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
+            AgentSession session,
+            JsonSerializerOptions? jsonSerializerOptions = null,
+            CancellationToken cancellationToken = default)
+            => new(JsonSerializer.SerializeToElement(new Dictionary<string, string>()));
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
+            JsonElement serializedState,
+            JsonSerializerOptions? jsonSerializerOptions = null,
+            CancellationToken cancellationToken = default)
+            => new(new ExpenseSession());
+
+        private static AgentResponseUpdate CreateUpdate(AIContent content)
+            => new(ChatRole.Assistant, [content])
+            {
+                MessageId = "expense-review-message",
+                ResponseId = "expense-review-response",
+            };
+
+        private sealed class ExpenseSession : AgentSession;
     }
 }

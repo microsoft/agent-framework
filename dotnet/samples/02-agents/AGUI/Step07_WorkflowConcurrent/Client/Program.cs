@@ -6,7 +6,7 @@ using Microsoft.Extensions.AI;
 
 string serverUrl = Environment.GetEnvironmentVariable("AGUI_SERVER_URL") ?? "http://localhost:8888";
 using HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
-IChatClient chatClient = new AGUIChatClient(new(httpClient, serverUrl));
+using IChatClient chatClient = CreateChatClient(httpClient, serverUrl);
 
 Console.Write("Request: ");
 string request = Console.ReadLine() ?? "Assess the tradeoffs of adopting a new framework.";
@@ -31,3 +31,6 @@ await foreach (ChatResponseUpdate update in chatClient.GetStreamingResponseAsync
 }
 
 Console.WriteLine();
+
+static IChatClient CreateChatClient(HttpClient httpClient, string serverUrl)
+    => new AGUIChatClient(new(httpClient, serverUrl));

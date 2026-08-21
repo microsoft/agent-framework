@@ -147,9 +147,7 @@ public static class AGUIEndpointRouteBuilderExtensions
 
             var session = await hostAgent.GetOrCreateSessionAsync(threadId, cancellationToken).ConfigureAwait(false);
 
-            IEnumerable<ChatMessage> messages = aiAgent.GetService<Microsoft.Agents.AI.Workflows.Workflow>() is not null
-                ? ctx.Messages.MapAGUIInterruptResponsesToWorkflow()
-                : ctx.Messages;
+            IEnumerable<ChatMessage> messages = ctx.Messages.MapAGUIInterruptResponsesToFunctionResults();
 
             var events = hostAgent
                 .RunStreamingAsync(

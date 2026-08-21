@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using AGUI.Abstractions;
 using FluentAssertions;
@@ -12,7 +13,7 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.UnitTests;
 
 /// <summary>
-/// Tests workflow executor lifecycle mapping to AG-UI step events.
+/// Tests workflow lifecycle and interruption mapping to AG-UI.
 /// </summary>
 public sealed class WorkflowAGUIExtensionsTests
 {
@@ -132,6 +133,58 @@ public sealed class WorkflowAGUIExtensionsTests
         result.Contents.Should().ContainSingle().Which.Should().BeSameAs(text);
     }
 
+    [Fact]
+    public void MapAGUIInterruptResponsesToFunctionResults_MapsResponseUnconditionally()
+    {
+        // Arrange
+        JsonElement payload = JsonSerializer.SerializeToElement(new { approved = true });
+        ChatMessage message = new(
+            ChatRole.User,
+            [new InterruptResponseContent("request-1") { Payload = payload }]);
+
+        // Act
+        List<ChatMessage> results = new[] { message }.MapAGUIInterruptResponsesToFunctionResults();
+
+        // Assert
+        ChatMessage result = results.Should().ContainSingle().Subject;
+        result.Role.Should().Be(ChatRole.User);
+        FunctionResultContent functionResult = result.Contents.Should().ContainSingle()
+            .Which.Should().BeOfType<FunctionResultContent>().Subject;
+        functionResult.CallId.Should().Be("request-1");
+        functionResult.Result.Should().Be(payload);
+    }
+
+    [Fact]
+    public async Task MapWorkflowEventsToAGUI_PrefersWorkflowCorrelatedApprovalRequestAsync()
+    {
+        // Arrange
+        FunctionCallContent toolCall = new(
+            "call-1",
+            "SubmitExpense",
+            new Dictionary<string, object?>());
+        ToolApprovalRequestContent originalRequest = new("agent-request", toolCall);
+        ToolApprovalRequestContent correlatedRequest = new("workflow-request", toolCall);
+        AgentResponseUpdate original = CreateUpdate(raw: new object(), originalRequest);
+        AgentResponseUpdate correlated = CreateUpdate(
+            new RequestInfoEvent(ExternalRequest.Create(
+                RequestPort.Create<ToolApprovalRequestContent, ToolApprovalResponseContent>("approval"),
+                originalRequest,
+                "workflow-request")),
+            correlatedRequest);
+
+        // Act
+        List<ChatResponseUpdate> results = await ToAsyncEnumerableAsync([original, correlated])
+            .AsChatResponseUpdatesAsync()
+            .MapWorkflowEventsToAGUI()
+            .ToListAsync();
+
+        // Assert
+        ToolApprovalRequestContent request = results.SelectMany(static update => update.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Should().ContainSingle().Subject;
+        request.RequestId.Should().Be("workflow-request");
+    }
+
     private static AgentResponseUpdate CreateUpdate(object raw, params AIContent[] contents)
         => new(ChatRole.Assistant, contents)
         {
@@ -147,6 +200,16 @@ public sealed class WorkflowAGUIExtensionsTests
     {
         await Task.Yield();
         yield return update;
+    }
+
+    private static async IAsyncEnumerable<AgentResponseUpdate> ToAsyncEnumerableAsync(
+        IEnumerable<AgentResponseUpdate> updates)
+    {
+        await Task.Yield();
+        foreach (AgentResponseUpdate update in updates)
+        {
+            yield return update;
+        }
     }
 
     private static async IAsyncEnumerable<ChatResponseUpdate> ToAsyncEnumerableAsync(

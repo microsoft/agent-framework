@@ -7,7 +7,7 @@ using Microsoft.Extensions.AI;
 
 string serverUrl = Environment.GetEnvironmentVariable("AGUI_SERVER_URL") ?? "http://localhost:8888";
 using HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
-using IChatClient chatClient = new AGUIChatClient(new(httpClient, serverUrl));
+using IChatClient chatClient = CreateChatClient(httpClient, serverUrl);
 
 List<ChatResponseUpdate> firstTurn = await chatClient
     .GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Plan my conference trip.")])
@@ -62,3 +62,6 @@ static AGUIResume Resume(AGUIInterrupt interrupt, object payload)
         Payload = JsonSerializer.SerializeToElement(payload),
         Status = "resolved",
     };
+
+static IChatClient CreateChatClient(HttpClient httpClient, string serverUrl)
+    => new AGUIChatClient(new(httpClient, serverUrl));

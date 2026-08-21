@@ -1,46 +1,60 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
-using AGUI.Abstractions;
 using AGUI.Client;
 using Microsoft.Extensions.AI;
 
 string serverUrl = Environment.GetEnvironmentVariable("AGUI_SERVER_URL") ?? "http://localhost:8888";
 using HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
-using IChatClient chatClient = new AGUIChatClient(new(httpClient, serverUrl));
+using IChatClient chatClient = CreateChatClient(httpClient, serverUrl);
+ChatOptions options = new();
+
+var expenseReport = new
+{
+    id = "EXP-100",
+    employee = "Taylor",
+    amount = 125.00m,
+    businessPurpose = "Developer conference registration",
+    receiptAttached = true,
+};
+string reportJson = JsonSerializer.Serialize(expenseReport);
 
 List<ChatResponseUpdate> firstTurn = await chatClient
-    .GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Submit expense EXP-100.")])
+    .GetStreamingResponseAsync(
+        [new ChatMessage(ChatRole.User, $"Review and submit this expense report:\n{reportJson}")],
+        options)
     .ToListAsync();
-RunFinishedEvent finished = firstTurn.Select(static update => update.RawRepresentation)
-    .OfType<RunFinishedEvent>()
+
+#pragma warning disable MEAI001 // Tool approval content is experimental.
+ToolApprovalRequestContent approvalRequest = firstTurn
+    .SelectMany(static update => update.Contents)
+    .OfType<ToolApprovalRequestContent>()
     .Single();
-AGUIInterrupt interrupt = ((RunFinishedInterruptOutcome)finished.Outcome!).Interrupts.Single();
+FunctionCallContent toolCall = (FunctionCallContent)approvalRequest.ToolCall;
 
-Console.Write($"{interrupt.Message ?? "Approve expense?"} [y/N]: ");
+Console.WriteLine($"The workflow completed its checks and wants to call {toolCall.Name}.");
+Console.Write($"Approve submission of expense {expenseReport.id}? [y/N]: ");
 bool approved = string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase);
+ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(
+    approved,
+    approved ? "Approved by the sample user." : "Rejected by the sample user.");
 
-ChatOptions resumeOptions = new()
+List<ChatMessage> approvalMessages =
+[
+    new(ChatRole.Assistant, [approvalRequest]),
+    new(ChatRole.Tool, [approvalResponse]),
+];
+
+await foreach (ChatResponseUpdate update in chatClient.GetStreamingResponseAsync(approvalMessages, options))
 {
-    RawRepresentationFactory = _ => new RunAgentInput
+    foreach (TextContent text in update.Contents.OfType<TextContent>())
     {
-        Messages = [],
-        ParentRunId = finished.RunId,
-        Resume =
-        [
-            new AGUIResume
-            {
-                InterruptId = interrupt.Id,
-                Payload = JsonSerializer.SerializeToElement(new { approved }),
-                Status = "resolved",
-            },
-        ],
-        RunId = Guid.NewGuid().ToString("N"),
-        ThreadId = finished.ThreadId,
-    },
-};
+        Console.Write(text.Text);
+    }
+}
+#pragma warning restore MEAI001
 
-List<ChatResponseUpdate> secondTurn = await chatClient
-    .GetStreamingResponseAsync([], resumeOptions)
-    .ToListAsync();
-Console.WriteLine(string.Concat(secondTurn.Select(static update => update.Text)));
+Console.WriteLine();
+
+static IChatClient CreateChatClient(HttpClient httpClient, string serverUrl)
+    => new AGUIChatClient(new(httpClient, serverUrl));

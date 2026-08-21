@@ -6,7 +6,7 @@ using Microsoft.Extensions.AI;
 
 string serverUrl = Environment.GetEnvironmentVariable("AGUI_SERVER_URL") ?? "http://localhost:8888";
 using HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
-IChatClient chatClient = new AGUIChatClient(new(httpClient, serverUrl));
+using IChatClient chatClient = CreateChatClient(httpClient, serverUrl);
 
 try
 {
@@ -35,3 +35,6 @@ catch (InvalidOperationException exception)
 }
 
 Console.WriteLine();
+
+static IChatClient CreateChatClient(HttpClient httpClient, string serverUrl)
+    => new AGUIChatClient(new(httpClient, serverUrl));

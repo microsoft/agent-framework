@@ -18,11 +18,20 @@ internal static class WorkflowAGUIExtensions
     {
         ArgumentNullException.ThrowIfNull(updates);
         List<ChatResponseUpdate> interruptions = [];
+        List<ChatResponseUpdate> uncorrelatedApprovalRequests = [];
 
         await foreach (ChatResponseUpdate update in updates.ConfigureAwait(false))
         {
             switch (update.RawRepresentation)
             {
+                case AgentResponseUpdate { RawRepresentation: RequestInfoEvent }
+                    when update.Contents.OfType<ToolApprovalRequestContent>().SingleOrDefault() is { } approvalRequest:
+                    uncorrelatedApprovalRequests.RemoveAll(candidate =>
+                        candidate.Contents.OfType<ToolApprovalRequestContent>().Any(candidateRequest =>
+                            candidateRequest.ToolCall.CallId == approvalRequest.ToolCall.CallId));
+                    yield return update;
+                    break;
+
                 case AgentResponseUpdate { RawRepresentation: RequestInfoEvent requestInfo }
                     when update.Contents.OfType<FunctionCallContent>().SingleOrDefault() is { } request:
                     update.Contents =
@@ -63,6 +72,10 @@ internal static class WorkflowAGUIExtensions
                         includeContents: false);
                     break;
 
+                case var _ when update.Contents.OfType<ToolApprovalRequestContent>().Any():
+                    uncorrelatedApprovalRequests.Add(update);
+                    break;
+
                 default:
                     yield return update;
                     break;
@@ -73,9 +86,17 @@ internal static class WorkflowAGUIExtensions
         {
             yield return interruption;
         }
+
+        foreach (ChatResponseUpdate approvalRequest in uncorrelatedApprovalRequests)
+        {
+            yield return approvalRequest;
+        }
     }
 #pragma warning restore VSTHRD200
 
+    // TODO: Remove this adapter after consuming an AG-UI .NET release containing
+    // https://github.com/ag-ui-protocol/ag-ui/pull/2455, which makes RUN_ERROR terminal
+    // and prevents the SDK from appending RUN_FINISHED(success).
     internal static async IAsyncEnumerable<BaseEvent> MakeRunErrorTerminalAsync(
         this IAsyncEnumerable<BaseEvent> events)
     {
@@ -212,7 +233,7 @@ internal static class WorkflowAGUIExtensions
             ContinuationToken = update.ContinuationToken,
         };
 
-    internal static List<ChatMessage> MapAGUIInterruptResponsesToWorkflow(
+    internal static List<ChatMessage> MapAGUIInterruptResponsesToFunctionResults(
         this IEnumerable<ChatMessage> messages)
         => [.. messages.Select(static message =>
         {

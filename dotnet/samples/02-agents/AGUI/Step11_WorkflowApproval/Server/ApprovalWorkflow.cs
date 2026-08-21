@@ -1,12 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
-using Microsoft.Extensions.AI;
 
 namespace AGUI.WorkflowApproval;
 
@@ -16,51 +11,25 @@ namespace AGUI.WorkflowApproval;
 public static class ApprovalWorkflow
 {
     /// <summary>
-    /// Creates a workflow that pauses for approval before submitting an expense.
+    /// Creates a workflow containing one expense-review agent.
     /// </summary>
-    /// <returns>The approval workflow.</returns>
-    public static Workflow Create()
-    {
-        ExpenseApprovalExecutor executor = new();
-        return new WorkflowBuilder(executor)
-            .AddExternalCall<ExpenseApprovalRequest, JsonElement>(executor, "ApprovalInput")
-            .WithOutputFrom(executor)
-            .Build();
-    }
+    /// <param name="expenseReviewer">The agent that checks and submits expense reports.</param>
+    /// <returns>The expense approval workflow.</returns>
+    public static Workflow Create(AIAgent expenseReviewer)
+        => new SequentialWorkflowBuilder(expenseReviewer).Build();
 }
 
 /// <summary>
-/// The expense approval request presented to the client.
+/// An expense report submitted to the workflow.
 /// </summary>
-/// <param name="ExpenseId">The expense identifier.</param>
-/// <param name="Amount">The expense amount.</param>
-public sealed record ExpenseApprovalRequest(string ExpenseId, decimal Amount);
-
-[SendsMessage(typeof(ExpenseApprovalRequest))]
-internal sealed partial class ExpenseApprovalExecutor()
-    : ChatProtocolExecutor("ExpenseApproval", new ChatProtocolExecutorOptions { AutoSendTurnToken = false })
-{
-    protected override ValueTask TakeTurnAsync(
-        List<ChatMessage> messages,
-        IWorkflowContext context,
-        bool? emitEvents,
-        CancellationToken cancellationToken = default)
-        => context.SendMessageAsync(new ExpenseApprovalRequest("EXP-100", 125.00m), cancellationToken);
-
-    [MessageHandler]
-    public async ValueTask HandleApprovalAsync(
-        JsonElement response,
-        IWorkflowContext context,
-        CancellationToken cancellationToken = default)
-    {
-        bool approved = response.GetProperty("approved").GetBoolean();
-        string result = approved ? "Expense approved and submitted." : "Expense rejected.";
-        AgentResponseUpdate update = new(ChatRole.Assistant, result)
-        {
-            MessageId = "expense-result",
-            ResponseId = "expense-response",
-        };
-        await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
-        await context.SendMessageAsync(new TurnToken(false), cancellationToken).ConfigureAwait(false);
-    }
-}
+/// <param name="Id">The report identifier.</param>
+/// <param name="Employee">The submitting employee.</param>
+/// <param name="Amount">The total expense amount.</param>
+/// <param name="BusinessPurpose">The business purpose.</param>
+/// <param name="ReceiptAttached">Whether a receipt is attached.</param>
+public sealed record ExpenseReport(
+    string Id,
+    string Employee,
+    decimal Amount,
+    string BusinessPurpose,
+    bool ReceiptAttached);
