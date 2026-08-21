@@ -3746,8 +3746,14 @@ def test_describe_error_keeps_plain_exception_message():
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup is Python >= 3.11")
 def test_describe_error_unwraps_single_member_exception_group():
+    import builtins
+
+    exception_group_type = getattr(builtins, "ExceptionGroup", None)
+    if exception_group_type is None:
+        pytest.skip("ExceptionGroup is not available on this Python version")
+
     real = RuntimeError("401 Client Error: Unauthorized")
-    group = ExceptionGroup("unhandled errors in a TaskGroup", [real])  # noqa: F821 -- gated to 3.11+ by the skipif above
+    group = exception_group_type("unhandled errors in a TaskGroup", [real])
     assert _describe_error(group) == "401 Client Error: Unauthorized"
 
 
@@ -3794,6 +3800,12 @@ async def test_connect_bare_cancel_names_cleanup_error_from_exit_stack():
     """The reported 401 path: initialize() raises a bare CancelledError and the
     real HTTP failure only surfaces from the exit-stack close. The ToolException
     must name that close-time error, not the cancellation."""
+    import builtins
+
+    exception_group_type = getattr(builtins, "ExceptionGroup", None)
+    if exception_group_type is None:
+        pytest.skip("ExceptionGroup is not available on this Python version")
+
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
 
     mock_transport = (Mock(), Mock())
@@ -3802,7 +3814,7 @@ async def test_connect_bare_cancel_names_cleanup_error_from_exit_stack():
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
     tool.get_mcp_client = Mock(return_value=mock_context_manager)  # type: ignore[method-assign]
 
-    cleanup_group = ExceptionGroup(  # noqa: F821 -- gated to 3.11+ by the skipif above
+    cleanup_group = exception_group_type(
         "unhandled errors in a TaskGroup", [RuntimeError("401 Client Error: Unauthorized")]
     )
 
