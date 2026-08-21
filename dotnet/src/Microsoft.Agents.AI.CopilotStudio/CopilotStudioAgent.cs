@@ -88,6 +88,7 @@ public class CopilotStudioAgent : AIAgent
             throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(CopilotStudioAgentSession)}' can be used by this agent.");
         }
 
+        FeatureUsageMarker.MarkUsed();
         typedSession.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.
@@ -120,6 +121,7 @@ public class CopilotStudioAgent : AIAgent
             throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(CopilotStudioAgentSession)}' can be used by this agent.");
         }
 
+        FeatureUsageMarker.MarkUsed();
         typedSession.ConversationId ??= await this.StartNewConversationAsync(cancellationToken).ConfigureAwait(false);
 
         // Invoke the Copilot Studio agent with the provided messages.

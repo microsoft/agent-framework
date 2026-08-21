@@ -240,6 +240,34 @@ def _mcp_config_candidate_names(*, local_name: str, normalized_name: str, remote
     return tuple(names)
 
 
+def _make_mcp_tool_caller(
+    mcp_tool: MCPTool, remote_tool_name: str
+) -> Callable[..., Coroutine[Any, Any, str | list[Content]]]:
+    """Build the callable backing a generated MCP ``FunctionTool``.
+
+    The remote tool name is captured in this factory's closure rather than declared as a
+    parameter of the returned callable. Model-supplied arguments are splatted into that
+    callable, so any name it declares could be bound - and overridden - by the model. Keeping
+    the call target out of the signature means it can only ever be reached through ``**kwargs``,
+    which is forwarded as tool arguments and can never redirect the call to another tool.
+    """
+
+    async def _call_tool_with_runtime_kwargs(
+        ctx: FunctionInvocationContext,
+        **kwargs: Any,
+    ) -> str | list[Content]:
+        trusted_meta = ctx.kwargs.get("_meta")
+        call_kwargs = dict(ctx.kwargs)
+        call_kwargs.update(kwargs)
+        if trusted_meta is not None:
+            call_kwargs["_meta"] = trusted_meta
+        else:
+            call_kwargs.pop("_meta", None)
+        return await mcp_tool.call_tool(remote_tool_name, **call_kwargs)
+
+    return _call_tool_with_runtime_kwargs
+
+
 def _validate_mcp_meta_key(key: str) -> None:
     """Validate an MCP ``_meta`` key against the 2025-06-18 key-name format."""
     if not _MCP_META_KEY_PATTERN.fullmatch(key):
@@ -1894,24 +1922,9 @@ class MCPTool:
                     )
                 )
 
-                async def _call_tool_with_runtime_kwargs(
-                    ctx: FunctionInvocationContext,
-                    *,
-                    _remote_tool_name: str = tool.name,
-                    **kwargs: Any,
-                ) -> str | list[Content]:
-                    trusted_meta = ctx.kwargs.get("_meta")
-                    call_kwargs = dict(ctx.kwargs)
-                    call_kwargs.update(kwargs)
-                    if trusted_meta is not None:
-                        call_kwargs["_meta"] = trusted_meta
-                    else:
-                        call_kwargs.pop("_meta", None)
-                    return await self.call_tool(_remote_tool_name, **call_kwargs)
-
                 # Create FunctionTools out of each tool
                 func: FunctionTool = FunctionTool(
-                    func=_call_tool_with_runtime_kwargs,
+                    func=_make_mcp_tool_caller(self, tool.name),
                     name=local_name,
                     description=tool.description or "",
                     approval_mode=approval_mode,

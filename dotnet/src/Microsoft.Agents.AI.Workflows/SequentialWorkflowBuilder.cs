@@ -98,6 +98,6 @@ public sealed class SequentialWorkflowBuilder : OrchestrationBuilderBase<Sequent
             builder.WithIntermediateOutputFrom(agentExecutors);
         });
 
-        return builder.Build();
+        return builder.BuildForFeature((int)FeatureIndex.OrchestrationSequential);
     }
 }

@@ -29,6 +29,7 @@ from agent_framework import (
     SessionContext,
 )
 from agent_framework.a2a import A2AAgent
+from agent_framework.exceptions import AgentInvalidRequestException
 from pytest import fixture, mark, raises, warns
 
 from agent_framework_a2a import A2AAgentSession, A2AContinuationToken, A2AServiceSessionId
@@ -837,9 +838,33 @@ async def test_input_required_task_emits_continuation_token(
 
     response = await a2a_agent.run("Need input", background=True)
 
+    [request] = response.user_input_requests
+    assert request.text == "Remote A2A task requires input."
     assert response.continuation_token is not None
     token = cast(dict[str, Any], response.continuation_token)
     assert token["task_id"] == "task-input"
+
+
+async def test_background_input_required_preserves_request_and_continuation_token(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Background callers retain both caller input and polling contracts."""
+    mock_a2a_client.add_in_progress_task_response(
+        "task-input-prompt",
+        context_id="ctx-input",
+        state=TaskState.TASK_STATE_INPUT_REQUIRED,
+        text="Approve deployment?",
+    )
+
+    response = await a2a_agent.run("Need input", background=True)
+
+    [request] = response.user_input_requests
+    assert request.text == "Approve deployment?"
+    assert response.continuation_token == {
+        "task_id": "task-input-prompt",
+        "context_id": "ctx-input",
+    }
 
 
 async def test_working_task_no_token_without_background(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
@@ -1026,6 +1051,34 @@ async def test_poll_task_in_progress(a2a_agent: A2AAgent, mock_a2a_client: MockA
     assert response.continuation_token is not None
     response_token = cast(dict[str, Any], response.continuation_token)
     assert response_token["task_id"] == "task-poll"
+
+
+async def test_poll_task_input_required_preserves_request_and_continuation_token(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Polling preserves both caller input and later resubscription paths."""
+    mock_a2a_client.get_task_response = Task(
+        id="task-poll-input",
+        context_id="ctx-poll-input",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=A2AMessage(
+                message_id="poll-input-request",
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="Approve deployment?")],
+            ),
+        ),
+    )
+
+    response = await a2a_agent.poll_task(A2AContinuationToken(task_id="task-poll-input", context_id="ctx-poll-input"))
+
+    [request] = response.user_input_requests
+    assert request.text == "Approve deployment?"
+    assert response.continuation_token == {
+        "task_id": "task-poll-input",
+        "context_id": "ctx-poll-input",
+    }
 
 
 async def test_poll_task_completed(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
@@ -1234,15 +1287,47 @@ async def test_run_creates_session_for_providers_when_none_provided(mock_a2a_cli
 async def test_run_raises_when_no_messages_and_no_continuation_token(
     mock_a2a_client: MockA2AClient, messages: list[str] | None
 ) -> None:
-    """Test that run() raises ValueError when messages is None/empty and no continuation_token is provided."""
+    """Empty A2A input requires a real message or an explicit continuation token."""
     agent = A2AAgent(
         name="Test Agent",
         client=cast(Any, mock_a2a_client),
         http_client=None,
     )
 
-    with raises(ValueError, match="At least one message is required"):
+    with raises(
+        AgentInvalidRequestException,
+        match="A2A agent 'Test Agent' requires a real message or an explicit continuation token",
+    ):
         await agent.run(messages)
+
+
+async def test_empty_input_error_includes_session_task_context_without_resuming(
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Durable A2A task state explains an invalid call but never authorizes continuation."""
+    agent = A2AAgent(
+        name="Remote specialist",
+        client=cast(Any, mock_a2a_client),
+        http_client=None,
+    )
+    session = AgentSession(
+        service_session_id=A2AServiceSessionId(
+            context_id="customer-42",
+            task_id="task-17",
+            task_state=TaskState.TASK_STATE_COMPLETED,
+        )
+    )
+
+    with raises(
+        AgentInvalidRequestException,
+        match=(
+            "A2A agent 'Remote specialist' requires a real message or an explicit continuation token. "
+            "Session context: context_id='customer-42', task_id='task-17', task_state=TASK_STATE_COMPLETED."
+        ),
+    ):
+        await agent.run([], session=session)
+
+    assert mock_a2a_client.call_count == 0
 
 
 async def test_run_with_continuation_token_does_not_require_messages(mock_a2a_client: MockA2AClient) -> None:
@@ -1477,13 +1562,131 @@ async def test_streaming_input_required_emits_content(a2a_agent: A2AAgent, mock_
     )
     mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
 
+    stream = a2a_agent.run("Hello", stream=True)
     updates: list[AgentResponseUpdate] = []
-    async for update in a2a_agent.run("Hello", stream=True):
+    async for update in stream:
         updates.append(update)
+    response = await stream.get_final_response()
 
     assert len(updates) == 1
     assert updates[0].text == "What is your name?"
     assert updates[0].message_id == "msg-input-req"
+    [update_request] = updates[0].user_input_requests
+    [response_request] = response.user_input_requests
+    assert update_request.id == response_request.id
+    assert update_request.id != "task-status"
+    assert update_request.text == "What is your name?"
+
+
+async def test_streaming_background_input_required_preserves_request_and_token(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Streaming background status retains caller and resubscription contracts."""
+    update_event = TaskStatusUpdateEvent(
+        task_id="task-status-background",
+        context_id="ctx-status",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=A2AMessage(
+                message_id="msg-input-req",
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="Approve deployment?")],
+            ),
+        ),
+    )
+    mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
+
+    stream = a2a_agent.run("Hello", stream=True, background=True)
+    updates = [update async for update in stream]
+
+    assert len(updates) == 1
+    [request] = updates[0].user_input_requests
+    assert request.text == "Approve deployment?"
+    assert updates[0].continuation_token == {
+        "task_id": "task-status-background",
+        "context_id": "ctx-status",
+    }
+
+
+async def test_streaming_input_required_without_message_emits_generic_request(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """A message-less INPUT_REQUIRED status update still pauses for the caller."""
+    update_event = TaskStatusUpdateEvent(
+        task_id="task-status-no-message",
+        context_id="ctx-status",
+        status=TaskStatus(state=TaskState.TASK_STATE_INPUT_REQUIRED),
+    )
+    mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
+
+    stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert len(updates) == 1
+    [request] = response.user_input_requests
+    assert request.text == "Remote A2A task requires input."
+    assert request.id != "task-status-no-message"
+
+
+async def test_streaming_input_required_multipart_prompt_remains_one_complete_request(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """All status prompt parts survive stream finalization as one request."""
+    update_event = TaskStatusUpdateEvent(
+        task_id="task-status-multipart",
+        context_id="ctx-status",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=A2AMessage(
+                message_id="msg-input-req",
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="Choose a deployment."), Part(text="Options: blue or green.")],
+            ),
+        ),
+    )
+    mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
+
+    stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert len(updates) == 1
+    [request] = response.user_input_requests
+    assert request.text == "Choose a deployment.\nOptions: blue or green."
+
+
+async def test_streaming_input_required_prompt_preserves_non_text_parts(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Streaming caller requests retain links and durable remote message data."""
+    update_event = TaskStatusUpdateEvent(
+        task_id="task-status-file",
+        context_id="ctx-status",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=A2AMessage(
+                message_id="msg-input-req",
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="Review the attached document."), Part(url="hosted://files/report.pdf")],
+            ),
+        ),
+    )
+    mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
+
+    stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert len(updates) == 1
+    [request] = response.user_input_requests
+    assert request.text == "Review the attached document.\nhosted://files/report.pdf"
+    serialized_message = request.additional_properties["a2a_input_required_message"]
+    assert serialized_message["parts"][1]["url"] == "hosted://files/report.pdf"
 
 
 @mark.asyncio
@@ -2107,6 +2310,113 @@ async def test_task_state_tracked_on_session(mock_a2a_client: MockA2AClient) -> 
 
     assert session.task_id == "task-input"
     assert session.task_state == TaskState.TASK_STATE_INPUT_REQUIRED
+
+
+@mark.asyncio
+@mark.parametrize("stream", [False, True])
+async def test_input_required_exposes_stable_user_input_request(
+    mock_a2a_client: MockA2AClient,
+    stream: bool,
+) -> None:
+    """INPUT_REQUIRED preserves the remote question and task identity."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
+    mock_a2a_client.add_in_progress_task_response(
+        "task-input",
+        context_id="ctx-input",
+        state=TaskState.TASK_STATE_INPUT_REQUIRED,
+        text="What is your name?",
+    )
+
+    updates: list[AgentResponseUpdate] = []
+    if stream:
+        response_stream = agent.run("Start", stream=True)
+        updates = [update async for update in response_stream]
+        response = await response_stream.get_final_response()
+        assert len(updates) == 1
+    else:
+        response = await agent.run("Start")
+
+    [request] = response.user_input_requests
+    assert request.id != "task-input"
+    assert request.text == "What is your name?"
+    if stream:
+        assert updates[0].user_input_requests[0].id == request.id
+
+
+async def test_input_required_without_message_exposes_generic_user_input_request(
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """INPUT_REQUIRED pauses even when the remote omits its optional prompt."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
+    mock_a2a_client.add_in_progress_task_response(
+        "task-input-no-message",
+        context_id="ctx-input",
+        state=TaskState.TASK_STATE_INPUT_REQUIRED,
+    )
+
+    response = await agent.run("Start")
+
+    [request] = response.user_input_requests
+    assert request.text == "Remote A2A task requires input."
+    assert request.id != "task-input-no-message"
+
+
+async def test_input_required_multipart_prompt_remains_one_complete_request(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """All prompt parts survive non-streaming response finalization."""
+    mock_a2a_client.responses.append(
+        StreamResponse(
+            task=Task(
+                id="task-input-multipart",
+                context_id="ctx-input",
+                status=TaskStatus(
+                    state=TaskState.TASK_STATE_INPUT_REQUIRED,
+                    message=A2AMessage(
+                        message_id="input-request",
+                        role=A2ARole.ROLE_AGENT,
+                        parts=[Part(text="Choose a deployment."), Part(text="Options: blue or green.")],
+                    ),
+                ),
+            )
+        )
+    )
+
+    response = await a2a_agent.run("Start")
+
+    [request] = response.user_input_requests
+    assert request.text == "Choose a deployment.\nOptions: blue or green."
+
+
+async def test_input_required_prompt_preserves_non_text_parts(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Caller-visible requests retain links and durable remote message data."""
+    mock_a2a_client.responses.append(
+        StreamResponse(
+            task=Task(
+                id="task-input-file",
+                context_id="ctx-input",
+                status=TaskStatus(
+                    state=TaskState.TASK_STATE_INPUT_REQUIRED,
+                    message=A2AMessage(
+                        message_id="input-request",
+                        role=A2ARole.ROLE_AGENT,
+                        parts=[Part(text="Review the attached document."), Part(url="hosted://files/report.pdf")],
+                    ),
+                ),
+            )
+        )
+    )
+
+    response = await a2a_agent.run("Start")
+
+    [request] = response.user_input_requests
+    assert request.text == "Review the attached document.\nhosted://files/report.pdf"
+    serialized_message = request.additional_properties["a2a_input_required_message"]
+    assert serialized_message["parts"][1]["url"] == "hosted://files/report.pdf"
 
 
 @mark.asyncio

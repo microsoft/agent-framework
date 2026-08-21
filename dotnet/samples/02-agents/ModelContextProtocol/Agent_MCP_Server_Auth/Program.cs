@@ -10,6 +10,7 @@ using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Authentication;
 using ModelContextProtocol.Client;
 using OpenAI.Chat;
 
@@ -39,7 +40,7 @@ var transport = new HttpClientTransport(new()
             ClientName = "ProtectedMcpClient",
         },
         RedirectUri = new Uri("http://localhost:1179/callback"),
-        AuthorizationRedirectDelegate = HandleAuthorizationUrlAsync,
+        AuthorizationCallbackHandler = HandleAuthorizationCallbackAsync,
     }
 }, httpClient, consoleLoggerFactory);
 
@@ -63,12 +64,14 @@ Console.WriteLine(await agent.RunAsync("Get current weather alerts for New York?
 
 // Handles the OAuth authorization URL by starting a local HTTP server and opening a browser.
 // This implementation demonstrates how SDK consumers can provide their own authorization flow.
-static async Task<string?> HandleAuthorizationUrlAsync(Uri authorizationUrl, Uri redirectUri, CancellationToken cancellationToken)
+static async Task<AuthorizationResult?> HandleAuthorizationCallbackAsync(
+    AuthorizationCallbackContext callbackContext,
+    CancellationToken cancellationToken)
 {
     Console.WriteLine("Starting OAuth authorization flow...");
-    Console.WriteLine($"Opening browser to: {authorizationUrl}");
+    Console.WriteLine($"Opening browser to: {callbackContext.AuthorizationUri}");
 
-    var listenerPrefix = redirectUri.GetLeftPart(UriPartial.Authority);
+    var listenerPrefix = callbackContext.RedirectUri.GetLeftPart(UriPartial.Authority);
     if (!listenerPrefix.EndsWith("/", StringComparison.InvariantCultureIgnoreCase))
     {
         listenerPrefix += "/";
@@ -82,11 +85,13 @@ static async Task<string?> HandleAuthorizationUrlAsync(Uri authorizationUrl, Uri
         listener.Start();
         Console.WriteLine($"Listening for OAuth callback on: {listenerPrefix}");
 
-        OpenBrowser(authorizationUrl);
+        OpenBrowser(callbackContext.AuthorizationUri);
 
         var context = await listener.GetContextAsync();
         var query = HttpUtility.ParseQueryString(context.Request.Url?.Query ?? string.Empty);
         var code = query["code"];
+        var state = query["state"];
+        var issuer = query["iss"];
         var error = query["error"];
 
         const string ResponseHtml = "<html><body><h1>Authentication complete</h1><p>You can close this window now.</p></body></html>";
@@ -102,14 +107,19 @@ static async Task<string?> HandleAuthorizationUrlAsync(Uri authorizationUrl, Uri
             return null;
         }
 
-        if (string.IsNullOrEmpty(code))
+        if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
         {
-            Console.WriteLine("No authorization code received");
+            Console.WriteLine("The authorization response did not contain both code and state.");
             return null;
         }
 
         Console.WriteLine("Authorization code received successfully.");
-        return code;
+        return new AuthorizationResult
+        {
+            Code = code,
+            State = state,
+            Iss = issuer,
+        };
     }
     catch (Exception ex)
     {
