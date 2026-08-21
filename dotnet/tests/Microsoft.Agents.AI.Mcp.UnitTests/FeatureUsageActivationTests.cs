@@ -4,7 +4,6 @@ using System;
 using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Skills.Mcp.UnitTests;
-using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
 namespace Microsoft.Agents.AI.Mcp.UnitTests;
@@ -18,18 +17,18 @@ public sealed class FeatureUsageActivationTests : IDisposable
     }
 
     [Fact]
-    public async Task ListAgentToolsWithTaskSupportAsync_ActivatesCoreMcpAsync()
+    public async Task ListAgentToolsWithTasksAsync_ActivatesCoreMcpAsync()
     {
         // Arrange
         McpServerPrimitiveCollection<McpServerTool> tools =
         [
-            TestTools.Create("tool", ToolTaskSupport.Optional, () => "result"),
+            TestTools.Create("tool", () => "result"),
         ];
         await using InMemoryMcpServerFixture fixture = await InMemoryMcpServerFixture.CreateAsync(tools);
         ResetFeatureUsage();
 
         // Act
-        _ = await fixture.Client.ListAgentToolsWithTaskSupportAsync();
+        _ = await fixture.Client.ListAgentToolsWithTasksAsync();
 
         // Assert
         Assert.Equal("v1.4000", GetFeatureToken());
