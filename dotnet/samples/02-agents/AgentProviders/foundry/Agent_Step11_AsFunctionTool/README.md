@@ -2,6 +2,8 @@
 
 This sample demonstrates how to use one agent as a function tool for another agent.
 
+Function tools are ideal for scenarios requiring deterministic and predictable behavior, such as API integrations with validation and transformations, database operations, or payment processing. Using .`AsAIFunction()` converts agents into function tools, enabling agent composition and the construction of advanced workflows with reliable execution.
+
 ## What this sample demonstrates
 
 - Creating a specialized agent (weather) with function tools
