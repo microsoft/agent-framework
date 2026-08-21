@@ -1340,9 +1340,9 @@ class MessageMapper:
         """
         events: list[ResponseFunctionCallArgumentsDeltaEvent | ResponseOutputItemAddedEvent] = []
 
-        # CASE 1: New function call (has call_id and name)
-        # This is the first event that establishes the function call
-        if content.call_id and content.name:
+        # CASE 1: New function call (has a call_id and name not seen in an earlier chunk)
+        # Streaming providers may repeat call metadata with every argument chunk.
+        if content.call_id and content.name and content.call_id not in context["active_function_calls"]:
             # Use call_id as item_id (simpler, and call_id uniquely identifies the call)
             item_id = content.call_id
 

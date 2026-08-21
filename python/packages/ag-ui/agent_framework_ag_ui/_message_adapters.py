@@ -152,9 +152,9 @@ def _sanitize_tool_history(
                     if content.function_call and content.function_call.call_id:
                         approval_call_ids.add(str(content.function_call.call_id))
                     if approval_accepted is None:
-                        approval_accepted = bool(content.approved)
+                        approval_accepted = content.approved is True
                     else:
-                        approval_accepted = approval_accepted and bool(content.approved)
+                        approval_accepted = approval_accepted and content.approved is True
 
             if approval_call_ids and pending_tool_call_ids:
                 pending_tool_call_ids = [
@@ -203,7 +203,7 @@ def _sanitize_tool_history(
                             contents=[
                                 Content.from_function_result(
                                     call_id=pending_confirm_changes_id,
-                                    result="Confirmed" if parsed.get("accepted") else "Rejected",
+                                    result="Confirmed" if parsed.get("accepted") is True else "Rejected",
                                 )
                             ],
                         )
@@ -360,9 +360,10 @@ def _extract_multimodal_source_fields(
 ) -> tuple[str | None, str | None, str | None, str | None]:
     """Extract ``(url, data, binary_id, mime_type)`` from an AG-UI multimodal part.
 
-    Handles both the current AG-UI spec (``source.value`` for base64 payloads) and the
-    legacy ``source.data`` field for backward compatibility. Returned values are the
-    raw extracted strings (or ``None`` when absent); callers apply their own defaults.
+    Handles both the current AG-UI spec (``source.value`` for both URL and base64
+    payloads) and the legacy ``source.url``/``source.data`` fields for backward
+    compatibility. Returned values are the raw extracted strings (or ``None`` when
+    absent); callers apply their own defaults.
     """
     mime_type = cast(str | None, part.get("mimeType") or part.get("mime_type"))
     url = cast(str | None, part.get("url") or part.get("uri"))
@@ -378,7 +379,7 @@ def _extract_multimodal_source_fields(
             mime_type = source_mime
 
         if source_type in {"url", "uri"}:
-            url = cast(str | None, source_dict.get("url") or source_dict.get("uri"))
+            url = cast(str | None, source_dict.get("value") or source_dict.get("url") or source_dict.get("uri"))
         elif source_type in {"base64", "data", "binary"}:
             data = cast(str | None, source_dict.get("value") or source_dict.get("data"))
         elif source_type in {"id", "file"}:
@@ -724,7 +725,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
                 # Look for the matching function call in previous messages to create
                 # proper function_approval_response content. This enables the agent framework
                 # to execute the approved tool (fix for GitHub issue #3034).
-                accepted = parsed.get("accepted", False) if parsed is not None else False
+                accepted = parsed.get("accepted") is True if parsed is not None else False
                 approval_payload_text = result_content if isinstance(result_content, str) else json.dumps(parsed)
 
                 # Log the full approval payload to debug modified arguments
@@ -932,7 +933,7 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
 
                 # Create the approval response
                 approval_response = Content.from_function_approval_response(
-                    approved=approval.get("approved", True),
+                    approved=approval.get("approved") is True,
                     id=approval.get("id", ""),
                     function_call=func_call,
                 )

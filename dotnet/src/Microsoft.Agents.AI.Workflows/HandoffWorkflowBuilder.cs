@@ -466,11 +466,11 @@ public class HandoffWorkflowBuilderCore<TBuilder> : OrchestrationBuilderBase<TBu
         {
             if (!effectiveTargets.TryGetValue(agent, out HashSet<HandoffTarget>? handoffs))
             {
-                handoffs = new();
+                handoffs = [];
             }
 
             // Use the ExecutorId as the placeholder id for a (possibly) future-bound factory
-            builder.AddSwitch(HandoffAgentExecutor.IdFor(agent), (SwitchBuilder sb) =>
+            builder.AddSwitch(HandoffAgentExecutor.IdFor(agent), sb =>
             {
                 foreach (HandoffTarget handoff in handoffs)
                 {
@@ -478,7 +478,7 @@ public class HandoffWorkflowBuilderCore<TBuilder> : OrchestrationBuilderBase<TBu
                     // turn falls through to the default branch, which routes to HandoffEndExecutor.
                     string targetAgentId = handoff.Target.Id;
                     sb.AddCase<HandoffState>(state => state?.RequestedHandoffTargetAgentId == targetAgentId // Use AgentId for target matching
-                                                  && state.IsTerminated != true,
+                                                  && !state.IsTerminated,
                                              HandoffAgentExecutor.IdFor(handoff.Target)); // Use ExecutorId in for routing at the workflow level
                 }
 
@@ -634,6 +634,6 @@ public class HandoffWorkflowBuilderCore<TBuilder> : OrchestrationBuilderBase<TBu
             }
         });
 
-        return builder.Build();
+        return builder.BuildForFeature((int)FeatureIndex.OrchestrationHandoff);
     }
 }

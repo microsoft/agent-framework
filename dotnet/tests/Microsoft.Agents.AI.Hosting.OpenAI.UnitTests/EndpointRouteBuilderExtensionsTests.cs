@@ -13,6 +13,42 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 /// </summary>
 public sealed class EndpointRouteBuilderExtensionsTests
 {
+    [Fact]
+    public void MapOpenAIResponses_MarksFeatureUsed()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        IChatClient chatClient = new TestHelpers.SimpleMockChatClient();
+        builder.Services.AddKeyedSingleton("chat-client", chatClient);
+        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        builder.AddOpenAIResponses();
+        using WebApplication app = builder.Build();
+        AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
+
+        // Act
+        _ = app.MapOpenAIResponses(agent);
+
+        // Assert
+        AssertFeatureUsed(74);
+    }
+
+    private static void AssertFeatureUsed(int featureIndex)
+    {
+#pragma warning disable MAAI001
+        string userAgent = FeatureUsage.ApplyToUserAgent(string.Empty);
+#pragma warning restore MAAI001
+        const string Prefix = "(feat=v1.";
+        Assert.StartsWith(Prefix, userAgent);
+        Assert.EndsWith(")", userAgent);
+
+        string hexMask = userAgent[Prefix.Length..^1];
+        int digitOffset = featureIndex / 4;
+        Assert.True(hexMask.Length > digitOffset);
+        char digit = char.ToLowerInvariant(hexMask[hexMask.Length - digitOffset - 1]);
+        int nibble = digit <= '9' ? digit - '0' : digit - 'a' + 10;
+        Assert.NotEqual(0, nibble & (1 << (featureIndex & 3)));
+    }
+
     /// <summary>
     /// Verifies that MapOpenAIResponses throws ArgumentNullException for null endpoints.
     /// </summary>

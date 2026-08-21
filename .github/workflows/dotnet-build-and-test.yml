@@ -37,6 +37,7 @@ jobs:
     outputs:
       dotnetChanges: ${{ steps.filter.outputs.dotnet }}
       cosmosDbChanges: ${{ steps.filter.outputs.cosmosdb }}
+      azureStorageChanges: ${{ steps.filter.outputs.azurestorage }}
       foundryHostingChanges: ${{ steps.filter.outputs.foundryHosting }}
       coreChanged: ${{ steps.filter.outputs.core }}
     steps:
@@ -49,6 +50,12 @@ jobs:
               - 'dotnet/**'
             cosmosdb:
               - 'dotnet/src/Microsoft.Agents.AI.CosmosNoSql/**'
+            azurestorage:
+              - 'dotnet/src/Microsoft.Agents.AI.Hosting.AzureStorage/**'
+              - 'dotnet/tests/Microsoft.Agents.AI.Hosting.AzureStorage.IntegrationTests/**'
+              - 'dotnet/tests/Microsoft.Agents.AI.Hosting.AzureStorage.UnitTests/**'
+              - 'dotnet/Directory.Packages.props'
+              - '.github/workflows/dotnet-build-and-test.yml'
             # The Foundry hosted-agent IT is costly (builds a container, pushes to ACR,
             # provisions live agents). Only run it when the project under test, its
             # dependency chain, the test container, the test fixture, or their tooling
@@ -120,6 +127,7 @@ jobs:
         uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
+
       - name: Build dotnet solutions
         shell: bash
         run: |
@@ -184,6 +192,7 @@ jobs:
               .
               .github
               dotnet
+              docs/specs
               python
               declarative-agents
 
@@ -199,6 +208,27 @@ jobs:
           Import-Module "$env:ProgramFiles\Azure Cosmos DB Emulator\PSModules\Microsoft.Azure.CosmosDB.Emulator"
           Start-CosmosDbEmulator -NoUI -Key "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
           echo "COSMOSDB_EMULATOR_AVAILABLE=true" >> $env:GITHUB_ENV
+
+      - name: Start Azurite Blob service
+        if: ${{ runner.os == 'Linux' && (needs.paths-filter.outputs.azureStorageChanges == 'true' || (github.event_name != 'pull_request' && matrix.integration-tests)) }}
+        shell: bash
+        run: |
+          docker run --detach --rm \
+            --name azurite \
+            --publish 10000:10000 \
+            mcr.microsoft.com/azure-storage/azurite:3.35.0@sha256:647c63a91102a9d8e8000aab803436e1fc85fbb285e7ce830a82ee5d6661cf37 \
+            azurite-blob --blobHost 0.0.0.0 --blobPort 10000 --skipApiVersionCheck
+
+          for attempt in {1..30}; do
+            if (echo > /dev/tcp/127.0.0.1/10000) > /dev/null 2>&1; then
+              echo "AZURITE_AVAILABLE=true" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs azurite
+          exit 1
 
       - name: Setup dotnet
         uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5.2.0
@@ -269,7 +299,7 @@ jobs:
 
       - name: Azure CLI Login
         if: github.event_name != 'pull_request' && matrix.integration-tests
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -325,7 +355,7 @@ jobs:
 
       - name: Upload coverage report artifact
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: CoverageReport-${{ matrix.os }}-${{ matrix.targetFramework }}-${{ matrix.configuration }} # Artifact name
           path: ./TestResults/Reports # Directory containing files to upload
@@ -337,7 +367,7 @@ jobs:
 
       - name: Upload integration test results
         if: always() && github.event_name != 'pull_request' && matrix.integration-tests
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dotnet-test-results-${{ matrix.targetFramework }}-${{ matrix.os }}
           path: IntegrationTestResults/**/*.junit
@@ -383,7 +413,7 @@ jobs:
         run: dotnet build dotnet/tests/Foundry.Hosting.IntegrationTests/Foundry.Hosting.IntegrationTests.csproj -c "$configuration" --warnaserror
 
       - name: Azure CLI Login
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -463,14 +493,14 @@ jobs:
       - name: Fail workflow if tests failed
         id: check_tests_failed
         if: contains(join(needs.*.result, ','), 'failure')
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: core.setFailed('Integration Tests Failed!')
 
       - name: Fail workflow if tests cancelled
         id: check_tests_cancelled
         if: contains(join(needs.*.result, ','), 'cancelled')
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: core.setFailed('Integration Tests Cancelled!')
 
@@ -528,7 +558,7 @@ jobs:
           key: dotnet-integration-report-history-${{ github.run_id }}
       - name: Upload trend report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dotnet-integration-test-report
           path: |

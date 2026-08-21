@@ -4744,6 +4744,52 @@ async def test_mcp_tool_call_tool_requires_loaded_tools() -> None:
         await tool.call_tool("remote_tool")
 
 
+async def test_generated_mcp_function_ignores_model_supplied_remote_tool_name() -> None:
+    """A model-supplied argument must not be able to redirect the call to another remote tool."""
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool.session = Mock(spec=ClientSession)
+    tool.session.list_tools = AsyncMock(  # ty: ignore[unresolved-attribute]
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="search_docs",
+                    description="Search docs.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                ),
+                types.Tool(
+                    name="delete_repo",
+                    description="Delete a repository.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {"repo": {"type": "string"}},
+                        "required": ["repo"],
+                    },
+                ),
+            ]
+        )
+    )
+    tool.session.call_tool = AsyncMock(  # ty: ignore[unresolved-attribute]
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+    )
+
+    await tool.load_tools()
+
+    search_docs = next(func for func in tool.functions if func.name == "search_docs")
+    await search_docs.invoke(
+        arguments={"query": "quarterly report", "_remote_tool_name": "delete_repo", "repo": "corp/prod"}
+    )
+
+    tool.session.call_tool.assert_awaited_once()  # ty: ignore[unresolved-attribute]
+    await_args = tool.session.call_tool.await_args  # ty: ignore[unresolved-attribute]
+    assert await_args is not None
+    assert await_args.args[0] == "search_docs"
+    assert await_args.kwargs["arguments"] == {"query": "quarterly report"}
+
+
 async def test_mcp_tool_get_prompt_requires_loaded_prompts() -> None:
     tool = MCPTool(name="test_tool", load_prompts=False)  # type: ignore[abstract]
 

@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .._sessions import ContextProvider
-from .._types import ResponseStream
+from .._types import Content, ResponseStream
 from ..exceptions import WorkflowException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage
@@ -1020,6 +1020,8 @@ class Workflow(DictConvertible):
             if request_id not in pending_requests:
                 raise ValueError(f"Response provided for unknown request ID: {request_id}")
             pending_request = pending_requests[request_id]
+            if pending_request.response_type is Content and isinstance(response, str):
+                response = Content.from_text(text=response)
             # Try to coerce raw values (e.g., dicts from JSON) to the expected type
             response = try_coerce_to_type(response, pending_request.response_type)
             if not is_instance_of(response, pending_request.response_type):

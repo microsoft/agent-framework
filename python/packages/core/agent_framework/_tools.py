@@ -97,6 +97,7 @@ DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 _TOOL_APPROVAL_STATE_KEY: Final[str] = "tool_approval"
 _ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY: Final[str] = "already_approved_approval_request_groups"
+_PENDING_APPROVAL_REQUESTS_KEY: Final[str] = "pending_approval_requests"
 _FUNCTION_INVOCATION_BUDGET_STATE_KEY: Final[str] = "_function_invocation_budget_state"
 _FUNCTION_INVOCATION_LIMIT_FALLBACK_TEXT: Final[str] = (
     "Function invocation limit reached before a final answer could be produced."
@@ -745,7 +746,10 @@ class FunctionTool(SerializationMixin):
                 "response_format",
             }
         }
-        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        # gen_ai.tool.call.arguments/result were introduced above v1.36.0; only emit them
+        # as span attributes when that semconv version is active.
+        emit_tool_call_attrs = OBSERVABILITY_SETTINGS.emit_tool_call_attributes
+        if emit_tool_call_attrs:
             attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: (
                     json.dumps(serializable_kwargs, default=str, ensure_ascii=False) if serializable_kwargs else "None"
@@ -772,8 +776,9 @@ class FunctionTool(SerializationMixin):
                     logger.info(f"Function {self.name} succeeded.")
                     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                         result_str = str(result)
-                        span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                         logger.debug(f"Function result: {result_str}")
+                        if emit_tool_call_attrs:
+                            span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                     return result
                 try:
                     parsed = parser(result)
@@ -785,8 +790,9 @@ class FunctionTool(SerializationMixin):
                 logger.info(f"Function {self.name} succeeded.")
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                     result_str = "\n".join(c.text or "" for c in parsed if c.type == "text") or str(parsed)
-                    span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                     logger.debug(f"Function result: {result_str}")
+                    if emit_tool_call_attrs:
+                        span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                 return parsed
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
@@ -1458,6 +1464,10 @@ async def _auto_invoke_function(
     Raises:
         KeyError: If the requested function is not found in the tool map.
         MiddlewareTermination: If middleware requests loop termination.
+        MiddlewareFailure: If middleware (or the tool) aborts the run fail-closed.
+            Unlike ordinary exceptions, which are converted into tool-error results,
+            this explicit signal is re-raised so it propagates to the run's caller.
+        UserInputRequiredException: If the tool requires user input to proceed.
     """
     from ._types import Content
 
@@ -1532,7 +1542,7 @@ async def _auto_invoke_function(
             additional_properties=function_call_content.additional_properties,
         )
 
-    from ._middleware import FunctionInvocationContext
+    from ._middleware import FunctionInvocationContext, MiddlewareFailure
 
     if middleware_pipeline is None or not middleware_pipeline.has_middlewares:
         # No middleware - execute directly
@@ -1556,7 +1566,9 @@ async def _auto_invoke_function(
                 result=function_result,
                 additional_properties=function_call_content.additional_properties,
             )
-        except UserInputRequiredException:
+        except (MiddlewareFailure, UserInputRequiredException):
+            # Explicit control-flow signals escape the loop; only ordinary exceptions
+            # are absorbed into tool-error results below.
             raise
         except Exception as exc:
             return _function_execution_error_result(function_call_content, tool.name, exc, config)
@@ -1620,7 +1632,10 @@ async def _auto_invoke_function(
                     additional_properties=function_call_content.additional_properties,
                 )
         raise
-    except UserInputRequiredException:
+    except (MiddlewareFailure, UserInputRequiredException):
+        # MiddlewareFailure is the loop's explicit fail-closed escape: middleware that
+        # must abort the run (enforcement layers, guardrails) raises it instead of
+        # relying on the tool-error conversion below, and it propagates to the caller.
         raise
     except Exception as exc:
         return _function_execution_error_result(function_call_content, tool.name, exc, config)
@@ -1813,6 +1828,7 @@ async def _try_execute_function_call_groups(
             visible_requests,
             already_approved_requests,
         )
+        _store_pending_approval_requests(invocation_session, visible_requests)
         return [[request] for request in visible_requests], False
     if has_declaration_only_call:
         # Declaration-only calls are returned as user input rather than executed locally.
@@ -1844,7 +1860,20 @@ async def _try_execute_function_call_groups(
         )
         for function_call in function_calls
     ]
-    execution_results = await asyncio.gather(*execution_tasks)
+    try:
+        execution_results = await asyncio.gather(*execution_tasks)
+    except BaseException:
+        # A loud escape from one call (e.g. MiddlewareFailure aborting the run
+        # fail-closed) fails the whole batch: cancel in-flight siblings and wait for
+        # them so no new tool work starts after the loop is abandoned. Cancellation
+        # is cooperative — a synchronous tool body already running in a worker thread
+        # (asyncio.to_thread) cannot be interrupted and may complete its side effects,
+        # but its result is discarded with the batch and never reaches the transcript,
+        # the model, or history.
+        for task in execution_tasks:
+            task.cancel()
+        await asyncio.gather(*execution_tasks, return_exceptions=True)
+        raise
 
     should_terminate = any(terminate for _, terminate in execution_results)
     return [result_contents for result_contents, _ in execution_results], should_terminate
@@ -1941,6 +1970,11 @@ def _is_hosted_tool_approval(content: Any) -> bool:
         return False
     ap = getattr(fc, "additional_properties", None)
     return bool(ap and ap.get("server_label"))
+
+
+def _is_approval_granted(value: Any) -> bool:
+    """Return whether an approval decision is the strict boolean ``True``."""
+    return value is True
 
 
 def _is_unexecutable_local_tool_content(content: Content) -> bool:
@@ -2070,6 +2104,146 @@ def _content_from_state(value: Any) -> Content | None:
     if isinstance(value, Mapping):
         return Content.from_dict(cast(Mapping[str, Any], value))
     return None
+
+
+def _load_pending_approval_requests(invocation_session: AgentSession | None) -> dict[str, Content]:
+    """Load immutable approval-request snapshots keyed by request ID."""
+    state = _get_tool_approval_state(invocation_session)
+    if state is None:
+        return {}
+    raw_requests = state.get(_PENDING_APPROVAL_REQUESTS_KEY, [])
+    if not isinstance(raw_requests, list):
+        return {}
+    pending: dict[str, Content] = {}
+    for raw_request in cast(list[Any], raw_requests):
+        request = _content_from_state(raw_request)
+        if request is not None and request.type == "function_approval_request" and request.id is not None:
+            if request.id in pending:
+                raise ValueError(f"Duplicate pending approval request id {request.id!r}.")
+            pending[request.id] = request
+    return pending
+
+
+def _save_pending_approval_requests(
+    invocation_session: AgentSession | None,
+    pending_requests: Mapping[str, Content],
+) -> None:
+    """Persist the active approval-request batch."""
+    state = _get_tool_approval_state(invocation_session)
+    if state is None:
+        return
+    if pending_requests:
+        state[_PENDING_APPROVAL_REQUESTS_KEY] = [request.to_dict() for request in pending_requests.values()]
+    else:
+        state.pop(_PENDING_APPROVAL_REQUESTS_KEY, None)
+
+
+def _store_pending_approval_requests(
+    invocation_session: AgentSession | None,
+    approval_requests: Sequence[Content],
+) -> None:
+    """Replace the active batch with immutable snapshots of surfaced approval requests."""
+    if invocation_session is None:
+        return
+    pending: dict[str, Content] = {}
+    for request in approval_requests:
+        if request.type != "function_approval_request" or request.id is None:
+            continue
+        if request.id in pending:
+            raise ValueError(f"Duplicate approval request id {request.id!r} in the active batch.")
+        snapshot = _content_from_state(request.to_dict())
+        if snapshot is not None:
+            pending[request.id] = snapshot
+    _save_pending_approval_requests(invocation_session, pending)
+    state = _get_tool_approval_state(invocation_session)
+    if state is None:
+        return
+    raw_groups = state.get(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY)
+    if not isinstance(raw_groups, list):
+        return
+    active_ids = set(pending)
+    active_groups: list[Any] = []
+    for raw_group in cast(list[Any], raw_groups):
+        if not isinstance(raw_group, Mapping):
+            continue
+        group = cast(Mapping[str, Any], raw_group)
+        raw_ids = group.get("approval_request_ids")
+        if not isinstance(raw_ids, list):
+            continue
+        group_ids = {str(item) for item in cast(list[Any], raw_ids)}
+        if group_ids.issubset(active_ids):
+            active_groups.append(raw_group)
+    if active_groups:
+        state[_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY] = active_groups
+    else:
+        state.pop(_ALREADY_APPROVED_APPROVAL_REQUEST_GROUPS_KEY, None)
+
+
+def _bind_approval_response_to_pending_request(
+    response: Content,
+    invocation_session: AgentSession | None,
+    *,
+    consume: bool,
+) -> Content | None:
+    """Bind one approval response to a session-recorded request."""
+    from ._types import Content
+
+    if invocation_session is None:
+        return response
+    if response.id is None:
+        return None
+    pending = _load_pending_approval_requests(invocation_session)
+    request = pending.get(response.id)
+    if request is None or request.function_call is None:
+        return None
+    rebound_call = _content_from_state(request.function_call.to_dict())
+    if rebound_call is None:
+        return None
+    rebound = Content.from_function_approval_response(
+        approved=_is_approval_granted(response.approved),
+        id=response.id,
+        function_call=rebound_call,
+        annotations=response.annotations,
+        additional_properties=copy.deepcopy(response.additional_properties),
+        raw_representation=response.raw_representation,
+    )
+    if consume:
+        pending.pop(response.id, None)
+        _save_pending_approval_requests(invocation_session, pending)
+    return rebound
+
+
+def _bind_approval_responses_to_pending_requests(
+    messages: list[Message],
+    invocation_session: AgentSession | None,
+) -> None:
+    """Rebind approval responses and remove unissued or duplicate responses."""
+    if invocation_session is None:
+        return
+
+    filtered_messages: list[Message] = []
+    for message in messages:
+        filtered_contents: list[Content] = []
+        for content in message.contents:
+            if content.type != "function_approval_response":
+                filtered_contents.append(content)
+                continue
+            rebound = _bind_approval_response_to_pending_request(
+                content,
+                invocation_session,
+                consume=True,
+            )
+            if rebound is None:
+                logger.warning(
+                    "Ignored an approval response with request id %r because no pending approval request exists.",
+                    content.id,
+                )
+                continue
+            filtered_contents.append(rebound)
+        if filtered_contents:
+            message.contents = filtered_contents
+            filtered_messages.append(message)
+    messages[:] = filtered_messages
 
 
 def _store_already_approved_approval_requests(
@@ -2419,7 +2593,7 @@ def _replace_approval_contents_with_results(
                 if occurrence is None:
                     occurrence = find_open_occurrence(call_id)
                 replacements: list[Content] | None
-                if content.approved:
+                if _is_approval_granted(content.approved):
                     call_result_groups = result_groups_by_call_id.get(call_id)
                     replacements = call_result_groups.popleft() if call_result_groups else None
                 else:
@@ -2704,9 +2878,19 @@ async def _resolve_approval_responses(
     max_errors: int,
     execute_function_calls: _FunctionCallExecutor,
     invocation_session: AgentSession | None = None,
+    settle_dangling_calls: Callable[[Sequence[Content]], Awaitable[None]] | None = None,
 ) -> _FunctionProcessingResult:
-    """Resolve inbound approval responses before the next model call."""
+    """Resolve inbound approval responses before the next model call.
+
+    ``settle_dangling_calls``, when provided, is invoked with the approved batch if
+    executing it aborts with ``MiddlewareFailure``, so a service-managed conversation
+    can be settled before the abort propagates (the replay's original calls belong to
+    an earlier, already-persisted model turn).
+    """
+    from ._middleware import MiddlewareFailure
     from ._types import Message
+
+    _bind_approval_responses_to_pending_requests(prepared_messages, invocation_session)
 
     # 1. Restore safe siblings hidden with a prior mixed approval batch when its visible decision arrives.
     explicit_approval_response_ids = {
@@ -2728,15 +2912,25 @@ async def _resolve_approval_responses(
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
 
     # 3. Execute approved decisions once. Rejected decisions are converted to results during normalization below.
-    responses_to_execute = [response for response in pending_approval_responses.values() if response.approved]
+    responses_to_execute = [
+        response for response in pending_approval_responses.values() if _is_approval_granted(response.approved)
+    ]
     execution_result_groups: list[list[Content]] = []
     should_terminate = False
     reached_error_limit = False
     if responses_to_execute:
-        execution = await execute_function_calls(
-            function_calls=responses_to_execute,
-            options=options,
-        )
+        try:
+            execution = await execute_function_calls(
+                function_calls=responses_to_execute,
+                options=options,
+            )
+        except MiddlewareFailure:
+            # Fail-closed abort during an approved replay: the original calls belong
+            # to an already-persisted model turn, so settle them on a service-managed
+            # conversation before propagating (best-effort inside the callback).
+            if settle_dangling_calls is not None:
+                await settle_dangling_calls(responses_to_execute)
+            raise
         execution_result_groups = execution.result_groups
         should_terminate = execution.should_terminate
         errors_in_a_row, reached_error_limit = _update_consecutive_error_count(
@@ -2782,14 +2976,23 @@ async def _process_model_function_calls(
     errors_in_a_row: int,
     max_errors: int,
     execute_function_calls: _FunctionCallExecutor,
+    invocation_session: AgentSession | None = None,
 ) -> _FunctionProcessingResult:
     """Execute function calls from a newly completed model response."""
+    approval_requests = [
+        content
+        for message in response.messages
+        for content in message.contents
+        if content.type == "function_approval_request"
+    ]
     # 1. Extract only actionable, unanswered calls from this model turn.
     tools = _extract_tools(options)
     function_calls = _extract_function_calls(response)
     if not (function_calls and tools):
         if function_call_messages is not None:
             _prepend_function_call_messages(response, function_call_messages)
+        if approval_requests:
+            _store_pending_approval_requests(invocation_session, approval_requests)
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row, action="return")
 
     # 2. Execute the batch once while preserving each call's result group.
@@ -2810,6 +3013,15 @@ async def _process_model_function_calls(
     )
     if execution.should_terminate:
         processing_result.action = "return"
+    if processing_result.action == "return":
+        returned_approval_requests = [
+            content
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        if returned_approval_requests:
+            _store_pending_approval_requests(invocation_session, returned_approval_requests)
     return processing_result
 
 
@@ -2867,6 +3079,83 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         ):
             session.service_session_id = conversation_id
 
+    async def _settle_dangling_service_function_calls(
+        self,
+        *,
+        super_get_response: Callable[..., Any],
+        function_calls: Sequence[Content],
+        options: dict[str, Any],
+        request_kwargs: dict[str, Any],
+        compaction_strategy: CompactionStrategy | None,
+        tokenizer: TokenizerProtocol | None,
+        invocation_session: AgentSession | None,
+        response_conversation_id: str | None = None,
+    ) -> None:
+        """Resolve an aborted batch's function calls on a service-managed conversation.
+
+        When ``MiddlewareFailure`` aborts a tool batch, the local run raises before
+        any result exists — but on a service-managed conversation the continuation
+        state (``session.service_session_id``) was already persisted, so the hosted
+        thread ends with unresolved ``function_call`` items and OpenAI-style
+        continuations reject the session's next request (missing tool output). Settle
+        the thread by submitting one error ``function_result`` per dangling call
+        (approval-response wrappers are unwrapped to their underlying calls;
+        hosted-tool approvals are left to their own provider protocol) with
+        ``tool_choice="none"`` so no new calls are requested, then advance the
+        persisted continuation to the settlement response: for response-ID
+        continuations the settlement response is the first endpoint whose chain
+        includes the synthetic outputs, so the next run must start from it (for
+        conversation-object ids the advance is a no-op). The settlement response is
+        otherwise discarded and the run still fails with the original
+        ``MiddlewareFailure``. Everything here is best-effort — a settlement failure
+        is logged and never masks the abort. Costs one extra request, only on the
+        failure path and only when a service-managed conversation is in play.
+        """
+        from ._types import ChatResponse, Content, Message
+
+        if response_conversation_id is None and not options.get("conversation_id"):
+            return
+        try:
+            error_results: list[Content] = []
+            for function_call in function_calls:
+                if _is_hosted_tool_approval(function_call):
+                    continue
+                underlying_call = _underlying_function_call(function_call)
+                if underlying_call.type != "function_call" or underlying_call.call_id is None:
+                    continue
+                error_results.append(
+                    Content.from_function_result(
+                        call_id=underlying_call.call_id,
+                        result="Error: Tool execution was aborted by middleware before a result was produced.",
+                        exception="MiddlewareFailure",
+                        additional_properties=underlying_call.additional_properties,
+                    )
+                )
+            if not error_results:
+                return
+            options["tool_choice"] = "none"
+            settlement_response = await super_get_response(
+                messages=[Message(role="tool", contents=error_results)],
+                stream=False,
+                options=options,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                client_kwargs=request_kwargs,
+            )
+            if isinstance(settlement_response, ChatResponse):
+                self._update_function_invocation_continuation_state(
+                    request_kwargs,
+                    cast("ChatResponse[Any]", settlement_response),
+                    session=invocation_session,
+                    options=options,
+                )
+        except Exception:
+            logger.warning(
+                "Failed to settle dangling function calls on the service-managed conversation; "
+                "the next request over this conversation may be rejected by the service.",
+                exc_info=True,
+            )
+
     def _get_function_middleware_pipeline(
         self,
         runtime_middleware: Sequence[FunctionMiddlewareTypes],
@@ -2897,6 +3186,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_errors: int,
     ) -> ChatResponse[Any]:
         """Run the non-streaming function invocation loop."""
+        from ._middleware import MiddlewareFailure
         from ._types import ChatResponse, add_usage_details
 
         errors_in_a_row = 0
@@ -2909,6 +3199,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
         attempt_start = int(budget_state.get("attempt_count", 0) or 0)
 
+        async def settle_approval_replay_calls(function_calls: Sequence[Content]) -> None:
+            await self._settle_dangling_service_function_calls(
+                super_get_response=super_get_response,
+                function_calls=function_calls,
+                options=options,
+                request_kwargs=request_kwargs,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                invocation_session=invocation_session,
+            )
+
         # Phase 1: resolve inbound approvals before consuming another model iteration.
         approval_processing = await _resolve_approval_responses(
             prepared_messages=prepared_messages,
@@ -2917,6 +3218,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             max_errors=max_errors,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
+            settle_dangling_calls=settle_approval_replay_calls,
         )
         function_call_messages.extend(approval_processing.response_messages)
         errors_in_a_row = approval_processing.errors_in_a_row
@@ -2960,14 +3262,32 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 options=options,
             )
 
-            function_processing = await _process_model_function_calls(
-                response=response,
-                options=options,
-                function_call_messages=function_call_messages,
-                errors_in_a_row=errors_in_a_row,
-                max_errors=max_errors,
-                execute_function_calls=execute_function_calls,
-            )
+            try:
+                function_processing = await _process_model_function_calls(
+                    response=response,
+                    options=options,
+                    function_call_messages=function_call_messages,
+                    errors_in_a_row=errors_in_a_row,
+                    max_errors=max_errors,
+                    execute_function_calls=execute_function_calls,
+                    invocation_session=invocation_session,
+                )
+            except MiddlewareFailure:
+                # Fail-closed abort: before propagating, settle the batch's calls on a
+                # service-managed conversation and advance the persisted continuation
+                # to the settled endpoint (best-effort — a settlement failure never
+                # masks the abort).
+                await self._settle_dangling_service_function_calls(
+                    super_get_response=super_get_response,
+                    function_calls=_extract_function_calls(response),
+                    options=options,
+                    request_kwargs=request_kwargs,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
+                    invocation_session=invocation_session,
+                    response_conversation_id=response.conversation_id,
+                )
+                raise
             total_function_calls = _record_function_calls(
                 budget_state,
                 total_function_calls,
@@ -3029,6 +3349,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         max_errors: int,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Run the streaming function invocation loop."""
+        from ._middleware import MiddlewareFailure
+
         errors_in_a_row = 0
         total_function_calls = int(budget_state.get("total_function_calls", 0) or 0)
         max_function_calls = self.function_invocation_configuration.get("max_function_calls")
@@ -3036,6 +3358,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         response: ChatResponse[Any] | None = None
         max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
         attempt_start = int(budget_state.get("attempt_count", 0) or 0)
+
+        async def settle_approval_replay_calls(function_calls: Sequence[Content]) -> None:
+            await self._settle_dangling_service_function_calls(
+                super_get_response=super_get_response,
+                function_calls=function_calls,
+                options=options,
+                request_kwargs=request_kwargs,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                invocation_session=invocation_session,
+            )
 
         # Phase 1: resolve and emit inbound approval outcomes before opening another provider stream.
         approval_processing = await _resolve_approval_responses(
@@ -3045,6 +3378,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             max_errors=max_errors,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
+            settle_dangling_calls=settle_approval_replay_calls,
         )
         errors_in_a_row = approval_processing.errors_in_a_row
         total_function_calls = _record_function_calls(
@@ -3110,14 +3444,31 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     yield _function_invocation_limit_fallback_update()
                 return
 
-            function_processing = await _process_model_function_calls(
-                response=response,
-                options=options,
-                function_call_messages=None,
-                errors_in_a_row=errors_in_a_row,
-                max_errors=max_errors,
-                execute_function_calls=execute_function_calls,
-            )
+            try:
+                function_processing = await _process_model_function_calls(
+                    response=response,
+                    options=options,
+                    function_call_messages=None,
+                    errors_in_a_row=errors_in_a_row,
+                    max_errors=max_errors,
+                    execute_function_calls=execute_function_calls,
+                    invocation_session=invocation_session,
+                )
+            except MiddlewareFailure:
+                # See the non-streaming loop: settle a service-managed conversation's
+                # dangling calls and advance the persisted continuation before
+                # propagating the fail-closed abort (best-effort).
+                await self._settle_dangling_service_function_calls(
+                    super_get_response=super_get_response,
+                    function_calls=_extract_function_calls(response),
+                    options=options,
+                    request_kwargs=request_kwargs,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
+                    invocation_session=invocation_session,
+                    response_conversation_id=response.conversation_id,
+                )
+                raise
             errors_in_a_row = function_processing.errors_in_a_row
             total_function_calls = _record_function_calls(
                 budget_state,

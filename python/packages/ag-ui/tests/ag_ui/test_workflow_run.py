@@ -4,6 +4,7 @@
 
 import json
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, make_dataclass
 from enum import Enum
 from types import SimpleNamespace
 from typing import Any, cast
@@ -28,7 +29,9 @@ from agent_framework import (
     response_handler,
     tool,
 )
+from agent_framework.orchestrations import MagenticPlanReviewResponse
 from conftest import StreamingChatClientStub  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+from pydantic import BaseModel
 
 from agent_framework_ag_ui._workflow_run import (
     _coerce_content,
@@ -130,7 +133,11 @@ async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch:
     monkeypatch.setattr(
         observability,
         "OBSERVABILITY_SETTINGS",
-        SimpleNamespace(ENABLED=True, SENSITIVE_DATA_ENABLED=False),
+        SimpleNamespace(
+            ENABLED=True,
+            SENSITIVE_DATA_ENABLED=False,
+            use_latest_experimental_gen_ai_semconv=True,
+        ),
     )
     monkeypatch.setattr(observability, "get_tracer", lambda *args, **kwargs: tracer_provider.get_tracer("test"))
 
@@ -1033,6 +1040,65 @@ async def test_workflow_run_empty_turn_with_pending_request_emits_run_error():
     assert getattr(run_error, "code") == "WORKFLOW_RESUME_REQUIRED"
 
 
+async def test_workflow_run_does_not_cancel_until_resolved_siblings_validate() -> None:
+    """A malformed resolved workflow sibling leaves a cancelled request pending."""
+    cancelled_call = Content.from_function_call(
+        call_id="call-cancelled",
+        name="write_record",
+        arguments={"value": "cancelled"},
+    )
+    resolved_call = Content.from_function_call(
+        call_id="call-resolved",
+        name="write_record",
+        arguments={"value": "resolved"},
+    )
+    pending = {
+        "approval-cancelled": SimpleNamespace(
+            request_id="approval-cancelled",
+            data=Content.from_function_approval_request(id="approval-cancelled", function_call=cancelled_call),
+            response_type=Content,
+        ),
+        "approval-resolved": SimpleNamespace(
+            request_id="approval-resolved",
+            data=Content.from_function_approval_request(id="approval-resolved", function_call=resolved_call),
+            response_type=Content,
+        ),
+    }
+
+    async def get_pending_request_info_events() -> dict[str, Any]:
+        return dict(pending)
+
+    runner_context = SimpleNamespace(
+        get_pending_request_info_events=get_pending_request_info_events,
+        _pending_request_info_events=pending,
+    )
+    workflow = SimpleNamespace(_runner_context=runner_context)
+
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {
+                "runId": "run-mixed-invalid",
+                "threadId": "thread-mixed-invalid",
+                "messages": [],
+                "resume": [
+                    {"interruptId": "approval-cancelled", "status": "cancelled"},
+                    {
+                        "interruptId": "approval-resolved",
+                        "status": "resolved",
+                        "payload": {"approved": True, "editedArgs": "not an object"},
+                    },
+                ],
+            },
+            cast(Any, workflow),
+        )
+    ]
+
+    assert [event.type for event in events] == ["RUN_STARTED", "RUN_ERROR"]
+    assert getattr(events[-1], "code") == "WORKFLOW_RESUME_INVALID_RESPONSE"
+    assert set(runner_context._pending_request_info_events) == {"approval-cancelled", "approval-resolved"}
+
+
 async def test_workflow_run_agent_response_output_uses_latest_assistant_message_only() -> None:
     """Conversation payload outputs should not flatten full history into one assistant message."""
 
@@ -1253,6 +1319,93 @@ def test_coerce_response_for_request_bool_int_float_and_mismatch() -> None:
 
     dict_request = SimpleNamespace(response_type=dict)
     assert _coerce_response_for_request(dict_request, "[1,2,3]") is None
+
+
+def test_coerce_response_for_request_builds_dataclass_from_json() -> None:
+    """JSON objects should map onto dataclass response types such as plan review."""
+    request = SimpleNamespace(response_type=MagenticPlanReviewResponse)
+
+    approved = _coerce_response_for_request(request, {"review": []})
+    assert isinstance(approved, MagenticPlanReviewResponse)
+    assert approved.review == []
+
+    revised = _coerce_response_for_request(request, '{"review": [{"role": "user", "content": "add tests"}]}')
+    assert isinstance(revised, MagenticPlanReviewResponse)
+    assert len(revised.review) == 1
+    assert revised.review[0].text == "add tests"
+
+    from_strings = _coerce_response_for_request(request, {"review": ["add tests"]})
+    assert isinstance(from_strings, MagenticPlanReviewResponse)
+    assert from_strings.review[0].text == "add tests"
+
+    assert _coerce_response_for_request(request, {"unknown": 1}) is None
+    assert _coerce_response_for_request(request, "approve") is None
+
+
+def test_coerce_response_for_request_leaves_non_message_fields_untouched() -> None:
+    """Message normalization must follow field annotations, not payload shape."""
+
+    @dataclass
+    class Tagged:
+        note: Message
+        revision: Message | None
+        metadata: dict[str, str]
+
+    request = SimpleNamespace(response_type=Tagged)
+    message_shaped = {"role": "admin", "content": "keep raw"}
+
+    tagged = _coerce_response_for_request(
+        request,
+        {
+            "note": {"role": "user", "content": "translate me"},
+            "revision": {"role": "user", "content": "optional fields too"},
+            "metadata": message_shaped,
+        },
+    )
+    assert isinstance(tagged, Tagged)
+    assert tagged.note.text == "translate me"
+    assert tagged.revision is not None
+    assert tagged.revision.text == "optional fields too"
+    assert tagged.metadata == message_shaped
+
+
+def test_coerce_response_for_request_rejects_malformed_message_field_payloads() -> None:
+    """A Message-typed field that is not message-shaped must fail, not crash normalization."""
+
+    @dataclass
+    class Review:
+        notes: list[Message]
+
+    request = SimpleNamespace(response_type=Review)
+
+    assert _coerce_response_for_request(request, {"notes": "not-a-list"}) is None
+    assert _coerce_response_for_request(request, {"notes": [42]}) is None
+
+
+def test_coerce_response_for_request_skips_normalization_without_resolvable_hints() -> None:
+    """Unresolvable annotations skip message normalization instead of failing the resume."""
+
+    mystery_type = make_dataclass("Mystery", [("value", "DoesNotExist")])
+    request = SimpleNamespace(response_type=mystery_type)
+
+    mystery = _coerce_response_for_request(request, {"value": 1})
+    assert type(mystery) is mystery_type
+    assert vars(mystery) == {"value": 1}
+
+
+def test_coerce_response_for_request_builds_pydantic_model_from_json() -> None:
+    """JSON objects should validate into pydantic response types."""
+
+    class ReviewDecision(BaseModel):
+        approved: bool
+
+    request = SimpleNamespace(response_type=ReviewDecision)
+
+    decision = _coerce_response_for_request(request, {"approved": True})
+    assert isinstance(decision, ReviewDecision)
+    assert decision.approved is True
+
+    assert _coerce_response_for_request(request, {"approved": "not-a-bool"}) is None
 
 
 async def test_workflow_run_emits_run_error_when_stream_raises() -> None:

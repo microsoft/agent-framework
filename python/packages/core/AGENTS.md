@@ -201,6 +201,12 @@ agent_framework/
   every output-capable executor not selected by `output_from`.
 - **`WorkflowRunResult`** - Non-streaming workflow result with Workflow Output `get_outputs()`
   and Intermediate Output `get_intermediate_outputs()` accessors
+- **Functional workflow definition/build lifecycle** - `@workflow` returns a stateless
+  `FunctionalWorkflowDefinition`. Call `build()` to create a stateful `FunctionalWorkflow` scoped to one logical
+  caller or session. The definition has no `run()` or `as_agent()` surface, so module-level decorated definitions
+  cannot accidentally retain caller state. Each built workflow and its `FunctionalWorkflowAgent` must remain scoped
+  to that caller/session. Pass a caller-scoped checkpoint storage to `build(checkpoint_storage=...)` when needed;
+  hosts remain responsible for authorizing and tenant-scoping access to any shared checkpoint adapter.
 - **Orchestrators**: `SequentialOrchestrator`, `ConcurrentOrchestrator`, `GroupChatOrchestrator`, `MagenticOrchestrator`, `HandoffOrchestrator`
 
 ## Built-in Providers
