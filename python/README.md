@@ -260,4 +260,4 @@ For more advanced orchestration patterns including Sequential, Concurrent, Group
 - [Design Documents](https://github.com/microsoft/agent-framework/tree/main/docs/design)
 - [Learn: Agent Framework Overview](https://learn.microsoft.com/agent-framework/overview/agent-framework-overview)
 - [Learn: Quick Start](https://learn.microsoft.com/agent-framework/tutorials/quick-start)
-- [Learn: Tutorials](https://learn.microsoft.com/agent-framework/tutorials/overview)
+- [Learn: Tutorials](https://learn.microsoft.com/agent-framework/get-started/)
