@@ -34,6 +34,13 @@ dependencies = [
 dev = [
     "pytest==9.1.1",
 ]
+# A2UI (agent-generated UI) support. Optional: the agent_framework_ag_ui._a2ui
+# modules import this lazily, so the base package works without it.
+# Floor 0.0.4 is the first release with singular-`child` validation and
+# `child_cycle` detection (ag-ui-protocol/ag-ui#1944).
+a2ui = [
+    "ag-ui-a2ui-toolkit>=0.0.4",
+]
 
 [dependency-groups]
 test = [
@@ -68,6 +75,12 @@ python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
+
+# ag-ui-a2ui-toolkit is a runtime-only dep that does not yet ship a py.typed marker.
+[[tool.mypy.overrides]]
+module = ["ag_ui_a2ui_toolkit", "ag_ui_a2ui_toolkit.*"]
+ignore_missing_imports = true
+follow_untyped_imports = true
 
 [tool.pyright]
 include = ["agent_framework_ag_ui"]

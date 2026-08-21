@@ -997,6 +997,14 @@ class RawOpenAIChatCompletionClient(
                         arguments=tool.function.arguments if tool.function.arguments else "",
                         raw_representation=tool.function,
                     )
+                    # Preserve the streaming tool-call index. Parallel calls interleave
+                    # argument deltas that carry an empty id and name; the index is the
+                    # only stable key a consumer can use to reassemble each call's
+                    # arguments. It is dropped otherwise (raw_representation is the
+                    # function, not the tool call).
+                    tool_index = getattr(tool, "index", None)
+                    if tool_index is not None:
+                        fcc.additional_properties["tool_call_index"] = tool_index
                     resp.append(fcc)
 
         # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
