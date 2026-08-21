@@ -62,6 +62,7 @@ internal sealed class Mem0Client
         };
 
         using var content = new StringContent(JsonSerializer.Serialize(searchRequest, Mem0SourceGenerationContext.Default.SearchRequest), Encoding.UTF8, "application/json");
+        FeatureUsageMarker.MarkUsed();
         using var responseMessage = await this._httpClient.PostAsync(s_searchUri, content, cancellationToken).ConfigureAwait(false);
         responseMessage.EnsureSuccessStatusCode();
 
@@ -106,6 +107,7 @@ internal sealed class Mem0Client
 #pragma warning restore CA1308
 
         using var content = new StringContent(JsonSerializer.Serialize(createMemoryRequest, Mem0SourceGenerationContext.Default.CreateMemoryRequest), Encoding.UTF8, "application/json");
+        FeatureUsageMarker.MarkUsed();
         using var responseMessage = await this._httpClient.PostAsync(s_createMemoryUri, content, cancellationToken).ConfigureAwait(false);
         responseMessage.EnsureSuccessStatusCode();
     }
@@ -123,6 +125,7 @@ internal sealed class Mem0Client
         var queryString = string.Join("&", querystringParams);
         var clearMemoryUrl = new Uri($"/v1/memories/?{queryString}", UriKind.Relative);
 
+        FeatureUsageMarker.MarkUsed();
         using var responseMessage = await this._httpClient.DeleteAsync(clearMemoryUrl, cancellationToken).ConfigureAwait(false);
         responseMessage.EnsureSuccessStatusCode();
     }

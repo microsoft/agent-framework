@@ -8,4 +8,10 @@
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Anthropic\Microsoft.Agents.AI.Anthropic.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\FeatureUsageAssert.cs" Link="FeatureUsageAssert.cs" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+    <Using Include="Microsoft.Agents.AI.Testing" />
+  </ItemGroup>
+
 </Project>

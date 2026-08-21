@@ -25,6 +25,7 @@ internal sealed class AsyncStreamingChatCompletionUpdateCollectionResult : Async
 
     protected override IAsyncEnumerable<StreamingChatCompletionUpdate> GetValuesFromPageAsync(ClientResult page)
     {
+        FeatureUsageMarker.MarkUsed();
         var updates = ((ClientResult<IAsyncEnumerable<AgentResponseUpdate>>)page).Value;
 
         return updates.AsChatResponseUpdatesAsync().AsOpenAIStreamingChatCompletionUpdatesAsync();

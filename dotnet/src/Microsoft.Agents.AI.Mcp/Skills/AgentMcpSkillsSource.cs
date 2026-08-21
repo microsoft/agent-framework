@@ -109,6 +109,10 @@ internal sealed partial class AgentMcpSkillsSource : AgentSkillsSource
     /// <inheritdoc/>
     public override async Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)Mcp.FeatureIndex.CoreMcpSkillsSource);
+#pragma warning restore MAAI001
+
         McpSkillIndex? index = await this.TryReadIndexAsync(cancellationToken).ConfigureAwait(false);
 
         // Group entries by type and set aside those a registered loader can handle; entries of any

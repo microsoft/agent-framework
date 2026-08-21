@@ -32,4 +32,7 @@
   <ItemGroup Condition="'$(InjectSharedRedaction)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\Redaction\*.cs" LinkBase="Shared\Redaction" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedFeatureUsageUserAgent)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\FeatureUsage\*.cs" LinkBase="Shared\FeatureUsage" />
+  </ItemGroup>
 </Project>

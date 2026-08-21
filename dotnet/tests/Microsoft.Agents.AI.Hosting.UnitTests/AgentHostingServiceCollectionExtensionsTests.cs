@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -14,6 +15,71 @@ namespace Microsoft.Agents.AI.Hosting.UnitTests;
 
 public class AgentHostingServiceCollectionExtensionsTests
 {
+    [Fact]
+    public async Task AIHostAgent_RunAsync_MarksFeatureUsedAsync()
+    {
+        // Arrange
+        var hostAgent = new AIHostAgent(new TestEchoAgent(name: "hosted-agent"), new NoopAgentSessionStore());
+        ResetFeatureUsage();
+
+        // Act
+        _ = await hostAgent.RunAsync("hello");
+
+        // Assert
+        AssertFeatureUsed(71);
+    }
+
+    [Fact]
+    public async Task AIHostAgent_RunStreamingAsync_MarksOnlyOnEnumerationAsync()
+    {
+        // Arrange
+        var hostAgent = new AIHostAgent(new TestEchoAgent(name: "hosted-agent"), new NoopAgentSessionStore());
+        ResetFeatureUsage();
+
+        // Act
+        IAsyncEnumerable<AgentResponseUpdate> updates = hostAgent.RunStreamingAsync("hello");
+
+        // Assert
+        AssertFeatureNotUsed();
+        await foreach (AgentResponseUpdate _ in updates)
+        {
+        }
+        AssertFeatureUsed(71);
+    }
+
+    private static void AssertFeatureUsed(int featureIndex)
+    {
+#pragma warning disable MAAI001
+        string userAgent = FeatureUsage.ApplyToUserAgent(string.Empty);
+#pragma warning restore MAAI001
+        const string Prefix = "(feat=v1.";
+        Assert.StartsWith(Prefix, userAgent);
+        Assert.EndsWith(")", userAgent);
+
+        string hexMask = userAgent[Prefix.Length..^1];
+        int digitOffset = featureIndex / 4;
+        Assert.True(hexMask.Length > digitOffset);
+        char digit = char.ToLowerInvariant(hexMask[hexMask.Length - digitOffset - 1]);
+        int nibble = digit <= '9' ? digit - '0' : digit - 'a' + 10;
+        Assert.NotEqual(0, nibble & (1 << (featureIndex & 3)));
+    }
+
+    private static void AssertFeatureNotUsed()
+    {
+#pragma warning disable MAAI001
+        Assert.Equal(string.Empty, FeatureUsage.ApplyToUserAgent(string.Empty));
+#pragma warning restore MAAI001
+    }
+
+    private static void ResetFeatureUsage()
+    {
+        MethodInfo? reset = typeof(FeatureUsage).GetMethod(
+            "ResetStateForTests",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(reset);
+        reset.Invoke(obj: null, parameters: null);
+    }
+
     /// <summary>
     /// Verifies that providing a null builder to AddAIAgent throws an ArgumentNullException.
     /// </summary>
