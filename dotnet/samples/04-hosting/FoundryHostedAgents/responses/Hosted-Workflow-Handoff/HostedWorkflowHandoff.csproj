@@ -25,7 +25,7 @@
     <PackageReference Include="Microsoft.Agents.AI.Hosting" Version="$(AgentFrameworkVersion)" />
     <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
-    <PackageReference Include="ModelContextProtocol" Version="1.2.0" />
+    <PackageReference Include="ModelContextProtocol" Version="2.1.0" />
     <PackageReference Include="DotNetEnv" Version="3.1.1" />
   </ItemGroup>
 
