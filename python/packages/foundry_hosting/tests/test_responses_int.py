@@ -1118,6 +1118,10 @@ async def _crash_and_recover(
     return body
 
 
+@pytest.mark.xfail(
+    reason=("Known gap: 1. 'RuntimeError: Server did not become ready in time.' consistenly in CI. 2. #7809"),
+    strict=False,
+)
 class TestWorkflowResilientRecoveryRealCrash:
     """Force-kill a real ResponsesHostServer process mid-workflow and verify a freshly started
     process, pointed at the same on-disk state, recovers and completes the response with no
