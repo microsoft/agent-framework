@@ -13,9 +13,9 @@ public static class SequentialWorkflow
     /// <summary>
     /// Creates a workflow that asks one agent to draft content and another to review it.
     /// </summary>
-    /// <param name="producer">The producer agent.</param>
+    /// <param name="writer">The writer agent.</param>
     /// <param name="reviewer">The reviewer agent.</param>
     /// <returns>The sequential workflow.</returns>
-    public static Workflow Create(AIAgent producer, AIAgent reviewer)
-        => new SequentialWorkflowBuilder(producer, reviewer).Build();
+    public static Workflow Create(AIAgent writer, AIAgent reviewer)
+        => new SequentialWorkflowBuilder(writer, reviewer).Build();
 }

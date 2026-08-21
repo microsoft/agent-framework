@@ -29,8 +29,7 @@ AIAgent critic = chatClient.AsAIAgent(
     name: "Critic",
     instructions: "Identify risks and missing considerations in the user's request.");
 
-Workflow workflow = ConcurrentWorkflow.Create(researcher, critic);
-AIAgent workflowAgent = workflow.AsAIAgent(name: "ConcurrentWorkflow");
+AIAgent workflowAgent = ConcurrentWorkflow.Create(researcher, critic).AsAIAgent(name: "ConcurrentWorkflow");
 
 WebApplication app = builder.Build();
 app.MapAGUIServer("/", workflowAgent);

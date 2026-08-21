@@ -22,15 +22,14 @@ ChatClient chatClient = new AzureOpenAIClient(
         new DefaultAzureCredential())
     .GetChatClient(deploymentName);
 
-AIAgent producer = chatClient.AsAIAgent(
-    name: "Producer",
+AIAgent writer = chatClient.AsAIAgent(
+    name: "Writer",
     instructions: "Draft a concise answer to the user's request.");
 AIAgent reviewer = chatClient.AsAIAgent(
     name: "Reviewer",
     instructions: "Review the draft and return an improved final answer.");
 
-Workflow workflow = SequentialWorkflow.Create(producer, reviewer);
-AIAgent workflowAgent = workflow.AsAIAgent(name: "SequentialWorkflow");
+AIAgent workflowAgent = SequentialWorkflow.Create(writer, reviewer).AsAIAgent(name: "SequentialWorkflow");
 
 WebApplication app = builder.Build();
 app.MapAGUIServer("/", workflowAgent);

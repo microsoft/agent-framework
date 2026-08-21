@@ -32,8 +32,7 @@ AIAgent weatherAgent = chatClient.AsAIAgent(
     name: "WeatherAgent",
     instructions: "Use the weather tool and answer with the returned forecast.",
     tools: [AIFunctionFactory.Create(GetWeather)]);
-Workflow workflow = ToolWorkflow.Create(weatherAgent);
-AIAgent workflowAgent = workflow.AsAIAgent(name: "ToolWorkflow");
+AIAgent workflowAgent = ToolWorkflow.Create(weatherAgent).AsAIAgent(name: "ToolWorkflow");
 
 WebApplication app = builder.Build();
 app.MapAGUIServer("/", workflowAgent);
