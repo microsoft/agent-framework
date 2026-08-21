@@ -2,20 +2,16 @@
 
 using AGUI.Abstractions;
 using AGUI.Client;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
 string serverUrl = Environment.GetEnvironmentVariable("AGUI_SERVER_URL") ?? "http://localhost:8888";
 using HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
-AGUIChatClient chatClient = new(new(httpClient, serverUrl));
-AIAgent agent = chatClient.AsAIAgent(name: "workflow-client");
-AgentSession session = await agent.CreateSessionAsync();
+IChatClient chatClient = new AGUIChatClient(new(httpClient, serverUrl));
 
-await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(
-    new ChatMessage(ChatRole.User, "What is the weather in Seattle?"),
-    session))
+await foreach (ChatResponseUpdate update in chatClient.GetStreamingResponseAsync(
+    [new ChatMessage(ChatRole.User, "What is the weather in Seattle?")]))
 {
-    switch (update.AsChatResponseUpdate().RawRepresentation)
+    switch (update.RawRepresentation)
     {
         case StepStartedEvent started:
             Console.WriteLine($"\n[Step started: {started.StepName}]");

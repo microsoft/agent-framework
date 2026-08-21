@@ -8,9 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
     <PackageReference Include="AGUI.Client" />
-    <PackageReference Include="AGUI.Server" />
   </ItemGroup>
 
 </Project>

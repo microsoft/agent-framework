@@ -1,50 +1,58 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Net.Http.Json;
 using System.Text.Json;
 using AGUI.Abstractions;
 using AGUI.Client;
-using AGUI.Server;
 using Microsoft.Extensions.AI;
 
 string serverUrl = Environment.GetEnvironmentVariable("AGUI_SERVER_URL") ?? "http://localhost:8888";
-using HttpClient httpClient = new() { BaseAddress = new Uri(serverUrl), Timeout = TimeSpan.FromSeconds(60) };
+using HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
+using IChatClient chatClient = new AGUIChatClient(new(httpClient, serverUrl));
 
-RunAgentInput initialInput = new()
-{
-    Messages = new[] { new ChatMessage(ChatRole.User, "Plan my conference trip.") }.AsAGUIMessages().ToList(),
-    RunId = Guid.NewGuid().ToString("N"),
-    ThreadId = Guid.NewGuid().ToString("N"),
-};
-List<BaseEvent> firstTurn = await SendAsync(initialInput);
-RunFinishedEvent firstFinished = firstTurn.OfType<RunFinishedEvent>().Single();
+List<ChatResponseUpdate> firstTurn = await chatClient
+    .GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Plan my conference trip.")])
+    .ToListAsync();
+RunFinishedEvent firstFinished = firstTurn.Select(static update => update.RawRepresentation)
+    .OfType<RunFinishedEvent>()
+    .Single();
 AGUIInterrupt[] requests = [.. ((RunFinishedInterruptOutcome)firstFinished.Outcome!).Interrupts];
 
 AGUIInterrupt dates = requests.Single(static item => item.Message!.Contains("TravelDates"));
 AGUIInterrupt travelers = requests.Single(static item => item.Message!.Contains("TravelerDetails"));
 AGUIInterrupt preferences = requests.Single(static item => item.Message!.Contains("TravelPreferences"));
 
-RunFinishedEvent partialFinished = (await SendAsync(CreateResume(
-    firstFinished,
-    [
-        Resume(travelers, new { kind = "travelers", count = 2, accessibility = "none" }),
-        Resume(dates, new { kind = "dates", departure = "2026-10-10", returnDate = "2026-10-14" }),
-    ]))).OfType<RunFinishedEvent>().Single();
+List<ChatResponseUpdate> partialTurn = await chatClient.GetStreamingResponseAsync(
+    [],
+    CreateResumeOptions(
+        firstFinished,
+        [
+            Resume(travelers, new { kind = "travelers", count = 2, accessibility = "none" }),
+            Resume(dates, new { kind = "dates", departure = "2026-10-10", returnDate = "2026-10-14" }),
+        ])).ToListAsync();
+RunFinishedEvent partialFinished = partialTurn.Select(static update => update.RawRepresentation)
+    .OfType<RunFinishedEvent>()
+    .Single();
 
-List<BaseEvent> finalTurn = await SendAsync(CreateResume(
-    partialFinished,
-    [Resume(preferences, new { kind = "preferences", budget = 2500, cabin = "economy", hotel = "downtown" })]));
+List<ChatResponseUpdate> finalTurn = await chatClient.GetStreamingResponseAsync(
+    [],
+    CreateResumeOptions(
+        partialFinished,
+        [Resume(preferences, new { kind = "preferences", budget = 2500, cabin = "economy", hotel = "downtown" })]))
+    .ToListAsync();
 
-Console.WriteLine(string.Concat(finalTurn.OfType<TextMessageContentEvent>().Select(static evt => evt.Delta)));
+Console.WriteLine(string.Concat(finalTurn.Select(static update => update.Text)));
 
-RunAgentInput CreateResume(RunFinishedEvent previous, IList<AGUIResume> resumes)
+ChatOptions CreateResumeOptions(RunFinishedEvent previous, IList<AGUIResume> resumes)
     => new()
     {
-        Messages = [],
-        ParentRunId = previous.RunId,
-        Resume = resumes,
-        RunId = Guid.NewGuid().ToString("N"),
-        ThreadId = previous.ThreadId,
+        RawRepresentationFactory = _ => new RunAgentInput
+        {
+            Messages = [],
+            ParentRunId = previous.RunId,
+            Resume = resumes,
+            RunId = Guid.NewGuid().ToString("N"),
+            ThreadId = previous.ThreadId,
+        },
     };
 
 static AGUIResume Resume(AGUIInterrupt interrupt, object payload)
@@ -54,11 +62,3 @@ static AGUIResume Resume(AGUIInterrupt interrupt, object payload)
         Payload = JsonSerializer.SerializeToElement(payload),
         Status = "resolved",
     };
-
-async Task<List<BaseEvent>> SendAsync(RunAgentInput input)
-{
-    using JsonContent content = JsonContent.Create(input, AGUIJsonSerializerContext.Default.RunAgentInput);
-    using HttpResponseMessage response = await httpClient.PostAsync(new Uri("", UriKind.Relative), content);
-    response.EnsureSuccessStatusCode();
-    return await response.ReadAGUIEventStreamAsync().ToListAsync();
-}
