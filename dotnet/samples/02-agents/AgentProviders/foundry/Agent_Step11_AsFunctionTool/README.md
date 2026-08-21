@@ -2,7 +2,7 @@
 
 This sample demonstrates how to use one agent as a function tool for another agent.
 
-Function tools expose operations through structured inputs, making them useful for scenarios such as API integrations with validation and transformations, database operations, or payment processing. Using `.AsAIFunction()` exposes an agent as a function tool, enabling agent composition and advanced workflows; because the wrapped agent remains model-driven, this does not make its behavior deterministic.
+Function tools expose operations through structured inputs, making them useful for scenarios such as API integrations with validation and transformations, database operations, or payment processing. Using `.AsAIFunction()` exposes an agent as a function tool, enabling agent composition and advanced workflows. Because the wrapped agent remains model-driven, this does not make its behavior deterministic. Agents exposed through `.AsAIFunction()` are intended for background and non-interactive workflows, and are not suited for workflows that require human-in-the-loop approval.
 
 ## What this sample demonstrates
 
