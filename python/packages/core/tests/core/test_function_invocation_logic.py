@@ -6581,11 +6581,7 @@ async def test_stop_reason_max_function_calls(chat_client_base: SupportsChatGetR
     )
 
     # max_function_calls degradation: stop_reason now correctly reflects "max_function_calls"
-    assert response.additional_properties.get("_agent_framework_stop_reason") in (
-        "completed",
-        "max_iterations",
-        "max_function_calls",
-    )
+    assert response.additional_properties.get("_agent_framework_stop_reason") == "max_function_calls"
 
 
 @pytest.mark.parametrize("max_iterations", [10])
@@ -6698,20 +6694,16 @@ async def test_batch_limit_decision_precedence_duration_over_call_count(
 
     from unittest.mock import patch
 
-    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
-        response = await chat_client_base.get_response(
-            [Message(role="user", contents=["Go"])],
-            stream=streaming,
-            options={
-                "tool_choice": "auto",
-                "tools": [op],
-            },
-        )
+    agent = Agent(client=chat_client_base, tools=[op])
 
-    if streaming:
-        async for _ in response:
-            pass
-        response = await response.get_final_response()
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        if streaming:
+            stream = agent.run("Go", stream=True)
+            async for _ in stream:
+                pass
+            response = await stream.get_final_response()
+        else:
+            response = await agent.run("Go")
 
     assert response.additional_properties.get("_agent_framework_stop_reason") == "max_duration_seconds", (
         "Duration limit should win precedence over call-count limit"
@@ -6753,3 +6745,183 @@ async def test_agent_streaming_surfaces_stop_reason_on_final_response(
     assert final.additional_properties.get("_agent_framework_stop_reason") == "max_iterations", (
         "Agent streaming response must surface _agent_framework_stop_reason from the inner ChatResponse"
     )
+
+
+def test_max_duration_seconds_rejects_nan():
+    from agent_framework._tools import normalize_function_invocation_configuration
+
+    with pytest.raises(ValueError, match="max_duration_seconds must be greater than 0 or None"):
+        normalize_function_invocation_configuration({"max_duration_seconds": float("nan")})
+
+
+async def test_phase1_duration_expiry_prevents_approval_execution(chat_client_base: SupportsChatGetResponse):
+    @tool(name="op", approval_mode="always_require")
+    def op() -> str:
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]
+
+    call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]
+        ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
+        ChatResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text("fallback")])], finish_reason="stop"
+        ),
+    ]
+
+    call_count = 0
+
+    def fake_perf_counter() -> float:
+        nonlocal call_count
+        call_count += 1
+        return 0.0 if call_count <= 2 else 10.0
+
+    from unittest.mock import patch
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        from agent_framework._sessions import AgentSession
+        session = AgentSession()
+        session.state["_approval_op1"] = True
+
+        agent = Agent(client=chat_client_base, tools=[op])
+        response = await agent.run("Go", session=session)
+
+    assert response.additional_properties.get("_agent_framework_stop_reason") == "max_duration_seconds"
+
+
+async def test_duration_expiry_drops_unexecutable_provider_call(chat_client_base: SupportsChatGetResponse):
+    @tool(name="op")
+    def op() -> str:
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]
+
+    call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]
+        ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
+        ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
+        ChatResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text("fallback")])], finish_reason="stop"
+        ),
+    ]
+
+    call_count = 0
+
+    def fake_perf_counter() -> float:
+        nonlocal call_count
+        call_count += 1
+        return 0.0 if call_count <= 2 else 10.0
+
+    from unittest.mock import patch
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["Go"])],
+            options={"tool_choice": "auto", "tools": [op]}
+        )
+
+    assert response.additional_properties.get("_agent_framework_stop_reason") == "max_duration_seconds"
+
+
+async def test_session_budget_state_persists_during_approval_and_cleans_up_on_completion(
+    chat_client_base: SupportsChatGetResponse,
+):
+    from agent_framework._harness._tool_approval import ToolApprovalMiddleware
+    from agent_framework._sessions import AgentSession
+
+    @tool(name="op", approval_mode="always_require")
+    def op() -> str:
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]
+    call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]
+        ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
+        ChatResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text("fallback")])], finish_reason="stop"
+        ),
+    ]
+
+    session = AgentSession()
+    middleware = ToolApprovalMiddleware()
+    agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
+
+    call_count = 0
+
+    def fake_perf_counter() -> float:
+        nonlocal call_count
+        call_count += 1
+        return 0.0 if call_count <= 2 else 10.0
+
+    import contextlib
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        with contextlib.suppress(Exception):
+            await agent.run("Go", session=session)
+
+        assert "_function_invocation_budget" in session.state
+        assert "start_time" in session.state["_function_invocation_budget"]
+
+        session.state["_approval_op1"] = True
+
+        await agent.run("Resume", session=session)
+
+        assert "_function_invocation_budget" not in session.state
+
+
+async def test_plain_session_multiturn_has_isolated_budget_state_per_invocation(
+    chat_client_base: SupportsChatGetResponse,
+):
+    from agent_framework._sessions import AgentSession
+
+    @tool(name="op")
+    def op() -> str:
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]
+        ChatResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text("first")])], finish_reason="stop"
+        ),
+        ChatResponse(
+            messages=[Message(role="assistant", contents=[Content.from_text("second")])], finish_reason="stop"
+        ),
+    ]
+
+    session = AgentSession()
+    agent = Agent(client=chat_client_base, tools=[op])
+
+    await agent.run("Go", session=session)
+    assert "_function_invocation_budget" not in session.state
+
+    await agent.run("Go again", session=session)
+    assert "_function_invocation_budget" not in session.state
+
+
+async def test_streaming_pending_approval_survives_budget_state_pop(chat_client_base: SupportsChatGetResponse):
+    from agent_framework._harness._tool_approval import ToolApprovalMiddleware
+    from agent_framework._sessions import AgentSession
+
+    @tool(name="op", approval_mode="always_require")
+    def op() -> str:
+        return "done"
+
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 100.0  # type: ignore[attr-defined]
+    call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]
+        [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+        [ChatResponseUpdate(contents=[Content.from_text("fallback")], role="assistant", finish_reason="stop")],
+    ]
+
+    session = AgentSession()
+    middleware = ToolApprovalMiddleware()
+    agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
+
+    stream = agent.run("Go", session=session, stream=True)
+
+    try:
+        async for _ in stream:
+            pass
+    except Exception:
+        pass
+
+    assert "_function_invocation_budget" in session.state
