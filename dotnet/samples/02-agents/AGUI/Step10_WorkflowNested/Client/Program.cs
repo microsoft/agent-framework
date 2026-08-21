@@ -8,14 +8,14 @@ using Microsoft.Extensions.AI;
 string serverUrl = Environment.GetEnvironmentVariable("AGUI_SERVER_URL") ?? "http://localhost:8888";
 using HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(60) };
 AGUIChatClient chatClient = new(new(httpClient, serverUrl));
-AIAgent agent = chatClient.AsAIAgent(name: "workflow-client");
-AgentSession session = await agent.CreateSessionAsync();
+AIAgent remoteAgent = chatClient.AsAIAgent(name: "workflow-client");
+AgentSession remoteSession = await remoteAgent.CreateSessionAsync();
 
 try
 {
-    await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(
+    await foreach (AgentResponseUpdate update in remoteAgent.RunStreamingAsync(
         new ChatMessage(ChatRole.User, "Review this proposal."),
-        session))
+        remoteSession))
     {
         switch (update.AsChatResponseUpdate().RawRepresentation)
         {

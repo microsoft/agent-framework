@@ -10,7 +10,11 @@ builder.Services.AddHttpClient().AddLogging();
 builder.Services.AddAGUIServer();
 builder.Services.AddAIAgent(
         "MultipleInputsWorkflow",
-        static (_, _) => MultipleInputsWorkflow.Create().AsAIAgent(name: "MultipleInputsWorkflow"))
+        static (_, _) =>
+        {
+            Workflow workflow = MultipleInputsWorkflow.Create();
+            return workflow.AsAIAgent(name: "MultipleInputsWorkflow");
+        })
     .WithInMemorySessionStore(withIsolation: false);
 
 WebApplication app = builder.Build();

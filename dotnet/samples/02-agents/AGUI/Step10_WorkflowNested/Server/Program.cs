@@ -9,7 +9,8 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient().AddLogging();
 builder.Services.AddAGUIServer();
 
-AIAgent workflowAgent = NestedWorkflow.Create().AsAIAgent(
+Workflow workflow = NestedWorkflow.Create();
+AIAgent workflowAgent = workflow.AsAIAgent(
     name: "NestedWorkflow",
     includeWorkflowOutputsInResponse: true);
 

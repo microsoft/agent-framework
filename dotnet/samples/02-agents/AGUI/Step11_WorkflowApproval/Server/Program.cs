@@ -11,9 +11,13 @@ builder.Services.AddHttpClient().AddLogging();
 builder.Services.AddAGUIServer();
 builder.Services.AddAIAgent(
         "ApprovalWorkflow",
-        static (_, _) => ApprovalWorkflow.Create().AsAIAgent(
-            name: "ApprovalWorkflow",
-            includeWorkflowOutputsInResponse: true))
+        static (_, _) =>
+        {
+            Workflow workflow = ApprovalWorkflow.Create();
+            return workflow.AsAIAgent(
+                name: "ApprovalWorkflow",
+                includeWorkflowOutputsInResponse: true);
+        })
     .WithInMemorySessionStore(withIsolation: false);
 
 WebApplication app = builder.Build();

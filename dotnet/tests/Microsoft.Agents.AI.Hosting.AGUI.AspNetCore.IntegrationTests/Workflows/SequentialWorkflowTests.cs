@@ -19,9 +19,9 @@ public sealed class SequentialWorkflowTests
     public async Task ClientReceivesOrderedExecutorStepsAndTextAsync()
     {
         // Arrange
-        AIAgent writer = new DeterministicAgent("Writer", "draft");
+        AIAgent producer = new DeterministicAgent("Producer", "draft");
         AIAgent reviewer = new DeterministicAgent("Reviewer", "final");
-        Workflow workflow = SequentialWorkflow.Create(writer, reviewer);
+        Workflow workflow = SequentialWorkflow.Create(producer, reviewer);
         await using WorkflowTestHost host = await WorkflowTestHost.StartAsync(
             workflow.AsAIAgent(name: "SequentialWorkflow"));
         AGUIChatClient chatClient = new(new(host.Client, ""));
@@ -43,15 +43,15 @@ public sealed class SequentialWorkflowTests
             .OfType<StepFinishedEvent>()
             .Select(static evt => evt.StepName)];
 
-        int writerStart = Array.FindIndex(started, static name => name.StartsWith("Writer_", StringComparison.Ordinal));
+        int producerStart = Array.FindIndex(started, static name => name.StartsWith("Producer_", StringComparison.Ordinal));
         int reviewerStart = Array.FindIndex(started, static name => name.StartsWith("Reviewer_", StringComparison.Ordinal));
-        int writerFinish = Array.FindIndex(finished, static name => name.StartsWith("Writer_", StringComparison.Ordinal));
+        int producerFinish = Array.FindIndex(finished, static name => name.StartsWith("Producer_", StringComparison.Ordinal));
         int reviewerFinish = Array.FindIndex(finished, static name => name.StartsWith("Reviewer_", StringComparison.Ordinal));
 
-        writerStart.Should().BeGreaterThanOrEqualTo(0);
-        reviewerStart.Should().BeGreaterThan(writerStart);
-        writerFinish.Should().BeGreaterThanOrEqualTo(0);
-        reviewerFinish.Should().BeGreaterThan(writerFinish);
+        producerStart.Should().BeGreaterThanOrEqualTo(0);
+        reviewerStart.Should().BeGreaterThan(producerStart);
+        producerFinish.Should().BeGreaterThanOrEqualTo(0);
+        reviewerFinish.Should().BeGreaterThan(producerFinish);
         updates.Count(static update => update.Text == "draft").Should().Be(1);
         updates.Count(static update => update.Text == "final").Should().Be(1);
     }

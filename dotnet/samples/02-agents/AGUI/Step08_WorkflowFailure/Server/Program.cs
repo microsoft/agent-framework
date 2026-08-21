@@ -9,7 +9,8 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient().AddLogging();
 builder.Services.AddAGUIServer();
 
-AIAgent workflowAgent = FailingWorkflow.Create(new FailingAgent()).AsAIAgent(name: "FailingWorkflow");
+Workflow workflow = FailingWorkflow.Create(new FailingAgent());
+AIAgent workflowAgent = workflow.AsAIAgent(name: "FailingWorkflow");
 
 WebApplication app = builder.Build();
 app.MapAGUIServer("/", workflowAgent);
