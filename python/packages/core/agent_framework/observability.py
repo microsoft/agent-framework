@@ -2791,7 +2791,9 @@ def capture_exception(span: trace.Span, exception: Exception, timestamp: int | N
     span.set_status(status=trace.StatusCode.ERROR, description=repr(exception))
 
 
-def _capture_system_instructions_latest_experimental(span: trace.Span, system_instructions: str | list[str] | None) -> None:
+def _capture_system_instructions_latest_experimental(
+    span: trace.Span, system_instructions: str | list[str] | None
+) -> None:
     """Capture system instructions on a span."""
     if not OBSERVABILITY_SETTINGS.use_latest_experimental_gen_ai_semconv or not system_instructions:
         return
