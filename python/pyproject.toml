@@ -144,27 +144,27 @@ select = [
     "T20", # typing checks
     "TD", # todos
     "W", # pycodestyle warning checks
-    "debugger", # Debugger,
+    "T100", # Debugger,
     "S", # Bandit checks
 ]
 ignore = [
-    "undocumented-public-module", # allow missing docstring in public module
-    "undocumented-public-package", # allow missing docstring in public package
-    "property-docstring-starts-with-verb", # allow property docstrings that start with a verb
-    "overload-with-docstring", # allow overload to have a docstring
-    "missing-todo-link", # allow missing link to todo issue
-    "line-contains-todo", # allow todo
-    "yield-in-context-manager-in-async-generator", # allow yielding inside async-generator context managers
-    "empty-method-without-abstract-decorator", # allow empty non-abstract method in ABC
-    "zip-without-explicit-strict", # `zip()` without an explicit `strict=` parameter
-    "non-empty-init-module", # allow version detection in __init__.py
+    "D100", # allow missing docstring in public module
+    "D104", # allow missing docstring in public package
+    "D421", # allow property docstrings that start with a verb
+    "D418", # allow overload to have a docstring
+    "TD003", # allow missing link to todo issue
+    "FIX002", # allow todo
+    "ASYNC119", # allow yielding inside async-generator context managers
+    "B027", # allow empty non-abstract method in ABC
+    "B905", # `zip()` without an explicit `strict=` parameter
+    "RUF067", # allow version detection in __init__.py
 ]
 
 [tool.ruff.lint.per-file-ignores]
 # Ignore all directories named `tests` and `samples`.
-"**/tests/**" = ["D", "INP", "TD", "commented-out-code", "RUF", "S"]
-"samples/**" = ["D", "INP", "commented-out-code", "RUF", "S", "print", "CPY"]
-"*.ipynb" = ["CPY", "line-too-long"]
+"**/tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
+"samples/**" = ["D", "INP", "ERA001", "RUF", "S", "T201", "CPY"]
+"*.ipynb" = ["CPY", "E501"]
 
 [tool.ruff.format]
 docstring-code-format = true
