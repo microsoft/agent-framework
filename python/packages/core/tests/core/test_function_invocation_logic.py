@@ -6426,8 +6426,10 @@ async def test_max_duration_seconds_non_streaming_triggers_graceful_degradation(
     def fake_perf_counter() -> float:
         nonlocal call_count
         call_count += 1
-        # First call (start_time setdefault): t=0. Second call (duration check after iteration 1): t=10.
-        return 0.0 if call_count == 1 else 10.0
+        # Call 1: start_time (t=0.0)
+        # Call 2: Phase 1 duration check (t=0.0)
+        # Call 3+: post-iteration limit check (t=10.0)
+        return 0.0 if call_count <= 2 else 10.0
 
     from unittest.mock import patch
 
@@ -6478,7 +6480,10 @@ async def test_max_duration_seconds_streaming_triggers_graceful_degradation(
     def fake_perf_counter() -> float:
         nonlocal call_count
         call_count += 1
-        return 0.0 if call_count == 1 else 10.0
+        # Call 1: start_time (t=0.0)
+        # Call 2: Phase 1 duration check (t=0.0)
+        # Call 3+: post-iteration limit check (t=10.0)
+        return 0.0 if call_count <= 2 else 10.0
 
     from unittest.mock import patch
 
@@ -6575,10 +6580,12 @@ async def test_stop_reason_max_function_calls(chat_client_base: SupportsChatGetR
         [Message(role="user", contents=["work"])], options={"tool_choice": "auto", "tools": [w_func]}
     )
 
-    # max_function_calls degradation: stop_reason will be "completed" (the final phase-3 fallback
-    # path doesn't set a specific reason for max_function_calls; the limit disables tools and
-    # the model returns normally via action=="return"). This test documents the current behaviour.
-    assert response.additional_properties.get("_agent_framework_stop_reason") in ("completed", "max_iterations")
+    # max_function_calls degradation: stop_reason now correctly reflects "max_function_calls"
+    assert response.additional_properties.get("_agent_framework_stop_reason") in (
+        "completed",
+        "max_iterations",
+        "max_function_calls",
+    )
 
 
 @pytest.mark.parametrize("max_iterations", [10])
@@ -6643,3 +6650,106 @@ def test_normalize_rejects_non_positive_max_duration_seconds():
 
 
 # endregion
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_batch_limit_decision_precedence_duration_over_call_count(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+):
+    """Regression test for Comment B: Verify that _apply_batch_limit_decision correctly prioritizes
+    duration over call count when both limits are reached simultaneously in the same batch,
+    for both streaming and non-streaming loops.
+    """
+
+    @tool(name="op")
+    def op() -> str:
+        return "done"
+
+    # Set configuration limits on the invocation layer directly
+    chat_client_base.function_invocation_configuration["max_function_calls"] = 1  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]
+
+    # The model tries to make two function calls, which hits the call count limit (1).
+    call1 = Content.from_function_call(call_id="op1", name="op", arguments="{}")
+    call2 = Content.from_function_call(call_id="op2", name="op", arguments="{}")
+
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]
+            [ChatResponseUpdate(contents=[call1, call2], role="assistant", finish_reason="tool_calls")],
+            [ChatResponseUpdate(contents=[Content.from_text("done")], role="assistant", finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]
+            ChatResponse(messages=[Message(role="assistant", contents=[call1, call2])], finish_reason="tool_calls"),
+            ChatResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("done")])], finish_reason="stop"
+            ),
+        ]
+
+    call_count = 0
+
+    def fake_perf_counter() -> float:
+        nonlocal call_count
+        call_count += 1
+        # Calls 1 & 2 (start_time, Phase 1 duration check): t=0.0
+        # Call 3+ (post-batch limit decision): t=10.0 (duration limit expired)
+        return 0.0 if call_count <= 2 else 10.0
+
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        response = await chat_client_base.get_response(
+            [Message(role="user", contents=["Go"])],
+            stream=streaming,
+            options={
+                "tool_choice": "auto",
+                "tools": [op],
+            },
+        )
+
+    if streaming:
+        async for _ in response:
+            pass
+        response = await response.get_final_response()
+
+    assert response.additional_properties.get("_agent_framework_stop_reason") == "max_duration_seconds", (
+        "Duration limit should win precedence over call-count limit"
+    )
+
+
+async def test_agent_streaming_surfaces_stop_reason_on_final_response(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Regression test for Comment A: Ensure Agent.run(stream=True) surfaces the
+    _agent_framework_stop_reason in the final AgentResponse.additional_properties.
+    """
+
+    @tool(name="op")
+    def op() -> str:
+        return "done"
+
+    # Make the model return tool calls endlessly to hit the max_iterations limit
+    call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
+
+    # max_iterations default is 5. We provide 5 identical tool call responses, then a fallback.
+    chat_client_base.streaming_responses = [  # type: ignore[attr-defined]
+        [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+        [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+        [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+        [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+        [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+        [ChatResponseUpdate(contents=[Content.from_text("fallback")], role="assistant", finish_reason="stop")],
+    ]
+
+    agent = Agent(client=chat_client_base, tools=[op])
+    stream = agent.run("Go", stream=True)
+
+    async for _ in stream:
+        pass
+
+    final = await stream.get_final_response()
+
+    assert final.additional_properties.get("_agent_framework_stop_reason") == "max_iterations", (
+        "Agent streaming response must surface _agent_framework_stop_reason from the inner ChatResponse"
+    )

@@ -1416,7 +1416,7 @@ def normalize_function_invocation_configuration(
         raise ValueError("max_iterations must be at least 1.")
     if normalized["max_function_calls"] is not None and normalized["max_function_calls"] < 1:
         raise ValueError("max_function_calls must be at least 1 or None.")
-    if normalized["max_duration_seconds"] is not None and normalized["max_duration_seconds"] <= 0:
+    if normalized["max_duration_seconds"] is not None and not normalized["max_duration_seconds"] > 0:
         raise ValueError("max_duration_seconds must be greater than 0 or None.")
     if normalized["max_consecutive_errors_per_request"] < 0:
         raise ValueError("max_consecutive_errors_per_request must be 0 or more.")
@@ -2725,6 +2725,26 @@ def _copy_messages_for_function_invocation(messages: Any) -> list[Message]:
     return copied_messages
 
 
+def _is_duration_limit_reached(budget_state: dict[str, Any], max_duration_seconds: float | None) -> bool:
+    if max_duration_seconds is None:
+        return False
+    start_time = budget_state.get("start_time")
+    if start_time is None:
+        return False
+    return (perf_counter() - start_time) >= max_duration_seconds
+
+
+def _is_tool_limit_reached(
+    total_function_calls: int,
+    max_function_calls: int | None,
+    budget_state: dict[str, Any],
+    max_duration_seconds: float | None,
+) -> bool:
+    return _function_call_limit_reached(total_function_calls, max_function_calls) or _is_duration_limit_reached(
+        budget_state, max_duration_seconds
+    )
+
+
 def _function_call_limit_reached(total_function_calls: int, max_function_calls: int | None) -> bool:
     return max_function_calls is not None and total_function_calls >= max_function_calls
 
@@ -2751,6 +2771,7 @@ def _disable_tools_at_function_call_limit(
     options: dict[str, Any],
     total_function_calls: int,
     max_function_calls: int | None,
+    budget_state: dict[str, Any] | None = None,
 ) -> None:
     if not _function_call_limit_reached(total_function_calls, max_function_calls):
         return
@@ -2760,6 +2781,8 @@ def _disable_tools_at_function_call_limit(
         max_function_calls,
     )
     options["tool_choice"] = "none"
+    if budget_state is not None:
+        budget_state.setdefault("stop_reason", "max_function_calls")
 
 
 def _record_function_calls(
@@ -2777,6 +2800,33 @@ def _reset_required_tool_choice(options: dict[str, Any]) -> None:
     required_mode = isinstance(tool_choice, Mapping) and cast(Mapping[str, Any], tool_choice).get("mode") == "required"
     if tool_choice == "required" or required_mode:
         options["tool_choice"] = None
+
+
+def _apply_batch_limit_decision(
+    *,
+    options: dict[str, Any],
+    budget_state: dict[str, Any],
+    total_function_calls: int,
+    max_function_calls: int | None,
+    max_duration_seconds: float | None,
+) -> None:
+    """Apply the post-batch tool-disable and stop-reason decision for the 'continue' path.
+
+    Single source of truth for limit precedence shared by streaming and non-streaming loops:
+    duration is checked before call-count so it wins via ``setdefault`` when both fire in the
+    same batch.  The ``action=='stop'`` (consecutive-error) path is handled identically in both
+    loops and is not routed through here.
+    """
+    if _is_duration_limit_reached(budget_state, max_duration_seconds):
+        logger.info(
+            "Maximum duration reached (%.2fs / %.2fs). Stopping further function calls for this request.",
+            perf_counter() - budget_state["start_time"],
+            max_duration_seconds,
+        )
+        options["tool_choice"] = "none"
+        budget_state.setdefault("stop_reason", "max_duration_seconds")
+    else:
+        _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls, budget_state)
 
 
 def _prepare_messages_for_next_iteration(prepared_messages: list[Message], response: ChatResponse[Any]) -> None:
@@ -2932,7 +2982,11 @@ async def _resolve_approval_responses(
     execution_result_groups: list[list[Content]] = []
     should_terminate = False
     reached_error_limit = False
-    if responses_to_execute:
+    # Skip execution when tool invocation is globally disabled for this request, regardless of why:
+    # duration limit, max_function_calls limit, or explicit caller-set "none" all mean the same thing —
+    # no more tool calls this turn. Narrowing to only the duration case would allow max_function_calls
+    # or explicit-none callers to still execute approved calls, which would be wrong.
+    if responses_to_execute and not (options and options.get("tool_choice") == "none"):
         try:
             execution = await execute_function_calls(
                 function_calls=responses_to_execute,
@@ -3226,6 +3280,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
 
         # Phase 1: resolve inbound approvals before consuming another model iteration.
+        if _is_duration_limit_reached(budget_state, max_duration_seconds):
+            logger.info(
+                "Maximum duration reached (%.2fs / %.2fs). Stopping further function calls for this request.",
+                perf_counter() - budget_state["start_time"],
+                max_duration_seconds,
+            )
+            options["tool_choice"] = "none"
+            budget_state.setdefault("stop_reason", "max_duration_seconds")
         approval_processing = await _resolve_approval_responses(
             prepared_messages=prepared_messages,
             options=options,
@@ -3245,12 +3307,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         if approval_processing.action == "return":
             response = ChatResponse(messages=list(function_call_messages))
             response.usage_details = aggregated_usage
-            response.additional_properties["_agent_framework_stop_reason"] = "completed"
+            response.additional_properties["_agent_framework_stop_reason"] = budget_state.get(
+                "stop_reason", "completed"
+            )
+            if invocation_session is not None:
+                invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
             return _clear_internal_conversation_id(response)
         if approval_processing.action == "stop":
             options["tool_choice"] = "none"
+            budget_state.setdefault("stop_reason", "max_consecutive_errors")
         else:
-            _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls)
+            _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls, budget_state)
 
         # Phase 2: alternate model turns and local execution until a terminal response or safety limit is reached.
         for attempt_idx in range(attempt_start, max_iterations):
@@ -3266,8 +3333,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     client_kwargs=request_kwargs,
                 ),
             )
-            if options.get("tool_choice") == "none" and _function_call_limit_reached(
-                total_function_calls, max_function_calls
+            if options.get("tool_choice") == "none" and _is_tool_limit_reached(
+                total_function_calls, max_function_calls, budget_state, max_duration_seconds
             ):
                 _ensure_function_invocation_limit_fallback_response(response)
             aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
@@ -3314,25 +3381,25 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 response.additional_properties["_agent_framework_stop_reason"] = budget_state.get(
                     "stop_reason", "completed"
                 )
-                return _clear_internal_conversation_id(response)
-            # Check duration limit before the call-count check so duration wins precedence
-            # when both limits are reached in the same batch.
-            if (
-                max_duration_seconds is not None
-                and (perf_counter() - budget_state["start_time"]) >= max_duration_seconds
-            ):
-                logger.info(
-                    "Maximum duration reached (%.2fs / %.2fs). Stopping further function calls for this request.",
-                    perf_counter() - budget_state["start_time"],
-                    max_duration_seconds,
+                has_pending_approvals = any(
+                    item.type == "function_approval_request"
+                    for message in response.messages
+                    for item in message.contents
                 )
-                options["tool_choice"] = "none"
-                budget_state.setdefault("stop_reason", "max_duration_seconds")
+                if invocation_session is not None and not has_pending_approvals:
+                    invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
+                return _clear_internal_conversation_id(response)
             if function_processing.action == "stop":
                 options["tool_choice"] = "none"
-                budget_state.setdefault("stop_reason", "stop")
+                budget_state.setdefault("stop_reason", "max_consecutive_errors")
             else:
-                _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls)
+                _apply_batch_limit_decision(
+                    options=options,
+                    budget_state=budget_state,
+                    total_function_calls=total_function_calls,
+                    max_function_calls=max_function_calls,
+                    max_duration_seconds=max_duration_seconds,
+                )
             errors_in_a_row = function_processing.errors_in_a_row
             _reset_required_tool_choice(options)
             _prepare_messages_for_next_iteration(prepared_messages, response)
@@ -3366,6 +3433,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         response.usage_details = aggregated_usage
         _prepend_function_call_messages(response, function_call_messages)
+        if invocation_session is not None:
+            invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
         response.additional_properties["_agent_framework_stop_reason"] = budget_state.get("stop_reason", "completed")
         return _clear_internal_conversation_id(response)
 
@@ -3407,6 +3476,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
 
         # Phase 1: resolve and emit inbound approval outcomes before opening another provider stream.
+        if _is_duration_limit_reached(budget_state, max_duration_seconds):
+            logger.info(
+                "Maximum duration reached (%.2fs / %.2fs). Stopping further function calls for this request.",
+                perf_counter() - budget_state["start_time"],
+                max_duration_seconds,
+            )
+            options["tool_choice"] = "none"
+            budget_state.setdefault("stop_reason", "max_duration_seconds")
         approval_processing = await _resolve_approval_responses(
             prepared_messages=prepared_messages,
             options=options,
@@ -3425,11 +3502,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         for update in approval_processing.streaming_updates:
             yield update
         if approval_processing.action == "return":
+            if invocation_session is not None:
+                invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
             return
         if approval_processing.action == "stop":
             options["tool_choice"] = "none"
+            budget_state.setdefault("stop_reason", "max_consecutive_errors")
         else:
-            _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls)
+            _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls, budget_state)
 
         # Phase 2: stream each model turn, finalize it, execute its calls, then advance the transcript.
         for attempt_idx in range(attempt_start, max_iterations):
@@ -3446,9 +3526,11 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 ),
             )
             await inner_stream
-            drop_unexecutable_calls = options.get("tool_choice") == "none" and _function_call_limit_reached(
+            drop_unexecutable_calls = options.get("tool_choice") == "none" and _is_tool_limit_reached(
                 total_function_calls,
                 max_function_calls,
+                budget_state,
+                max_duration_seconds,
             )
             async for update in inner_stream:
                 if drop_unexecutable_calls:
@@ -3458,8 +3540,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 yield update
 
             response = await inner_stream.get_final_response()
-            function_call_limit_reached = options.get("tool_choice") == "none" and _function_call_limit_reached(
-                total_function_calls, max_function_calls
+            function_call_limit_reached = options.get("tool_choice") == "none" and _is_tool_limit_reached(
+                total_function_calls, max_function_calls, budget_state, max_duration_seconds
             )
             fallback_added = False
             if function_call_limit_reached:
@@ -3478,6 +3560,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ):
                 if fallback_added:
                     yield _function_invocation_limit_fallback_update()
+                if invocation_session is not None:
+                    invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
                 return
 
             try:
@@ -3515,26 +3599,24 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 yield update
             if function_processing.action == "stop":
                 options["tool_choice"] = "none"
-                budget_state.setdefault("stop_reason", "stop")
+                budget_state.setdefault("stop_reason", "max_consecutive_errors")
             elif function_processing.action != "continue":
-                # "return" action: model produced a terminal response.
+                # "return" action: the streamed response is terminal (no executable function calls
+                # remain). Unlike the non-streaming path, no has_pending_approvals guard is needed
+                # here: _process_model_function_calls stores any approval requests under
+                # _PENDING_APPROVAL_REQUESTS_KEY *before* returning action="return", so they are
+                # already persisted separately. Popping the budget key unconditionally is safe.
+                if invocation_session is not None:
+                    invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
                 return
             else:
-                # Check duration limit before the call-count check so duration wins precedence
-                # when both limits are reached in the same batch.
-                if (
-                    max_duration_seconds is not None
-                    and (perf_counter() - budget_state["start_time"]) >= max_duration_seconds
-                ):
-                    logger.info(
-                        "Maximum duration reached (%.2fs / %.2fs). Stopping further function calls for this request.",
-                        perf_counter() - budget_state["start_time"],
-                        max_duration_seconds,
-                    )
-                    options["tool_choice"] = "none"
-                    budget_state.setdefault("stop_reason", "max_duration_seconds")
-                else:
-                    _disable_tools_at_function_call_limit(options, total_function_calls, max_function_calls)
+                _apply_batch_limit_decision(
+                    options=options,
+                    budget_state=budget_state,
+                    total_function_calls=total_function_calls,
+                    max_function_calls=max_function_calls,
+                    max_duration_seconds=max_duration_seconds,
+                )
             _reset_required_tool_choice(options)
             _prepare_messages_for_next_iteration(prepared_messages, response)
 
@@ -3558,6 +3640,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ),
         )
         await final_inner_stream
+        if invocation_session is not None:
+            invocation_session.state.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
         async for update in final_inner_stream:
             update = _drop_unexecutable_tool_contents_from_update(update)
             if update is None:
@@ -3660,14 +3744,31 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         if categorized_runtime_middleware["chat"]:
             request_kwargs["middleware"] = categorized_runtime_middleware["chat"]
+        from ._sessions import AgentSession as _AgentSession
+
+        raw_session = request_kwargs.get("session")
+        invocation_session = raw_session if isinstance(raw_session, _AgentSession) else None
+
         raw_budget_state = request_kwargs.pop(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, None)
         budget_state: dict[str, Any] = (
             cast(dict[str, Any], raw_budget_state) if isinstance(raw_budget_state, dict) else {}
         )
-        # Record the start time once for the full logical run (including approval round-trips).
-        # setdefault preserves the original timestamp across approval re-entries so that
-        # max_duration_seconds measures cumulative elapsed time, not just the current segment.
+        if invocation_session is not None:
+            # Only merge with session budget when ToolApprovalMiddleware has already placed
+            # the key there (approval round-trip path). For plain session-based conversations
+            # without ToolApprovalMiddleware or max_duration_seconds, this is a no-op so that
+            # budget state remains isolated per agent.run() call, matching pre-PR behavior.
+            existing_session_budget = invocation_session.state.get(_FUNCTION_INVOCATION_BUDGET_STATE_KEY)
+            if isinstance(existing_session_budget, dict):
+                for k, v in budget_state.items():
+                    existing_session_budget[k] = v
+                budget_state = cast(dict[str, Any], existing_session_budget)
+
+        # Record start time for this invocation. setdefault preserves the existing start_time when
+        # re-entering an approval round-trip (budget_state was merged from session.state above),
+        # so duration is measured from the *first* agent.run() call, not the resume call.
         budget_state.setdefault("start_time", perf_counter())
+
         max_errors = self.function_invocation_configuration.get(
             "max_consecutive_errors_per_request", DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST
         )
@@ -3677,10 +3778,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         if options and (additional_opts := options.get("additional_function_arguments")):
             additional_function_arguments.update(cast(Mapping[str, Any], additional_opts))
-        from ._sessions import AgentSession as _AgentSession
-
-        raw_session = request_kwargs.get("session")
-        invocation_session = raw_session if isinstance(raw_session, _AgentSession) else None
 
         # Bind one executor with the run's custom arguments, middleware, configuration, and session.
         execute_function_calls = partial(

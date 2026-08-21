@@ -385,7 +385,8 @@ class ToolApprovalMiddleware(AgentMiddleware):
             raise RuntimeError("ToolApprovalMiddleware requires an AgentSession.")
 
         state = _get_state(context.session, source_id=self.source_id)
-        context.client_kwargs.setdefault(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, {})
+        session_budget = context.session.state.setdefault(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, {})
+        context.client_kwargs.setdefault(_FUNCTION_INVOCATION_BUDGET_STATE_KEY, session_budget)
         context.messages = self._prepare_inbound_messages(context.messages, state, context.session)
         await self._drain_auto_approvable_queue(state)
         if next_queued := self._pop_next_queued_request(state):
