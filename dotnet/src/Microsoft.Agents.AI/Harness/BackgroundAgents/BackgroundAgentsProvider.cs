@@ -121,6 +121,10 @@ public sealed class BackgroundAgentsProvider : AIContextProvider
     /// <inheritdoc />
     protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreBackgroundAgentsProvider);
+#pragma warning restore MAAI001
+
         BackgroundAgentState state = this._sessionState.GetOrInitializeState(context.Session);
         BackgroundAgentRuntimeState runtimeState = this._runtimeSessionState.GetOrInitializeState(context.Session);
 

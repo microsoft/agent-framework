@@ -14,6 +14,42 @@ namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests;
 /// </summary>
 public sealed class A2AEndpointRouteBuilderExtensionsTests
 {
+    [Fact]
+    public void MapA2AJsonRpc_MarksFeatureUsed()
+    {
+        // Arrange
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        IChatClient chatClient = new DummyChatClient();
+        builder.Services.AddKeyedSingleton("chat-client", chatClient);
+        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
+        agentBuilder.AddA2AServer();
+        builder.Services.AddLogging();
+        using WebApplication app = builder.Build();
+
+        // Act
+        _ = app.MapA2AJsonRpc(agentBuilder, "/a2a");
+
+        // Assert
+        AssertFeatureUsed(73);
+    }
+
+    private static void AssertFeatureUsed(int featureIndex)
+    {
+#pragma warning disable MAAI001
+        string userAgent = FeatureUsage.ApplyToUserAgent(string.Empty);
+#pragma warning restore MAAI001
+        const string Prefix = "(feat=v1.";
+        Assert.StartsWith(Prefix, userAgent);
+        Assert.EndsWith(")", userAgent);
+
+        string hexMask = userAgent[Prefix.Length..^1];
+        int digitOffset = featureIndex / 4;
+        Assert.True(hexMask.Length > digitOffset);
+        char digit = char.ToLowerInvariant(hexMask[hexMask.Length - digitOffset - 1]);
+        int nibble = digit <= '9' ? digit - '0' : digit - 'a' + 10;
+        Assert.NotEqual(0, nibble & (1 << (featureIndex & 3)));
+    }
+
     /// <summary>
     /// Verifies that MapA2AHttpJson throws ArgumentNullException for null endpoints.
     /// </summary>
