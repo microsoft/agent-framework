@@ -239,7 +239,7 @@ class TestClientOwnership:
 
         import agent_framework_declarative._workflows._http_handler as hh
 
-        hh.httpx.AsyncClient = counting_ctor  # type: ignore[assignment]
+        hh.httpx.AsyncClient = counting_ctor  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
         try:
             handler = DefaultHttpRequestHandler()
             try:

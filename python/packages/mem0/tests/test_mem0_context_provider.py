@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +11,7 @@ from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 
 from agent_framework_mem0._context_provider import Mem0ContextProvider
+from agent_framework_mem0._feature_usage import FeatureIndex
 
 
 @pytest.fixture
@@ -50,6 +52,9 @@ class TestInit:
             application_id="app1",
             agent_id="agent1",
             user_id="user1",
+            search_application_id="app2",
+            search_agent_id="agent2",
+            search_user_id="user2",
             context_prompt="Custom prompt",
         )
         assert provider.source_id == "mem0"
@@ -57,9 +62,21 @@ class TestInit:
         assert provider.application_id == "app1"
         assert provider.agent_id == "agent1"
         assert provider.user_id == "user1"
+        assert provider.search_application_id == "app2"
+        assert provider.search_agent_id == "agent2"
+        assert provider.search_user_id == "user2"
         assert provider.context_prompt == "Custom prompt"
         assert provider.mem0_client is mock_mem0_client
         assert provider._should_close_client is False
+
+    def test_init_search_scope_defaults_to_none(self, mock_mem0_client: AsyncMock) -> None:
+        """Retrieval scope never inherits from the storage scope."""
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", agent_id="a1", application_id="app1"
+        )
+        assert provider.search_user_id is None
+        assert provider.search_agent_id is None
+        assert provider.search_application_id is None
 
     def test_init_default_context_prompt(self, mock_mem0_client: AsyncMock) -> None:
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
@@ -92,12 +109,17 @@ class TestBeforeRun:
             {"memory": "User likes Python"},
             {"memory": "User prefers dark mode"},
         ]
-        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", search_user_id="u1"
+        )
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_mem0_client.search.assert_awaited_once()
@@ -110,12 +132,17 @@ class TestBeforeRun:
 
     async def test_empty_input_skips_search(self, mock_mem0_client: AsyncMock) -> None:
         """Empty input messages → no search performed."""
-        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", search_user_id="u1"
+        )
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[Message(role="user", contents=[""])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_mem0_client.search.assert_not_awaited()
@@ -124,12 +151,17 @@ class TestBeforeRun:
     async def test_empty_search_results_no_messages(self, mock_mem0_client: AsyncMock) -> None:
         """Empty search results → no messages added."""
         mock_mem0_client.search.return_value = []
-        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", search_user_id="u1"
+        )
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         assert "mem0" not in ctx.context_messages
@@ -141,17 +173,27 @@ class TestBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         with pytest.raises(ValueError, match="At least one of the filters"):
-            await provider.before_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+            await provider.before_run(
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state,
+            )  # type: ignore[arg-type]
 
     async def test_v1_1_response_format(self, mock_mem0_client: AsyncMock) -> None:
         """Search response in v1.1 dict format with 'results' key."""
         mock_mem0_client.search.return_value = {"results": [{"memory": "remembered fact"}]}
-        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", search_user_id="u1"
+        )
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         added = ctx.context_messages["mem0"]
@@ -160,7 +202,9 @@ class TestBeforeRun:
     async def test_search_query_combines_input_messages(self, mock_mem0_client: AsyncMock) -> None:
         """Multiple input messages are joined for the search query."""
         mock_mem0_client.search.return_value = []
-        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, user_id="u1")
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", search_user_id="u1"
+        )
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(
             input_messages=[
@@ -171,34 +215,49 @@ class TestBeforeRun:
         )
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         call_kwargs = mock_mem0_client.search.call_args.kwargs
         assert call_kwargs["query"] == "Hello\nWorld"
 
-    async def test_oss_client_passes_direct_kwargs(self, mock_oss_mem0_client: AsyncMock) -> None:
-        """OSS AsyncMemory client should receive user_id as direct kwarg, not in filters."""
+    async def test_oss_client_passes_filters_dict(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS AsyncMemory client should receive entity IDs in a filters dict (mem0 >=2.0)."""
         mock_oss_mem0_client.search.return_value = [{"memory": "User likes Python"}]
-        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1")
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", search_user_id="u1"
+        )
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         call_kwargs = mock_oss_mem0_client.search.call_args.kwargs
         assert call_kwargs["query"] == "Hello"
-        assert call_kwargs["user_id"] == "u1"
-        assert "filters" not in call_kwargs
+        assert call_kwargs["filters"] == {"user_id": "u1"}
+        assert "user_id" not in call_kwargs
 
-    @pytest.mark.asyncio
-    async def test_oss_client_all_scoping_params_except_app_id(self, mock_oss_mem0_client: AsyncMock) -> None:
-        """OSS client with all scoping parameters passes them as isolated concurrent kwargs."""
+    async def test_oss_client_rejects_application_id_with_user_or_agent(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client rejects application_id even when user_id/agent_id are provided."""
         mock_oss_mem0_client.search.return_value = []
 
-        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", agent_id="a1")
+        provider = Mem0ContextProvider(
+            source_id="mem0",
+            mem0_client=mock_oss_mem0_client,
+            user_id="u1",
+            agent_id="a1",
+            application_id="app1",
+            search_user_id="u1",
+            search_agent_id="a1",
+        )
 
         mock_context = MagicMock(spec=SessionContext)
         mock_msg = MagicMock()
@@ -206,16 +265,31 @@ class TestBeforeRun:
         mock_context.input_messages = [mock_msg]
         mock_context.response = None
 
-        await provider.before_run(
-            agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            await provider.before_run(
+                agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
+            )
+
+        mock_oss_mem0_client.search.assert_not_awaited()
+
+    async def test_oss_client_rejects_application_id_only(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client with only application_id set raises and never searches."""
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_oss_mem0_client, application_id="app1", search_application_id="app1"
         )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
 
-        # Re-aligned assertion: We expect 2 separate concurrent calls instead of 1 combined call
-        assert mock_oss_mem0_client.search.call_count == 2
-        mock_oss_mem0_client.search.assert_any_call(query="hello", user_id="u1")
-        mock_oss_mem0_client.search.assert_any_call(query="hello", agent_id="a1")
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            await provider.before_run(
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
+            )  # type: ignore[arg-type]
 
-    @pytest.mark.asyncio
+        mock_oss_mem0_client.search.assert_not_awaited()
+
     async def test_platform_client_passes_filters_dict_except_app_id(self, mock_mem0_client: AsyncMock) -> None:
         """Platform client passes scoping parameters concurrently inside the nested filters dictionary."""
         mock_mem0_client.search.return_value = []
@@ -225,6 +299,8 @@ class TestBeforeRun:
             mem0_client=mock_mem0_client,
             user_id="u1",
             agent_id="a1",
+            search_user_id="u1",
+            search_agent_id="a1",
         )
 
         mock_context = MagicMock(spec=SessionContext)
@@ -237,10 +313,228 @@ class TestBeforeRun:
             agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
         )
 
-        # Re-aligned assertion: Platform client isolates filters per call to bypass AND limitations
+        # Retrieval scope is explicit: user and agent partitions are queried separately and merged.
         assert mock_mem0_client.search.call_count == 2
         mock_mem0_client.search.assert_any_call(query="hello", filters={"user_id": "u1"})
         mock_mem0_client.search.assert_any_call(query="hello", filters={"agent_id": "a1"})
+
+    async def test_platform_client_keeps_app_id(self, mock_mem0_client: AsyncMock) -> None:
+        """Platform client keeps app_id in filters for each entity-scoped partition."""
+        mock_mem0_client.search.return_value = []
+
+        provider = Mem0ContextProvider(
+            source_id="mem0",
+            mem0_client=mock_mem0_client,
+            user_id="u1",
+            application_id="app1",
+            search_user_id="u1",
+            search_application_id="app1",
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
+
+        await provider.before_run(
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
+        )  # type: ignore[arg-type]
+
+        mock_mem0_client.search.assert_awaited_once_with(query="Hello", filters={"user_id": "u1", "app_id": "app1"})
+
+    async def test_no_search_scope_skips_retrieval(self, mock_mem0_client: AsyncMock) -> None:
+        """Storage scope is never used for retrieval: without search_* values nothing is searched."""
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", agent_id="a1", application_id="app1"
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
+
+        with patch("agent_framework_mem0._context_provider.logger") as mock_logger:
+            await provider.before_run(
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
+            )  # type: ignore[arg-type]
+            # Second run must not re-emit the warning.
+            await provider.before_run(
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
+            )  # type: ignore[arg-type]
+
+        mock_mem0_client.search.assert_not_awaited()
+        assert "mem0" not in ctx.context_messages
+        mock_logger.warning.assert_called_once()
+
+    async def test_search_scope_does_not_inherit_storage_scope(self, mock_mem0_client: AsyncMock) -> None:
+        """A shared storage agent_id is not queried unless search_agent_id is set explicitly."""
+        mock_mem0_client.search.return_value = []
+        provider = Mem0ContextProvider(
+            source_id="mem0",
+            mem0_client=mock_mem0_client,
+            user_id="u1",
+            agent_id="shared-agent",
+            search_user_id="u1",
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
+
+        await provider.before_run(
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
+        )  # type: ignore[arg-type]
+
+        mock_mem0_client.search.assert_awaited_once_with(query="Hello", filters={"user_id": "u1"})
+
+    async def test_search_agent_id_opts_into_agent_partition(self, mock_mem0_client: AsyncMock) -> None:
+        """search_agent_id can differ from the storage agent_id and is queried on its own partition."""
+        mock_mem0_client.search.return_value = []
+        provider = Mem0ContextProvider(
+            source_id="mem0",
+            mem0_client=mock_mem0_client,
+            user_id="u1",
+            agent_id="storage-agent",
+            search_agent_id="shared-knowledge",
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["Hello"])], session_id="s1")
+
+        await provider.before_run(
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
+        )  # type: ignore[arg-type]
+
+        mock_mem0_client.search.assert_awaited_once_with(query="Hello", filters={"agent_id": "shared-knowledge"})
+
+
+class TestCrossUserIsolation:
+    """Regression tests for cross-user memory leakage through the shared agent partition."""
+
+    @staticmethod
+    def _fake_partition_client() -> Any:
+        """Build a fake Platform client modelling Mem0 partition semantics.
+
+        A search matches every stored memory that carries all of the provided filter
+        fields, so a filter without ``user_id`` spans all users.
+        """
+        from mem0 import AsyncMemoryClient
+
+        stored: list[dict[str, Any]] = []
+
+        async def add(**kwargs: Any) -> None:
+            filters = kwargs.get("filters", {})
+            for index, message in enumerate(kwargs["messages"]):
+                stored.append({
+                    "id": f"{filters.get('user_id', '')}-{len(stored)}-{index}",
+                    "memory": message["content"],
+                    **filters,
+                })
+
+        async def search(**kwargs: Any) -> list[dict[str, Any]]:
+            filters: dict[str, Any] = kwargs.get("filters", {})
+            return [memory for memory in stored if all(memory.get(key) == value for key, value in filters.items())]
+
+        client = AsyncMock(spec=AsyncMemoryClient)
+        client.add = AsyncMock(side_effect=add)
+        client.search = AsyncMock(side_effect=search)
+        return client
+
+    async def test_other_users_memories_are_not_retrieved(self) -> None:
+        """Alice's memories must never reach Bob, even though both write under the same agent_id."""
+        client = self._fake_partition_client()
+
+        alice = Mem0ContextProvider(
+            source_id="mem0",
+            mem0_client=client,
+            user_id="alice",
+            agent_id="support-bot",
+            search_user_id="alice",
+        )
+        bob = Mem0ContextProvider(
+            source_id="mem0",
+            mem0_client=client,
+            user_id="bob",
+            agent_id="support-bot",
+            search_user_id="bob",
+        )
+
+        alice_session = AgentSession(session_id="alice-session")
+        alice_ctx = SessionContext(
+            input_messages=[Message(role="user", contents=["remember my credit card is 4111-1111-1111-1111"])],
+            session_id="alice-session",
+        )
+        alice_ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["Saved your card."])])
+        await alice.after_run(
+            agent=cast(Any, None),
+            session=alice_session,
+            context=alice_ctx,
+            state=alice_session.state.setdefault(alice.source_id, {}),
+        )  # type: ignore[arg-type]
+
+        bob_session = AgentSession(session_id="bob-session")
+        bob_ctx = SessionContext(
+            input_messages=[Message(role="user", contents=["what is my credit card number?"])],
+            session_id="bob-session",
+        )
+        await bob.before_run(
+            agent=cast(Any, None),
+            session=bob_session,
+            context=bob_ctx,
+            state=bob_session.state.setdefault(bob.source_id, {}),
+        )  # type: ignore[arg-type]
+
+        for call in client.search.await_args_list:
+            assert call.kwargs["filters"].get("user_id") == "bob"
+
+        retrieved = "".join(message.text or "" for message in bob_ctx.context_messages.get("mem0", []))
+        assert "4111-1111-1111-1111" not in retrieved
+        assert "mem0" not in bob_ctx.context_messages
+
+    async def test_own_memories_are_still_retrieved(self) -> None:
+        """The isolation fix must not regress retrieval of the user's own memories."""
+        client = self._fake_partition_client()
+
+        alice = Mem0ContextProvider(
+            source_id="mem0",
+            mem0_client=client,
+            user_id="alice",
+            agent_id="support-bot",
+            search_user_id="alice",
+        )
+
+        write_session = AgentSession(session_id="alice-session")
+        write_ctx = SessionContext(
+            input_messages=[Message(role="user", contents=["my favourite colour is teal"])],
+            session_id="alice-session",
+        )
+        await alice.after_run(
+            agent=cast(Any, None),
+            session=write_session,
+            context=write_ctx,
+            state=write_session.state.setdefault(alice.source_id, {}),
+        )  # type: ignore[arg-type]
+
+        read_session = AgentSession(session_id="alice-session-2")
+        read_ctx = SessionContext(
+            input_messages=[Message(role="user", contents=["what is my favourite colour?"])],
+            session_id="alice-session-2",
+        )
+        await alice.before_run(
+            agent=cast(Any, None),
+            session=read_session,
+            context=read_ctx,
+            state=read_session.state.setdefault(alice.source_id, {}),
+        )  # type: ignore[arg-type]
+
+        retrieved = "".join(message.text or "" for message in read_ctx.context_messages["mem0"])
+        assert "teal" in retrieved
 
 
 # -- after_run tests -----------------------------------------------------------
@@ -257,7 +551,10 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["answer"])])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_mem0_client.add.assert_awaited_once()
@@ -266,7 +563,9 @@ class TestAfterRun:
             {"role": "user", "content": "question"},
             {"role": "assistant", "content": "answer"},
         ]
-        assert call_kwargs["user_id"] == "u1"
+        assert call_kwargs["filters"] == {"user_id": "u1"}
+        assert "user_id" not in call_kwargs
+        assert "agent_id" not in call_kwargs
         assert "run_id" not in call_kwargs
 
     async def test_only_stores_user_assistant_system(self, mock_mem0_client: AsyncMock) -> None:
@@ -283,7 +582,10 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["reply"])])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         call_kwargs = mock_mem0_client.add.call_args.kwargs
@@ -305,7 +607,10 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_mem0_client.add.assert_not_awaited()
@@ -318,10 +623,14 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hey"])])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         assert "run_id" not in mock_mem0_client.add.call_args.kwargs
+        assert "run_id" not in mock_mem0_client.add.call_args.kwargs["filters"]
 
     async def test_validates_filters(self, mock_mem0_client: AsyncMock) -> None:
         """Raises ValueError when no filters."""
@@ -331,22 +640,71 @@ class TestAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hey"])])
 
         with pytest.raises(ValueError, match="At least one of the filters"):
-            await provider.after_run(agent=None, session=session, context=ctx, state=session.state)  # type: ignore[arg-type]
+            await provider.after_run(
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state,
+            )  # type: ignore[arg-type]
 
-    async def test_stores_with_application_id_filters(self, mock_mem0_client: AsyncMock) -> None:
-        """application_id is passed in filters."""
+    async def test_platform_stores_identity_fields_in_filters(self, mock_mem0_client: AsyncMock) -> None:
+        """Platform add receives all identity fields in filters for mem0ai 2.x."""
         provider = Mem0ContextProvider(
-            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", application_id="app1"
+            source_id="mem0", mem0_client=mock_mem0_client, user_id="u1", agent_id="a1", application_id="app1"
         )
         session = AgentSession(session_id="test-session")
         ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
         ctx._response = AgentResponse(messages=[])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
-        assert mock_mem0_client.add.call_args.kwargs["filters"] == {"app_id": "app1"}
+        call_kwargs = mock_mem0_client.add.call_args.kwargs
+        assert call_kwargs["filters"] == {"user_id": "u1", "agent_id": "a1", "app_id": "app1"}
+        assert "user_id" not in call_kwargs
+        assert "agent_id" not in call_kwargs
+
+    async def test_oss_stores_identity_fields_as_direct_kwargs(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS add keeps user_id/agent_id as direct kwargs because AsyncMemory.add uses that signature."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", agent_id="a1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
+        ctx._response = AgentResponse(messages=[])
+
+        await provider.after_run(
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
+        )  # type: ignore[arg-type]
+
+        call_kwargs = mock_oss_mem0_client.add.call_args.kwargs
+        assert call_kwargs["user_id"] == "u1"
+        assert call_kwargs["agent_id"] == "a1"
+        assert "filters" not in call_kwargs
+
+    async def test_oss_storage_rejects_application_id(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS storage rejects Platform-only application_id because AsyncMemory.add has no app_id parameter."""
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", application_id="app1"
+        )
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
+        ctx._response = AgentResponse(messages=[])
+
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            await provider.after_run(
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
+            )  # type: ignore[arg-type]
+
+        mock_oss_mem0_client.add.assert_not_awaited()
 
 
 # -- _validate_filters tests --------------------------------------------------
@@ -372,6 +730,33 @@ class TestValidateFilters:
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client, application_id="app1")
         provider._validate_filters()
 
+    def test_oss_application_id_only_raises(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client with only application_id is rejected because application scope is Platform-only."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, application_id="app1")
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            provider._validate_filters()
+
+    def test_oss_application_id_with_user_id_raises(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client rejects application_id even with a supported user scope."""
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", application_id="app1"
+        )
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            provider._validate_filters()
+
+    def test_oss_passes_with_user_id(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client with user_id is accepted."""
+        provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1")
+        provider._validate_filters()
+
+    def test_oss_search_application_id_raises(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS client rejects the Platform-only search_application_id retrieval scope."""
+        provider = Mem0ContextProvider(
+            source_id="mem0", mem0_client=mock_oss_mem0_client, user_id="u1", search_application_id="app1"
+        )
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            provider._validate_filters()
+
 
 # -- _build_search_kwargs tests -----------------------------------------------------
 
@@ -395,6 +780,8 @@ class TestBuildSearchKwargs:
             user_id="u1",
             agent_id="a1",
             application_id="app1",
+            search_agent_id="a1",
+            search_application_id="app1",
         )
 
         # Test that app_id correctly merges with the isolated target entity
@@ -425,6 +812,19 @@ class TestBuildSearchKwargs:
         assert "run_id" not in result.get("filters", {})
         assert "run_id" not in result
 
+    def test_oss_search_filters_reject_app_id(self, mock_oss_mem0_client: AsyncMock) -> None:
+        """OSS search filters reject application_id because app_id is only supported by Platform."""
+        provider = Mem0ContextProvider(
+            source_id="mem0",
+            mem0_client=mock_oss_mem0_client,
+            user_id="u1",
+            application_id="app1",
+            search_application_id="app1",
+        )
+
+        with pytest.raises(ValueError, match="application_id is not supported"):
+            provider._build_search_kwargs("test query", "user_id", "u1")
+
     def test_empty_when_no_params(self, mock_mem0_client: AsyncMock) -> None:
         # Validates base query payload generation
         provider = Mem0ContextProvider(source_id="mem0", mem0_client=mock_mem0_client)
@@ -433,11 +833,12 @@ class TestBuildSearchKwargs:
 
         assert result == {"query": "test query", "filters": {"custom_key": "custom_val"}}
 
-    @pytest.mark.asyncio
     async def test_before_run_application_only_fallback(self, mock_mem0_client: AsyncMock) -> None:
-
         provider = Mem0ContextProvider(
-            source_id="mem0", mem0_client=mock_mem0_client, application_id="app_fallback_test"
+            source_id="mem0",
+            mem0_client=mock_mem0_client,
+            application_id="app_fallback_test",
+            search_application_id="app_fallback_test",
         )
 
         # Mock a valid message list and session container setup
@@ -449,12 +850,17 @@ class TestBuildSearchKwargs:
 
         mock_mem0_client.search = AsyncMock(return_value=[{"id": "m1", "memory": "System configuration template"}])
 
-        await provider.before_run(
-            agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
-        )
+        with patch("agent_framework_mem0._context_provider.mark_feature_used") as mark_feature_used:
+            await provider.before_run(
+                agent=MagicMock(), session=MagicMock(spec=AgentSession), context=mock_context, state={}
+            )
 
         # Verify that an application-scoped search task executed successfully
-        assert mock_mem0_client.search.call_count == 1
+        mark_feature_used.assert_called_once_with(FeatureIndex.MEM0)
+        mock_mem0_client.search.assert_awaited_once_with(
+            query="Retrieve systemic fallback memory traces",
+            filters={"app_id": "app_fallback_test"},
+        )
         mock_context.extend_messages.assert_called_once()
 
 

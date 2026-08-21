@@ -17,26 +17,14 @@ from agent_framework import (
 )
 from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
+    _auto_invoke_function,
     _parse_annotation,
     _parse_inputs,
-    _tools_to_dict,
+    normalize_function_invocation_configuration,
 )
 from agent_framework.observability import OtelAttr
 
 # region FunctionTool and tool decorator tests
-
-
-def test_tools_to_dict_supports_pydantic_tool_models() -> None:
-    """Pydantic-based tool specs are serialized without logging parse warnings."""
-
-    class ProviderTool(BaseModel):
-        kind: str
-        enabled: bool = True
-        note: str | None = None
-
-    result = _tools_to_dict([ProviderTool(kind="google_search")])
-
-    assert result == [{"kind": "google_search", "enabled": True}]
 
 
 def test_tool_decorator():
@@ -163,6 +151,59 @@ async def test_tool_decorator_with_json_schema_invoke_missing_required():
 
     with pytest.raises(TypeError, match="Missing required argument"):
         await search.invoke(arguments={})
+
+
+async def test_invoke_preserves_explicit_null_argument():
+    """A required nullable argument the model sets to null must reach the function.
+
+    Regression for #5934: exclude_none dropped the explicit null, so the required
+    ``unit`` went missing and the invocation failed.
+    """
+
+    @tool
+    def get_weather(location: str, unit: Literal["C", "F"] | None) -> str:
+        return f"{location}:{unit}"
+
+    result = await get_weather.invoke(arguments={"location": "Seattle", "unit": None})
+    assert isinstance(result, list)
+    assert result[0].text == "Seattle:None"
+
+
+async def test_invoke_omitted_optional_uses_function_default():
+    """An omitted optional argument still falls back to the function's own default."""
+
+    @tool
+    def get_weather(location: str, unit: str = "C") -> str:
+        return f"{location}:{unit}"
+
+    result = await get_weather.invoke(arguments={"location": "Seattle"})
+    assert result[0].text == "Seattle:C"
+
+
+async def test_auto_invoke_preserves_explicit_null_argument():
+    """The auto function-calling path must preserve an explicit null argument too.
+
+    Regression for #5934: ``FunctionTool.invoke`` was fixed, but ``_auto_invoke_function``
+    (the path a model's ``function_call`` actually takes) still ran ``exclude_none`` and
+    dropped the required ``unit``, so the invocation failed with a missing argument.
+    """
+
+    @tool
+    def get_weather(location: str, unit: Literal["C", "F"] | None) -> str:
+        return f"{location}:{unit}"
+
+    function_call = Content.from_function_call(
+        call_id="call-1",
+        name=get_weather.name,
+        arguments='{"location": "Seattle", "unit": null}',
+    )
+    result = await _auto_invoke_function(
+        function_call,
+        config=normalize_function_invocation_configuration(None),
+        tool_map={get_weather.name: get_weather},
+    )
+    assert result.type == "function_result"
+    assert result.result == "Seattle:None"
 
 
 async def test_tool_decorator_with_json_schema_invoke_invalid_type():
@@ -550,12 +591,12 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     span = spans[0]
     assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
     assert "telemetry_test_tool" in span.name
-    assert span.attributes[OtelAttr.TOOL_NAME] == "telemetry_test_tool"
-    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
-    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
-    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'
-    assert span.attributes[OtelAttr.TOOL_RESULT] == "3"
+    assert span.attributes[OtelAttr.TOOL_NAME] == "telemetry_test_tool"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_RESULT] == "3"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     # Verify histogram was called with correct attributes
     mock_histogram.record.assert_called_once()
@@ -595,12 +636,12 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     span = spans[0]
     assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
     assert "telemetry_test_tool" in span.name
-    assert span.attributes[OtelAttr.TOOL_NAME] == "telemetry_test_tool"
-    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
-    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
-    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"
-    assert OtelAttr.TOOL_ARGUMENTS not in span.attributes
-    assert OtelAttr.TOOL_RESULT not in span.attributes
+    assert span.attributes[OtelAttr.TOOL_NAME] == "telemetry_test_tool"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool for telemetry"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert OtelAttr.TOOL_ARGUMENTS not in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+    assert OtelAttr.TOOL_RESULT not in span.attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
     # Verify histogram was called with correct attributes
     mock_histogram.record.assert_called_once()
@@ -611,6 +652,35 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_invoke_telemetry_omits_tool_call_attrs_under_baseline_semconv(span_exporter: InMemorySpanExporter):
+    """gen_ai.tool.call.arguments/result were introduced above v1.36.0; omit them under the baseline semconv."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+
+    @tool(
+        name="telemetry_test_tool",
+        description="A test tool for telemetry",
+    )
+    def telemetry_test_tool(x: int, y: int) -> int:
+        """A function that adds two numbers for telemetry testing."""
+        return x + y
+
+    span_exporter.clear()
+    result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
+
+    assert isinstance(result, list)
+    assert result[0].text == "3"
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes is not None
+    assert OtelAttr.TOOL_ARGUMENTS not in span.attributes
+    assert OtelAttr.TOOL_RESULT not in span.attributes
+
+
 async def test_tool_invoke_rejects_unexpected_runtime_kwargs() -> None:
     """Ensure invoke() requires runtime data to flow through FunctionInvocationContext."""
 
@@ -619,7 +689,7 @@ async def test_tool_invoke_rejects_unexpected_runtime_kwargs() -> None:
         """Echo tool."""
         return message.upper()
 
-    args = simple_tool.input_model(message="hello world")
+    args = simple_tool.input_model(message="hello world")  # type: ignore[misc, operator]  # pyrefly: ignore[not-callable]  # ty: ignore[call-non-callable]
 
     with pytest.raises(TypeError, match="Unexpected keyword argument"):
         await simple_tool.invoke(
@@ -641,7 +711,7 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
         return x + y
 
     # Create arguments as Pydantic model instance
-    args_model = pydantic_test_tool.input_model(x=5, y=10)
+    args_model = pydantic_test_tool.input_model(x=5, y=10)  # type: ignore[misc, operator]  # pyrefly: ignore[not-callable]  # ty: ignore[call-non-callable]
 
     mock_histogram = Mock()
     pydantic_test_tool._invocation_duration_histogram = mock_histogram
@@ -657,11 +727,11 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     span = spans[0]
     assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
     assert "pydantic_test_tool" in span.name
-    assert span.attributes[OtelAttr.TOOL_NAME] == "pydantic_test_tool"
-    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "pydantic_call"
-    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
-    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool with Pydantic args"
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'
+    assert span.attributes[OtelAttr.TOOL_NAME] == "pydantic_test_tool"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "pydantic_call"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool with Pydantic args"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):
@@ -686,12 +756,12 @@ async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanE
     span = spans[0]
     assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
     assert "exception_test_tool" in span.name
-    assert span.attributes[OtelAttr.TOOL_NAME] == "exception_test_tool"
-    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "exception_call"
-    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
-    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool that raises an exception"
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'
-    assert span.attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__
+    assert span.attributes[OtelAttr.TOOL_NAME] == "exception_test_tool"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "exception_call"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool that raises an exception"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 1, "y": 2}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.ERROR_TYPE] == ValueError.__name__  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert span.status.status_code == trace.StatusCode.ERROR
 
     # Verify histogram was called with error attributes
@@ -726,11 +796,11 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     span = spans[0]
     assert OtelAttr.TOOL_EXECUTION_OPERATION.value in span.name
     assert "async_telemetry_test" in span.name
-    assert span.attributes[OtelAttr.TOOL_NAME] == "async_telemetry_test"
-    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "async_call"
-    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
-    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "An async test tool for telemetry"
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 3, "y": 4}'
+    assert span.attributes[OtelAttr.TOOL_NAME] == "async_telemetry_test"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "async_call"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_TYPE] == "function"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "An async test tool for telemetry"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 3, "y": 4}'  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
     # Verify histogram recording
     mock_histogram.record.assert_called_once()
@@ -822,7 +892,7 @@ def test_parse_inputs_list_of_strings():
     """Test _parse_inputs with list of strings."""
 
     inputs = ["http://example.com", "https://test.org"]
-    result = _parse_inputs(inputs)
+    result = _parse_inputs(inputs)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     assert len(result) == 2
     assert all(item.type == "uri" for item in result)
@@ -900,7 +970,7 @@ def test_parse_inputs_mixed_list():
         Content.from_text(text="Hello"),  # Content instance
     ]
 
-    result = _parse_inputs(inputs)
+    result = _parse_inputs(inputs)  # type: ignore[arg-type]
 
     assert len(result) == 4
     assert result[0].type == "uri"
@@ -925,7 +995,7 @@ def test_parse_inputs_unsupported_dict():
 def test_parse_inputs_unsupported_type():
     """Test _parse_inputs with unsupported input type."""
     with pytest.raises(TypeError, match="Unsupported input type: int"):
-        _parse_inputs(123)
+        _parse_inputs(123)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
 
 # endregion
@@ -953,13 +1023,13 @@ async def test_ai_function_with_kwargs_rejects_runtime_invoke_kwargs():
 
     with pytest.raises(TypeError, match="Unexpected keyword argument"):
         await tool_with_kwargs.invoke(
-            arguments=tool_with_kwargs.input_model(x=5),
+            arguments=tool_with_kwargs.input_model(x=5),  # type: ignore[misc, operator]  # pyrefly: ignore[not-callable]  # ty: ignore[call-non-callable]
             user_id="user2",
         )
 
     # Verify invoke works without injected args (uses default)
     result_default = await tool_with_kwargs.invoke(
-        arguments=tool_with_kwargs.input_model(x=10),
+        arguments=tool_with_kwargs.input_model(x=10),  # type: ignore[misc, operator]  # pyrefly: ignore[not-callable]  # ty: ignore[call-non-callable]
     )
     assert isinstance(result_default, list)
     assert result_default[0].text == "x=10, user=unknown"
@@ -983,7 +1053,7 @@ async def test_ai_function_with_explicit_invocation_context():
 
     context = FunctionInvocationContext(
         function=tool_with_context,
-        arguments=tool_with_context.input_model(x=7),
+        arguments=tool_with_context.input_model(x=7),  # type: ignore[misc, operator]  # pyrefly: ignore[not-callable]  # ty: ignore[call-non-callable]
         kwargs={"user_id": "ctx-user"},
     )
 
@@ -1010,7 +1080,7 @@ async def test_ai_function_with_typed_context_parameter_using_custom_name():
 
     context = FunctionInvocationContext(
         function=tool_with_runtime_context,
-        arguments=tool_with_runtime_context.input_model(x=8),
+        arguments=tool_with_runtime_context.input_model(x=8),  # type: ignore[misc, operator]  # pyrefly: ignore[not-callable]  # ty: ignore[call-non-callable]
         kwargs={"user_id": "runtime-user"},
     )
 
@@ -1132,7 +1202,9 @@ def test_parse_annotation_with_annotated_and_literal():
     """Test that Annotated[Literal[...], description] works correctly."""
 
     # When Literal is inside Annotated, it should still be preserved
-    annotated_literal = Annotated[Literal["A", "B", "C"], "The category"]
+    category_literal: Any = Literal["A", "B", "C"]
+    annotated: Any = Annotated
+    annotated_literal = annotated[category_literal, "The category"]
     result = _parse_annotation(annotated_literal)
 
     # The Annotated type should be preserved
@@ -1468,9 +1540,9 @@ async def test_invoke_skip_parsing_records_telemetry(span_exporter: InMemorySpan
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
-    assert span.attributes[OtelAttr.TOOL_NAME] == "raw_tool"
-    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "raw_call"
-    assert span.attributes[OtelAttr.TOOL_RESULT] == "{'value': 5}"
+    assert span.attributes[OtelAttr.TOOL_NAME] == "raw_tool"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_CALL_ID] == "raw_call"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+    assert span.attributes[OtelAttr.TOOL_RESULT] == "{'value': 5}"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 async def test_invoke_default_path_records_parsed_telemetry(
@@ -1492,7 +1564,7 @@ async def test_invoke_default_path_records_parsed_telemetry(
     assert parsed[0].text == "parsed:7"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].attributes[OtelAttr.TOOL_RESULT] == "parsed:7"
+    assert spans[0].attributes[OtelAttr.TOOL_RESULT] == "parsed:7"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 def test_skip_parsing_is_singleton() -> None:

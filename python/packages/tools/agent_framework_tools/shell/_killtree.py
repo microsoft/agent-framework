@@ -25,12 +25,12 @@ import signal
 import sys
 
 try:  # pragma: no cover - importable on every platform we ship
-    import psutil  # type: ignore[import-untyped]
+    import psutil
 
     _has_psutil = True
 except ImportError:  # pragma: no cover
     _has_psutil = False
-    psutil = None  # type: ignore[assignment]
+    psutil = None
 
 
 _taskkill_path: str | None = None
@@ -41,7 +41,7 @@ def _resolve_taskkill() -> str:
     global _taskkill_path
     if _taskkill_path is not None:
         return _taskkill_path
-    system_root = os.environ.get("SystemRoot") or os.environ.get("SYSTEMROOT") or r"C:\Windows"  # noqa: SIM112
+    system_root = os.environ.get("SystemRoot") or os.environ.get("SYSTEMROOT") or r"C:\Windows"  # ruff:ignore[uncapitalized-environment-variables]
     candidate = os.path.join(system_root, "System32", "taskkill.exe")
     _taskkill_path = candidate if os.path.isfile(candidate) else "taskkill"
     return _taskkill_path

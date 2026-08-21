@@ -21,7 +21,7 @@ Environment variables (optional):
 import asyncio
 from pathlib import Path
 
-from agent_framework.github import GitHubCopilotAgent
+from agent_framework.github import GitHubCopilotAgent, GitHubCopilotOptions
 from copilot.session import PermissionHandler
 from dotenv import load_dotenv
 
@@ -44,12 +44,12 @@ async def default_instructions_example() -> None:
 
     # 2. Create the agent with instruction directories in default_options.
     # These directories apply to every session created by this agent.
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful coding assistant.",
-        default_options={
-            "on_permission_request": PermissionHandler.approve_all,
-            "instruction_directories": instruction_dirs,
-        },
+        default_options=GitHubCopilotOptions(
+            on_permission_request=PermissionHandler.approve_all,
+            instruction_directories=instruction_dirs,
+        ),
     )
 
     # 3. Run the agent — instruction files from those directories are loaded
@@ -65,12 +65,12 @@ async def runtime_override_example() -> None:
     """Example of overriding instruction directories at runtime."""
     print("=== Instruction Directories (Runtime Override) ===\n")
 
-    agent = GitHubCopilotAgent(
+    agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
         instructions="You are a helpful assistant.",
-        default_options={
-            "on_permission_request": PermissionHandler.approve_all,
-            "instruction_directories": ["/team/shared/instructions"],
-        },
+        default_options=GitHubCopilotOptions(
+            on_permission_request=PermissionHandler.approve_all,
+            instruction_directories=["/team/shared/instructions"],
+        ),
     )
 
     async with agent:
@@ -85,11 +85,11 @@ async def runtime_override_example() -> None:
         print("Overriding with project-specific instructions...\n")
         query2 = "Now what instructions are you following?"
         print(f"User: {query2}")
-        result2 = await agent.run(
+        result2 = await agent.run(  # pyright: ignore[reportCallIssue]
             query2,
-            options={
-                "instruction_directories": ["/project/specific/instructions"],
-            },
+            options=GitHubCopilotOptions(  # pyright: ignore[reportArgumentType]
+                instruction_directories=["/project/specific/instructions"],
+            ),
         )
         print(f"Agent: {result2}\n")
 

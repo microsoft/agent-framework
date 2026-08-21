@@ -3,11 +3,11 @@
 import asyncio
 import os
 
-# Uncomment this filter to suppress the experimental Skills warning before
-# using the sample's Skills APIs.
+# Uncomment this filter to suppress the experimental MCP Skills warning before
+# using the sample's MCP Skills APIs.
 # import warnings
-# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
-from agent_framework import Agent, MCPSkillsSource, SkillsProvider
+# warnings.filterwarnings("ignore", message=r"\[MCP_SKILLS\].*", category=FutureWarning)
+from agent_framework import Agent, MCPSkillsSource, SkillsProvider, ToolApprovalMiddleware
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -63,11 +63,13 @@ async def main() -> None:
             client=client,
             instructions="You are a helpful assistant. Use available skills to answer the user.",
             context_providers=[skills_provider],
+            middleware=[ToolApprovalMiddleware(auto_approval_rules=[SkillsProvider.all_tools_auto_approval_rule])],
         ) as agent:
             query = input("User: ").strip()  # noqa: ASYNC250
             if not query:
                 return
-            response = await agent.run(query)
+            session = agent.create_session()
+            response = await agent.run(query, session=session)
             print(f"Agent: {response}\n")
 
 

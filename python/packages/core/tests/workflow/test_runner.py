@@ -17,7 +17,6 @@ from agent_framework import (
     WorkflowContext,
     WorkflowConvergenceException,
     WorkflowEvent,
-    WorkflowRunnerException,
     WorkflowRunState,
     handler,
 )
@@ -171,7 +170,7 @@ async def test_runner_run_iteration_preserves_message_order_per_edge_runner() ->
     runner = Runner([], {}, state, ctx, "test_name", graph_signature_hash="test_hash")
 
     edge_runner = RecordingEdgeRunner()
-    runner._edge_runner_map = {"source": [edge_runner]}  # type: ignore[assignment]
+    runner._edge_runner_map = {"source": [edge_runner]}  # type: ignore[assignment, list-item]  # ty: ignore[invalid-assignment]
 
     for index in range(5):
         await ctx.send_message(WorkflowMessage(data=MockMessage(data=index), source_id="source"))
@@ -216,7 +215,7 @@ async def test_runner_run_iteration_delivers_different_edge_runners_concurrently
 
     blocking_edge_runner = BlockingEdgeRunner()
     probe_edge_runner = ProbeEdgeRunner()
-    runner._edge_runner_map = {"source": [blocking_edge_runner, probe_edge_runner]}  # type: ignore[assignment]
+    runner._edge_runner_map = {"source": [blocking_edge_runner, probe_edge_runner]}  # type: ignore[assignment, list-item]  # ty: ignore[invalid-assignment]
 
     await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source"))
 
@@ -305,40 +304,62 @@ async def test_fanout_edge_runner_delivers_to_multiple_targets_concurrently() ->
     assert probe_target.call_count == 1
 
 
-async def test_runner_already_running():
-    """Test that running the runner while it is already running raises an error."""
+async def test_runner_run_until_convergence_runs_sequentially():
+    """run_until_convergence can be invoked back-to-back on the same Runner.
+
+    The Runner itself does not enforce concurrency; that responsibility lives on
+    :class:`Workflow`. This test simply confirms the Runner is reusable across
+    sequential runs.
+    """
+    runner = _make_runner()
+    async for _ in runner.run_until_convergence():
+        pass
+    async for _ in runner.run_until_convergence():
+        pass
+
+
+def _make_runner() -> Runner:
+    """Build a minimal runner for runner-level tests."""
+    return Runner(
+        [],
+        {},
+        State(),
+        InProcRunnerContext(),
+        "test_name",
+        graph_signature_hash="test_hash",
+    )
+
+
+async def test_runner_accepts_new_run_after_previous_failure():
+    """A failed run must not leave the Runner unable to start a new run.
+
+    After the first run raises, ``run_until_convergence()`` must be callable
+    again and not surface any lifecycle-related rejection.
+    """
     executor_a = MockExecutor(id="executor_a")
     executor_b = MockExecutor(id="executor_b")
-
-    # Create a loop
     edges = [
         SingleEdgeGroup(executor_a.id, executor_b.id),
         SingleEdgeGroup(executor_b.id, executor_a.id),
     ]
-
-    executors: dict[str, Executor] = {
-        executor_a.id: executor_a,
-        executor_b.id: executor_b,
-    }
+    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
     state = State()
     ctx = InProcRunnerContext()
+    runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash", max_iterations=2)
 
-    runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash")
+    await executor_a.execute(MockMessage(data=0), ["START"], state, ctx)
 
-    await executor_a.execute(
-        MockMessage(data=0),
-        ["START"],  # source_executor_ids
-        state,  # state
-        ctx,  # runner_context
-    )
+    with pytest.raises(WorkflowConvergenceException):
+        async for _ in runner.run_until_convergence():
+            pass
 
-    with pytest.raises(WorkflowRunnerException, match="Runner is already running."):
-
-        async def _run():
-            async for _ in runner.run_until_convergence():
-                pass
-
-        await asyncio.gather(_run(), _run())
+    # A second run on the same Runner must not be blocked by stale lifecycle
+    # state from the failed run.
+    try:
+        async for _ in runner.run_until_convergence():
+            pass
+    except Exception as exc:
+        assert "Runner is already running" not in str(exc), "Runner stayed locked after a failed run"
 
 
 async def test_runner_emits_runner_completion_for_agent_response_without_targets():
@@ -491,6 +512,98 @@ async def test_runner_reset_iteration_count():
     assert runner._iteration == 0  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_runner_capture_and_restore_checkpoint_object_roundtrip():
+    """build_checkpoint() then restore_checkpoint() must roundtrip.
+
+    Shared state and executor snapshots are captured into an in-memory ``WorkflowCheckpoint``
+    and restored from it without any storage backend (the path the parent WorkflowExecutor
+    uses to checkpoint a nested sub-workflow).
+    """
+
+    class CounterExecutor(Executor):
+        def __init__(self, id: str) -> None:
+            super().__init__(id=id)
+            self.count = 0
+
+        @handler
+        async def handle(self, message: MockMessage, ctx: WorkflowContext[Any, int]) -> None:
+            self.count += message.data
+
+        async def on_checkpoint_save(self) -> dict[str, Any]:
+            return {"count": self.count}
+
+        async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+            self.count = int(state.get("count", 0))
+
+    executor = CounterExecutor(id="counter")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # Establish some state to capture.
+    executor.count = 7
+    state.set("shared_key", "shared_value")
+    state.commit()
+
+    checkpoint = await runner.build_checkpoint()
+    assert checkpoint.graph_signature_hash == "test_hash"
+
+    # Mutate after capture; restoring must roll back to the captured snapshot.
+    executor.count = 999
+    state.set("shared_key", "mutated")
+    state.commit()
+
+    await runner.restore_checkpoint(checkpoint)
+
+    assert executor.count == 7
+    assert state.get("shared_key") == "shared_value"
+    assert runner._previous_checkpoint_id == checkpoint.checkpoint_id  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_runner_build_checkpoint_includes_in_flight_messages():
+    """build_checkpoint() must snapshot in-flight messages non-destructively."""
+    executor = MockExecutor(id="executor_a")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="START"))
+
+    checkpoint = await runner.build_checkpoint()
+
+    # The in-flight message is captured in the snapshot ...
+    assert list(checkpoint.messages.keys()) == ["START"]
+    assert len(checkpoint.messages["START"]) == 1
+    # ... without draining it from the runner (capture is non-destructive).
+    assert await ctx.has_messages() is True
+
+
+async def test_runner_build_checkpoint_do_not_advance_previous_checkpoint_id():
+    """build_checkpoint() must not advance _previous_checkpoint_id so a later capture chains to it."""
+    executor = MockExecutor(id="executor_a")
+    state = State()
+    ctx = InProcRunnerContext()
+    runner = Runner([], {executor.id: executor}, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # Pre-condition: nothing captured yet, so there is no parent to chain back to.
+    assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
+
+    first = await runner.build_checkpoint()
+    assert first.previous_checkpoint_id is None
+
+    # Capturing advances the tracked checkpoint id to the newly-created checkpoint ...
+    assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_runner_restore_checkpoint_rejects_graph_mismatch():
+    """restore_checkpoint() must reject a checkpoint from a different graph."""
+    runner = Runner([], {}, State(), InProcRunnerContext(), "test_name", graph_signature_hash="hash-a")
+
+    foreign = WorkflowCheckpoint(workflow_name="test_name", graph_signature_hash="hash-b")
+    with pytest.raises(WorkflowCheckpointException, match="Workflow graph has changed"):
+        await runner.restore_checkpoint(foreign)
+
+
 class CheckpointingContext(InProcRunnerContext):
     """A context that supports checkpointing for testing."""
 
@@ -520,7 +633,7 @@ class CheckpointingContext(InProcRunnerContext):
         )
         return await self._storage.save(checkpoint)
 
-    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:  # pyright: ignore[reportIncompatibleMethodOverride]
+    async def load_checkpoint(self, checkpoint_id: str) -> WorkflowCheckpoint | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]  # pyright: ignore[reportIncompatibleMethodOverride]
         try:
             return await self._storage.load(checkpoint_id)
         except WorkflowCheckpointException:
@@ -618,7 +731,7 @@ async def test_runner_restore_from_checkpoint_with_external_storage():
     # Restore using external storage
     await runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage=storage)
 
-    assert runner._resumed_from_checkpoint is True  # pyright: ignore[reportPrivateUsage]
+    assert runner._previous_checkpoint_id == checkpoint_id  # pyright: ignore[reportPrivateUsage]
     assert runner._iteration == 5  # pyright: ignore[reportPrivateUsage]
     assert state.get("test_key") == "test_value"
 
@@ -843,8 +956,34 @@ async def test_runner_restore_executor_states_no_states():
     await runner._restore_executor_states()  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_runner_checkpoint_with_resumed_flag():
-    """Test that resumed flag prevents initial checkpoint creation."""
+async def test_runner_mark_resumed_sets_previous_checkpoint_id():
+    """_mark_resumed must populate _previous_checkpoint_id so future checkpoints chain back to the resume point."""
+    runner = Runner(
+        [],
+        {},
+        State(),
+        InProcRunnerContext(),
+        "test_name",
+        graph_signature_hash="test_hash",
+    )
+
+    # Pre-condition: nothing to chain back to
+    assert runner._previous_checkpoint_id is None  # pyright: ignore[reportPrivateUsage]
+
+    resumed_checkpoint = WorkflowCheckpoint(
+        checkpoint_id="resumed-cp-id",
+        workflow_name="test_name",
+        graph_signature_hash="test_hash",
+        iteration_count=3,
+    )
+    runner._mark_resumed(resumed_checkpoint)  # pyright: ignore[reportPrivateUsage]
+
+    assert runner._iteration == 3  # pyright: ignore[reportPrivateUsage]
+    assert runner._previous_checkpoint_id == "resumed-cp-id"  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_runner_post_resume_checkpoint_chains_to_resumed_checkpoint():
+    """After resuming, the next checkpoint created must reference the resumed checkpoint as its parent."""
     storage = InMemoryCheckpointStorage()
     ctx = CheckpointingContext(storage)
     executor_a = MockExecutor(id="executor_a")
@@ -862,24 +1001,38 @@ async def test_runner_checkpoint_with_resumed_flag():
     state = State()
 
     runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash")
-    runner._mark_resumed(5)  # pyright: ignore[reportPrivateUsage]
 
-    # Add a message to trigger the checkpoint creation path
-    await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id="START"))
-
-    await executor_a.execute(
-        MockMessage(data=8),
-        ["START"],
-        state,
-        ctx,
+    # Simulate having resumed from a prior checkpoint
+    resumed_checkpoint = WorkflowCheckpoint(
+        checkpoint_id="parent-checkpoint-id",
+        workflow_name="test_name",
+        graph_signature_hash="test_hash",
+        iteration_count=1,
     )
+    runner._mark_resumed(resumed_checkpoint)  # pyright: ignore[reportPrivateUsage]
 
-    # Run until convergence
+    # Seed a message so the runner has work to do (and creates checkpoints at superstep boundaries)
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=8), source_id=executor_a.id))
+
     async for _ in runner.run_until_convergence():
         pass
 
-    # After completing, resumed flag should be reset
-    assert runner._resumed_from_checkpoint is False  # pyright: ignore[reportPrivateUsage]
+    # Find the first checkpoint created after the resume point (across all workflows tracked by storage)
+    new_checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name="test_name"),
+        key=lambda c: c.timestamp,
+    )
+    assert new_checkpoints, "Resuming and running should produce at least one new checkpoint"
+
+    # The first new checkpoint must chain to the resumed-from checkpoint, not to None
+    assert new_checkpoints[0].previous_checkpoint_id == "parent-checkpoint-id", (
+        "First post-resume checkpoint must chain to the resumed checkpoint id; "
+        f"got {new_checkpoints[0].previous_checkpoint_id!r}"
+    )
+
+    # Subsequent post-resume checkpoints continue the chain
+    for i in range(1, len(new_checkpoints)):
+        assert new_checkpoints[i].previous_checkpoint_id == new_checkpoints[i - 1].checkpoint_id
 
 
 class ExecutorThatFailsWithEvents(Executor):
@@ -949,6 +1102,51 @@ async def test_runner_drains_events_on_iteration_exception():
     output_events = [e for e in events if e.type == "output"]
     # Should have drained the pending events before propagating the exception
     assert len(output_events) >= 1
+
+
+async def test_runner_creates_exactly_one_checkpoint_per_superstep():
+    """The runner creates exactly one checkpoint per completed superstep, with a consistent lineage.
+
+    Driving a loop that converges in a known number of supersteps must yield one checkpoint per
+    superstep - iteration counts ``1..N`` with no gaps or duplicates - and each checkpoint must
+    chain to its immediate predecessor, the first beginning a fresh lineage with no parent. The
+    runner never creates an entry (iteration-0) checkpoint; that is the ``Workflow``'s responsibility.
+    """
+    storage = InMemoryCheckpointStorage()
+    ctx = CheckpointingContext(storage)
+    executor_a = MockExecutor(id="executor_a")
+    executor_b = MockExecutor(id="executor_b")
+    edges = [
+        SingleEdgeGroup(executor_a.id, executor_b.id),
+        SingleEdgeGroup(executor_b.id, executor_a.id),
+    ]
+    executors: dict[str, Executor] = {executor_a.id: executor_a, executor_b.id: executor_b}
+    state = State()
+    runner = Runner(edges, executors, state, ctx, "test_name", graph_signature_hash="test_hash")
+
+    # executor_a seeds the loop; the runner then drives supersteps until the value reaches 10.
+    await executor_a.execute(MockMessage(data=0), ["START"], state, ctx)
+    superstep_completed = 0
+    async for event in runner.run_until_convergence():
+        if event.type == "superstep_completed":
+            superstep_completed += 1
+
+    checkpoints = sorted(
+        await storage.list_checkpoints(workflow_name="test_name"),
+        key=lambda c: c.iteration_count,
+    )
+
+    # Exactly one checkpoint per completed superstep, with contiguous iteration counts 1..N and no entry checkpoint.
+    assert superstep_completed == runner._iteration  # pyright: ignore[reportPrivateUsage]
+    assert len(checkpoints) == superstep_completed
+    assert [cp.iteration_count for cp in checkpoints] == list(range(1, superstep_completed + 1))
+
+    # Lineage: the first checkpoint begins a fresh chain; each subsequent one chains to its predecessor.
+    assert checkpoints[0].previous_checkpoint_id is None
+    for prev, cur in zip(checkpoints, checkpoints[1:]):
+        assert cur.previous_checkpoint_id == prev.checkpoint_id, (
+            f"Checkpoint at iteration {cur.iteration_count} must chain to iteration {prev.iteration_count}"
+        )
 
 
 class SlowEventEmittingExecutor(Executor):

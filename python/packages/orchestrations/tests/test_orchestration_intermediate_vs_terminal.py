@@ -14,10 +14,11 @@ Verifies that under the strict-output model:
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable
-from typing import Any, ClassVar, Literal, overload
+from typing import Any, ClassVar, Literal, cast, overload
 
 import pytest
 from agent_framework import (
+    Agent,
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
@@ -39,6 +40,14 @@ from agent_framework.orchestrations import (
     MagenticProgressLedgerItem,
     SequentialBuilder,
 )
+
+
+def _as_handoff_agent(agent: Any) -> Agent:
+    return cast(Agent, agent)
+
+
+def _as_handoff_agents(*agents: Any) -> list[Agent]:
+    return [_as_handoff_agent(agent) for agent in agents]
 
 
 class _EchoAgent(BaseAgent):
@@ -98,7 +107,7 @@ async def test_sequential_default_only_terminator_is_output() -> None:
     b = _EchoAgent(name="B")
     c = _EchoAgent(name="C")
 
-    workflow = SequentialBuilder(participants=[a, b, c]).build()
+    workflow = SequentialBuilder(participants=_as_handoff_agents(a, b, c)).build()
 
     output_events: list[Any] = []
     intermediate_events: list[Any] = []
@@ -122,7 +131,7 @@ async def test_sequential_output_from_designates_workflow_output_participants() 
     b = _EchoAgent(name="B")
     c = _EchoAgent(name="C")
 
-    workflow = SequentialBuilder(participants=[a, b, c], output_from=["A", "B", "C"]).build()
+    workflow = SequentialBuilder(participants=_as_handoff_agents(a, b, c), output_from=["A", "B", "C"]).build()
     result = await workflow.run("hello")
     outputs = result.get_outputs()
     assert len(outputs) == 3
@@ -134,7 +143,7 @@ async def test_sequential_intermediate_output_from_surface_as_intermediate() -> 
     b = _EchoAgent(name="B")
     c = _EchoAgent(name="C")
 
-    workflow = SequentialBuilder(participants=[a, b, c], intermediate_output_from=[a, "B"]).build()
+    workflow = SequentialBuilder(participants=_as_handoff_agents(a, b, c), intermediate_output_from=[a, "B"]).build()
 
     output_executors: set[str] = set()
     intermediate_executors: set[str] = set()
@@ -162,7 +171,7 @@ async def test_sequential_intermediate_can_demote_default_terminator() -> None:
     b = _EchoAgent(name="B")
     c = _EchoAgent(name="C")
 
-    workflow = SequentialBuilder(participants=[a, b, c], intermediate_output_from=["C"]).build()
+    workflow = SequentialBuilder(participants=_as_handoff_agents(a, b, c), intermediate_output_from=["C"]).build()
 
     output_executors: set[str] = set()
     intermediate_executors: set[str] = set()
@@ -184,7 +193,7 @@ async def test_sequential_get_outputs_returns_terminator_only() -> None:
     a = _EchoAgent(name="A")
     b = _EchoAgent(name="B")
 
-    workflow = SequentialBuilder(participants=[a, b]).build()
+    workflow = SequentialBuilder(participants=_as_handoff_agents(a, b)).build()
     result = await workflow.run("hi")
     outputs = result.get_outputs()
     assert len(outputs) == 1
@@ -201,7 +210,7 @@ async def test_concurrent_default_only_aggregator_is_output() -> None:
     a = _EchoAgent(name="A")
     b = _EchoAgent(name="B")
 
-    workflow = ConcurrentBuilder(participants=[a, b]).build()
+    workflow = ConcurrentBuilder(participants=_as_handoff_agents(a, b)).build()
 
     output_events: list[Any] = []
     intermediate_events: list[Any] = []
@@ -223,7 +232,7 @@ async def test_concurrent_output_from_designates_workflow_output_participants() 
     a = _EchoAgent(name="A")
     b = _EchoAgent(name="B")
 
-    workflow = ConcurrentBuilder(participants=[a, b], output_from=[a, "B"]).build()
+    workflow = ConcurrentBuilder(participants=_as_handoff_agents(a, b), output_from=[a, "B"]).build()
     result = await workflow.run("hello")
     outputs = result.get_outputs()
     assert len(outputs) == 3
@@ -234,7 +243,7 @@ async def test_concurrent_intermediate_output_from_surface_as_intermediate() -> 
     a = _EchoAgent(name="A")
     b = _EchoAgent(name="B")
 
-    workflow = ConcurrentBuilder(participants=[a, b], intermediate_output_from=["A", b]).build()
+    workflow = ConcurrentBuilder(participants=_as_handoff_agents(a, b), intermediate_output_from=["A", b]).build()
 
     output_executors: set[str] = set()
     intermediate_executors: set[str] = set()
@@ -260,7 +269,7 @@ async def test_sequential_default_as_agent_forwards_original_content_types() -> 
     b = _EchoAgent(name="B")
     c = _EchoAgent(name="C")
 
-    workflow = SequentialBuilder(participants=[a, b, c]).build()
+    workflow = SequentialBuilder(participants=_as_handoff_agents(a, b, c)).build()
     agent = workflow.as_agent("seq")
 
     response = await agent.run("hi")
@@ -268,7 +277,7 @@ async def test_sequential_default_as_agent_forwards_original_content_types() -> 
     text_contents = [c for m in response.messages for c in m.contents if c.type == "text"]
     reasoning_contents = [c for m in response.messages for c in m.contents if c.type == "text_reasoning"]
 
-    assert any("C reply" in c.text for c in text_contents)
+    assert any("C reply" in (c.text or "") for c in text_contents)
     assert not reasoning_contents
 
 
@@ -279,12 +288,12 @@ async def test_sequential_as_agent_output_from_all_text() -> None:
     b = _EchoAgent(name="B")
     c = _EchoAgent(name="C")
 
-    workflow = SequentialBuilder(participants=[a, b, c], output_from=["A", "B", "C"]).build()
+    workflow = SequentialBuilder(participants=_as_handoff_agents(a, b, c), output_from=["A", "B", "C"]).build()
     agent = workflow.as_agent("seq")
 
     response = await agent.run("hi")
     text_contents = [c for m in response.messages for c in m.contents if c.type == "text"]
-    text = " ".join(c.text for c in text_contents)
+    text = " ".join(c.text or "" for c in text_contents)
     assert "A reply" in text
     assert "B reply" in text
     assert "C reply" in text
@@ -297,16 +306,16 @@ async def test_sequential_as_agent_intermediate_output_from_keeps_text_content()
     b = _EchoAgent(name="B")
     c = _EchoAgent(name="C")
 
-    workflow = SequentialBuilder(participants=[a, b, c], intermediate_output_from=["A", "B"]).build()
+    workflow = SequentialBuilder(participants=_as_handoff_agents(a, b, c), intermediate_output_from=["A", "B"]).build()
     agent = workflow.as_agent("seq")
 
     response = await agent.run("hi")
 
     text_contents = [c for m in response.messages for c in m.contents if c.type == "text"]
     reasoning_contents = [c for m in response.messages for c in m.contents if c.type == "text_reasoning"]
-    assert any("C reply" in c.text for c in text_contents)
-    assert any("A reply" in c.text for c in text_contents)
-    assert any("B reply" in c.text for c in text_contents)
+    assert any("C reply" in (c.text or "") for c in text_contents)
+    assert any("A reply" in (c.text or "") for c in text_contents)
+    assert any("B reply" in (c.text or "") for c in text_contents)
     assert not reasoning_contents
 
 
@@ -321,7 +330,7 @@ async def test_concurrent_default_as_agent_participants_keep_text_content() -> N
     a = _EchoAgent(name="A")
     b = _EchoAgent(name="B")
 
-    workflow = ConcurrentBuilder(participants=[a, b]).build()
+    workflow = ConcurrentBuilder(participants=_as_handoff_agents(a, b)).build()
     agent = workflow.as_agent("concurrent")
 
     response = await agent.run("hi")
@@ -329,8 +338,8 @@ async def test_concurrent_default_as_agent_participants_keep_text_content() -> N
     text_contents = [c for m in response.messages for c in m.contents if c.type == "text"]
     reasoning_contents = [c for m in response.messages for c in m.contents if c.type == "text_reasoning"]
 
-    assert not any("A reply" in c.text for c in reasoning_contents)
-    assert not any("B reply" in c.text for c in reasoning_contents)
+    assert not any("A reply" in (c.text or "") for c in reasoning_contents)
+    assert not any("B reply" in (c.text or "") for c in reasoning_contents)
 
     # The aggregator's default-yielded AgentResponse passes through as text content.
     assert text_contents, "expected at least one terminal text content from the aggregator"
@@ -365,7 +374,7 @@ async def test_group_chat_default_only_orchestrator_is_output() -> None:
     beta = _EchoAgent(name="beta")
 
     workflow = GroupChatBuilder(
-        participants=[alpha, beta],
+        participants=_as_handoff_agents(alpha, beta),
         max_rounds=2,
         selection_func=_two_step_selector(),
     ).build()
@@ -393,7 +402,7 @@ async def test_group_chat_output_from_designates_workflow_output_participants() 
     beta = _EchoAgent(name="beta")
 
     workflow = GroupChatBuilder(
-        participants=[alpha, beta],
+        participants=_as_handoff_agents(alpha, beta),
         max_rounds=2,
         selection_func=_two_step_selector(),
         output_from=[alpha, "beta"],
@@ -413,7 +422,7 @@ async def test_group_chat_intermediate_output_from_surface_as_intermediate() -> 
     beta = _EchoAgent(name="beta")
 
     workflow = GroupChatBuilder(
-        participants=[alpha, beta],
+        participants=_as_handoff_agents(alpha, beta),
         max_rounds=2,
         selection_func=_two_step_selector(),
         intermediate_output_from=["alpha", beta],
@@ -471,7 +480,9 @@ def test_handoff_builder_designates_every_participant_as_output() -> None:
         require_per_service_call_history_persistence=True,
     )
 
-    workflow = HandoffBuilder(participants=[alpha, beta]).with_start_agent(alpha).build()
+    workflow = (
+        HandoffBuilder(participants=_as_handoff_agents(alpha, beta)).with_start_agent(_as_handoff_agent(alpha)).build()
+    )
 
     designated = {ex.id for ex in workflow.get_output_executors()}
     assert "alpha" in designated, f"alpha must be designated; got {designated}"
@@ -506,7 +517,11 @@ def test_handoff_builder_output_from_can_select_workflow_output_participants() -
         require_per_service_call_history_persistence=True,
     )
 
-    workflow = HandoffBuilder(participants=[alpha, beta], output_from=["alpha"]).with_start_agent(alpha).build()
+    workflow = (
+        HandoffBuilder(participants=_as_handoff_agents(alpha, beta), output_from=["alpha"])
+        .with_start_agent(_as_handoff_agent(alpha))
+        .build()
+    )
 
     assert {ex.id for ex in workflow.get_output_executors()} == {"alpha"}
 
@@ -539,7 +554,9 @@ def test_handoff_builder_intermediate_output_from_demotes_from_default_output() 
     beta = Agent(name="beta", id="beta", client=_StubClient(), require_per_service_call_history_persistence=True)
 
     workflow = (
-        HandoffBuilder(participants=[alpha, beta], intermediate_output_from=["alpha"]).with_start_agent(alpha).build()
+        HandoffBuilder(participants=_as_handoff_agents(alpha, beta), intermediate_output_from=["alpha"])
+        .with_start_agent(_as_handoff_agent(alpha))
+        .build()
     )
 
     # alpha is implicitly removed from the default-final set; beta remains final.
@@ -592,7 +609,7 @@ def test_magentic_builder_default_only_manager_designated() -> None:
     manager = _StubMagenticManager()
     alpha = _EchoAgent(name="alpha")
 
-    workflow = MagenticBuilder(participants=[alpha], manager=manager).build()
+    workflow = MagenticBuilder(participants=_as_handoff_agents(alpha), manager=manager).build()
 
     designated = {ex.id for ex in workflow.get_output_executors()}
     assert "magentic_orchestrator" in designated, f"manager must be designated; got {designated}"
@@ -604,7 +621,7 @@ def test_magentic_builder_output_from_designates_workflow_output_participants() 
     manager = _StubMagenticManager()
     alpha = _EchoAgent(name="alpha")
 
-    workflow = MagenticBuilder(participants=[alpha], manager=manager, output_from=["alpha"]).build()
+    workflow = MagenticBuilder(participants=_as_handoff_agents(alpha), manager=manager, output_from=["alpha"]).build()
 
     designated = {ex.id for ex in workflow.get_output_executors()}
     assert {"magentic_orchestrator", "alpha"}.issubset(designated)
@@ -614,7 +631,9 @@ def test_magentic_builder_intermediate_output_from_designates_intermediate_worke
     manager = _StubMagenticManager()
     alpha = _EchoAgent(name="alpha")
 
-    workflow = MagenticBuilder(participants=[alpha], manager=manager, intermediate_output_from=[alpha]).build()
+    workflow = MagenticBuilder(
+        participants=_as_handoff_agents(alpha), manager=manager, intermediate_output_from=[alpha]
+    ).build()
 
     assert {ex.id for ex in workflow.get_output_executors()} == {"magentic_orchestrator"}
     assert {ex.id for ex in workflow.get_intermediate_executors()} == {"alpha"}
@@ -625,7 +644,7 @@ def test_sequential_output_from_all_selects_all_participants() -> None:
     b = _EchoAgent(name="B")
     c = _EchoAgent(name="C")
 
-    workflow = SequentialBuilder(participants=[a, b, c], output_from="all").build()
+    workflow = SequentialBuilder(participants=_as_handoff_agents(a, b, c), output_from="all").build()
 
     assert {ex.id for ex in workflow.get_output_executors()} == {"A", "B", "C"}
 
@@ -636,7 +655,7 @@ def test_sequential_intermediate_output_from_all_other_selects_non_outputs() -> 
     c = _EchoAgent(name="C")
 
     workflow = SequentialBuilder(
-        participants=[a, b, c], output_from=["C"], intermediate_output_from="all_other"
+        participants=_as_handoff_agents(a, b, c), output_from=["C"], intermediate_output_from="all_other"
     ).build()
 
     assert {ex.id for ex in workflow.get_output_executors()} == {"C"}
@@ -647,7 +666,7 @@ def test_sequential_all_other_with_omitted_output_from_selects_all_intermediate(
     a = _EchoAgent(name="A")
     b = _EchoAgent(name="B")
 
-    workflow = SequentialBuilder(participants=[a, b], intermediate_output_from="all_other").build()
+    workflow = SequentialBuilder(participants=_as_handoff_agents(a, b), intermediate_output_from="all_other").build()
 
     assert {ex.id for ex in workflow.get_output_executors()} == set()
     assert {ex.id for ex in workflow.get_intermediate_executors()} == {"A", "B"}
@@ -659,16 +678,20 @@ def test_sequential_all_other_with_omitted_output_from_selects_all_intermediate(
 
 
 def _build_sequential_with_designation(**kwargs: Any) -> None:
-    SequentialBuilder(participants=[_EchoAgent(name="alpha"), _EchoAgent(name="beta")], **kwargs).build()
+    SequentialBuilder(
+        participants=_as_handoff_agents(_EchoAgent(name="alpha"), _EchoAgent(name="beta")), **kwargs
+    ).build()
 
 
 def _build_concurrent_with_designation(**kwargs: Any) -> None:
-    ConcurrentBuilder(participants=[_EchoAgent(name="alpha"), _EchoAgent(name="beta")], **kwargs).build()
+    ConcurrentBuilder(
+        participants=_as_handoff_agents(_EchoAgent(name="alpha"), _EchoAgent(name="beta")), **kwargs
+    ).build()
 
 
 def _build_group_chat_with_designation(**kwargs: Any) -> None:
     GroupChatBuilder(
-        participants=[_EchoAgent(name="alpha"), _EchoAgent(name="beta")],
+        participants=_as_handoff_agents(_EchoAgent(name="alpha"), _EchoAgent(name="beta")),
         max_rounds=1,
         selection_func=_two_step_selector(),
         **kwargs,
@@ -676,7 +699,9 @@ def _build_group_chat_with_designation(**kwargs: Any) -> None:
 
 
 def _build_magentic_with_designation(**kwargs: Any) -> None:
-    MagenticBuilder(participants=[_EchoAgent(name="alpha")], manager=_StubMagenticManager(), **kwargs).build()
+    MagenticBuilder(
+        participants=_as_handoff_agents(_EchoAgent(name="alpha")), manager=_StubMagenticManager(), **kwargs
+    ).build()
 
 
 def _build_handoff_with_designation(**kwargs: Any) -> None:
@@ -706,7 +731,9 @@ def _build_handoff_with_designation(**kwargs: Any) -> None:
         client=_StubClient(),
         require_per_service_call_history_persistence=True,
     )
-    HandoffBuilder(participants=[alpha, beta], **kwargs).with_start_agent(alpha).build()
+    HandoffBuilder(participants=_as_handoff_agents(alpha, beta), **kwargs).with_start_agent(
+        _as_handoff_agent(alpha)
+    ).build()
 
 
 @pytest.mark.parametrize(

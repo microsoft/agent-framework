@@ -2,8 +2,12 @@
 
 """Unit tests for WorkflowFactory."""
 
+from typing import Any, cast
+from unittest.mock import patch
+
 import pytest
 
+from agent_framework_declarative._feature_usage import FeatureIndex
 from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
 from agent_framework_declarative._workflows._factory import WorkflowFactory
 
@@ -63,6 +67,24 @@ actions:
 
         assert workflow is not None
         assert workflow.name == "minimal-workflow"
+
+    def test_valid_workflow_marks_declarative_workflow_used(self):
+        """Test that successful declarative workflow creation marks feature usage."""
+        factory = WorkflowFactory()
+
+        with patch("agent_framework_declarative._workflows._factory.mark_feature_used") as mark_feature_used:
+            factory.create_workflow_from_definition({
+                "name": "minimal-workflow",
+                "actions": [
+                    {
+                        "kind": "SetValue",
+                        "path": "Local.result",
+                        "value": "done",
+                    }
+                ],
+            })
+
+        mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_WORKFLOW)
 
 
 @_requires_powerfx
@@ -289,11 +311,11 @@ actions:
         # Stamp a marker into the declarative state between turns. The
         # continuation branch must preserve it; a state-clearing run would
         # wipe ``DECLARATIVE_STATE_KEY`` and force re-initialization.
-        state_data = workflow._state.get(DECLARATIVE_STATE_KEY)
+        state_data = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert isinstance(state_data, dict), "Expected declarative state to be initialized after turn 1"
         state_data["Local"] = {"persisted_marker": "kept-from-turn-1"}
-        workflow._state.set(DECLARATIVE_STATE_KEY, state_data)
-        workflow._state.commit()
+        workflow._runner.state.set(DECLARATIVE_STATE_KEY, state_data)
+        workflow._runner.state.commit()
 
         second = await agent.run("turn-2-msg")
         assert second.text == "turn-2-msg", (
@@ -303,7 +325,7 @@ actions:
         # The continuation branch in ``_ensure_state_initialized`` must:
         # 1. preserve the cross-turn marker we stamped above
         # 2. refresh Inputs.input and System.LastMessage* to the new turn
-        post_state = workflow._state.get(DECLARATIVE_STATE_KEY)
+        post_state = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert isinstance(post_state, dict), "declarative state vanished between turns"
         local = post_state.get("Local", {})
         assert local.get("persisted_marker") == "kept-from-turn-1", (
@@ -327,7 +349,7 @@ class TestWorkflowFactoryAgentRegistration:
             name = "mock-agent"
 
         factory = WorkflowFactory()
-        factory.register_agent("myAgent", MockAgent())
+        factory.register_agent("myAgent", cast(Any, MockAgent()))
 
         assert "myAgent" in factory._agents
 
@@ -1024,7 +1046,7 @@ actions:
         workflow = factory.create_workflow_from_yaml_path(workflow_file)
 
         assert workflow is not None
-        assert "TestAgent" in workflow._declarative_agents
+        assert "TestAgent" in cast(Any, workflow)._declarative_agents
 
     def test_agent_connection_definition_raises(self):
         """Test that connection-based agent definition raises error."""
@@ -1062,7 +1084,7 @@ actions:
         class MockAgent:
             name = "PreregisteredAgent"
 
-        factory = WorkflowFactory(agents={"TestAgent": MockAgent()})
+        factory = WorkflowFactory(agents={"TestAgent": cast(Any, MockAgent())})
         workflow = factory.create_workflow_from_yaml("""
 kind: Workflow
 agents:
@@ -1075,7 +1097,7 @@ actions:
     value: 1
 """)
 
-        assert workflow._declarative_agents["TestAgent"].name == "PreregisteredAgent"
+        assert cast(Any, workflow)._declarative_agents["TestAgent"].name == "PreregisteredAgent"
 
 
 class TestWorkflowFactoryInputSchema:
@@ -1099,7 +1121,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["type"] == "object"
         assert "name" in schema["properties"]
         assert "age" in schema["properties"]
@@ -1126,7 +1148,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert "required_field" in schema["required"]
         assert "optional_field" not in schema["required"]
 
@@ -1145,7 +1167,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["greeting"]["default"] == "Hello"
 
     def test_inputs_schema_with_enum(self):
@@ -1166,7 +1188,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["color"]["enum"] == ["red", "green", "blue"]
 
     def test_inputs_schema_type_mappings(self):
@@ -1193,7 +1215,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["str_field"]["type"] == "string"
         assert schema["properties"]["int_field"]["type"] == "integer"
         assert schema["properties"]["float_field"]["type"] == "number"
@@ -1215,7 +1237,7 @@ actions:
     value: 1
 """)
 
-        schema = workflow.input_schema
+        schema = cast(Any, workflow).input_schema
         assert schema["properties"]["name"]["type"] == "string"
         assert schema["properties"]["count"]["type"] == "integer"
         assert "name" in schema["required"]
@@ -1234,7 +1256,11 @@ class TestWorkflowFactoryChaining:
         class MockAgent2:
             name = "Agent2"
 
-        factory = WorkflowFactory().register_agent("agent1", MockAgent1()).register_agent("agent2", MockAgent2())
+        factory = (
+            WorkflowFactory()
+            .register_agent("agent1", cast(Any, MockAgent1()))
+            .register_agent("agent2", cast(Any, MockAgent2()))
+        )
 
         assert "agent1" in factory._agents
         assert "agent2" in factory._agents
@@ -1267,7 +1293,7 @@ class TestWorkflowFactoryChaining:
 
         factory = (
             WorkflowFactory()
-            .register_agent("agent", MockAgent())
+            .register_agent("agent", cast(Any, MockAgent()))
             .register_tool("tool", my_tool)
             .register_binding("binding", my_binding)
         )

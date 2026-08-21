@@ -26,7 +26,7 @@ A handoff workflow defines a pattern that assembles agents in a mesh topology, a
 them to transfer control to each other based on the conversation context.
 
 Prerequisites:
-    - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+    - FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
     - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
     - Authentication via azure-identity. Use AzureCliCredential and run `az login` before executing the sample.
 

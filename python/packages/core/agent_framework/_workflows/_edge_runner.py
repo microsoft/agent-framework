@@ -220,14 +220,14 @@ class FanOutEdgeRunner(EdgeRunner):
                             else:
                                 span.set_attributes({
                                     OtelAttr.EDGE_GROUP_DELIVERED: False,
-                                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value,  # noqa: E501
+                                    OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value,  # ruff:ignore[line-too-long]
                                 })
                                 # For targeted messages with condition failure, return True (message was processed)
                                 return True
                         else:
                             span.set_attributes({
                                 OtelAttr.EDGE_GROUP_DELIVERED: False,
-                                OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,  # noqa: E501
+                                OtelAttr.EDGE_GROUP_DELIVERY_STATUS: EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value,  # ruff:ignore[line-too-long]
                             })
                             # For targeted messages that can't be handled, return False
                             return False
@@ -353,9 +353,26 @@ class FanInEdgeRunner(EdgeRunner):
                     # Send aggregated data to target
                     aggregated_data = [msg.data for msg in messages_to_send]
 
-                    # Collect all trace contexts and source span IDs for fan-in linking
-                    trace_contexts = [msg.trace_context for msg in messages_to_send if msg.trace_context]
-                    source_span_ids = [msg.source_span_id for msg in messages_to_send if msg.source_span_id]
+                    # Collect all trace contexts and source span IDs for fan-in linking.
+                    # Iterate over the plural fields (trace_contexts / source_span_ids)
+                    # so that messages carrying multiple contexts from a previous
+                    # fan-in aggregation are fully preserved. Using the singular
+                    # backward-compat properties would silently drop all but the
+                    # first context per message.
+                    #
+                    # Pair contexts and span IDs per-message (via zip) so that a
+                    # message with mismatched counts only drops its own orphans
+                    # instead of shifting all subsequent pairs out of alignment
+                    # when the flattened lists are later zipped by
+                    # ``create_processing_span``.
+                    trace_contexts: list[dict[str, str]] = []
+                    source_span_ids: list[str] = []
+                    for msg in messages_to_send:
+                        msg_contexts = msg.trace_contexts or []
+                        msg_span_ids = msg.source_span_ids or []
+                        for trace_context, span_id in zip(msg_contexts, msg_span_ids, strict=False):
+                            trace_contexts.append(trace_context)
+                            source_span_ids.append(span_id)
 
                     # Create a new Message object for the aggregated data
                     aggregated_message = WorkflowMessage(

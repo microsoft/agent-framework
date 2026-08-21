@@ -265,7 +265,7 @@ internal sealed class PurviewClient : IPurviewClient
         var token = await this._tokenCredential.GetTokenAsync(new TokenRequestContext(this._scopes), cancellationToken).ConfigureAwait(false);
         string userId = request.UserId;
 
-        string uri = $"{this._graphUri}/{userId}/dataSecurityAndGovernance/activities/contentActivities";
+        string uri = $"{this._graphUri}/users/{userId}/dataSecurityAndGovernance/activities/contentActivities";
 
         using (HttpRequestMessage message = new(HttpMethod.Post, new Uri(uri)))
         {

@@ -359,7 +359,7 @@ def _parse_windows_process_rows(output: str) -> list[_BrowserProcessRow]:
         parent_pid = item.get("parent_pid")
         rss_kb = item.get("rss_kb")
         command = item.get("command")
-        if not all(isinstance(value, int) for value in (pid, parent_pid, rss_kb)):
+        if not isinstance(pid, int) or not isinstance(parent_pid, int) or not isinstance(rss_kb, int):
             continue
         if not isinstance(command, str):
             continue

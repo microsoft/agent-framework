@@ -14,7 +14,7 @@ from agent_framework import (
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent
 from agent_framework.observability import ChatTelemetryLayer
-from anthropic import AsyncAnthropicBedrock
+from anthropic.lib.bedrock import AsyncAnthropicBedrock
 
 from ._chat_client import AnthropicOptionsT, RawAnthropicClient
 
@@ -34,7 +34,7 @@ class AnthropicBedrockSettings(TypedDict, total=False):
 class RawAnthropicBedrockClient(RawAnthropicClient[AnthropicOptionsT], Generic[AnthropicOptionsT]):
     """Raw Anthropic Bedrock chat client without middleware, telemetry, or function invocation support."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "aws.bedrock"
 
     def __init__(
         self,
@@ -105,7 +105,7 @@ class RawAnthropicBedrockClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
         )
 
 
-class AnthropicBedrockClient(  # type: ignore[misc]
+class AnthropicBedrockClient(
     FunctionInvocationLayer[AnthropicOptionsT],
     ChatMiddlewareLayer[AnthropicOptionsT],
     ChatTelemetryLayer[AnthropicOptionsT],

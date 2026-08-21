@@ -104,6 +104,32 @@ public class ToolApprovalRuleTests
     }
 
     /// <summary>
+    /// Verify that an empty-arguments rule round-trips as a non-null empty dictionary, keeping it
+    /// distinct from a tool-level (null arguments) rule so persisted session state preserves the
+    /// narrower scope.
+    /// </summary>
+    [Fact]
+    public void Serialize_EmptyArgsRule_RoundTrips()
+    {
+        // Arrange
+        var rule = new ToolApprovalRule
+        {
+            ToolName = "SendPayment",
+            Arguments = new Dictionary<string, string>(),
+        };
+
+        // Act
+        var json = JsonSerializer.Serialize(rule, AgentJsonUtilities.DefaultOptions);
+        var deserialized = JsonSerializer.Deserialize<ToolApprovalRule>(json, AgentJsonUtilities.DefaultOptions);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("SendPayment", deserialized!.ToolName);
+        Assert.NotNull(deserialized.Arguments);
+        Assert.Empty(deserialized.Arguments!);
+    }
+
+    /// <summary>
     /// Verify that JSON property names are correctly applied.
     /// </summary>
     [Fact]

@@ -82,7 +82,7 @@ The plugin requires the following Graph permissions:
 - Content.Process.All : [processContent](https://learn.microsoft.com/en-us/graph/api/userdatasecurityandgovernance-processcontent)
 - ContentActivity.Write : [contentActivity](https://learn.microsoft.com/en-us/graph/api/activitiescontainer-post-contentactivities)
 
-Authentication with user tokens is preferred. If authenticating with app tokens, the agent-framework caller will need to provide an entra user id for each `ChatMessage` send to the agent/client. This user id can be set using the `SetUserId` extension method, or by setting the `"userId"` field of the `AdditionalProperties` dictionary.
+Authentication with user tokens is preferred. When the configured credential resolves to a user token, that token's user id is used for Purview policy evaluation. If authenticating with app tokens, the token does not contain an end-user principal, so the agent-framework caller will need to provide an entra user id for each `ChatMessage` sent to the agent/client. This user id can be set using the `SetUserId` extension method, or by setting the `"userId"` field of the `AdditionalProperties` dictionary.
 
 ``` csharp
 // Manually

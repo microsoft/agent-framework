@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import asyncio
+import threading
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -21,6 +23,7 @@ from agent_framework import (
     FunctionTool,
     Message,
     MiddlewareException,
+    MiddlewareFailure,
     MiddlewareTermination,
     MiddlewareType,
     SupportsChatGetResponse,
@@ -69,6 +72,51 @@ class TestChatAgentClassBasedMiddleware:
         # Verify middleware execution order
         assert execution_order == ["agent_middleware_before", "agent_middleware_after"]
 
+    async def test_bare_middleware_at_construction_is_installed(self, client: SupportsChatGetResponse) -> None:
+        """A single middleware object passed bare (not in a list) at construction is installed.
+
+        Construction-time middleware mirrors categorize_middleware's single-source
+        handling, matching the run-level ``middleware=`` behavior instead of silently
+        dropping the middleware.
+        """
+        execution_order: list[str] = []
+
+        class TrackingAgentMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                execution_order.append("before")
+                await call_next()
+                execution_order.append("after")
+
+        agent = Agent(client=client, middleware=TrackingAgentMiddleware())
+
+        response = await agent.run([Message(role="user", contents=["test message"])])
+
+        assert response is not None
+        assert execution_order == ["before", "after"]
+
+    async def test_bare_middleware_assigned_to_attribute_is_installed(self, client: SupportsChatGetResponse) -> None:
+        """A single middleware object assigned bare to ``agent.middleware`` executes.
+
+        categorize_middleware owns the bare-source rule (a non-sequence source is a
+        one-element list) and ``run()`` passes the raw attribute straight to it, so a
+        bare attribute assignment — which used to be silently ignored — now executes.
+        """
+        execution_order: list[str] = []
+
+        class TrackingAgentMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                execution_order.append("before")
+                await call_next()
+                execution_order.append("after")
+
+        agent = Agent(client=client)
+        agent.middleware = cast("Any", TrackingAgentMiddleware())
+
+        response = await agent.run([Message(role="user", contents=["test message"])])
+
+        assert response is not None
+        assert execution_order == ["before", "after"]
+
     async def test_class_based_function_middleware_with_chat_agent(self, client: "MockChatClient") -> None:
         """Test class-based function middleware with Agent."""
 
@@ -81,7 +129,7 @@ class TestChatAgentClassBasedMiddleware:
                 await call_next()
 
         middleware = TrackingFunctionMiddleware()
-        Agent(client=client, middleware=[middleware])
+        Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     async def test_class_based_function_middleware_with_chat_agent_supported_client(
         self, chat_client_base: "MockBaseChatClient"
@@ -131,7 +179,7 @@ class TestChatAgentFunctionBasedMiddleware:
 
         # Create Agent with terminating middleware
         middleware = PreTerminationMiddleware()
-        agent = Agent(client=client, middleware=[middleware])
+        agent = Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Execute the agent with multiple messages
         messages = [
@@ -155,11 +203,11 @@ class TestChatAgentFunctionBasedMiddleware:
                 execution_order.append("middleware_before")
                 await call_next()
                 execution_order.append("middleware_after")
-                context.terminate = True
+                context.terminate = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Create Agent with terminating middleware
         middleware = PostTerminationMiddleware()
-        agent = Agent(client=client, middleware=[middleware])
+        agent = Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Execute the agent with multiple messages
         messages = [
@@ -192,12 +240,12 @@ class TestChatAgentFunctionBasedMiddleware:
                 call_next: Callable[[], Awaitable[None]],
             ) -> None:
                 execution_order.append("middleware_before")
-                context.terminate = True
+                context.terminate = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
                 # We call next() but since terminate=True, subsequent middleware and handler should not execute
                 await call_next()
                 execution_order.append("middleware_after")
 
-        Agent(client=client, middleware=[PreTerminationFunctionMiddleware()], tools=[])
+        Agent(client=client, middleware=[PreTerminationFunctionMiddleware()], tools=[])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     async def test_function_middleware_with_post_termination(self, client: "MockChatClient") -> None:
         """Test that function middleware can terminate execution after calling next()."""
@@ -212,9 +260,9 @@ class TestChatAgentFunctionBasedMiddleware:
                 execution_order.append("middleware_before")
                 await call_next()
                 execution_order.append("middleware_after")
-                context.terminate = True
+                context.terminate = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
-        Agent(client=client, middleware=[PostTerminationFunctionMiddleware()], tools=[])
+        Agent(client=client, middleware=[PostTerminationFunctionMiddleware()], tools=[])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     async def test_function_based_agent_middleware_with_chat_agent(self, client: "MockChatClient") -> None:
         """Test function-based agent middleware with Agent."""
@@ -226,7 +274,7 @@ class TestChatAgentFunctionBasedMiddleware:
             execution_order.append("agent_function_after")
 
         # Create Agent with function middleware
-        agent = Agent(client=client, middleware=[tracking_agent_middleware])
+        agent = Agent(client=client, middleware=[tracking_agent_middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Execute the agent
         messages = [Message(role="user", contents=["test message"])]
@@ -250,7 +298,7 @@ class TestChatAgentFunctionBasedMiddleware:
         ) -> None:
             await call_next()
 
-        Agent(client=client, middleware=[tracking_function_middleware])
+        Agent(client=client, middleware=[tracking_function_middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     async def test_function_based_function_middleware_with_supported_client(
         self, chat_client_base: "MockBaseChatClient"
@@ -292,7 +340,7 @@ class TestChatAgentStreamingMiddleware:
 
         # Create Agent with middleware
         middleware = StreamingTrackingMiddleware()
-        agent = Agent(client=client, middleware=[middleware])
+        agent = Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Set up mock streaming responses
         client.streaming_responses = [
@@ -332,7 +380,7 @@ class TestChatAgentStreamingMiddleware:
 
         # Create Agent with middleware
         middleware = FlagTrackingMiddleware()
-        agent = Agent(client=client, middleware=[middleware])
+        agent = Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
         messages = [Message(role="user", contents=["test message"])]
 
         # Test non-streaming execution
@@ -369,7 +417,7 @@ class TestChatAgentMultipleMiddlewareOrdering:
         middleware3 = OrderedMiddleware("third")
 
         # Create Agent with multiple middleware
-        agent = Agent(client=client, middleware=[middleware1, middleware2, middleware3])
+        agent = Agent(client=client, middleware=[middleware1, middleware2, middleware3])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Execute the agent
         messages = [Message(role="user", contents=["test message"])]
@@ -796,7 +844,7 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         # Execute the agent with custom parameters passed as kwargs
         messages = [Message(role="user", contents=["test message"])]
-        response = await agent.run(messages, options={"additional_function_arguments": {"custom_param": "test_value"}})
+        response = await agent.run(messages, options={"additional_function_arguments": {"custom_param": "test_value"}})  # type: ignore[call-overload, typeddict-unknown-key, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[invalid-key, no-matching-overload]
 
         # Verify response
         assert response is not None
@@ -890,14 +938,14 @@ class TestChatAgentFunctionMiddlewareWithTools:
 
         agent = Agent(client=chat_client_base, middleware=[capture_middleware], tools=[sample_tool_function])
 
-        await agent.run(
+        await agent.run(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
             [Message(role="user", contents=["Get weather"])],
             function_invocation_kwargs={
                 "user_id": "from-kwargs",
                 "tenant_id": "from-kwargs",
             },
-            options={
-                "additional_function_arguments": {
+            options={  # type: ignore[typeddict-unknown-key]
+                "additional_function_arguments": {  # ty: ignore[invalid-key]
                     "user_id": "from-options",
                     "extra_key": "only-in-options",
                 }
@@ -1016,7 +1064,7 @@ class TestMiddlewareDynamicRebuild:
 
         # Create agent with initial middleware
         middleware1 = self.TrackingAgentMiddleware("middleware1", execution_log)
-        agent = Agent(client=client, middleware=[middleware1])
+        agent = Agent(client=client, middleware=[middleware1])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # First execution - should use middleware1
         await agent.run("Test message 1")
@@ -1066,7 +1114,7 @@ class TestMiddlewareDynamicRebuild:
 
         # Create agent with initial middleware
         middleware1 = self.TrackingAgentMiddleware("stream_middleware1", execution_log)
-        agent = Agent(client=client, middleware=[middleware1])
+        agent = Agent(client=client, middleware=[middleware1])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # First streaming execution
         updates: list[AgentResponseUpdate] = []
@@ -1101,7 +1149,7 @@ class TestMiddlewareDynamicRebuild:
         middleware2 = self.TrackingAgentMiddleware("second", execution_log)
 
         # Create agent with middleware in order [first, second]
-        agent = Agent(client=client, middleware=[middleware1, middleware2])
+        agent = Agent(client=client, middleware=[middleware1, middleware2])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # First execution
         await agent.run("Test message 1")
@@ -1138,7 +1186,7 @@ class TestRunLevelMiddleware:
         execution_log: list[str] = []
 
         # Create agent without any agent-level middleware
-        agent = Agent(client=client)
+        agent = Agent(client=client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Create run-level middleware
         run_middleware1 = self.TrackingAgentMiddleware("run1", execution_log)
@@ -1203,7 +1251,7 @@ class TestRunLevelMiddleware:
 
         # Create agent with agent-level middleware
         agent_middleware = MetadataAgentMiddleware("agent")
-        agent = Agent(client=client, middleware=[agent_middleware])
+        agent = Agent(client=client, middleware=[agent_middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Create run-level middleware
         run_middleware = MetadataRunMiddleware("run")
@@ -1223,7 +1271,7 @@ class TestRunLevelMiddleware:
         execution_log: list[str] = []
 
         # Create agent without agent-level middleware
-        agent = Agent(client=client)
+        agent = Agent(client=client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Create run-level middleware
         run_middleware = self.TrackingAgentMiddleware("run_nonstream", execution_log)
@@ -1256,7 +1304,7 @@ class TestRunLevelMiddleware:
                 execution_log.append(f"{self.name}_end")
 
         # Create agent without agent-level middleware
-        agent = Agent(client=client)
+        agent = Agent(client=client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Set up mock streaming responses
         client.streaming_responses = [
@@ -1447,7 +1495,7 @@ class TestMiddlewareDecoratorLogic:
             ]
         )
         final_response = ChatResponse(messages=[Message(role="assistant", contents=["Final response"])])
-        chat_client_base.responses = [function_call_response, final_response]
+        chat_client_base.responses = [function_call_response, final_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Should work without errors
         agent = Agent(
@@ -1469,14 +1517,14 @@ class TestMiddlewareDecoratorLogic:
         # Should raise MiddlewareException due to mismatch during agent creation
         with pytest.raises(MiddlewareException, match="MiddlewareTypes type mismatch"):
 
-            @agent_middleware  # type: ignore[arg-type]
+            @agent_middleware  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             async def mismatched_middleware(
                 context: FunctionInvocationContext,  # Wrong type for @agent_middleware
                 call_next: Any,
             ) -> None:
                 await call_next()
 
-            agent = Agent(client=client, middleware=[mismatched_middleware])
+            agent = Agent(client=client, middleware=[mismatched_middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             await agent.run([Message(role="user", contents=["test"])])
 
     async def test_only_decorator_specified(self, chat_client_base: "MockBaseChatClient") -> None:
@@ -1518,7 +1566,7 @@ class TestMiddlewareDecoratorLogic:
             ]
         )
         final_response = ChatResponse(messages=[Message(role="assistant", contents=["Final response"])])
-        chat_client_base.responses = [function_call_response, final_response]
+        chat_client_base.responses = [function_call_response, final_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Should work - relies on decorator
         agent = Agent(
@@ -1574,7 +1622,7 @@ class TestMiddlewareDecoratorLogic:
             ]
         )
         final_response = ChatResponse(messages=[Message(role="assistant", contents=["Final response"])])
-        chat_client_base.responses = [function_call_response, final_response]
+        chat_client_base.responses = [function_call_response, final_response]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Should work - relies on type annotations
         agent = Agent(
@@ -1605,7 +1653,7 @@ class TestMiddlewareDecoratorLogic:
         # Should raise MiddlewareException about insufficient parameters
         with pytest.raises(MiddlewareException, match="must have at least 2 parameters"):
 
-            @agent_middleware  # type: ignore[arg-type]
+            @agent_middleware  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             async def insufficient_params_middleware(context: Any) -> None:  # Missing 'next' parameter
                 pass
 
@@ -1676,7 +1724,7 @@ class TestChatAgentSessionBehavior:
 
         # Create Agent with session tracking middleware
         middleware = SessionTrackingMiddleware()
-        agent = Agent(client=client, middleware=[middleware])
+        agent = Agent(client=client, middleware=[middleware])  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Create a session that will persist messages between runs
         session = agent.create_session()
@@ -1733,14 +1781,14 @@ class TestChatAgentSessionBehavior:
         second_after = thread_states[3]
         assert second_after["before_next"] is False
         assert second_after["messages_count"] == 1  # Input messages unchanged
-        assert second_after["thread_count"] == 4  # Previous history + current input + current response
+        assert second_after["thread_count"] == 3  # Previous history (2) + current input (1)
         assert second_after["messages_text"] == ["second message"]
-        # Thread should contain: first input + first response + second input + second response
+        # Thread should contain: first input + first response + second input
         assert "first message" in second_after["thread_messages_text"]
         assert "second message" in second_after["thread_messages_text"]
-        # Should have two "test response" entries (one for each run)
+        # "test response" should only appear once since the duplicate was correctly filtered
         response_count = sum(1 for text in second_after["thread_messages_text"] if "test response" in text)
-        assert response_count == 2
+        assert response_count == 1
 
 
 class TestChatAgentChatMiddleware:
@@ -1813,7 +1861,7 @@ class TestChatAgentChatMiddleware:
                     if msg.role == "system":
                         continue
                     original_text = msg.text or ""
-                    context.messages[idx] = Message(role=msg.role, contents=[f"MODIFIED: {original_text}"])
+                    context.messages[idx] = Message(role=msg.role, contents=[f"MODIFIED: {original_text}"])  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[invalid-assignment]
                     break
             await call_next()
 
@@ -1839,7 +1887,7 @@ class TestChatAgentChatMiddleware:
                 messages=[Message(role="assistant", contents=["MiddlewareTypes overridden response"])],
                 response_id="middleware-response-123",
             )
-            context.terminate = True
+            context.terminate = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Create Agent with response-overriding middleware
         client = MockBaseChatClient()
@@ -1968,7 +2016,7 @@ class TestChatAgentChatMiddleware:
                 execution_order.append("middleware_before")
                 await call_next()
                 execution_order.append("middleware_after")
-                context.terminate = True
+                context.terminate = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         # Create Agent with terminating middleware
         client = MockBaseChatClient()
@@ -2219,9 +2267,9 @@ class TestChatAgentChatMiddleware:
             assert isinstance(context.options, dict)
             captured_options.update(context.options)
 
-            context.options["temperature"] = 0.9
-            context.options["max_tokens"] = 500
-            context.options["new_param"] = "added_by_middleware"
+            context.options["temperature"] = 0.9  # ty: ignore[invalid-assignment]
+            context.options["max_tokens"] = 500  # ty: ignore[invalid-assignment]
+            context.options["new_param"] = "added_by_middleware"  # ty: ignore[invalid-assignment]
 
             modified_options.update(context.options)
 
@@ -2233,9 +2281,9 @@ class TestChatAgentChatMiddleware:
 
         # Execute the agent with runtime options
         messages = [Message(role="user", contents=["test message"])]
-        response = await agent.run(
+        response = await agent.run(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
             messages,
-            options={"temperature": 0.7, "max_tokens": 100, "custom_param": "test_value"},
+            options={"temperature": 0.7, "max_tokens": 100, "custom_param": "test_value"},  # type: ignore[typeddict-unknown-key]  # ty: ignore[invalid-key]
         )
 
         # Verify response
@@ -2302,3 +2350,692 @@ class TestChatAgentChatMiddleware:
 #     response = await agent.run("test message")
 #     assert response is not None
 #     assert execution_order == ["before", "after"]
+
+
+class TestCallableClassMiddlewareErrorHandling:
+    """Tests for exception handling when using callable class instances as middleware."""
+
+    def test_callable_class_middleware_insufficient_params_raises_middleware_exception(self) -> None:
+        """Test that callable class instance with insufficient params raises MiddlewareException."""
+
+        class InsufficientParamsMiddleware:
+            async def __call__(self, ctx: Any) -> None:
+                pass
+
+        client = MockBaseChatClient()
+        insufficient_middleware: list[Any] = [InsufficientParamsMiddleware()]
+        with pytest.raises(MiddlewareException) as exc_info:
+            Agent(client=client, middleware=insufficient_middleware)
+
+        assert "InsufficientParamsMiddleware" in str(exc_info.value)
+        assert "must have at least 2 parameters" in str(exc_info.value)
+
+    def test_callable_class_middleware_type_mismatch_raises_middleware_exception(self) -> None:
+        """Test that callable class instance with decorator/annotation mismatch raises MiddlewareException."""
+
+        class MismatchedCallableMiddleware:
+            _middleware_type = MiddlewareType.AGENT
+
+            async def __call__(self, context: FunctionInvocationContext, call_next: Any) -> None:
+                await call_next()
+
+        client = MockBaseChatClient()
+        mismatched_middleware: list[Any] = [MismatchedCallableMiddleware()]
+        with pytest.raises(MiddlewareException) as exc_info:
+            Agent(client=client, middleware=mismatched_middleware)
+
+        assert "MismatchedCallableMiddleware" in str(exc_info.value)
+        assert "MiddlewareTypes type mismatch" in str(exc_info.value)
+
+    def test_callable_class_middleware_undetermined_type_raises_middleware_exception(self) -> None:
+        """Test that a callable class instance without annotations or decorator raises MiddlewareException."""
+
+        class UndeterminedCallableMiddleware:
+            async def __call__(self, arg1: Any, arg2: Any) -> None:
+                pass
+
+        client = MockBaseChatClient()
+        undetermined_middleware: list[Any] = [UndeterminedCallableMiddleware()]
+        with pytest.raises(MiddlewareException) as exc_info:
+            Agent(client=client, middleware=undetermined_middleware)
+
+        assert "UndeterminedCallableMiddleware" in str(exc_info.value)
+        assert "Cannot determine middleware type" in str(exc_info.value)
+
+
+# region MiddlewareFailure fail-closed escape
+
+
+def _tool_call_response(name: str = "sample_tool_function", call_id: str = "call_1") -> ChatResponse:
+    return ChatResponse(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[Content.from_function_call(call_id=call_id, name=name, arguments='{"location": "Seattle"}')],
+            )
+        ]
+    )
+
+
+class TestMiddlewareFailure:
+    """The explicit fail-closed escape from the function-invocation loop.
+
+    Ordinary exceptions raised by function middleware are converted into tool-error
+    results and the loop keeps running (a public behavior, pinned below); only the
+    explicit ``MiddlewareFailure`` signal escapes the loop and propagates to the
+    ``run()`` caller.
+    """
+
+    async def test_failure_before_tool_aborts_run(self, chat_client_base: "MockBaseChatClient") -> None:
+        executed: list[str] = []
+
+        def tool_impl(location: str) -> str:
+            executed.append(location)
+            return "ran"
+
+        tracked_tool = FunctionTool(func=tool_impl, name="sample_tool_function", approval_mode="never_require")
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        chat_client_base.run_responses = [
+            _tool_call_response(),
+            ChatResponse(messages=[Message(role="assistant", contents=["Final"])]),
+        ]
+        agent = Agent(client=chat_client_base, middleware=[Enforcement()], tools=[tracked_tool])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            await agent.run("get the weather")
+
+        # Fail-closed: the tool never executed and no further model turn was consumed.
+        assert executed == []
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_after_tool_aborts_run_before_next_model_turn(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        executed: list[str] = []
+
+        def tool_impl(location: str) -> str:
+            executed.append(location)
+            return "ran"
+
+        tracked_tool = FunctionTool(func=tool_impl, name="sample_tool_function", approval_mode="never_require")
+
+        class PostCheck(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                await call_next()
+                raise MiddlewareFailure("result rejected")
+
+        chat_client_base.run_responses = [
+            _tool_call_response(),
+            ChatResponse(messages=[Message(role="assistant", contents=["Final"])]),
+        ]
+        agent = Agent(client=chat_client_base, middleware=[PostCheck()], tools=[tracked_tool])
+
+        with pytest.raises(MiddlewareFailure, match="result rejected"):
+            await agent.run("get the weather")
+
+        # The tool ran once, but its result never fed another model iteration.
+        assert executed == ["Seattle"]
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_cause_chain_reaches_caller(self, chat_client_base: "MockBaseChatClient") -> None:
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                try:
+                    raise ValueError("enforcement backend down")
+                except ValueError as exc:
+                    raise MiddlewareFailure("enforcement failed") from exc
+
+        chat_client_base.run_responses = [_tool_call_response()]
+        agent = Agent(client=chat_client_base, middleware=[Enforcement()], tools=[sample_tool_function])
+
+        with pytest.raises(MiddlewareFailure, match="enforcement failed") as exc_info:
+            await agent.run("get the weather")
+
+        assert isinstance(exc_info.value.__cause__, ValueError)
+
+    async def test_ordinary_exception_still_becomes_tool_error(self, chat_client_base: "MockBaseChatClient") -> None:
+        """The loop's absorb-into-tool-error contract for ordinary exceptions is unchanged."""
+
+        class Broken(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise RuntimeError("middleware bug")
+
+        chat_client_base.run_responses = [
+            _tool_call_response(),
+            ChatResponse(messages=[Message(role="assistant", contents=["Final"])]),
+        ]
+        agent = Agent(client=chat_client_base, middleware=[Broken()], tools=[sample_tool_function])
+
+        response = await agent.run("get the weather")
+
+        # The exception was converted into a tool-error result and the loop continued.
+        assert chat_client_base.call_count == 2
+        error_results = [
+            content
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_result" and content.exception is not None
+        ]
+        assert len(error_results) == 1
+
+    async def test_failure_from_tool_escapes_without_middleware(self, chat_client_base: "MockBaseChatClient") -> None:
+        """The direct (no-middleware) execution path honors the same explicit signal."""
+
+        def tool_impl(location: str) -> str:
+            raise MiddlewareFailure("tool aborted the run")
+
+        failing_tool = FunctionTool(func=tool_impl, name="sample_tool_function", approval_mode="never_require")
+        chat_client_base.run_responses = [_tool_call_response()]
+        agent = Agent(client=chat_client_base, tools=[failing_tool])
+
+        with pytest.raises(MiddlewareFailure, match="tool aborted the run"):
+            await agent.run("get the weather")
+
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_cancels_concurrent_sibling_tool(self, chat_client_base: "MockBaseChatClient") -> None:
+        """A fatal signal fails the whole batch: in-flight siblings are cancelled."""
+        sibling_started = asyncio.Event()
+        sibling_cancelled: list[bool] = []
+
+        async def slow_impl(location: str) -> str:
+            sibling_started.set()
+            try:
+                await asyncio.Event().wait()  # blocks until cancelled
+            except asyncio.CancelledError:
+                sibling_cancelled.append(True)
+                raise
+            return "never"
+
+        slow_tool = FunctionTool(func=slow_impl, name="slow_tool", approval_mode="never_require")
+
+        class FailFast(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                if context.function.name == "sample_tool_function":
+                    # Fail only after the sibling is genuinely in flight.
+                    await sibling_started.wait()
+                    raise MiddlewareFailure("abort the batch")
+                await call_next()
+
+        batch_response = ChatResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                        ),
+                        Content.from_function_call(call_id="call_2", name="slow_tool", arguments='{"location": "x"}'),
+                    ],
+                )
+            ]
+        )
+        chat_client_base.run_responses = [batch_response]
+        agent = Agent(client=chat_client_base, middleware=[FailFast()], tools=[sample_tool_function, slow_tool])
+
+        with pytest.raises(MiddlewareFailure, match="abort the batch"):
+            await agent.run("run both tools")
+
+        assert sibling_cancelled == [True]
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_with_sync_sibling_discards_late_result(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Batch cancellation is cooperative: a synchronous sibling cannot be interrupted.
+
+        A synchronous tool body runs in a worker thread (``asyncio.to_thread``);
+        cancelling its wrapping task cannot stop the thread, so the body may complete
+        its side effects after the failure has already reached the caller. Its result
+        is discarded either way — the loop stops at one model call — and failure
+        propagation is not delayed behind the still-running thread.
+        """
+        sync_started = threading.Event()
+        sync_release = threading.Event()
+        sync_completed: list[str] = []
+
+        def sync_slow(location: str) -> str:
+            sync_started.set()
+            sync_release.wait(10)
+            sync_completed.append("side effect")
+            return "late sync result"
+
+        slow_tool = FunctionTool(func=sync_slow, name="slow_tool", approval_mode="never_require")
+
+        class FailFast(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                if context.function.name == "sample_tool_function":
+                    # Fail only once the synchronous sibling body is genuinely running.
+                    await asyncio.to_thread(sync_started.wait, 5)
+                    raise MiddlewareFailure("abort the batch")
+                await call_next()
+
+        batch_response = ChatResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                        ),
+                        Content.from_function_call(call_id="call_2", name="slow_tool", arguments='{"location": "x"}'),
+                    ],
+                )
+            ]
+        )
+        chat_client_base.run_responses = [batch_response]
+        agent = Agent(client=chat_client_base, middleware=[FailFast()], tools=[sample_tool_function, slow_tool])
+
+        try:
+            with pytest.raises(MiddlewareFailure, match="abort the batch"):
+                await agent.run("run both tools")
+            # The failure reached the caller while the synchronous body was still running.
+            assert sync_completed == []
+        finally:
+            sync_release.set()
+
+        for _ in range(500):
+            if sync_completed:
+                break
+            await asyncio.sleep(0.01)
+        # The worker thread survived cancellation and completed its side effect
+        # (the documented cooperative-cancellation limitation) ...
+        assert sync_completed == ["side effect"]
+        # ... but its result went nowhere: the loop never made another model call.
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_streaming_reaches_stream_consumer(self, chat_client_base: "MockBaseChatClient") -> None:
+        executed: list[str] = []
+
+        def tool_impl(location: str) -> str:
+            executed.append(location)
+            return "ran"
+
+        tracked_tool = FunctionTool(func=tool_impl, name="sample_tool_function", approval_mode="never_require")
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        chat_client_base.streaming_responses = [
+            [
+                ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                        )
+                    ],
+                    role="assistant",
+                )
+            ]
+        ]
+        agent = Agent(client=chat_client_base, middleware=[Enforcement()], tools=[tracked_tool])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            async for _ in agent.run("get the weather", stream=True):
+                pass
+
+        assert executed == []
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_from_agent_middleware_propagates(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Agent (and chat) middleware exceptions already propagate; the explicit signal behaves the same."""
+
+        class Guard(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                raise MiddlewareFailure("run denied")
+
+        agent = Agent(client=chat_client_base, middleware=[Guard()])
+
+        with pytest.raises(MiddlewareFailure, match="run denied"):
+            await agent.run("hello")
+
+        assert chat_client_base.call_count == 0
+
+    async def test_failure_settles_dangling_calls_on_service_conversation(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """A service-managed conversation is settled before the failure propagates.
+
+        The continuation state (``session.service_session_id``) is persisted when the
+        model turn completes — before tool execution — so an aborted batch would leave
+        the hosted thread ending in unresolved function calls, and OpenAI-style
+        continuations reject the next request over such a thread. The loop submits one
+        error ``function_result`` per dangling call (``tool_choice="none"``) and
+        discards the settlement response; the run still fails.
+        """
+        from agent_framework import AgentSession
+
+        requests: list[dict[str, Any]] = []
+
+        class Recorder(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                requests.append({
+                    "contents": [(m.role, [c for c in m.contents]) for m in context.messages],
+                    "conversation_id": (context.options or {}).get("conversation_id"),
+                    "tool_choice": (context.options or {}).get("tool_choice"),
+                })
+                await call_next()
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        tool_turn = _tool_call_response()
+        tool_turn.conversation_id = "conv_123"
+        chat_client_base.run_responses = [tool_turn]
+        session = AgentSession()
+        agent = Agent(client=chat_client_base, middleware=[Enforcement(), Recorder()], tools=[sample_tool_function])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            await agent.run("get the weather", session=session)
+
+        # The continuation state was already durable when the batch failed ...
+        assert session.service_session_id == "conv_123"
+        # ... so the loop settled the thread: one extra request carrying an error
+        # function_result for the dangling call, with tool calling disabled.
+        assert len(requests) == 2
+        settlement = requests[1]
+        assert settlement["conversation_id"] == "conv_123"
+        assert settlement["tool_choice"] == "none"
+        settlement_results = [
+            content
+            for _, contents in settlement["contents"]
+            for content in contents
+            if content.type == "function_result"
+        ]
+        assert [result.call_id for result in settlement_results] == ["call_1"]
+        assert settlement_results[0].exception == "MiddlewareFailure"
+
+    async def test_failure_settles_service_conversation_streaming(self, chat_client_base: "MockBaseChatClient") -> None:
+        """The streaming loop settles a service-managed conversation the same way."""
+        requests: list[dict[str, Any]] = []
+
+        class Recorder(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                requests.append({
+                    "tool_choice": (context.options or {}).get("tool_choice"),
+                    "messages": list(context.messages),
+                })
+                await call_next()
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        chat_client_base.streaming_responses = [
+            [
+                ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                        )
+                    ],
+                    role="assistant",
+                    conversation_id="conv_123",
+                )
+            ]
+        ]
+        agent = Agent(client=chat_client_base, middleware=[Enforcement(), Recorder()], tools=[sample_tool_function])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            async for _ in agent.run("get the weather", stream=True):
+                pass
+
+        assert len(requests) == 2
+        assert requests[1]["tool_choice"] == "none"
+        settlement_results = [
+            content
+            for message in requests[1]["messages"]
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        assert [result.call_id for result in settlement_results] == ["call_1"]
+
+    async def test_failure_without_service_conversation_makes_no_settlement_request(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """No service-managed conversation, no settlement cost: the abort stays at one model call."""
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        chat_client_base.run_responses = [_tool_call_response()]
+        agent = Agent(client=chat_client_base, middleware=[Enforcement()], tools=[sample_tool_function])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            await agent.run("get the weather")
+
+        assert chat_client_base.call_count == 1
+
+    async def test_failure_settlement_advances_response_id_continuation(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """The persisted continuation advances to the settlement response.
+
+        For response-ID continuations (OpenAI Responses with ``store=True``, where
+        each response id is the continuation handle) the settlement response is the
+        first endpoint whose chain includes the synthetic tool outputs; leaving
+        ``session.service_session_id`` on the pre-settlement response would make the
+        next run continue from the still-unresolved turn.
+        """
+        from agent_framework import AgentSession
+
+        class Enforcement(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("policy denied")
+
+        tool_turn = _tool_call_response()
+        tool_turn.conversation_id = "resp_1"
+        settlement_turn = ChatResponse(
+            messages=[Message(role="assistant", contents=["settled"])], conversation_id="resp_2"
+        )
+        chat_client_base.run_responses = [tool_turn, settlement_turn]
+        session = AgentSession()
+        agent = Agent(client=chat_client_base, middleware=[Enforcement()], tools=[sample_tool_function])
+
+        with pytest.raises(MiddlewareFailure, match="policy denied"):
+            await agent.run("get the weather", session=session)
+
+        # The stored continuation points at the settled endpoint, not the aborted turn.
+        assert session.service_session_id == "resp_2"
+        assert chat_client_base.call_count == 2
+
+    async def test_failure_during_approved_replay_settles_and_escapes(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """A fatal signal during an approved-tool replay escapes loudly and settles.
+
+        The replayed call belongs to an earlier, already-persisted model turn, so the
+        service-managed conversation must be settled from the approval-resolution
+        phase too (which runs before any model call of the resumed run).
+        """
+        from agent_framework import AgentSession
+
+        executed: list[str] = []
+
+        def tool_impl(location: str) -> str:
+            executed.append(location)
+            return "ran"
+
+        guarded_tool = FunctionTool(func=tool_impl, name="guarded_tool", approval_mode="always_require")
+
+        class FailReplay(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("replay denied")
+
+        requests: list[dict[str, Any]] = []
+
+        class Recorder(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                requests.append({
+                    "tool_choice": (context.options or {}).get("tool_choice"),
+                    "conversation_id": (context.options or {}).get("conversation_id"),
+                    "results": [
+                        content
+                        for message in context.messages
+                        for content in message.contents
+                        if content.type == "function_result"
+                    ],
+                })
+                await call_next()
+
+        tool_turn = ChatResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(call_id="call_1", name="guarded_tool", arguments='{"location": "x"}')
+                    ],
+                )
+            ],
+            conversation_id="resp_1",
+        )
+        chat_client_base.run_responses = [tool_turn]
+        session = AgentSession()
+        agent = Agent(client=chat_client_base, middleware=[FailReplay(), Recorder()], tools=[guarded_tool])
+
+        paused = await agent.run("go", session=session)
+        approvals = [
+            content
+            for message in paused.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(approvals) == 1
+        assert session.service_session_id == "resp_1"
+
+        settlement_turn = ChatResponse(
+            messages=[Message(role="assistant", contents=["settled"])], conversation_id="resp_2"
+        )
+        chat_client_base.run_responses = [settlement_turn]
+        approval_request = approvals[0]
+        assert approval_request.id is not None
+        assert approval_request.function_call is not None
+        approval_message = Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(True, approval_request.id, approval_request.function_call)
+            ],
+        )
+
+        with pytest.raises(MiddlewareFailure, match="replay denied"):
+            await agent.run([approval_message], session=session)
+
+        # The tool never ran, and the settlement request resolved the original call
+        # on the persisted conversation before the abort propagated.
+        assert executed == []
+        settlement = requests[-1]
+        assert settlement["tool_choice"] == "none"
+        assert settlement["conversation_id"] == "resp_1"
+        assert [result.call_id for result in settlement["results"]] == ["call_1"]
+        assert settlement["results"][0].exception == "MiddlewareFailure"
+        # The continuation advanced to the settled endpoint.
+        assert session.service_session_id == "resp_2"
+
+    async def test_failure_during_approved_replay_streaming(self, chat_client_base: "MockBaseChatClient") -> None:
+        """The streaming loop's approval-resolution phase settles and escapes the same way."""
+        from agent_framework import AgentSession
+
+        executed: list[str] = []
+
+        def tool_impl(location: str) -> str:
+            executed.append(location)
+            return "ran"
+
+        guarded_tool = FunctionTool(func=tool_impl, name="guarded_tool", approval_mode="always_require")
+
+        class FailReplay(FunctionMiddleware):
+            async def process(
+                self, context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+            ) -> None:
+                raise MiddlewareFailure("replay denied")
+
+        requests: list[dict[str, Any]] = []
+
+        class Recorder(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                requests.append({
+                    "tool_choice": (context.options or {}).get("tool_choice"),
+                    "results": [
+                        content
+                        for message in context.messages
+                        for content in message.contents
+                        if content.type == "function_result"
+                    ],
+                })
+                await call_next()
+
+        tool_turn = ChatResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_function_call(call_id="call_1", name="guarded_tool", arguments='{"location": "x"}')
+                    ],
+                )
+            ],
+            conversation_id="resp_1",
+        )
+        chat_client_base.run_responses = [tool_turn]
+        session = AgentSession()
+        agent = Agent(client=chat_client_base, middleware=[FailReplay(), Recorder()], tools=[guarded_tool])
+
+        paused = await agent.run("go", session=session)
+        approvals = [
+            content
+            for message in paused.messages
+            for content in message.contents
+            if content.type == "function_approval_request"
+        ]
+        assert len(approvals) == 1
+
+        chat_client_base.run_responses = [ChatResponse(messages=[Message(role="assistant", contents=["settled"])])]
+        approval_request = approvals[0]
+        assert approval_request.id is not None
+        assert approval_request.function_call is not None
+        approval_message = Message(
+            role="user",
+            contents=[
+                Content.from_function_approval_response(True, approval_request.id, approval_request.function_call)
+            ],
+        )
+
+        with pytest.raises(MiddlewareFailure, match="replay denied"):
+            async for _ in agent.run([approval_message], session=session, stream=True):
+                pass
+
+        assert executed == []
+        settlement = requests[-1]
+        assert settlement["tool_choice"] == "none"
+        assert [result.call_id for result in settlement["results"]] == ["call_1"]
+
+
+# endregion

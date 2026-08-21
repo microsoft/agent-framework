@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -16,45 +16,56 @@ namespace WorkflowAgentsInWorkflowsSample;
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
-/// - An Azure OpenAI chat completion deployment must be configured.
+/// - A Microsoft Foundry project endpoint and model must be configured.
 /// </remarks>
 public static class Program
 {
     private static async Task Main()
     {
-        // Set up the Azure OpenAI client.
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
-        var client = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        // Set up the Microsoft Foundry client.
+        var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+        var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-        Console.Write("Choose workflow type ('sequential', 'concurrent', 'handoffs', 'groupchat'): ");
+        Console.Write("Choose workflow type ('sequential', 'sequential-chain-only', 'concurrent', 'handoffs', 'groupchat'): ");
         switch (Console.ReadLine())
         {
             case "sequential":
                 await RunWorkflowAsync(
-                    AgentWorkflowBuilder.BuildSequential(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, client)),
+                    AgentWorkflowBuilder.BuildSequential(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, aiProjectClient, deploymentName)),
+                    [new(ChatRole.User, "Hello, world!")]);
+                break;
+
+            case "sequential-chain-only":
+                await RunWorkflowAsync(
+                    AgentWorkflowBuilder.BuildSequential(
+                        chainOnlyAgentResponses: true,
+                        from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, aiProjectClient, deploymentName)),
                     [new(ChatRole.User, "Hello, world!")]);
                 break;
 
             case "concurrent":
                 await RunWorkflowAsync(
-                    AgentWorkflowBuilder.BuildConcurrent(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, client)),
+                    AgentWorkflowBuilder.BuildConcurrent(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, aiProjectClient, deploymentName)),
                     [new(ChatRole.User, "Hello, world!")]);
                 break;
 
             case "handoffs":
-                ChatClientAgent historyTutor = new(client,
-                    "You provide assistance with historical queries. Explain important events and context clearly. Only respond about history.",
-                    "history_tutor",
-                    "Specialist agent for historical questions");
-                ChatClientAgent mathTutor = new(client,
-                    "You provide help with math problems. Explain your reasoning at each step and include examples. Only respond about math.",
-                    "math_tutor",
-                    "Specialist agent for math questions");
-                ChatClientAgent triageAgent = new(client,
-                    "You determine which agent to use based on the user's homework question. ALWAYS handoff to another agent.",
-                    "triage_agent",
-                    "Routes messages to the appropriate specialist agent");
+                ChatClientAgent historyTutor = aiProjectClient.AsAIAgent(
+                    model: deploymentName,
+                    instructions: "You provide assistance with historical queries. Explain important events and context clearly. Only respond about history.",
+                    name: "history_tutor",
+                    description: "Specialist agent for historical questions");
+                ChatClientAgent mathTutor = aiProjectClient.AsAIAgent(
+                    model: deploymentName,
+                    instructions: "You provide help with math problems. Explain your reasoning at each step and include examples. Only respond about math.",
+                    name: "math_tutor",
+                    description: "Specialist agent for math questions");
+                ChatClientAgent triageAgent = aiProjectClient.AsAIAgent(
+                    model: deploymentName,
+                    instructions: "You determine which agent to use based on the user's homework question. ALWAYS handoff to another agent.",
+                    name: "triage_agent",
+                    description: "Routes messages to the appropriate specialist agent");
                 var workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(triageAgent)
                     .WithHandoffs(triageAgent, [mathTutor, historyTutor])
                     .WithHandoffs([mathTutor, historyTutor], triageAgent)
@@ -71,7 +82,7 @@ public static class Program
             case "groupchat":
                 await RunWorkflowAsync(
                     AgentWorkflowBuilder.CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents) { MaximumIterationCount = 5 })
-                        .AddParticipants(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, client))
+                        .AddParticipants(from lang in (string[])["French", "Spanish", "English"] select GetTranslationAgent(lang, aiProjectClient, deploymentName))
                         .WithName("Translation Round Robin Workflow")
                         .WithDescription("A workflow where three translation agents take turns responding in a round-robin fashion.")
                         .Build(),
@@ -130,8 +141,9 @@ public static class Program
     }
 
     /// <summary>Creates a translation agent for the specified target language.</summary>
-    private static ChatClientAgent GetTranslationAgent(string targetLanguage, IChatClient chatClient) =>
-        new(chatClient,
-            $"You are a translation assistant who only responds in {targetLanguage}. Respond to any " +
+    private static ChatClientAgent GetTranslationAgent(string targetLanguage, AIProjectClient client, string model) =>
+        client.AsAIAgent(
+            model: model,
+            instructions: $"You are a translation assistant who only responds in {targetLanguage}. Respond to any " +
             $"input by outputting the name of the input language and then translating the input to {targetLanguage}.");
 }

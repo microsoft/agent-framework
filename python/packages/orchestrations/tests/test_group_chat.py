@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Callable, Sequence
 from typing import Any, cast
 
 import pytest
@@ -21,7 +21,6 @@ from agent_framework import (
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import (
     AgentRequestInfoResponse,
-    BaseGroupChatOrchestrator,
     GroupChatBuilder,
     GroupChatState,
     MagenticContext,
@@ -29,6 +28,8 @@ from agent_framework.orchestrations import (
     MagenticProgressLedger,
     MagenticProgressLedgerItem,
 )
+
+from agent_framework_orchestrations import BaseGroupChatOrchestrator
 
 
 class StubAgent(BaseAgent):
@@ -43,12 +44,12 @@ class StubAgent(BaseAgent):
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Any:
         if stream:
             return self._run_stream_impl()
         return self._run_impl()
 
-    async def _run_impl(self) -> AgentResponse:
+    async def _run_impl(self) -> AgentResponse[Any]:
         response = Message(role="assistant", contents=[self._reply_text], author_name=self.name)
         return AgentResponse(messages=[response])
 
@@ -71,21 +72,21 @@ class MockChatClient:
 
 class StubManagerAgent(Agent):
     def __init__(self) -> None:
-        super().__init__(client=MockChatClient(), name="manager_agent", description="Stub manager")
+        super().__init__(client=cast(Any, MockChatClient()), name="manager_agent", description="Stub manager")
         self._call_count = 0
 
-    async def run(
+    async def run(  # type: ignore[override]  # ty: ignore[invalid-method-override]
         self,
         messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> AgentResponse[Any]:
         if self._call_count == 0:
             self._call_count += 1
             # First call: select the agent (using AgentOrchestrationOutput format)
             payload = {"terminate": False, "reason": "Selecting agent", "next_speaker": "agent", "final_message": None}
-            return AgentResponse(
+            return AgentResponse[Any](
                 messages=[
                     Message(
                         role="assistant",
@@ -108,7 +109,7 @@ class StubManagerAgent(Agent):
             "next_speaker": None,
             "final_message": "agent manager final",
         }
-        return AgentResponse(
+        return AgentResponse[Any](
             messages=[
                 Message(
                     role="assistant",
@@ -129,16 +130,18 @@ class ConcatenatedJsonManagerAgent(Agent):
     """Manager agent that emits concatenated JSON in a single assistant message."""
 
     def __init__(self) -> None:
-        super().__init__(client=MockChatClient(), name="concat_manager", description="Concatenated JSON manager")
+        super().__init__(
+            client=cast(Any, MockChatClient()), name="concat_manager", description="Concatenated JSON manager"
+        )
         self._call_count = 0
 
-    async def run(
+    async def run(  # type: ignore[override]  # ty: ignore[invalid-method-override]
         self,
         messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> AgentResponse:
+    ) -> AgentResponse[Any]:
         if self._call_count == 0:
             self._call_count += 1
             return AgentResponse(
@@ -349,9 +352,7 @@ class TestGroupChatBuilder:
             def __init__(self) -> None:
                 super().__init__(name="", description="test")
 
-            def run(
-                self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
-            ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
+            def run(self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any) -> Any:
                 if stream:
 
                     async def _stream() -> AsyncIterable[AgentResponseUpdate]:
@@ -360,7 +361,7 @@ class TestGroupChatBuilder:
                     return _stream()
                 return self._run_impl()
 
-            async def _run_impl(self) -> AgentResponse:
+            async def _run_impl(self) -> AgentResponse[Any]:
                 return AgentResponse(messages=[])
 
         agent = AgentWithoutName()
@@ -936,16 +937,16 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
         """Manager agent that dynamically selects from available participants."""
 
         def __init__(self) -> None:
-            super().__init__(client=MockChatClient(), name="dynamic_manager", description="Dynamic manager")
+            super().__init__(client=cast(Any, MockChatClient()), name="dynamic_manager", description="Dynamic manager")
             self._call_count = 0
 
-        async def run(
+        async def run(  # type: ignore[override]  # ty: ignore[invalid-method-override]
             self,
             messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
             *,
             session: AgentSession | None = None,
             **kwargs: Any,
-        ) -> AgentResponse:
+        ) -> AgentResponse[Any]:
             if self._call_count == 0:
                 self._call_count += 1
                 payload = {
@@ -954,7 +955,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
                     "next_speaker": "alpha",
                     "final_message": None,
                 }
-                return AgentResponse(
+                return AgentResponse[Any](
                     messages=[
                         Message(
                             role="assistant",
@@ -976,7 +977,7 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
                 "next_speaker": None,
                 "final_message": "dynamic manager final",
             }
-            return AgentResponse(
+            return AgentResponse[Any](
                 messages=[
                     Message(
                         role="assistant",

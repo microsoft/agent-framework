@@ -1,8 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
@@ -11,6 +13,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using OpenAI.Responses;
 using Shared.IntegrationTests;
 
 namespace Foundry.Hosting.IntegrationTests.Fixtures;
@@ -41,6 +44,7 @@ public abstract class HostedAgentFixture : IAsyncLifetime
 {
     private const string ScenarioEnvironmentVariable = "IT_SCENARIO";
     private const string RunIdEnvironmentVariable = "IT_RUN_ID";
+    private const string ModelDeploymentEnvironmentVariable = "AZURE_AI_MODEL_DEPLOYMENT_NAME";
     private const string FoundryFeaturesHeader = "Foundry-Features";
     private const string HostedAgentsFeatureValue = "HostedAgents=V1Preview";
     private const string EnableVnextExperienceMetadataKey = "enableVnextExperience";
@@ -68,6 +72,13 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     protected virtual TimeSpan ProvisioningTimeout => TimeSpan.FromMinutes(5);
 
     /// <summary>
+    /// Container responses protocol version declared in <c>container_protocol_versions</c>. Defaults to
+    /// <c>2.0.0</c> (the only version this image supports). The unsupported-protocol scenario overrides
+    /// it to <c>1.0.0</c> to assert the container fails fast with a clear, actionable error.
+    /// </summary>
+    protected virtual string ResponsesProtocolVersion => "2.0.0";
+
+    /// <summary>
     /// The wrapped agent. Available after <see cref="InitializeAsync"/>.
     /// </summary>
     public AIAgent Agent { get; private set; } = null!;
@@ -91,12 +102,20 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     public AIProjectClient ProjectClient { get; private set; } = null!;
 
     /// <summary>
+    /// The per-agent <see cref="ProjectOpenAIClient"/> bound to this scenario's hosted agent endpoint
+    /// (<c>/agents/{name}/endpoint/protocols/openai</c>). Stored hosted-agent responses are only
+    /// readable through this per-agent client; the project-level responses client returns
+    /// <c>session_not_accessible</c> (403). Use this to fetch a response by id.
+    /// </summary>
+    public ProjectOpenAIClient AgentOpenAIClient { get; private set; } = null!;
+
+    /// <summary>
     /// Creates a server side conversation that tests can pass via <c>ChatOptions.ConversationId</c>
     /// to exercise multi turn flows backed by the Foundry conversations service.
     /// </summary>
     public async Task<string> CreateConversationAsync()
     {
-        var response = await this.ProjectClient.GetProjectOpenAIClient().GetProjectConversationsClient().CreateProjectConversationAsync().ConfigureAwait(false);
+        var response = await this.AgentOpenAIClient.GetProjectConversationsClient().CreateProjectConversationAsync().ConfigureAwait(false);
         return response.Value.Id;
     }
 
@@ -107,7 +126,7 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     {
         try
         {
-            await this.ProjectClient.GetProjectOpenAIClient().GetProjectConversationsClient().DeleteConversationAsync(conversationId).ConfigureAwait(false);
+            await this.AgentOpenAIClient.GetProjectConversationsClient().DeleteConversationAsync(conversationId).ConfigureAwait(false);
         }
         catch
         {
@@ -122,12 +141,82 @@ public abstract class HostedAgentFixture : IAsyncLifetime
     public async Task<int> CountConversationItemsAsync(string conversationId)
     {
         var count = 0;
-        await foreach (var _ in this.ProjectClient.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc").ConfigureAwait(false))
+        await foreach (var _ in this.AgentOpenAIClient.GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc").ConfigureAwait(false))
         {
             count++;
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// Reads every message stored in a conversation, oldest first, as a role and text pair. Used by
+    /// tests that need to see how many times a given turn was recorded, not just how many items there
+    /// are.
+    /// </summary>
+    public async Task<List<(string Role, string Text)>> ReadConversationMessagesAsync(string conversationId)
+    {
+        List<(string Role, string Text)> messages = [];
+        await foreach (AgentResponseItem item in this.AgentOpenAIClient.GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc").ConfigureAwait(false))
+        {
+            if (item.AsResponseResultItem() is MessageResponseItem message)
+            {
+                var text = string.Concat(message.Content
+                    .Where(c => c.Kind is ResponseContentPartKind.OutputText or ResponseContentPartKind.InputText)
+                    .Select(c => c.Text));
+
+                messages.Add((message.Role.ToString(), text));
+            }
+        }
+
+        return messages;
+    }
+
+    /// <summary>
+    /// Reads the input a stored response was run with, oldest first, as a role and text pair. Along a
+    /// <c>previous_response_id</c> chain this is what the turn actually received, so tests can see
+    /// whether an earlier turn was handed to it more than once.
+    /// </summary>
+    public async Task<List<(string Role, string Text)>> ReadResponseInputMessagesAsync(string responseId)
+    {
+        List<(string Role, string Text)> messages = [];
+        await foreach (ResponseItem item in this.AgentOpenAIClient.GetProjectResponsesClient().GetResponseInputItemsAsync(responseId).ConfigureAwait(false))
+        {
+            if (item is MessageResponseItem message)
+            {
+                var text = string.Concat(message.Content
+                    .Where(c => c.Kind is ResponseContentPartKind.OutputText or ResponseContentPartKind.InputText)
+                    .Select(c => c.Text));
+
+                messages.Add((message.Role.ToString(), text));
+            }
+        }
+
+        return messages;
+    }
+
+    /// <summary>
+    /// Tries to read a response back off the service by id, returning <see langword="null"/> when
+    /// nothing is stored under it.
+    /// </summary>
+    /// <remarks>
+    /// Reads go through this scenario's per-agent client, which is the one that can see a hosted
+    /// agent's responses; the project-level client answers 403 <c>session_not_accessible</c> for them.
+    /// Only a 404 is taken as "nothing is stored": that is what the service answers for a well-formed
+    /// id it has no response for. Anything else surfaces, because a caller reading a 403 or a server
+    /// fault as "nothing is stored" would turn a broken run into a passing test.
+    /// </remarks>
+    public async Task<object?> TryReadResponseAsync(string responseId)
+    {
+        try
+        {
+            var response = await this.AgentOpenAIClient.GetProjectResponsesClient().GetResponseAsync(responseId).ConfigureAwait(false);
+            return response?.Value;
+        }
+        catch (ClientResultException ex) when (ex.Status is 404)
+        {
+            return null;
+        }
     }
 
     public async ValueTask InitializeAsync()
@@ -148,8 +237,16 @@ public abstract class HostedAgentFixture : IAsyncLifetime
         {
             Image = image,
         };
-        definition.Versions.Add(new ProtocolVersionRecord(ProjectsAgentProtocol.Responses, "1.0.0"));
+        definition.Versions.Add(new ProtocolVersionRecord(ProjectsAgentProtocol.Responses, this.ResponsesProtocolVersion));
         definition.EnvironmentVariables[ScenarioEnvironmentVariable] = this.ScenarioName;
+        // Forward the test-side model deployment to the container so it targets the same model the
+        // tests expect. Without this the container falls back to its hard-coded default (gpt-4o),
+        // which fails on projects that only deploy a different model.
+        var modelDeployment = TestConfiguration.GetValue(TestSettings.AzureAIModelDeploymentName);
+        if (!string.IsNullOrWhiteSpace(modelDeployment))
+        {
+            definition.EnvironmentVariables[ModelDeploymentEnvironmentVariable] = modelDeployment;
+        }
         // Foundry deduplicates versions by content hash, so a fixture re-using the same
         // definition would just receive the bootstrap version and then delete it on dispose.
         // Adding a per-run env var forces a brand new version that the dispose can safely remove
@@ -181,6 +278,7 @@ public abstract class HostedAgentFixture : IAsyncLifetime
         var openAIOptions = new ProjectOpenAIClientOptions { AgentName = this.AgentName };
         openAIOptions.AddPolicy(new FoundryFeaturesPolicy(HostedAgentsFeatureValue), PipelinePosition.PerCall);
         var openAIClient = new ProjectOpenAIClient(endpoint, credential, openAIOptions);
+        this.AgentOpenAIClient = openAIClient;
         var responsesClient = openAIClient.GetProjectResponsesClient();
 
         this.Agent = responsesClient.AsIChatClient().AsAIAgent(name: this.AgentName);

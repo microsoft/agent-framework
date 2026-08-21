@@ -19,18 +19,20 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
 )
+from agent_framework._telemetry import mark_feature_used
+from agent_framework_lab_common._feature_usage import FeatureIndex
 from loguru import logger
-from tau2.data_model.simulation import SimulationRun, TerminationReason  # type: ignore[import-untyped]
-from tau2.data_model.tasks import Task  # type: ignore[import-untyped]
-from tau2.domains.airline.environment import get_environment  # type: ignore[import-untyped]
-from tau2.evaluator.evaluator import EvaluationType, RewardInfo, evaluate_simulation  # type: ignore[import-untyped]
-from tau2.user.user_simulator import (  # type: ignore[import-untyped]
+from tau2.data_model.simulation import SimulationRun, TerminationReason
+from tau2.data_model.tasks import Task
+from tau2.domains.airline.environment import get_environment
+from tau2.evaluator.evaluator import EvaluationType, RewardInfo, evaluate_simulation
+from tau2.user.user_simulator import (
     OUT_OF_SCOPE,
     STOP,
     TRANSFER,
     get_global_user_sim_guidelines,
 )
-from tau2.utils.utils import get_now  # type: ignore[import-untyped]
+from tau2.utils.utils import get_now
 
 from ._message_utils import flip_messages, log_messages
 from ._sliding_window import SlidingWindowHistoryProvider
@@ -338,6 +340,7 @@ class TaskRunner:
         Returns:
             Complete conversation history as Message list for evaluation
         """
+        mark_feature_used(FeatureIndex.LAB)
         logger.info(f"Starting workflow agent for task {task.id}: {task.description.purpose}")  # type: ignore[unused-ignore]
         logger.info(f"Assistant chat client: {assistant_chat_client}")
         logger.info(f"User simulator chat client: {user_simulator_chat_client}")
@@ -372,7 +375,7 @@ class TaskRunner:
         session_state: dict[str, Any] = self._assistant_executor._session.state  # type: ignore
         all_messages: list[Message] = list(
             session_state.get(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}).get("messages", [])
-        )  # type: ignore
+        )
         full_conversation = [first_message, *all_messages]
         if self._final_user_message is not None:
             full_conversation.extend(self._final_user_message)

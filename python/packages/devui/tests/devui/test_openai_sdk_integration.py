@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Generator
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import pytest
@@ -103,11 +104,12 @@ def test_openai_sdk_responses_create_with_entity_id(devui_server: str) -> None:
 
     # Get available entities - extract host and port from base_url
     parsed = urlparse(base_url)
+    assert parsed.hostname is not None
     conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
     try:
         conn.request("GET", "/v1/entities")
-        response = conn.getresponse()
-        entities = json.loads(response.read().decode("utf-8"))["entities"]
+        http_response = conn.getresponse()
+        entities = json.loads(http_response.read().decode("utf-8"))["entities"]
     finally:
         conn.close()
 
@@ -128,7 +130,7 @@ def test_openai_sdk_responses_create_with_entity_id(devui_server: str) -> None:
 
     assert response.object == "response"
     assert len(response.output) > 0
-    assert response.output[0].content is not None
+    assert cast(Any, response.output[0]).content is not None
 
 
 def test_openai_sdk_responses_create_streaming(devui_server: str) -> None:
@@ -138,6 +140,7 @@ def test_openai_sdk_responses_create_streaming(devui_server: str) -> None:
 
     # Get available entities - extract host and port from base_url
     parsed = urlparse(base_url)
+    assert parsed.hostname is not None
     conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
     try:
         conn.request("GET", "/v1/entities")
@@ -183,6 +186,7 @@ def test_openai_sdk_with_conversations(devui_server: str) -> None:
 
     # Get available entities - extract host and port from base_url
     parsed = urlparse(base_url)
+    assert parsed.hostname is not None
     conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
     try:
         conn.request("GET", "/v1/entities")
@@ -226,7 +230,7 @@ def test_openai_sdk_with_conversations(devui_server: str) -> None:
     assert len(response2.output) > 0
     # The agent should remember the name from the previous turn
     # Note: This may not work with all agents, so we just verify we got a response
-    assert response2.output[0].content is not None
+    assert cast(Any, response2.output[0]).content is not None
 
 
 def test_openai_sdk_with_model_and_entity_id(devui_server: str) -> None:
@@ -236,11 +240,12 @@ def test_openai_sdk_with_model_and_entity_id(devui_server: str) -> None:
 
     # Get available entities - extract host and port from base_url
     parsed = urlparse(base_url)
+    assert parsed.hostname is not None
     conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=10)
     try:
         conn.request("GET", "/v1/entities")
-        response = conn.getresponse()
-        entities = json.loads(response.read().decode("utf-8"))["entities"]
+        http_response = conn.getresponse()
+        entities = json.loads(http_response.read().decode("utf-8"))["entities"]
     finally:
         conn.close()
 

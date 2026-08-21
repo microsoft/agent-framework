@@ -68,7 +68,7 @@ async def main() -> None:
     print(f"Result: {result}\n")
 
 
-async def run_with_approvals(query: str, agent: Agent) -> Any:
+async def run_with_approvals(query: str, agent: Agent[Any]) -> Any:
     """Run the agent and handle shell approvals outside tool execution."""
     current_input: str | list[Any] = query
     while True:
@@ -79,6 +79,8 @@ async def run_with_approvals(query: str, agent: Agent) -> Any:
         next_input: list[Any] = [query]
         rejected = False
         for user_input_needed in result.user_input_requests:
+            if user_input_needed.function_call is None:
+                continue
             print(
                 f"\nShell request: {user_input_needed.function_call.name}"
                 f"\nArguments: {user_input_needed.function_call.arguments}"

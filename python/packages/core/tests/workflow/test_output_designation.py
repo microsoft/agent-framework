@@ -61,7 +61,7 @@ def test_designation_is_frozen() -> None:
 
     designation = OutputDesignation(outputs=frozenset({"alpha"}))
     with pytest.raises(FrozenInstanceError):
-        designation.outputs = frozenset({"beta"})  # type: ignore[misc]
+        designation.outputs = frozenset({"beta"})  # type: ignore[misc]  # ty: ignore[invalid-assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -70,12 +70,12 @@ def test_designation_is_frozen() -> None:
 
 
 @executor
-async def _emit_one(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+async def _emit_one(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
     await ctx.yield_output("hello")
 
 
 @executor
-async def _downstream(message: str, ctx: WorkflowContext[Never, str]) -> None:
+async def _downstream(message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
     await ctx.yield_output("downstream")
 
 

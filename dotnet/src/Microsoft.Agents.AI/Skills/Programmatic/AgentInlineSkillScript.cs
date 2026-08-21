@@ -2,13 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -16,10 +14,10 @@ namespace Microsoft.Agents.AI;
 /// <summary>
 /// A skill script backed by a delegate.
 /// </summary>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 internal sealed class AgentInlineSkillScript : AgentSkillScript
 {
     private readonly AIFunction _function;
+    private readonly Func<JsonElement?, AIFunctionArguments> _argumentMarshaler;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentInlineSkillScript"/> class from a delegate.
@@ -32,13 +30,18 @@ internal sealed class AgentInlineSkillScript : AgentSkillScript
     /// Optional <see cref="JsonSerializerOptions"/> used to marshal the delegate's parameters and return value.
     /// When <see langword="null"/>, <see cref="AIJsonUtilities.DefaultOptions"/> is used.
     /// </param>
-    public AgentInlineSkillScript(string name, Delegate method, string? description = null, JsonSerializerOptions? serializerOptions = null)
+    /// <param name="argumentMarshaler">
+    /// Optional function for converting raw JSON arguments into <see cref="AIFunctionArguments"/>.
+    /// When <see langword="null"/>, the default marshaler is used which expects arguments as a JSON object.
+    /// </param>
+    public AgentInlineSkillScript(string name, Delegate method, string? description = null, JsonSerializerOptions? serializerOptions = null, Func<JsonElement?, AIFunctionArguments>? argumentMarshaler = null)
         : base(Throw.IfNullOrWhitespace(name), description)
     {
         Throw.IfNull(method);
 
         var options = new AIFunctionFactoryOptions { Name = this.Name, SerializerOptions = serializerOptions };
         this._function = AIFunctionFactory.Create(method, options);
+        this._argumentMarshaler = argumentMarshaler ?? ConvertToFunctionArguments;
     }
 
     /// <summary>
@@ -53,13 +56,18 @@ internal sealed class AgentInlineSkillScript : AgentSkillScript
     /// Optional <see cref="JsonSerializerOptions"/> used to marshal the method's parameters and return value.
     /// When <see langword="null"/>, <see cref="AIJsonUtilities.DefaultOptions"/> is used.
     /// </param>
-    public AgentInlineSkillScript(string name, MethodInfo method, object? target, string? description = null, JsonSerializerOptions? serializerOptions = null)
+    /// <param name="argumentMarshaler">
+    /// Optional function for converting raw JSON arguments into <see cref="AIFunctionArguments"/>.
+    /// When <see langword="null"/>, the default marshaler is used which expects arguments as a JSON object.
+    /// </param>
+    public AgentInlineSkillScript(string name, MethodInfo method, object? target, string? description = null, JsonSerializerOptions? serializerOptions = null, Func<JsonElement?, AIFunctionArguments>? argumentMarshaler = null)
         : base(Throw.IfNullOrWhitespace(name), description)
     {
         Throw.IfNull(method);
 
         var options = new AIFunctionFactoryOptions { Name = this.Name, SerializerOptions = serializerOptions };
         this._function = AIFunctionFactory.Create(method, target, options);
+        this._argumentMarshaler = argumentMarshaler ?? ConvertToFunctionArguments;
     }
 
     /// <summary>
@@ -70,19 +78,15 @@ internal sealed class AgentInlineSkillScript : AgentSkillScript
     /// <inheritdoc/>
     public override async Task<object?> RunAsync(AgentSkill skill, JsonElement? arguments, IServiceProvider? serviceProvider, CancellationToken cancellationToken = default)
     {
-        var funcArgs = ConvertToFunctionArguments(arguments);
+        var funcArgs = this._argumentMarshaler(arguments);
         funcArgs.Services = serviceProvider;
 
         return await this._function.InvokeAsync(funcArgs, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
-    /// Converts a raw <see cref="JsonElement"/> to <see cref="AIFunctionArguments"/> for delegate invocation.
+    /// Default argument marshaling: expects arguments as a JSON object whose properties map to the delegate's parameters.
     /// </summary>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when <paramref name="arguments"/> is provided but is not a JSON object.
-    /// Inline skill scripts expect arguments as a JSON object whose properties map to the delegate's parameters.
-    /// </exception>
     private static AIFunctionArguments ConvertToFunctionArguments(JsonElement? arguments)
     {
         if (arguments is null ||

@@ -111,9 +111,9 @@ class ShellSession:
                 return
             popen_kwargs: dict[str, object] = {}
             if sys.platform == "win32":
-                import subprocess  # noqa: S404  # nosec B404 - Win32 constants only
+                import subprocess  # ruff:ignore[suspicious-subprocess-import]  # nosec B404 - Win32 constants only
 
-                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
             else:
                 popen_kwargs["start_new_session"] = True
 
@@ -412,7 +412,7 @@ class ShellSession:
             return
         try:
             if sys.platform == "win32":
-                self._proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+                self._proc.send_signal(signal.CTRL_BREAK_EVENT)
             else:
                 os.killpg(os.getpgid(self._proc.pid), signal.SIGINT)
         except (ProcessLookupError, PermissionError, OSError):

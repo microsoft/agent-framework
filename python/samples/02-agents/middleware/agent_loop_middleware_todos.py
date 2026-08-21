@@ -23,7 +23,7 @@ The loop is run with streaming, so the injected messages between iterations show
 updates; the stream is printed as ``<role>: <content>`` lines.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint URL
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint URL
     FOUNDRY_MODEL            — Model deployment name
 
 Authentication:
@@ -41,7 +41,7 @@ async def todo_loop(client: FoundryChatClient) -> None:
     # 2. ``todos_remaining`` builds a ``should_continue`` predicate that returns True while any todo
     #    item is still open. ``max_iterations`` guarantees the loop stops even if the agent stalls.
     loop = AgentLoopMiddleware(
-        should_continue=todos_remaining(todo_provider),
+        should_continue=todos_remaining(),
         max_iterations=6,
     )
 

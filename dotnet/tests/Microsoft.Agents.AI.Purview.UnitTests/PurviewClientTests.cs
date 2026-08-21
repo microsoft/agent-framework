@@ -376,8 +376,8 @@ public sealed class PurviewClientTests : IDisposable
         Assert.NotNull(result);
         Assert.Null(result.Error);
 
-        // Verify request - note the endpoint is different from ProcessContent
-        Assert.Equal("https://graph.microsoft.com/v1.0/test-user-id/dataSecurityAndGovernance/activities/contentActivities", this._handler.RequestUri?.ToString());
+        // Verify request
+        Assert.Equal("https://graph.microsoft.com/v1.0/users/test-user-id/dataSecurityAndGovernance/activities/contentActivities", this._handler.RequestUri?.ToString());
         Assert.Equal(HttpMethod.Post, this._handler.RequestMethod);
     }
 

@@ -9,7 +9,9 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from typing import Any, cast, get_args, get_origin
+from functools import partial
+from types import UnionType
+from typing import Any, Union, cast, get_args, get_origin, get_type_hints
 
 from ag_ui.core import (
     ActivitySnapshotEvent,
@@ -24,16 +26,35 @@ from ag_ui.core import (
     ToolCallEndEvent,
     ToolCallStartEvent,
 )
-from agent_framework import AgentResponse, AgentResponseUpdate, Content, Message, Workflow, WorkflowRunState
+from agent_framework import (
+    AgentResponse,
+    AgentResponseUpdate,
+    CheckpointStorage,
+    Content,
+    Message,
+    Workflow,
+    WorkflowRunState,
+)
+from agent_framework._workflows._typing_utils import (  # pyright: ignore[reportPrivateUsage]
+    is_instance_of,
+    try_coerce_to_type,
+)
+from agent_framework.observability import (
+    _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ._message_adapters import normalize_agui_input_messages
 from ._run_common import (
     FlowState,
+    _approval_interrupt_for_function_call,  # pyright: ignore[reportPrivateUsage]
+    _approval_response_schema,  # pyright: ignore[reportPrivateUsage]
     _build_run_finished_event,
     _close_reasoning_block,
     _emit_content,
     _extract_resume_payload,
+    _iterate_with_context,
     _normalize_resume_interrupts,
+    _resume_contract_error,
 )
 from ._utils import canonical_function_arguments, generate_event_id, make_json_safe
 
@@ -61,6 +82,67 @@ _WORKFLOW_EVENT_BASE_FIELDS: set[str] = {
 }
 
 _INTERRUPT_CARD_EVENT_NAME = "WorkflowInterruptEvent"
+# Tool content admitted from streaming updates regardless of role. Approval requests are
+# deliberately excluded: workflow approvals resume through request_info pending state, and an
+# approval interrupt emitted from streamed content would have no pending request to resume against.
+_TOOL_CONTENT_TYPES = {"function_call", "function_result", "mcp_server_tool_call", "mcp_server_tool_result"}
+
+
+def _json_schema_for_response_type(response_type: Any) -> dict[str, Any] | None:
+    """Build a lightweight response schema for a workflow request_info response type."""
+    if response_type is None:
+        return None
+
+    target_type = get_origin(response_type) or response_type
+    if target_type is Any:
+        return {"description": "Resolved workflow response payload."}
+    if target_type is dict:
+        return {"type": "object", "additionalProperties": True}
+    if target_type is list:
+        item_types = get_args(response_type)
+        schema: dict[str, Any] = {"type": "array"}
+        if item_types:
+            item_schema = _json_schema_for_response_type(item_types[0])
+            if item_schema is not None:
+                schema["items"] = item_schema
+        return schema
+    if target_type is str:
+        return {"type": "string"}
+    if target_type is bool:
+        return {"type": "boolean"}
+    if target_type is int:
+        return {"type": "integer"}
+    if target_type is float:
+        return {"type": "number"}
+    if target_type in {Message, Content}:
+        return {"type": "object", "additionalProperties": True}
+    return {"description": f"Resolved workflow response payload for {getattr(target_type, '__name__', target_type)}."}
+
+
+def _workflow_interrupt_value(request_data: Any) -> Any:
+    """Normalize workflow request data into legacy metadata value form."""
+    safe_request_data = make_json_safe(request_data)
+    if isinstance(safe_request_data, dict):
+        return safe_request_data
+    return {"data": safe_request_data}
+
+
+def _workflow_interrupt_metadata(request_payload: dict[str, Any], value: Any) -> dict[str, Any]:
+    """Build Agent Framework metadata for workflow request_info interrupts."""
+    agent_framework_metadata = {
+        key: make_json_safe(value)
+        for key, value in {
+            "type": "workflow_request_info",
+            "request_id": request_payload.get("request_id"),
+            "source_executor_id": request_payload.get("source_executor_id"),
+            "request_type": request_payload.get("request_type"),
+            "response_type": request_payload.get("response_type"),
+            "data": request_payload.get("data"),
+            "value": value,
+        }.items()
+        if value is not None
+    }
+    return {"agent_framework": agent_framework_metadata}
 
 
 async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
@@ -84,17 +166,68 @@ async def _pending_request_events(workflow: Workflow) -> dict[str, Any]:
     return {}
 
 
+async def _pending_request_events_from_checkpoint(
+    checkpoint_id: str,
+    checkpoint_storage: CheckpointStorage,
+) -> dict[str, Any]:
+    """Read pending request_info events from a persisted checkpoint without restoring it.
+
+    Resume responses are coerced against the requests that were pending when the
+    checkpoint was written. On a cold checkpoint resume those requests are not yet live
+    on the workflow instance, so the coercion cannot see them. Reading
+    ``pending_request_info_events`` straight from the persisted ``WorkflowCheckpoint``
+    exposes them without running any executor ``on_checkpoint_restore`` hook; the single
+    ``workflow.run(checkpoint_id=...)`` then performs the one real restore, so the
+    restore -- and every custom restore hook -- runs exactly once per resume.
+    """
+    try:
+        checkpoint = await checkpoint_storage.load(checkpoint_id)
+    except Exception:
+        logger.warning(
+            "Could not load checkpoint for resume-response coercion; the core run will surface any error.",
+            exc_info=True,
+        )
+        return {}
+    return dict(checkpoint.pending_request_info_events)
+
+
 def _interrupt_entry_for_request_event(request_event: Any) -> dict[str, Any] | None:
     """Build AG-UI interrupt payload from a workflow request_info event."""
-    request_id = getattr(request_event, "request_id", None)
-    if request_id is None:
+    request_payload = _request_payload_from_request_event(request_event)
+    if request_payload is None:
         return None
-    request_data = make_json_safe(getattr(request_event, "data", None))
-    if isinstance(request_data, dict):
-        value: Any = request_data
-    else:
-        value = {"data": request_data}
-    return {"id": str(request_id), "value": value}
+
+    value = _workflow_interrupt_value(request_payload.get("data"))
+    request_data = getattr(request_event, "data", None)
+    if (
+        isinstance(request_data, Content)
+        and request_data.type == "function_approval_request"
+        and request_data.function_call is not None
+    ):
+        workflow_metadata = _workflow_interrupt_metadata(request_payload, value)["agent_framework"]
+        workflow_metadata.pop("type", None)
+        response_schema = (
+            _approval_response_schema()
+            if request_data.function_call.additional_properties.get("server_label")
+            else None
+        )
+        return _approval_interrupt_for_function_call(
+            interrupt_id=str(request_payload["request_id"]),
+            function_call=request_data.function_call,
+            metadata=workflow_metadata,
+            response_schema=response_schema,
+        )
+
+    entry: dict[str, Any] = {
+        "id": str(request_payload["request_id"]),
+        "reason": "input_required",
+        "value": value,
+        "metadata": _workflow_interrupt_metadata(request_payload, value),
+    }
+    response_schema = _json_schema_for_response_type(getattr(request_event, "response_type", None))
+    if response_schema is not None:
+        entry["responseSchema"] = response_schema
+    return entry
 
 
 def _interrupts_from_pending_requests(pending_events: dict[str, Any]) -> list[dict[str, Any]]:
@@ -142,12 +275,12 @@ def _extract_responses_from_messages(messages: list[Message]) -> dict[str, Any]:
             elif content.type == "function_approval_response" and getattr(content, "id", None):
                 approval_value: dict[str, Any] = {
                     "approved": getattr(content, "approved", False),
-                    "id": str(content.id),  # type: ignore[union-attr]
+                    "id": str(content.id),
                 }
                 func_call = getattr(content, "function_call", None)
                 if func_call is not None:
                     approval_value["function_call"] = make_json_safe(func_call.to_dict())
-                responses[str(content.id)] = approval_value  # type: ignore[union-attr]
+                responses[str(content.id)] = approval_value
     return responses
 
 
@@ -155,9 +288,79 @@ def _resume_to_workflow_responses(resume_payload: Any) -> dict[str, Any]:
     """Convert AG-UI resume payloads into workflow responses."""
     responses: dict[str, Any] = {}
     for interrupt in _normalize_resume_interrupts(resume_payload):
+        if interrupt.get("status") not in {None, "resolved"}:
+            continue
         value = _coerce_json_value(interrupt.get("value"))
         responses[str(interrupt["id"])] = value
     return responses
+
+
+def _merge_workflow_response_sources(
+    resume_responses: dict[str, Any],
+    message_responses: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge workflow response sources with explicit resume payloads taking precedence."""
+    if not resume_responses:
+        return dict(message_responses)
+
+    responses = dict(message_responses)
+    responses.update(resume_responses)
+    return responses
+
+
+def _resume_entries_to_workflow_responses(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Convert validated resume entries into workflow responses."""
+    responses: dict[str, Any] = {}
+    for entry in entries:
+        if entry.get("status") == "resolved":
+            responses[str(entry["interrupt_id"])] = _coerce_json_value(entry.get("payload"))
+    return responses
+
+
+def _pending_workflow_interrupt_ids(pending_events: dict[str, Any]) -> set[str]:
+    """Return canonical interrupt ids for pending workflow request_info events."""
+    pending_ids: set[str] = set()
+    for request_id, request_event in pending_events.items():
+        pending_id = getattr(request_event, "request_id", None) or request_id
+        if pending_id:
+            pending_ids.add(str(pending_id))
+    return pending_ids
+
+
+def _resume_error_for_pending_workflow_requests(
+    resume_entries: list[dict[str, Any]],
+) -> RunErrorEvent | None:
+    """Return a workflow resume error for unsupported canonical resume entries."""
+    for entry in resume_entries:
+        interrupt_id = str(entry["interrupt_id"])
+        status = entry.get("status")
+        if status not in {None, "resolved", "cancelled"}:
+            return RunErrorEvent(
+                message=f"Unsupported workflow resume status '{status}' for interruptId '{interrupt_id}'.",
+                code="WORKFLOW_RESUME_INVALID",
+            )
+    return None
+
+
+def _consume_cancelled_workflow_requests(workflow: Workflow, resume_entries: list[dict[str, Any]]) -> None:
+    """Remove cancelled workflow requests from runner and owning agent-executor state."""
+    cancelled_ids = {str(entry["interrupt_id"]) for entry in resume_entries if entry.get("status") == "cancelled"}
+    if not cancelled_ids:
+        return
+
+    runner_context = getattr(workflow, "_runner_context", None)
+    pending_events = getattr(runner_context, "_pending_request_info_events", None)
+    if not isinstance(pending_events, dict):
+        return
+    pending_events = cast(dict[str, Any], pending_events)
+
+    for interrupt_id in cancelled_ids:
+        request_event = pending_events.pop(interrupt_id, None)
+        source_executor_id = getattr(request_event, "source_executor_id", None)
+        executor = workflow.executors.get(source_executor_id) if source_executor_id else None
+        pending_agent_requests = getattr(executor, "_pending_agent_requests", None)
+        if isinstance(pending_agent_requests, dict):
+            cast(dict[str, Any], pending_agent_requests).pop(interrupt_id, None)
 
 
 def _coerce_json_value(value: Any) -> Any:
@@ -264,6 +467,121 @@ def _coerce_message(value: Any) -> Message | None:
     )
 
 
+def _approval_argument_value_matches(original_value: Any, edited_value: Any) -> bool:
+    """Return whether an edited approval argument preserves its JSON value type."""
+    if isinstance(original_value, bool):
+        return isinstance(edited_value, bool)
+    if isinstance(original_value, int) and not isinstance(original_value, bool):
+        return isinstance(edited_value, int) and not isinstance(edited_value, bool)
+    if isinstance(original_value, float):
+        return isinstance(edited_value, (int, float)) and not isinstance(edited_value, bool)
+    if isinstance(original_value, str):
+        return isinstance(edited_value, str)
+    if isinstance(original_value, list):
+        return isinstance(edited_value, list)
+    if isinstance(original_value, dict):
+        return isinstance(edited_value, dict)
+    return True
+
+
+def _coerce_compact_approval_response(request_data: Content, candidate: dict[str, Any]) -> Content | None:
+    """Reconstruct a workflow approval response from client-owned decision fields."""
+    if {"type", "id", "function_call"}.intersection(candidate):
+        return None
+
+    approved = candidate.get("approved", candidate.get("accepted"))
+    if not isinstance(approved, bool):
+        return None
+
+    direct_edited_arguments = {
+        key: value for key, value in candidate.items() if key not in {"approved", "accepted", "editedArgs"}
+    }
+    standard_edited_arguments = candidate.get("editedArgs")
+    if request_data.function_call is None:
+        return None
+    if (
+        direct_edited_arguments or standard_edited_arguments is not None
+    ) and request_data.function_call.additional_properties.get("server_label"):
+        return None
+
+    original_arguments = request_data.function_call.parse_arguments() or {}
+    if standard_edited_arguments is not None:
+        if not isinstance(standard_edited_arguments, dict) or direct_edited_arguments:
+            return None
+        edited_arguments = cast(dict[str, Any], standard_edited_arguments)
+        if set(edited_arguments) != set(original_arguments):
+            return None
+        final_arguments = dict(edited_arguments)
+    else:
+        edited_arguments = direct_edited_arguments
+        if not set(edited_arguments).issubset(original_arguments):
+            return None
+        final_arguments = {**original_arguments, **edited_arguments}
+
+    if any(
+        not _approval_argument_value_matches(original_arguments[name], edited_arguments[name])
+        for name in edited_arguments
+    ):
+        return None
+    if not edited_arguments:
+        return request_data.to_function_approval_response(approved)
+
+    edited_function_call = Content.from_function_call(
+        call_id=request_data.function_call.call_id or "",
+        name=request_data.function_call.name or "",
+        arguments=final_arguments,
+        informational_only=request_data.function_call.informational_only,
+        annotations=request_data.function_call.annotations,
+        additional_properties=request_data.function_call.additional_properties,
+        raw_representation=request_data.function_call.raw_representation,
+    )
+    response = request_data.to_function_approval_response(approved)
+    response.function_call = edited_function_call
+    return response
+
+
+def _without_optional(annotation: Any) -> Any:
+    """Unwrap ``X | None`` so optional fields normalize like their plain counterpart."""
+    if get_origin(annotation) not in (Union, UnionType):
+        return annotation
+    members = [member for member in get_args(annotation) if member is not type(None)]
+    return members[0] if len(members) == 1 else annotation
+
+
+def _normalize_agui_message_fields(response_type: Any, candidate: Any) -> Any:
+    """Convert AG-UI message payloads for fields the response type declares as Message.
+
+    Core coercion only understands the canonical ``contents`` form, so AG-UI wire shapes
+    (``{"role": ..., "content": ...}`` and bare strings) are translated here.
+    """
+    if not isinstance(candidate, dict):
+        return candidate
+
+    try:
+        field_types = get_type_hints(response_type)
+    except Exception:
+        return candidate
+
+    normalized = dict(cast(dict[str, Any], candidate))
+    for name, annotation in field_types.items():
+        if name not in normalized:
+            continue
+        annotation = _without_optional(annotation)
+        target_type = get_origin(annotation) or annotation
+        if target_type is Message:
+            message = _coerce_message(normalized[name])
+            if message is not None:
+                normalized[name] = message
+        elif target_type is list and get_args(annotation)[:1] == (Message,):
+            items = normalized[name]
+            if not isinstance(items, list):
+                continue
+            messages = [_coerce_message(item) for item in cast(list[Any], items)]
+            if all(message is not None for message in messages):
+                normalized[name] = messages
+    return normalized
+
+
 def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     """Coerce a candidate value into the request's expected response type."""
     response_type = getattr(request_event, "response_type", None)
@@ -310,6 +628,15 @@ def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     if target_type is Message:
         return _coerce_message(candidate)
     if target_type is Content:
+        request_data = getattr(request_event, "data", None)
+        if (
+            isinstance(request_data, Content)
+            and request_data.type == "function_approval_request"
+            and isinstance(candidate, dict)
+        ):
+            compact_response = _coerce_compact_approval_response(request_data, cast(dict[str, Any], candidate))
+            if compact_response is not None:
+                return compact_response
         return _coerce_content(candidate)
     if target_type is bool:
         return candidate if isinstance(candidate, bool) else None
@@ -318,13 +645,28 @@ def _coerce_response_for_request(request_event: Any, value: Any) -> Any | None:
     if target_type is float:
         return candidate if isinstance(candidate, (int, float)) and not isinstance(candidate, bool) else None
     if isinstance(target_type, type):
-        return candidate if isinstance(candidate, target_type) else None
+        coerced = try_coerce_to_type(_normalize_agui_message_fields(response_type, candidate), response_type)
+        return coerced if is_instance_of(coerced, response_type) else None
 
     # Unknown typing metadata: preserve value as-is.
     return candidate
 
 
-def _approval_response_matches_request(request_id: str, request_event: Any, response: Any) -> bool:
+def _is_compact_approval_response_payload(value: Any) -> bool:
+    """Return whether a value contains only client-owned approval decision fields."""
+    candidate = _coerce_json_value(value)
+    return isinstance(candidate, dict) and not {"type", "id", "function_call"}.intersection(
+        cast(dict[str, Any], candidate)
+    )
+
+
+def _approval_response_matches_request(
+    request_id: str,
+    request_event: Any,
+    response: Any,
+    *,
+    allow_edited_arguments: bool = False,
+) -> bool:
     """Check whether an approval response matches the pending approval request."""
     request_data = getattr(request_event, "data", None)
     if not isinstance(request_data, Content) or request_data.type != "function_approval_request":
@@ -344,6 +686,8 @@ def _approval_response_matches_request(request_id: str, request_event: Any, resp
     if getattr(response_call, "name", None) != getattr(request_call, "name", None):
         return False
 
+    if allow_edited_arguments:
+        return True
     return canonical_function_arguments(response_call) == canonical_function_arguments(request_call)
 
 
@@ -366,7 +710,12 @@ def _single_pending_response_from_value(pending_events: dict[str, Any], value: A
         )
         return {}
 
-    if not _approval_response_matches_request(str(request_id), request_event, coerced_value):
+    if not _approval_response_matches_request(
+        str(request_id),
+        request_event,
+        coerced_value,
+        allow_edited_arguments=_is_compact_approval_response_payload(value),
+    ):
         logger.info(
             "Ignoring pending request response for request_id=%s: approval response does not match pending request",
             request_id,
@@ -385,7 +734,12 @@ def _coerce_responses_for_pending_requests(
         return responses
 
     normalized: dict[str, Any] = {}
-    pending_by_id = {str(request_id): event for request_id, event in pending_events.items()}
+    pending_by_id: dict[str, Any] = {}
+    for request_id, event in pending_events.items():
+        pending_by_id[str(request_id)] = event
+        event_request_id = getattr(event, "request_id", None)
+        if event_request_id:
+            pending_by_id[str(event_request_id)] = event
 
     for request_id, value in responses.items():
         request_key = str(request_id)
@@ -402,7 +756,12 @@ def _coerce_responses_for_pending_requests(
                 _response_type_name(request_event),
             )
             continue
-        if not _approval_response_matches_request(request_key, request_event, coerced_value):
+        if not _approval_response_matches_request(
+            request_key,
+            request_event,
+            coerced_value,
+            allow_edited_arguments=_is_compact_approval_response_payload(value),
+        ):
             logger.info(
                 "Ignoring resume response for request_id=%s: approval response does not match pending request",
                 request_key,
@@ -410,6 +769,58 @@ def _coerce_responses_for_pending_requests(
             continue
         normalized[request_key] = coerced_value
     return normalized
+
+
+def _coerce_responses_for_pending_requests_strict(
+    responses: dict[str, Any],
+    pending_events: dict[str, Any],
+) -> tuple[dict[str, Any], RunErrorEvent | None]:
+    """Coerce resume responses or return RUN_ERROR for invalid pending response payloads."""
+    if not responses or not pending_events:
+        return responses, None
+
+    normalized: dict[str, Any] = {}
+    pending_by_id: dict[str, Any] = {}
+    for request_id, event in pending_events.items():
+        pending_by_id[str(request_id)] = event
+        event_request_id = getattr(event, "request_id", None)
+        if event_request_id:
+            pending_by_id[str(event_request_id)] = event
+
+    for request_id, value in responses.items():
+        request_key = str(request_id)
+        request_event = pending_by_id.get(request_key)
+        if request_event is None:
+            normalized[request_key] = value
+            continue
+
+        coerced_value = _coerce_response_for_request(request_event, value)
+        if coerced_value is None:
+            return (
+                {},
+                RunErrorEvent(
+                    message=(
+                        f"Workflow resume for interruptId '{request_key}' does not match expected "
+                        f"response type {_response_type_name(request_event)}."
+                    ),
+                    code="WORKFLOW_RESUME_INVALID_RESPONSE",
+                ),
+            )
+        if not _approval_response_matches_request(
+            request_key,
+            request_event,
+            coerced_value,
+            allow_edited_arguments=_is_compact_approval_response_payload(value),
+        ):
+            return (
+                {},
+                RunErrorEvent(
+                    message=f"Workflow resume for interruptId '{request_key}' does not match pending approval request.",
+                    code="WORKFLOW_RESUME_INVALID_RESPONSE",
+                ),
+            )
+        normalized[request_key] = coerced_value
+    return normalized, None
 
 
 def _latest_user_text(messages: list[Message]) -> str | None:
@@ -460,6 +871,34 @@ def _latest_assistant_contents(messages: list[Message]) -> list[Content] | None:
     return None
 
 
+def _unemitted_exposed_function_results(response: AgentResponse, flow: FlowState) -> list[Content]:
+    """Return finalized function results that complete calls exposed during this run."""
+    exposed_call_ids = set(flow.tool_calls_by_id)
+    emitted_call_ids = {
+        str(result["toolCallId"]) for result in flow.tool_results if isinstance(result.get("toolCallId"), str)
+    }
+    latest_assistant_result_ids = {
+        str(content.call_id)
+        for content in _latest_assistant_contents(list(response.messages or [])) or []
+        if content.type == "function_result" and content.call_id
+    }
+    results: list[Content] = []
+    for message in response.messages or []:
+        for content in message.contents or []:
+            call_id = content.call_id
+            if (
+                content.type != "function_result"
+                or not call_id
+                or call_id not in exposed_call_ids
+                or call_id in emitted_call_ids
+                or call_id in latest_assistant_result_ids
+            ):
+                continue
+            results.append(content)
+            emitted_call_ids.add(call_id)
+    return results
+
+
 def _text_from_contents(contents: list[Content]) -> str | None:
     """Return normalized assistant text from a content list when present."""
     text_parts: list[str] = []
@@ -490,16 +929,16 @@ def _workflow_payload_to_contents(payload: Any) -> list[Content] | None:
             return None
         return list(payload.contents or [])
     if isinstance(payload, AgentResponseUpdate):
+        contents = list(payload.contents or [])
         role_field = payload.role
-        if role_field is None:
-            return None
         if isinstance(role_field, str):
             role = role_field
         else:
             role = str(getattr(role_field, "value", role_field))
-        if role != "assistant":
-            return None
-        return list(payload.contents or [])
+        if role == "assistant":
+            return contents
+        tool_contents = [content for content in contents if content.type in _TOOL_CONTENT_TYPES]
+        return tool_contents or None
     if isinstance(payload, AgentResponse):
         return _latest_assistant_contents(list(payload.messages or []))
     if isinstance(payload, list):
@@ -558,9 +997,26 @@ def _details_code(details: Any) -> str | None:
 async def run_workflow_stream(
     input_data: dict[str, Any],
     workflow: Workflow,
+    *,
+    checkpoint_storage: CheckpointStorage | None = None,
+    checkpoint_id: str | None = None,
 ) -> AsyncGenerator[BaseEvent]:
-    """Run a Workflow and emit AG-UI protocol events."""
-    thread_id = input_data.get("thread_id") or input_data.get("threadId") or str(uuid.uuid4())
+    """Run a Workflow and emit AG-UI protocol events.
+
+    Args:
+        input_data: Normalized AG-UI request payload (a ``RunAgentInput`` dump).
+        workflow: The core ``Workflow`` instance to execute.
+        checkpoint_storage: Optional checkpoint storage forwarded to the core
+            workflow. When provided, the workflow creates a checkpoint at the end
+            of each superstep, mirroring ``Workflow.run(checkpoint_storage=...)``.
+        checkpoint_id: Optional checkpoint id to resume from. When provided the run
+            restores the persisted workflow state instead of starting a fresh turn,
+            mirroring ``Workflow.run(checkpoint_id=...)``. Any incoming messages are
+            treated as request-info responses (or ignored) rather than a new
+            start-executor message, so resume stays consistent with the core API.
+    """
+    supplied_thread_id = input_data.get("thread_id") or input_data.get("threadId")
+    thread_id = supplied_thread_id or str(uuid.uuid4())
     run_id = input_data.get("run_id") or input_data.get("runId") or str(uuid.uuid4())
     available_interrupts = input_data.get("available_interrupts") or input_data.get("availableInterrupts")
     if available_interrupts:
@@ -577,17 +1033,74 @@ async def run_workflow_stream(
     last_assistant_text: str | None = None
 
     resume_payload = _extract_resume_payload(input_data)
-    responses = _resume_to_workflow_responses(resume_payload)
-    responses.update(_extract_responses_from_messages(messages))
-    pending_before_run = await _pending_request_events(workflow)
-    responses = _coerce_responses_for_pending_requests(responses, pending_before_run)
-    pending_interrupts = _interrupts_from_pending_requests(pending_before_run)
-    if not responses and pending_before_run:
-        responses.update(_single_pending_response_from_value(pending_before_run, resume_payload))
-    if not responses and pending_before_run:
-        responses.update(_single_pending_response_from_value(pending_before_run, _latest_user_text(messages)))
 
-    if not responses and pending_before_run:
+    # A checkpoint resume that carries an explicit resume payload targets the requests
+    # that were pending when the checkpoint was written; those only reappear on the live
+    # instance once the checkpoint is restored, so coerce against the checkpoint's
+    # persisted pending set instead. Only do so when a resume payload is present, so a
+    # pure checkpoint restore still surfaces its pending interrupts instead of tripping
+    # the "resume required" contract.
+    if checkpoint_id is not None and resume_payload is not None:
+        if checkpoint_storage is None:
+            raise ValueError("Resuming a checkpoint with an AG-UI resume payload requires checkpoint_storage.")
+        pending_before_run = await _pending_request_events_from_checkpoint(checkpoint_id, checkpoint_storage)
+    else:
+        pending_before_run = await _pending_request_events(workflow)
+    pending_interrupt_ids = _pending_workflow_interrupt_ids(pending_before_run)
+    resume_entries: list[dict[str, Any]] = []
+    cancelled_request_ids: set[str] = set()
+    if pending_interrupt_ids:
+        resume_entries, contract_error, contract_code = _resume_contract_error(
+            resume_payload,
+            pending_interrupt_ids,
+            required_code="WORKFLOW_RESUME_REQUIRED",
+            invalid_code="WORKFLOW_RESUME_INVALID",
+            unknown_code="WORKFLOW_RESUME_NOT_FOUND",
+            missing_code="WORKFLOW_RESUME_MISSING_INTERRUPT",
+        )
+        if contract_error is not None and contract_code is not None:
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield RunErrorEvent(message=contract_error, code=contract_code)
+            return
+        resume_error = _resume_error_for_pending_workflow_requests(resume_entries)
+        if resume_error is not None:
+            yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+            yield resume_error
+            return
+        cancelled_request_ids = {
+            str(entry["interrupt_id"]) for entry in resume_entries if entry.get("status") == "cancelled"
+        }
+
+    resume_responses = (
+        _resume_entries_to_workflow_responses(resume_entries)
+        if pending_interrupt_ids
+        else _resume_to_workflow_responses(resume_payload)
+    )
+    message_responses = {
+        request_id: value
+        for request_id, value in _extract_responses_from_messages(messages).items()
+        if request_id in pending_interrupt_ids
+    }
+    responses = _merge_workflow_response_sources(resume_responses, message_responses)
+    responses, response_error = _coerce_responses_for_pending_requests_strict(responses, pending_before_run)
+    if response_error is not None:
+        yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
+        yield response_error
+        return
+    if cancelled_request_ids:
+        _consume_cancelled_workflow_requests(workflow, resume_entries)
+        pending_before_run = {
+            request_id: request_event
+            for request_id, request_event in pending_before_run.items()
+            if str(getattr(request_event, "request_id", None) or request_id) not in cancelled_request_ids
+        }
+    pending_interrupts = _interrupts_from_pending_requests(pending_before_run)
+
+    # A checkpoint resume must always reach ``workflow.run(checkpoint_id=...)`` so the
+    # core restores persisted state and re-emits any pending requests from the
+    # checkpoint. ``pending_before_run`` reflects the live (pre-restore) instance, so
+    # short-circuiting on it here would skip the restore entirely.
+    if checkpoint_id is None and not responses and pending_before_run:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         for request_event in pending_before_run.values():
             request_payload = _request_payload_from_request_event(request_event)
@@ -604,7 +1117,7 @@ async def run_workflow_stream(
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
         return
 
-    if not responses and not messages:
+    if checkpoint_id is None and not responses and not messages:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=pending_interrupts)
         return
@@ -640,13 +1153,26 @@ async def run_workflow_stream(
             logger.debug("workflow.run() does not accept function_invocation_kwargs; dropping forwarded_props")
             fwd_kwargs = {}
 
-    try:
-        if responses:
-            event_stream = workflow.run(responses=responses, stream=True, **fwd_kwargs)
-        else:
-            event_stream = workflow.run(message=messages, stream=True, **fwd_kwargs)
+    # When checkpointing is not in play, keep the exact legacy call shape so duck-typed
+    # workflows with narrower ``run`` signatures keep working. Otherwise forward the
+    # checkpoint arguments as-is (``None`` included) and let core validate conflicts.
+    checkpoint_kwargs: dict[str, Any] = {}
+    if checkpoint_storage is not None or checkpoint_id is not None:
+        checkpoint_kwargs = {"checkpoint_storage": checkpoint_storage, "checkpoint_id": checkpoint_id}
 
-        async for event in event_stream:
+    try:
+        telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
+        telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
+        with telemetry_context():
+            if responses or checkpoint_id is not None:
+                # ``message`` is mutually exclusive with both ``responses`` and
+                # ``checkpoint_id`` in the core API; ``responses`` + ``checkpoint_id``
+                # restores the checkpoint and delivers the responses in a single call.
+                event_stream = workflow.run(stream=True, responses=responses or None, **checkpoint_kwargs, **fwd_kwargs)
+            else:
+                event_stream = workflow.run(message=messages, stream=True, **checkpoint_kwargs, **fwd_kwargs)
+
+        async for event in _iterate_with_context(event_stream, telemetry_context):
             event_type = getattr(event, "type", None)
 
             if event_type == "started":
@@ -673,6 +1199,10 @@ async def run_workflow_stream(
                 else:
                     state_value = str(getattr(state, "value", state))
                 if state_value in _TERMINAL_STATES and not terminal_emitted:
+                    # Close any open assistant text message before the terminal event so
+                    # RUN_FINISHED is always the last emitted event.
+                    for end_event in _drain_open_message():
+                        yield end_event
                     if not interrupts:
                         interrupts.extend(_interrupts_from_pending_requests(await _pending_request_events(workflow)))
                     yield _build_run_finished_event(run_id=run_id, thread_id=thread_id, interrupts=interrupts)
@@ -730,12 +1260,9 @@ async def run_workflow_stream(
                 if request_payload is None:
                     continue
                 request_id = request_payload["request_id"]
-                request_data = request_payload.get("data")
-                if isinstance(request_data, dict):
-                    interrupt_value: Any = request_data
-                else:
-                    interrupt_value = {"data": request_data}
-                interrupts.append({"id": str(request_id), "value": interrupt_value})
+                interrupt_entry = _interrupt_entry_for_request_event(event)
+                if interrupt_entry is not None:
+                    interrupts.append(interrupt_entry)
                 args_delta = json.dumps(request_payload)
 
                 yield ToolCallStartEvent(tool_call_id=str(request_id), tool_call_name="request_info")
@@ -760,13 +1287,16 @@ async def run_workflow_stream(
                     for item in output_payload:
                         yield item
                     continue
+                if isinstance(output_payload, AgentResponse):
+                    for result in _unemitted_exposed_function_results(output_payload, flow):
+                        for out_event in _emit_content(result, flow, predictive_handler=None, skip_text=False):
+                            yield out_event
                 contents = _workflow_payload_to_contents(output_payload)
                 if contents:
                     output_text = _text_from_contents(contents)
-                    if output_text and output_text == last_assistant_text:
-                        continue
+                    skip_text = bool(output_text and output_text == last_assistant_text)
                     for content in contents:
-                        for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=False):
+                        for out_event in _emit_content(content, flow, predictive_handler=None, skip_text=skip_text):
                             yield out_event
                     if flow.message_id and flow.accumulated_text:
                         last_assistant_text = flow.accumulated_text.strip() or last_assistant_text

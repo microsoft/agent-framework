@@ -122,7 +122,7 @@ def deserialize_flag(
     if flag_value == enum_cls(0):
         none_member = mapping.get("none")
         if none_member is not None:
-            return none_member  # type: ignore[return-value,index]
+            return none_member
     return flag_value
 
 
@@ -250,13 +250,13 @@ class _AliasSerializable(SerializationMixin):
         return json.dumps(self.model_dump(by_alias=by_alias, exclude_none=exclude_none, **kwargs))
 
     @classmethod
-    def model_validate(cls: type[AliasSerializableT], value: MutableMapping[str, Any]) -> AliasSerializableT:  # type: ignore[name-defined]
+    def model_validate(cls: type[AliasSerializableT], value: MutableMapping[str, Any]) -> AliasSerializableT:
         return cls(**value)
 
     # ------------------------------------------------------------------
     # Override to handle alias emission
     # ------------------------------------------------------------------
-    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:  # type: ignore[override]
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         base = SerializationMixin.to_dict(self, exclude=exclude, exclude_none=exclude_none)
 
         # For Graph API models, remove the auto-generated 'type' field if it's in DEFAULT_EXCLUDE
@@ -390,7 +390,7 @@ class ProtectedAppMetadata(_AliasSerializable):
         super().__init__(**kwargs)
         self.name = name
         self.version = version
-        self.application_location = application_location  # type: ignore[assignment]
+        self.application_location = application_location
 
 
 class DlpActionInfo(_AliasSerializable):
@@ -507,7 +507,7 @@ class PurviewBinaryContent(ContentBase):
         super().__init__(data_type=data_type, **kwargs)
         self.data = data
 
-    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:  # type: ignore[override]
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         import base64
 
         base = super().to_dict(exclude=exclude, exclude_none=exclude_none)
@@ -567,9 +567,9 @@ class ProcessConversationMetadata(GraphDataTypeBase):
             # determine by type? fall back to text content
             c_type = content.get("@odata.type") or content.get("data_type")
             if c_type and "binary" in str(c_type):
-                content = PurviewBinaryContent(**content)  # type: ignore[arg-type]
+                content = PurviewBinaryContent(**content)
             else:
-                content = PurviewTextContent(**content)  # type: ignore[arg-type]
+                content = PurviewTextContent(**content)
         accessed_list: list[AccessedResourceDetails] | None = None
         if accessed_resources:
             accessed_list = [
@@ -586,7 +586,7 @@ class ProcessConversationMetadata(GraphDataTypeBase):
         # Call parent without explicit params with aliases
         super().__init__(data_type=data_type, **kwargs)
         self.identifier = identifier
-        self.content = content  # type: ignore[assignment]
+        self.content = content
         self.name = name
         self.correlation_id = correlation_id
         self.sequence_number = sequence_number
@@ -647,10 +647,10 @@ class ContentToProcess(_AliasSerializable):
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
         self.content_entries = entries
-        self.activity_metadata = activity_metadata  # type: ignore[assignment]
-        self.device_metadata = device_metadata  # type: ignore[assignment]
-        self.integrated_app_metadata = integrated_app_metadata  # type: ignore[assignment]
-        self.protected_app_metadata = protected_app_metadata  # type: ignore[assignment]
+        self.activity_metadata = activity_metadata
+        self.device_metadata = device_metadata
+        self.integrated_app_metadata = integrated_app_metadata
+        self.protected_app_metadata = protected_app_metadata
 
 
 # --------------------------------------------------------------------------------------
@@ -684,7 +684,7 @@ class ProcessContentRequest(_AliasSerializable):
 
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
-        self.content_to_process = content_to_process  # type: ignore[assignment]
+        self.content_to_process = content_to_process
         self.user_id = user_id
         self.tenant_id = tenant_id
         self.correlation_id = correlation_id
@@ -737,7 +737,7 @@ class ProtectionScopesRequest(_AliasSerializable):
         super().__init__(**kwargs)
         self.user_id = user_id
         self.tenant_id = tenant_id
-        self.activities = activities  # type: ignore[assignment]
+        self.activities = activities
         self.locations = locations
         self.pivot_on = pivot_on
         self.device_metadata = device_metadata
@@ -745,7 +745,7 @@ class ProtectionScopesRequest(_AliasSerializable):
         self.correlation_id = correlation_id
         self.scope_identifier = scope_identifier
 
-    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:  # type: ignore[override]
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         # Get base dict (activities will be missing because Flag isn't JSON-serializable)
         base = super().to_dict(exclude=exclude, exclude_none=exclude_none)
 
@@ -793,7 +793,7 @@ class ContentActivitiesRequest(_AliasSerializable):
         super().__init__(**kwargs)
         self.id = id or str(uuid4())
         self.user_id = user_id
-        self.content_to_process = content_to_process  # type: ignore[assignment]
+        self.content_to_process = content_to_process
         self.tenant_id = tenant_id
         self.scope_identifier = scope_identifier
         self.correlation_id = correlation_id
@@ -913,12 +913,12 @@ class PolicyScope(_AliasSerializable):
 
         # Call parent without explicit params with aliases
         super().__init__(**kwargs)
-        self.activities = activities  # type: ignore[assignment]
+        self.activities = activities
         self.locations = converted_locations
         self.policy_actions = converted_policy_actions
         self.execution_mode = execution_mode
 
-    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:  # type: ignore[override]
+    def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
         # Get base dict (activities will be missing because Flag isn't JSON-serializable)
         base = super().to_dict(exclude=exclude, exclude_none=exclude_none)
 
@@ -991,7 +991,7 @@ class ContentActivitiesResponse(_AliasSerializable):
             error = ErrorDetails(**error)
         super().__init__(status_code=status_code, error=error, correlation_id=correlation_id, **kwargs)
         self.status_code = status_code
-        self.error = error  # type: ignore[assignment]
+        self.error = error
         self.correlation_id = correlation_id
 
 

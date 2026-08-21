@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
@@ -19,6 +20,7 @@ public sealed record class ActionExecutorResult
     /// </summary>
     public object? Result { get; }
 
+    [JsonConstructor]
     internal ActionExecutorResult(string executorId, object? result = null)
     {
         this.ExecutorId = executorId;

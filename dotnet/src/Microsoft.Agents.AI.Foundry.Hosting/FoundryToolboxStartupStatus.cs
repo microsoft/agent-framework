@@ -43,4 +43,23 @@ public enum FoundryToolboxStartupStatus
     /// will simply not be available.
     /// </summary>
     NoEndpoint = 3,
+
+    /// <summary>
+    /// One or more pre-registered toolboxes could not enumerate their tools because a tool
+    /// source requires user OAuth consent (the proxy returned <c>CONSENT_REQUIRED</c> at
+    /// <c>tools/list</c> time). The health-check reports <c>Healthy</c> so the container stays
+    /// routable: the consent requirement is surfaced to the caller as a per-request
+    /// <c>oauth_consent_request</c>, and enumeration is retried once the user has consented.
+    /// </summary>
+    ConsentRequired = 4,
+
+    /// <summary>
+    /// One or more pre-registered toolboxes could not be enumerated at startup due to a non-consent
+    /// error (for example, a tool source that requires a per-user delegated identity, which is only
+    /// available on a user request's egress). The health-check reports <c>Healthy</c> so the container
+    /// stays routable: the toolbox is retried per-request via
+    /// <see cref="FoundryToolboxService.RetryDeferredToolboxesAsync"/>, where the per-user isolation key
+    /// is present, and either resolves or surfaces a consent prompt at that point.
+    /// </summary>
+    Degraded = 5,
 }

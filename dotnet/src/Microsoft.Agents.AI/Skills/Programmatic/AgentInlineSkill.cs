@@ -2,13 +2,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -25,11 +23,11 @@ namespace Microsoft.Agents.AI;
 /// resources and scripts before registering the skill with an
 /// <see cref="AgentSkillsProvider"/> or <see cref="AgentSkillsProviderBuilder"/>.
 /// </remarks>
-[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentInlineSkill : AgentSkill
 {
     private readonly string _instructions;
     private readonly JsonSerializerOptions? _serializerOptions;
+    private readonly Func<JsonElement?, AIFunctionArguments>? _argumentMarshaler;
     private List<AgentInlineSkillResource>? _resources;
     private List<AgentInlineSkillScript>? _scripts;
     private string? _cachedContent;
@@ -45,11 +43,16 @@ public sealed class AgentInlineSkill : AgentSkill
     /// added to this skill. Individual <see cref="AddScript"/> and <see cref="AddResource(string, Delegate, string?, JsonSerializerOptions?)"/>
     /// calls can override this default. When <see langword="null"/>, <see cref="AIJsonUtilities.DefaultOptions"/> is used.
     /// </param>
-    public AgentInlineSkill(AgentSkillFrontmatter frontmatter, string instructions, JsonSerializerOptions? serializerOptions = null)
+    /// <param name="argumentMarshaler">
+    /// Optional argument marshaler applied by default to all scripts added to this skill.
+    /// When <see langword="null"/>, the default marshaler is used which expects arguments as a JSON object.
+    /// </param>
+    public AgentInlineSkill(AgentSkillFrontmatter frontmatter, string instructions, JsonSerializerOptions? serializerOptions = null, Func<JsonElement?, AIFunctionArguments>? argumentMarshaler = null)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
         this._instructions = Throw.IfNullOrWhitespace(instructions);
         this._serializerOptions = serializerOptions;
+        this._argumentMarshaler = argumentMarshaler;
     }
 
     /// <summary>
@@ -68,6 +71,10 @@ public sealed class AgentInlineSkill : AgentSkill
     /// added to this skill. Individual <see cref="AddScript"/> and <see cref="AddResource(string, Delegate, string?, JsonSerializerOptions?)"/>
     /// calls can override this default. When <see langword="null"/>, <see cref="AIJsonUtilities.DefaultOptions"/> is used.
     /// </param>
+    /// <param name="argumentMarshaler">
+    /// Optional argument marshaler applied by default to all scripts added to this skill.
+    /// When <see langword="null"/>, the default marshaler is used which expects arguments as a JSON object.
+    /// </param>
     public AgentInlineSkill(
         string name,
         string description,
@@ -76,7 +83,8 @@ public sealed class AgentInlineSkill : AgentSkill
         string? compatibility = null,
         string? allowedTools = null,
         AdditionalPropertiesDictionary? metadata = null,
-        JsonSerializerOptions? serializerOptions = null)
+        JsonSerializerOptions? serializerOptions = null,
+        Func<JsonElement?, AIFunctionArguments>? argumentMarshaler = null)
         : this(
             new AgentSkillFrontmatter(name, description, compatibility)
             {
@@ -85,7 +93,8 @@ public sealed class AgentInlineSkill : AgentSkill
                 Metadata = metadata,
             },
             instructions,
-            serializerOptions)
+            serializerOptions,
+            argumentMarshaler)
     {
     }
 
@@ -95,12 +104,20 @@ public sealed class AgentInlineSkill : AgentSkill
     /// <inheritdoc/>
     public override ValueTask<string> GetContentAsync(CancellationToken cancellationToken = default)
     {
-        return new(this._cachedContent ??= AgentInlineSkillContentBuilder.Build(this.Frontmatter.Name, this.Frontmatter.Description, this._instructions, this._scripts));
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreInlineSkill);
+#pragma warning restore MAAI001
+
+        return new(this._cachedContent ??= AgentInlineSkillContentBuilder.Build(this.Frontmatter.Name, this.Frontmatter.Description, this._instructions, this._resources, this._scripts));
     }
 
     /// <inheritdoc/>
     public override ValueTask<AgentSkillResource?> GetResourceAsync(string name, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreInlineSkill);
+#pragma warning restore MAAI001
+
         var resource = this._resources?.FirstOrDefault(r => r.Name == name);
         return new(resource);
     }
@@ -108,6 +125,10 @@ public sealed class AgentInlineSkill : AgentSkill
     /// <inheritdoc/>
     public override ValueTask<AgentSkillScript?> GetScriptAsync(string name, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreInlineSkill);
+#pragma warning restore MAAI001
+
         var script = this._scripts?.FirstOrDefault(s => s.Name == name);
         return new(script);
     }
@@ -116,8 +137,9 @@ public sealed class AgentInlineSkill : AgentSkill
     /// Registers a static resource with this skill.
     /// </summary>
     /// <remarks>
-    /// Resources are not automatically included in the skill body.
-    /// To enable discovery, reference the resource by name in the skill's instructions or in another resource.
+    /// The resource is listed in the <c>&lt;available_resources&gt;</c> block of the skill body so the
+    /// LLM knows it can be accessed. When no resources are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated resource calls.
     /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="value">The static resource value.</param>
@@ -134,8 +156,9 @@ public sealed class AgentInlineSkill : AgentSkill
     /// The delegate's parameters and return type are automatically marshaled via <c>AIFunctionFactory</c>.
     /// </summary>
     /// <remarks>
-    /// Resources are not automatically included in the skill body.
-    /// To enable discovery, reference the resource by name in the skill's instructions or in another resource.
+    /// The resource is listed in the <c>&lt;available_resources&gt;</c> block of the skill body so the
+    /// LLM knows it can be accessed. When no resources are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated resource calls.
     /// </remarks>
     /// <param name="name">The resource name.</param>
     /// <param name="method">A method that produces the resource value when requested.</param>
@@ -156,8 +179,9 @@ public sealed class AgentInlineSkill : AgentSkill
     /// The delegate's parameters and return type are automatically marshaled via <c>AIFunctionFactory</c>.
     /// </summary>
     /// <remarks>
-    /// Only the script's parameter schema is included in the skill body (as a <c>&lt;script_schemas&gt;</c> block).
-    /// To enable discovery, reference the script by name in the skill's instructions or in a resource.
+    /// The script is listed in the <c>&lt;available_scripts&gt;</c> block of the skill body so the
+    /// LLM knows it can be called. When no scripts are registered, the block is emitted as a
+    /// self-closing element to signal that none exist, preventing hallucinated script calls.
     /// </remarks>
     /// <param name="name">The script name.</param>
     /// <param name="method">A method to execute when the script is invoked.</param>
@@ -169,7 +193,7 @@ public sealed class AgentInlineSkill : AgentSkill
     /// <returns>This instance, for chaining.</returns>
     public AgentInlineSkill AddScript(string name, Delegate method, string? description = null, JsonSerializerOptions? serializerOptions = null)
     {
-        (this._scripts ??= []).Add(new AgentInlineSkillScript(name, method, description, serializerOptions ?? this._serializerOptions));
+        (this._scripts ??= []).Add(new AgentInlineSkillScript(name, method, description, serializerOptions ?? this._serializerOptions, this._argumentMarshaler));
         return this;
     }
 }

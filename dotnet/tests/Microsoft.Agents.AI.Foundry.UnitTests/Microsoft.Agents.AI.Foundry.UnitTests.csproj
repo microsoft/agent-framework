@@ -6,7 +6,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Azure.AI.OpenAI" />
     <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Azure.Core" />
     <PackageReference Include="System.ClientModel" />
@@ -21,6 +23,7 @@
     <Compile Remove="FoundryEvalConverterTests.cs" />
     <Compile Remove="FoundryEvalsTests.cs" />
     <Compile Remove="ClientHeadersExtensionsTests.cs" />
+    <Compile Remove="FoundryHostedRequestTests.cs" />
     <Compile Remove="ServedModelTestHelpers.cs" />
     <Compile Remove="ServedModelScopeTests.cs" />
     <Compile Remove="ServedModelPolicyTests.cs" />

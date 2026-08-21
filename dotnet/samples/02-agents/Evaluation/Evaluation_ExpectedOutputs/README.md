@@ -31,3 +31,4 @@ dotnet run --project .\Evaluation_ExpectedOutputs
 
 - [Evaluation_SimpleEval](../Evaluation_SimpleEval/) — Simplest evaluation with built-in and custom checks
 - [Evaluation_FoundryQuality](../../../05-end-to-end/Evaluation/Evaluation_FoundryQuality/) — Cloud-based quality evaluation with Foundry evaluators
+- [Evaluation_FoundryRubric](../../../05-end-to-end/Evaluation/Evaluation_FoundryRubric/) — Rubric (adaptive) evaluators with per-dimension scores

@@ -50,12 +50,12 @@ try:
 except (ImportError, RuntimeError):
     # ImportError: powerfx package not installed
     # RuntimeError: .NET runtime not available or misconfigured
-    Engine = None  # type: ignore[assignment, misc]
+    Engine = None
 
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
@@ -147,11 +147,11 @@ def discover_env_references(node: Any) -> set[str]:
                 names.update(_ENV_REFERENCE_RE.findall(value))
             return
         if isinstance(value, Mapping):
-            for inner in cast(Mapping[Any, Any], value).values():  # type: ignore[redundant-cast]
+            for inner in cast(Mapping[Any, Any], value).values():
                 visit(inner)
             return
         if isinstance(value, list):
-            for item in cast(list[Any], value):  # type: ignore[redundant-cast]
+            for item in cast(list[Any], value):
                 visit(item)
 
     visit(node)
@@ -243,7 +243,7 @@ def _make_powerfx_safe(value: Any) -> Any:
         return {str(k): _make_powerfx_safe(v) for k, v in value_dict.items()}
 
     if isinstance(value, list):
-        value_list = cast(list[Any], value)  # type: ignore[redundant-cast]
+        value_list = cast(list[Any], value)
         return [_make_powerfx_safe(item) for item in value_list]
 
     # Try to convert objects with __dict__ or dataclass-style attributes
@@ -581,10 +581,10 @@ class DeclarativeWorkflowState:
 
                 original_culture = cast(Any, CultureInfo.CurrentCulture)  # pyright: ignore[reportUnknownMemberType]
                 try:
-                    CultureInfo.CurrentCulture = CultureInfo(_POWERFX_EVAL_LOCALE)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    CultureInfo.CurrentCulture = CultureInfo(_POWERFX_EVAL_LOCALE)
                     return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
                 finally:
-                    CultureInfo.CurrentCulture = original_culture  # pyright: ignore[reportUnknownMemberType]
+                    CultureInfo.CurrentCulture = original_culture
             except ValueError as e:
                 error_msg = str(e)
                 # Handle undefined variable errors gracefully by returning None
@@ -780,7 +780,7 @@ class DeclarativeWorkflowState:
         """
         messages: Any = self.eval(f"={inner_expr}")
         if isinstance(messages, list) and messages:
-            message_list = cast(list[Any], messages)  # type: ignore[redundant-cast]
+            message_list = cast(list[Any], messages)
             last_msg: Any = message_list[-1]
             if isinstance(last_msg, dict):
                 last_msg_dict = cast(dict[str, Any], last_msg)
@@ -791,7 +791,7 @@ class DeclarativeWorkflowState:
                 # Message.text concatenates text from all TextContent items
                 contents_obj = last_msg_dict.get("contents", [])
                 if isinstance(contents_obj, list):
-                    contents = cast(list[Any], contents_obj)  # type: ignore[redundant-cast]
+                    contents = cast(list[Any], contents_obj)
                     text_parts: list[str] = []
                     for content in contents:
                         if isinstance(content, dict):
@@ -1215,7 +1215,7 @@ class DeclarativeActionExecutor(Executor):
             state.set("System.LastMessageText", trigger)
         elif not isinstance(
             trigger,
-            (ActionTrigger, ActionComplete, ConditionResult, LoopIterationResult, LoopControl),  # pyright: ignore[reportUnknownArgumentType]
+            (ActionTrigger, ActionComplete, ConditionResult, LoopIterationResult, LoopControl),
         ):
             # Any other type - convert to string like .NET's DefaultTransform
             input_str = str(cast(Any, trigger))

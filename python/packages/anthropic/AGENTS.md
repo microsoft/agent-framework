@@ -5,7 +5,7 @@ Integration with Anthropic's Claude API.
 ## Main Classes
 
 - **`AnthropicClient`** - Chat client for Anthropic Claude models
-- **`AnthropicFoundryClient`** - Anthropic chat client for Azure AI Foundry's Anthropic-compatible endpoint
+- **`AnthropicFoundryClient`** - Anthropic chat client for Microsoft Foundry's Anthropic-compatible endpoint
 - **`AnthropicBedrockClient`** - Anthropic chat client for Amazon Bedrock
 - **`AnthropicVertexClient`** - Anthropic chat client for Google Vertex AI
 - **`AnthropicChatOptions`** - Options TypedDict for Anthropic-specific parameters

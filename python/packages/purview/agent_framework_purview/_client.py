@@ -11,7 +11,7 @@ from typing import Any, Literal, TypeVar, Union, overload
 from uuid import uuid4
 
 import httpx
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.observability import get_tracer
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -24,6 +24,7 @@ from ._exceptions import (
     PurviewRequestError,
     PurviewServiceError,
 )
+from ._feature_usage import FeatureIndex
 from ._models import (
     ContentActivitiesRequest,
     ContentActivitiesResponse,
@@ -72,9 +73,9 @@ class PurviewClient:
         # Callable token provider — returns a token string directly
         if callable(cred) and not isinstance(cred, (TokenCredential, AsyncTokenCredential)):
             result = cred()
-            return await result if inspect.isawaitable(result) else result  # type: ignore[return-value]
+            return await result if inspect.isawaitable(result) else result
         scopes = get_purview_scopes(self._settings)
-        token = cred.get_token(*scopes, tenant_id=tenant_id)  # type: ignore[union-attr]
+        token = cred.get_token(*scopes, tenant_id=tenant_id)
         token = await token if inspect.isawaitable(token) else token
         return token.token
 
@@ -96,10 +97,12 @@ class PurviewClient:
         }
 
     async def get_user_info_from_token(self, *, tenant_id: str | None = None) -> dict[str, Any]:
+        mark_feature_used(FeatureIndex.PURVIEW)
         token = await self._get_token(tenant_id=tenant_id)
         return self._extract_token_info(token)
 
     async def process_content(self, request: ProcessContentRequest) -> ProcessContentResponse:
+        mark_feature_used(FeatureIndex.PURVIEW)
         with get_tracer().start_as_current_span("purview.process_content"):
             token = await self._get_token(tenant_id=request.tenant_id)
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/processContent"
@@ -122,6 +125,7 @@ class PurviewClient:
             return response
 
     async def get_protection_scopes(self, request: ProtectionScopesRequest) -> ProtectionScopesResponse:
+        mark_feature_used(FeatureIndex.PURVIEW)
         with get_tracer().start_as_current_span("purview.get_protection_scopes"):
             token = await self._get_token()
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/protectionScopes/compute"
@@ -140,6 +144,7 @@ class PurviewClient:
             return response
 
     async def send_content_activities(self, request: ContentActivitiesRequest) -> ContentActivitiesResponse:
+        mark_feature_used(FeatureIndex.PURVIEW)
         with get_tracer().start_as_current_span("purview.send_content_activities"):
             token = await self._get_token()
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/activities/contentActivities"
@@ -203,7 +208,7 @@ class PurviewClient:
             raise PurviewAuthenticationError(f"Auth failure {resp.status_code}: {resp.text}")
         if resp.status_code == 402:
             if self._settings.get("ignore_payment_required", False):
-                return response_type()  # type: ignore[call-arg]
+                return response_type()
             raise PurviewPaymentRequiredError(f"Payment required {resp.status_code}: {resp.text}")
         if resp.status_code == 429:
             raise PurviewRateLimitError(f"Rate limited {resp.status_code}: {resp.text}")
@@ -217,7 +222,7 @@ class PurviewClient:
         try:
             # Prefer pydantic-style model_validate if present, else fall back to constructor.
             model_validate = getattr(response_type, "model_validate", None)
-            response_obj = model_validate(data) if callable(model_validate) else response_type(**data)  # type: ignore[call-arg]
+            response_obj = model_validate(data) if callable(model_validate) else response_type(**data)
 
             # Extract correlation_id from response headers if response object supports it
             if "client-request-id" in resp.headers and hasattr(response_obj, "correlation_id"):

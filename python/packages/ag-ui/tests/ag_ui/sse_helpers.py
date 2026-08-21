@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from event_stream import EventStream
+from event_stream import EventStream  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
 
 
 def parse_sse_response(response_content: bytes) -> list[dict[str, Any]]:

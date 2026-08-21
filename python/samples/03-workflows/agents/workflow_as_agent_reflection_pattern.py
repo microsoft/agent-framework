@@ -39,7 +39,7 @@ Key Concepts Demonstrated:
 - State management for pending requests and retry logic.
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Familiarity with WorkflowBuilder, Executor, WorkflowContext, and event handling.
 - Understanding of how agent messages are generated, reviewed, and re-submitted.

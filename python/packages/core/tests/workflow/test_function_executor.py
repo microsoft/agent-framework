@@ -119,7 +119,7 @@ class TestFunctionExecutor:
 
         # Test union types for workflow outputs too
         @executor
-        async def multi_workflow_output(data: str, ctx: WorkflowContext[Never, str | int | bool]) -> None:
+        async def multi_workflow_output(data: str, ctx: WorkflowContext[Never, str | int | bool]) -> None:  # type: ignore[valid-type]
             if data.isdigit():
                 await ctx.yield_output(int(data))
             elif data.lower() in ("true", "false"):
@@ -414,7 +414,7 @@ class TestFunctionExecutor:
         assert int in func_exec2._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Sync function with missing type annotation should still fail
-        def no_annotation(data):  # type: ignore  # pyright: ignore[reportUnknownVariableType]
+        def no_annotation(data):  # pyright: ignore[reportUnknownVariableType]  # type: ignore
             return data  # pyright: ignore[reportUnknownVariableType]
 
         with pytest.raises(ValueError, match="type annotation for the message"):
@@ -485,7 +485,7 @@ class TestFunctionExecutor:
         @executor
         def blocking_function(data: str):
             nonlocal execution_thread_id
-            execution_thread_id = threading.get_ident()
+            execution_thread_id = threading.get_ident()  # type: ignore[assignment]
             # Simulate some CPU-bound work
             time.sleep(0.01)  # Small sleep to verify thread execution
             return data.upper()
@@ -522,7 +522,7 @@ class TestFunctionExecutor:
             class Example:  # pyright: ignore[reportUnusedClass]
                 @executor
                 @classmethod
-                async def bad_handler(cls, data: str) -> str:
+                async def bad_handler(cls, data: str) -> str:  # type: ignore[operator]
                     return data.upper()
 
         assert "cannot be used with @classmethod" in str(exc_info.value)
@@ -675,7 +675,7 @@ class TestExecutorExplicitTypes:
         async def process_input(message: str, ctx: WorkflowContext[int]) -> None:
             pass
 
-        assert bytes in process_input._handlers  # Explicit  # pyright: ignore[reportPrivateUsage]
+        assert bytes in process_input._handlers  # pyright: ignore[reportPrivateUsage]  # Explicit
         assert int in process_input.output_types  # Introspected
 
         # Only explicit output_type, introspect input_type
@@ -683,7 +683,7 @@ class TestExecutorExplicitTypes:
         async def process_output(message: str, ctx: WorkflowContext[int]) -> None:
             pass
 
-        assert str in process_output._handlers  # Introspected  # pyright: ignore[reportPrivateUsage]
+        assert str in process_output._handlers  # pyright: ignore[reportPrivateUsage]  # Introspected
         assert float in process_output.output_types  # Explicit
         assert int not in process_output.output_types  # Not introspected when explicit provided
 
@@ -748,7 +748,7 @@ class TestExecutorExplicitTypes:
         """Test that Union[] syntax also works for explicit types."""
         from typing import Union
 
-        @executor(input=Union[str, int], output=Union[bool, float])
+        @executor(input=Union[str, int], output=Union[bool, float])  # type: ignore[call-overload]
         async def process(message, ctx: WorkflowContext) -> None:  # type: ignore[no-untyped-def]
             pass
 
@@ -962,7 +962,7 @@ def test_function_executor_rejects_bounded_typevar_in_message_annotation():
     """Test that FunctionExecutor raises ValueError for a bounded TypeVar in message annotation."""
 
     async def process(message: _FBT, ctx: WorkflowContext) -> None:
-        await ctx.send_message(message)
+        await ctx.send_message(message)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
     with pytest.raises(ValueError, match="unresolved TypeVar"):
         FunctionExecutor(process, id="bounded")

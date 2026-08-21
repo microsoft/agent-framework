@@ -3,11 +3,12 @@
 """Unit tests for prompt injection defense system."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
 
-from agent_framework import ExperimentalFeature, FunctionInvocationContext, FunctionMiddleware
+from agent_framework import AgentSession, ExperimentalFeature, FunctionInvocationContext, FunctionMiddleware
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
 from agent_framework._tools import FunctionTool, _auto_invoke_function, normalize_function_invocation_configuration
 from agent_framework._types import Content
@@ -93,8 +94,8 @@ class TestSecurityFeatureStage:
         ]
 
         for security_class in security_classes:
-            assert security_class.__feature_stage__ == "experimental"
-            assert security_class.__feature_id__ == ExperimentalFeature.FIDES.value
+            assert security_class.__feature_stage__ == "experimental"  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+            assert security_class.__feature_id__ == ExperimentalFeature.FIDES.value  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
 class TestCombineLabels:
@@ -327,7 +328,7 @@ class TestLabelTrackingMiddleware:
             additional_properties={"source_integrity": "trusted"},
         )
 
-        args = trusted_function.args_schema(arg="test")
+        args = trusted_function.args_schema(arg="test")  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=trusted_function, arguments=args)
 
         async def next_fn():
@@ -379,7 +380,7 @@ class TestLabelTrackingMiddleware:
         )
 
         # Create argument that contains untrusted label
-        args = trusted_function.args_schema(
+        args = trusted_function.args_schema(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             data={"content": "test", "security_label": {"integrity": "untrusted", "confidentiality": "public"}}
         )
 
@@ -422,7 +423,7 @@ class TestLabelTrackingMiddleware:
         # Pass the VariableReferenceContent as an argument
         context = FunctionInvocationContext(
             function=trusted_function,
-            arguments=trusted_function.args_schema(var_ref={"test": "value"}),  # Regular dict
+            arguments=trusted_function.args_schema(var_ref={"test": "value"}),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]  # Regular dict
         )
         # But also pass the actual VariableReferenceContent in kwargs
         context.kwargs = {"var_ref_obj": var_ref}
@@ -436,6 +437,91 @@ class TestLabelTrackingMiddleware:
         # source_integrity="trusted" (tier 2) overrides the VariableReferenceContent
         # label from input (tier 3) — the tool's declaration is authoritative
         assert label.integrity == IntegrityLabel.TRUSTED
+
+    @pytest.mark.asyncio
+    async def test_bracketed_variable_reference_expanded_before_call_next(self, middleware):
+        """Bracketed variable placeholders should be expanded before tool execution."""
+
+        class MessageArgs(BaseModel):
+            summary: str
+
+        async def send_message(summary: str) -> str:
+            return summary
+
+        message_tool = FunctionTool(
+            fn=send_message,
+            name="SendMessagetoSelf",
+            description="Send message",
+            args_schema=MessageArgs,
+        )
+
+        expected_summary = "Expanded quarantined summary"
+        variable_id = middleware.get_variable_store().store(
+            expected_summary,
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        context = FunctionInvocationContext(
+            function=message_tool,
+            arguments=MessageArgs(summary=f"[{variable_id}]"),
+        )
+
+        async def next_fn() -> None:
+            current_args = context.arguments
+            if isinstance(current_args, BaseModel):
+                summary = current_args.model_dump()["summary"]
+            else:
+                summary = current_args["summary"]
+            assert summary == expected_summary
+            context.result = [Content.from_text("sent")]
+
+        await middleware.process(context, next_fn)
+
+    @pytest.mark.asyncio
+    async def test_json_string_variable_reference_expands_only_response_before_call_next(self, middleware):
+        """JSON-serialized hidden payloads should expose only the response text to tools."""
+
+        class MessageArgs(BaseModel):
+            summary: str
+
+        async def send_message(summary: str) -> str:
+            return summary
+
+        message_tool = FunctionTool(
+            fn=send_message,
+            name="SendMessagetoSelf",
+            description="Send message",
+            args_schema=MessageArgs,
+        )
+
+        response_text = "Expanded quarantined summary"
+        stored_payload = json.dumps({
+            "response": response_text,
+            "security_label": {"integrity": "untrusted", "confidentiality": "public"},
+            "metadata": {},
+            "quarantined": True,
+            "variables_processed": ["var_1"],
+            "content_summary": ["var_1: 10 chars"],
+        })
+        variable_id = middleware.get_variable_store().store(
+            stored_payload,
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED),
+        )
+        context = FunctionInvocationContext(
+            function=message_tool,
+            arguments=MessageArgs(summary=f"Security review complete. [{variable_id}]"),
+        )
+
+        async def next_fn() -> None:
+            current_args = context.arguments
+            if isinstance(current_args, BaseModel):
+                summary = current_args.model_dump()["summary"]
+            else:
+                summary = current_args["summary"]
+            assert summary == f"Security review complete. {response_text}"
+            assert '"response"' not in summary
+            context.result = [Content.from_text("sent")]
+
+        await middleware.process(context, next_fn)
 
 
 class TestPolicyEnforcementMiddleware:
@@ -510,7 +596,7 @@ class TestPolicyEnforcementMiddleware:
             fn=mock_fn, name="allowed_function", description="Allowed function", args_schema=MockArgs
         )
 
-        args = allowed_function.args_schema(arg="test")
+        args = allowed_function.args_schema(arg="test")  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=allowed_function, arguments=args)
 
         # Set untrusted context label (policy enforcement uses context_label)
@@ -549,7 +635,7 @@ class TestPolicyEnforcementMiddleware:
         assert context.result.type == "function_approval_request"
         assert context.result.additional_properties["policy_violation"] is True
         assert context.result.additional_properties["violation_type"] == "untrusted_context"
-        assert context.result.function_call.call_id == "call-untrusted"
+        assert context.result.function_call.call_id == "call-untrusted"  # type: ignore[union-attr]
 
     async def test_confidentiality_violation_requests_policy_approval(self, mock_function):
         """Test confidentiality violations reuse the policy approval path."""
@@ -653,7 +739,7 @@ class TestPolicyEnforcementMiddleware:
         label_tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
         # Taint the context label so the policy enforcer sees UNTRUSTED
         label_tracker._context_label = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
-        label_tracker._initialized = True
+        label_tracker._initialized = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
         policy = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
         pipeline = FunctionMiddlewarePipeline(label_tracker, policy)
@@ -683,6 +769,671 @@ class TestPolicyEnforcementMiddleware:
         assert result.function_call.call_id == "call-policy-violation"
         assert result.additional_properties["policy_violation"] is True
         assert result.additional_properties["violation_type"] == "untrusted_context"
+
+    async def _approve_once(
+        self,
+        middleware: PolicyEnforcementFunctionMiddleware,
+        function: FunctionTool,
+        call_id: str,
+    ) -> None:
+        """Drive one approval request -> approved replay so the tool executes once."""
+        request_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(arg="test"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = call_id
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.type == "function_approval_request"
+
+        replay_context = FunctionInvocationContext(
+            function=function,
+            arguments=function.args_schema(arg="test"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = call_id
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        await middleware.process(replay_context, execute)
+        assert executed is True
+
+    async def test_approved_call_id_cannot_be_replayed_for_repeated_call(self, mock_function):
+        """A granted approval is consumed once; reusing the same call_id must re-request approval.
+
+        Binds each approval to a single, non-reusable invocation: once a policy violation for a
+        call_id has been approved and executed, a later invocation reusing that same call_id (with
+        no fresh approval) must not be auto-authorized.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: complete one legitimate approve -> execute cycle for this call_id.
+        await self._approve_once(middleware, mock_function, "call-replay")
+
+        # Act: a second invocation reuses the same call_id but presents NO fresh approval.
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = "call-replay"
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the reused call_id is not auto-authorized; approval is requested again.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+
+    async def test_approved_call_id_cannot_authorize_different_function(self, mock_function):
+        """A replayed approval bound to one call must not authorize a different function.
+
+        The approval is bound to the specific invocation (function + arguments), so a replayed
+        approval response that reuses the approved call_id cannot re-authorize a different tool.
+        """
+
+        class MockArgs(BaseModel):
+            arg: str
+
+        async def other_fn(arg: str) -> str:
+            return f"other: {arg}"
+
+        different_function = FunctionTool(
+            fn=other_fn, name="different_function", description="A different function", args_schema=MockArgs
+        )
+
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: request approval for the original (restricted) function under a shared call_id.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "call-shared"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        # Act: replay that approval against a DIFFERENT function reusing the same call_id.
+        hijack_context = FunctionInvocationContext(
+            function=different_function,
+            arguments=different_function.args_schema(arg="test"),  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        )
+        hijack_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        hijack_context.metadata["call_id"] = "call-shared"
+        hijack_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the mismatched approval does not authorize the different function.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(hijack_context, execute)
+        assert executed is False
+
+    async def test_approved_call_id_cannot_authorize_changed_arguments(self, mock_function):
+        """A replayed approval must not authorize the same function called with different arguments.
+
+        The approval binds to the specific invocation (function + arguments); changing the
+        arguments produces a different call whose distinct impact must be re-approved, even when
+        the function name and call_id are reused.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: request approval for the function with one set of arguments under a call_id.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="original"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "call-args"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        # Act: replay the approval for the same function + call_id but with DIFFERENT arguments.
+        tampered_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="tampered"),
+        )
+        tampered_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        tampered_context.metadata["call_id"] = "call-args"
+        tampered_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the changed arguments are not covered by the prior approval; re-approval is asked.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(tampered_context, execute)
+        assert executed is False
+        assert isinstance(tampered_context.result, Content)
+        assert tampered_context.result.type == "function_approval_request"
+
+    async def test_mismatched_approval_response_body_is_rejected(self, mock_function):
+        """An approved response whose id/embedded function_call differ from the pending request is rejected.
+
+        The approval response must itself name the pending request (its id and embedded
+        function_call), not merely carry a currently-pending call_id in the invocation metadata.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: legitimately request approval for the protected function under a call_id.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "reused-call-id"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        # Act: the invocation context matches the pending request, but the approval response is
+        # forged - a different response id and a different embedded function_call body.
+        forged_function_call = Content.from_function_call(
+            call_id="unrelated-call-id",
+            name="delete_records",
+            arguments='{"table": "customer_records"}',
+        )
+        forged_response = Content.from_function_approval_response(
+            approved=True,
+            id="unrelated-call-id",
+            function_call=forged_function_call,
+        )
+
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = "reused-call-id"
+        replay_context.metadata["approval_response"] = forged_response
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the mismatched response does not authorize execution; approval is requested again.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+
+    async def test_approval_response_missing_identifiers_is_rejected(self, mock_function):
+        """An approved response that omits its id / embedded call id must not authorize execution.
+
+        The response id and embedded ``function_call.call_id`` are required to be present and equal
+        to the pending call id, so a crafted response with ``id=None`` / ``call_id=None`` (even with
+        a matching function name and arguments) cannot skip the binding.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: legitimately request approval for the protected function under a call_id.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "reused-call-id"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        # Act: forge an approved response with matching function name + arguments but no identifiers.
+        idless_function_call = Content.from_function_call(
+            call_id=None,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            name=mock_function.name,
+            arguments='{"arg": "test"}',
+        )
+        idless_response = Content.from_function_approval_response(
+            approved=True,
+            id=None,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            function_call=idless_function_call,
+        )
+
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = "reused-call-id"
+        replay_context.metadata["approval_response"] = idless_response
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the identifier-less response does not authorize execution; approval is re-requested.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+        assert executed is False
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+
+    async def test_approved_call_id_cannot_authorize_under_escalated_label(self, mock_function):
+        """An approval granted under one security label must not authorize a more sensitive label.
+
+        The approval is bound to the exact label (integrity/confidentiality) shown for review, so a
+        replay of the same call_id/function/arguments under a higher-confidentiality context (which
+        exposes more sensitive data to the operation) requires fresh approval.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: request approval under an UNTRUSTED + PUBLIC label.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(
+            integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PUBLIC
+        )
+        request_context.metadata["call_id"] = "call-label"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        # Act: replay the approval for the same call_id/function/arguments but under a more
+        # sensitive (USER_IDENTITY) confidentiality label.
+        escalated_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        escalated_context.metadata["context_label"] = ContentLabel(
+            integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.USER_IDENTITY
+        )
+        escalated_context.metadata["call_id"] = "call-label"
+        escalated_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the label change is not covered by the prior approval; re-approval is requested.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(escalated_context, execute)
+        assert executed is False
+        assert isinstance(escalated_context.result, Content)
+        assert escalated_context.result.type == "function_approval_request"
+
+    async def test_approved_call_id_is_bound_to_session(self, mock_function):
+        """An approval granted in one session must not authorize the same call in another session.
+
+        The approval binds to the session it was requested in (the isolation boundary at this
+        layer), so a middleware instance shared across sessions cannot let session B consume an
+        approval that session A was shown.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: request approval within session A.
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+            session=AgentSession(session_id="session-a"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "call-session"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        # Act: replay the same call_id/function/arguments and approval from a different session B.
+        other_session_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+            session=AgentSession(session_id="session-b"),
+        )
+        other_session_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        other_session_context.metadata["call_id"] = "call-session"
+        other_session_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the cross-session replay is not authorized; approval is requested again.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(other_session_context, execute)
+        assert executed is False
+        assert isinstance(other_session_context.result, Content)
+        assert other_session_context.result.type == "function_approval_request"
+
+    async def test_same_call_id_and_function_can_be_reapproved(self, mock_function):
+        """After consuming one approval, the same function + call_id works again via a fresh approval.
+
+        Consume-once blocks silent replay, but it must not permanently lock out a legitimate later
+        call: re-requesting and re-granting approval for the same (call_id, function, arguments)
+        lets the tool execute again.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange + Act: first full approve -> execute cycle consumes the approval.
+        await self._approve_once(middleware, mock_function, "call-reused")
+
+        # Act: a fresh approval request for the same call_id + function, then an approved replay.
+        second_request = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        second_request.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        second_request.metadata["call_id"] = "call-reused"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(second_request, stop_before_execute)
+
+        second_approval = second_request.result
+        assert isinstance(second_approval, Content)
+        assert second_approval.type == "function_approval_request"
+
+        second_replay = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        second_replay.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        second_replay.metadata["call_id"] = "call-reused"
+        second_replay.metadata["approval_response"] = second_approval.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        # Assert: the freshly re-approved call executes.
+        await middleware.process(second_replay, execute)
+        assert executed is True
+
+    async def test_multiple_violations_disclosed_in_single_approval(self, mock_function):
+        """A call with two violations must disclose both before it can be approved.
+
+        Regression: when both an untrusted-context violation and a confidentiality
+        (data-exfiltration) violation apply, the approval request must surface both. A single
+        approval computed once must not disclose only the integrity violation and then silently
+        wave the undisclosed confidentiality violation on replay.
+        """
+        # max_allowed_confidentiality="public" makes a PRIVATE context a confidentiality violation.
+        mock_function.additional_properties = {"max_allowed_confidentiality": "public"}
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: UNTRUSTED + PRIVATE context triggers BOTH integrity and confidentiality checks.
+        both_label = ContentLabel(
+            integrity=IntegrityLabel.UNTRUSTED,
+            confidentiality=ConfidentialityLabel.PRIVATE,
+        )
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = both_label
+        request_context.metadata["call_id"] = "call-both"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        # Act: the single approval request must disclose every detected violation.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.type == "function_approval_request"
+        props = approval_request.additional_properties
+        disclosed = {entry["violation_type"] for entry in props.get("violations", [])}
+        disclosed.add(props["violation_type"])
+
+        # Assert: both the untrusted-context and the confidentiality violation are disclosed.
+        assert "untrusted_context" in disclosed
+        assert "max_allowed_confidentiality" in disclosed
+
+        # Act: approving the fully disclosed request executes exactly once and consumes it.
+        exec_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        exec_context.metadata["context_label"] = both_label
+        exec_context.metadata["call_id"] = "call-both"
+        exec_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        executed = False
+
+        async def execute() -> None:
+            nonlocal executed
+            executed = True
+
+        await middleware.process(exec_context, execute)
+        assert executed is True
+        assert "call-both" not in middleware._pending_policy_approvals
+
+    async def test_replay_with_new_violation_set_requires_fresh_approval(self, mock_function):
+        """An approval bound to one disclosed violation set cannot wave a larger set on replay.
+
+        Regression: the violation set depends on the tool's policy metadata
+        (``max_allowed_confidentiality`` / ``accepts_untrusted``), which is not part of the call
+        body. If that metadata changes between the approval request and the replay so that a new
+        violation now applies, the invocation must re-request approval for the new set rather than
+        execute under the old grant that never disclosed it.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: at request time the tool has no confidentiality restriction, so the only
+        # violation is untrusted_context.
+        both_label = ContentLabel(
+            integrity=IntegrityLabel.UNTRUSTED,
+            confidentiality=ConfidentialityLabel.PRIVATE,
+        )
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = both_label
+        request_context.metadata["call_id"] = "call-drift"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.additional_properties["violation_type"] == "untrusted_context"
+        # Only one violation was disclosed (no confidentiality restriction yet).
+        assert "violations" not in approval_request.additional_properties
+
+        # Act: the tool's policy metadata changes so a confidentiality violation now also applies.
+        mock_function.additional_properties = {"max_allowed_confidentiality": "public"}
+
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = both_label
+        replay_context.metadata["call_id"] = "call-drift"
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        async def execute() -> None:
+            pytest.fail("Tool must not execute an undisclosed violation under the old approval")
+
+        # Assert: the replay computes a larger violation set than was disclosed, so instead of
+        # executing it re-requests approval disclosing the new (data-exfiltration) risk.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+
+        new_request = replay_context.result
+        assert isinstance(new_request, Content)
+        assert new_request.type == "function_approval_request"
+        redisclosed = {entry["violation_type"] for entry in new_request.additional_properties.get("violations", [])}
+        redisclosed.add(new_request.additional_properties["violation_type"])
+        assert "untrusted_context" in redisclosed
+        assert "max_allowed_confidentiality" in redisclosed
+
+    async def test_replay_same_violation_type_worse_risk_requires_fresh_approval(self, mock_function):
+        """A same-type violation whose disclosed risk changed must re-request approval.
+
+        The approval binds the disclosed violation *fingerprint* (type + canonical reason), not just
+        the type name. If the tool's ``max_allowed_confidentiality`` destination is loosened between
+        request and replay, the violation type stays ``max_allowed_confidentiality`` but the risk
+        (and its reason) worsens, so the old approval must not wave it.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+
+        # Arrange: at request time the destination is PRIVATE; a USER_IDENTITY context violates it.
+        mock_function.additional_properties = {"max_allowed_confidentiality": "private"}
+        label = ContentLabel(
+            integrity=IntegrityLabel.TRUSTED,
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+        )
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = label
+        request_context.metadata["call_id"] = "call-worse"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert approval_request.additional_properties["violation_type"] == "max_allowed_confidentiality"
+        assert "PRIVATE" in approval_request.additional_properties["reason"]
+
+        # Act: the destination is loosened to PUBLIC (worse exfiltration risk, same violation type).
+        mock_function.additional_properties = {"max_allowed_confidentiality": "public"}
+
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = label
+        replay_context.metadata["call_id"] = "call-worse"
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        async def execute() -> None:
+            pytest.fail("Tool must not execute a worse same-type risk under the old approval")
+
+        # Assert: the fingerprint differs (PRIVATE -> PUBLIC destination), so it re-requests.
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+        new_request = replay_context.result
+        assert isinstance(new_request, Content)
+        assert new_request.type == "function_approval_request"
+        assert "PUBLIC" in new_request.additional_properties["reason"]
+
+    async def test_non_boolean_approved_flag_is_rejected(self, mock_function):
+        """An approval response whose ``approved`` is a truthy non-True value must be rejected.
+
+        The approval gate requires a strict boolean ``True``; a crafted/deserialized response with
+        ``approved`` set to a truthy string (e.g. ``"false"``) must not be treated as approval.
+        """
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "call-nonbool"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+
+        # Act: craft a response with a truthy non-True approved flag.
+        crafted = approval_request.to_function_approval_response(True)
+        crafted.approved = "false"  # type: ignore[assignment]
+
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = "call-nonbool"
+        replay_context.metadata["approval_response"] = crafted
+
+        async def execute() -> None:
+            pytest.fail("A non-boolean approved flag must not authorize execution")
+
+        # Assert: not treated as approved; execution is gated (re-requests approval).
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, execute)
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
 
 
 class TestAutomaticHiding:
@@ -728,7 +1479,7 @@ class TestAutomaticHiding:
         item = context.result[0]
         assert isinstance(item, Content)
         assert item.additional_properties.get("_variable_reference") is True
-        parsed = json.loads(item.text)
+        parsed = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert parsed.get("type") == "variable_reference"
         assert parsed["variable_id"].startswith("var_")
 
@@ -756,7 +1507,7 @@ class TestAutomaticHiding:
             additional_properties={"source_integrity": "trusted"},
         )
 
-        args = trusted_function.args_schema()
+        args = trusted_function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=trusted_function, arguments=args)
 
         async def next_fn():
@@ -870,6 +1621,171 @@ class TestAutomaticHiding:
         assert label.integrity == IntegrityLabel.UNTRUSTED
 
     @pytest.mark.asyncio
+    async def test_inspect_variable_bypasses_auto_hide_and_taints_context(self, middleware_auto_hide):
+        """inspect_variable should expose content and taint context even when auto-hide is enabled."""
+        from agent_framework.security import get_security_tools
+
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+
+        # Seed variable store with untrusted data to inspect.
+        var_id = middleware_auto_hide.get_variable_store().store(
+            "raw untrusted payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PRIVATE),
+        )
+
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": var_id, "reason": "validate exposure behavior"},
+        )
+
+        async def next_fn():
+            context.result = [
+                Content.from_text(
+                    json.dumps({
+                        "inspected": True,
+                        "variable_id": var_id,
+                        "content": "raw untrusted payload",
+                    })
+                )
+            ]
+
+        assert middleware_auto_hide.get_context_label().integrity == IntegrityLabel.TRUSTED
+
+        await middleware_auto_hide.process(context, next_fn)
+
+        # Result should stay visible (no variable-reference replacement).
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+        item = context.result[0]
+        assert item.additional_properties.get("_variable_reference") is not True
+
+        payload = json.loads(item.text)
+        assert payload["inspected"] is True
+        assert payload["variable_id"] == var_id
+        assert payload["content"] == "raw untrusted payload"
+
+        # Since content entered context, integrity should taint to UNTRUSTED.
+        assert middleware_auto_hide.get_context_label().integrity == IntegrityLabel.UNTRUSTED
+
+    @pytest.mark.asyncio
+    async def test_inspect_variable_id_not_expanded(self, middleware_no_auto_hide):
+        """inspect_variable's variable_id must not be expanded to stored content.
+
+        The middleware expands ``var_xxx`` references in tool arguments by default
+        (an anti-leak measure). For ``inspect_variable`` this would replace the ID
+        with the content and break the lookup, so the tool is exempt.
+        """
+        from agent_framework.security import get_security_tools
+
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+
+        var_id = middleware_no_auto_hide.get_variable_store().store(
+            "raw untrusted payload",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PRIVATE),
+        )
+
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": var_id, "reason": "no expansion"},
+        )
+
+        async def next_fn():
+            context.result = await inspect_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware_no_auto_hide.process(context, next_fn)
+
+        # The literal ID must survive (not expanded to "raw untrusted payload").
+        assert isinstance(context.arguments, dict)
+        assert context.arguments["variable_id"] == var_id
+
+        payload = json.loads(context.result[0].text)
+        assert payload["inspected"] is True
+        assert payload["content"] == "raw untrusted payload"
+
+    @pytest.mark.asyncio
+    async def test_inspect_variable_propagates_user_identity(self, middleware_no_auto_hide):
+        """inspect_variable must propagate a USER_IDENTITY label, not downgrade it.
+
+        The tool returns a dict whose ``security_label`` carries the inspected
+        content's confidentiality. A custom result parser stamps that label onto
+        the produced Content so the middleware propagates it faithfully.
+        """
+        from agent_framework.security import get_security_tools
+
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+
+        var_id = middleware_no_auto_hide.get_variable_store().store(
+            "secret",
+            ContentLabel(
+                integrity=IntegrityLabel.UNTRUSTED,
+                confidentiality=ConfidentialityLabel.USER_IDENTITY,
+                metadata={"user_id": "user-123"},
+            ),
+        )
+
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": var_id, "reason": "propagate user identity"},
+        )
+
+        async def next_fn():
+            context.result = await inspect_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware_no_auto_hide.process(context, next_fn)
+
+        result_label = context.metadata["result_label"]
+        assert result_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+        assert middleware_no_auto_hide.get_context_label().confidentiality == ConfidentialityLabel.USER_IDENTITY
+
+    @pytest.mark.asyncio
+    async def test_inspect_variable_propagates_private(self, middleware_no_auto_hide):
+        """Regression: inspect_variable preserves a PRIVATE label."""
+        from agent_framework.security import get_security_tools
+
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+
+        var_id = middleware_no_auto_hide.get_variable_store().store(
+            "secret",
+            ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PRIVATE),
+        )
+
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": var_id, "reason": "propagate private"},
+        )
+
+        async def next_fn():
+            context.result = await inspect_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware_no_auto_hide.process(context, next_fn)
+
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+        assert middleware_no_auto_hide.get_context_label().confidentiality == ConfidentialityLabel.PRIVATE
+
+    @pytest.mark.asyncio
+    async def test_inspect_variable_missing_var_does_not_crash(self, middleware_no_auto_hide):
+        """A missing variable id returns an error result and falls back safely."""
+        from agent_framework.security import get_security_tools
+
+        inspect_tool = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
+
+        context = FunctionInvocationContext(
+            function=inspect_tool,
+            arguments={"variable_id": "var_doesnotexist1", "reason": "missing"},
+        )
+
+        async def next_fn():
+            context.result = await inspect_tool.invoke(arguments=context.arguments, context=context)
+
+        await middleware_no_auto_hide.process(context, next_fn)
+
+        payload = json.loads(context.result[0].text)
+        assert payload["security_label"] is None
+        assert "error" in payload
+        # No embedded label -> falls back to the tool's default confidentiality.
+        assert context.metadata["result_label"].confidentiality == ConfidentialityLabel.PRIVATE
+
+    @pytest.mark.asyncio
     async def test_multiple_calls_accumulate_variables(self, middleware_auto_hide, mock_function):
         """Test that multiple tool calls accumulate variables in the store."""
         for i in range(5):
@@ -917,9 +1833,9 @@ class TestSecureAgentConfig:
         label_tracker = middleware[0]
         policy_enforcer = middleware[1]
 
-        assert label_tracker.auto_hide_untrusted is True
-        assert "fetch_data" in policy_enforcer.allow_untrusted_tools
-        assert "search" in policy_enforcer.allow_untrusted_tools
+        assert label_tracker.auto_hide_untrusted is True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert "fetch_data" in policy_enforcer.allow_untrusted_tools  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        assert "search" in policy_enforcer.allow_untrusted_tools  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     def test_get_tools_returns_security_tools(self):
         """Test that get_tools returns quarantined_llm and inspect_variable."""
@@ -952,7 +1868,7 @@ class TestSecureAgentConfig:
 
         inspect_variable = next(tool for tool in get_security_tools() if tool.name == "inspect_variable")
         assert inspect_variable.approval_mode == "never_require"
-        assert "requires_approval" not in inspect_variable.additional_properties
+        assert "requires_approval" not in inspect_variable.additional_properties  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 class TestGetSecurityTools:
@@ -1253,10 +2169,10 @@ class TestContextLabelTracking:
         current_context = None
 
         async def next_fn():
-            current_context.result = [Content.from_text("result")]
+            current_context.result = [Content.from_text("result")]  # type: ignore[attr-defined, union-attr]  # ty: ignore[invalid-assignment]
 
         # First call: trusted function (TRUSTED)
-        context1 = FunctionInvocationContext(function=trusted_function, arguments=trusted_function.args_schema())
+        context1 = FunctionInvocationContext(function=trusted_function, arguments=trusted_function.args_schema())  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         current_context = context1
 
         await middleware.process(context1, next_fn)
@@ -1265,7 +2181,7 @@ class TestContextLabelTracking:
         assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
 
         # Second call: untrusted function (UNTRUSTED)
-        context2 = FunctionInvocationContext(function=untrusted_function, arguments=untrusted_function.args_schema())
+        context2 = FunctionInvocationContext(function=untrusted_function, arguments=untrusted_function.args_schema())  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         current_context = context2
 
         await middleware.process(context2, next_fn)
@@ -1274,7 +2190,7 @@ class TestContextLabelTracking:
         assert middleware.get_context_label().integrity == IntegrityLabel.UNTRUSTED
 
         # Third call: trusted function again
-        context3 = FunctionInvocationContext(function=trusted_function, arguments=trusted_function.args_schema())
+        context3 = FunctionInvocationContext(function=trusted_function, arguments=trusted_function.args_schema())  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         current_context = context3
 
         await middleware.process(context3, next_fn)
@@ -1351,7 +2267,7 @@ class TestPolicyEnforcementWithContextLabel:
             args_schema=MockArgs,
         )
 
-        args = allowed_function.args_schema()
+        args = allowed_function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=allowed_function, arguments=args)
 
         context.metadata["context_label"] = label_middleware.get_context_label()
@@ -1551,8 +2467,8 @@ class TestQuarantinedLLM:
         from agent_framework.security import get_security_tools
 
         q_llm = next(tool for tool in get_security_tools() if tool.name == "quarantined_llm")
-        assert q_llm.additional_properties.get("source_integrity") == "untrusted"
-        assert q_llm.additional_properties.get("accepts_untrusted") is True
+        assert q_llm.additional_properties.get("source_integrity") == "untrusted"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert q_llm.additional_properties.get("accepts_untrusted") is True  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
 
 class TestQuarantineClient:
@@ -1573,7 +2489,7 @@ class TestQuarantineClient:
                 pass
 
         mock_client = MockClient()
-        set_quarantine_client(mock_client)
+        set_quarantine_client(mock_client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         assert get_quarantine_client() is mock_client
 
@@ -1596,7 +2512,7 @@ class TestQuarantineClient:
         mock_client = MockClient()
 
         # Create config with quarantine client
-        config = SecureAgentConfig(quarantine_chat_client=mock_client)
+        config = SecureAgentConfig(quarantine_chat_client=mock_client)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
 
         # Should have set the global client
         assert get_quarantine_client() is mock_client
@@ -1864,7 +2780,7 @@ class TestPerItemEmbeddedLabels:
         # First item should be visible (trusted)
         item0 = context.result[0]
         assert isinstance(item0, Content)
-        data0 = json.loads(item0.text)
+        data0 = json.loads(item0.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert data0["id"] == 1
         assert data0["content"] == "trusted content"
 
@@ -1872,7 +2788,7 @@ class TestPerItemEmbeddedLabels:
         item1 = context.result[1]
         assert isinstance(item1, Content)
         assert item1.additional_properties.get("_variable_reference") is True
-        parsed1 = json.loads(item1.text)
+        parsed1 = json.loads(item1.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert parsed1.get("type") == "variable_reference"
         assert parsed1["security_label"]["integrity"] == "untrusted"
 
@@ -1880,6 +2796,34 @@ class TestPerItemEmbeddedLabels:
         item2 = context.result[2]
         data2 = json.loads(item2.text)
         assert data2["id"] == 3
+
+        context_label = middleware.get_context_label()
+        assert context_label.integrity == IntegrityLabel.TRUSTED
+        assert context_label.confidentiality == ConfidentialityLabel.PUBLIC
+
+    @pytest.mark.asyncio
+    async def test_hidden_untrusted_items_do_not_taint_integrity_in_mixed_results(self, middleware, mock_function):
+        """Hidden untrusted items should only affect confidentiality, not integrity."""
+        args = mock_function.args_schema()
+        context = FunctionInvocationContext(function=mock_function, arguments=args)
+
+        async def next_fn():
+            context.result = [
+                Content.from_text(
+                    json.dumps({"id": 1, "content": "trusted content"}),
+                    additional_properties={"security_label": {"integrity": "trusted", "confidentiality": "public"}},
+                ),
+                Content.from_text(
+                    json.dumps({"id": 2, "content": "hidden private content"}),
+                    additional_properties={"security_label": {"integrity": "untrusted", "confidentiality": "private"}},
+                ),
+            ]
+
+        await middleware.process(context, next_fn)
+
+        context_label = middleware.get_context_label()
+        assert context_label.integrity == IntegrityLabel.TRUSTED
+        assert context_label.confidentiality == ConfidentialityLabel.PRIVATE
 
     @pytest.mark.asyncio
     async def test_all_trusted_items_visible(self, middleware, mock_function):
@@ -1935,7 +2879,7 @@ class TestPerItemEmbeddedLabels:
         for item in context.result:
             assert isinstance(item, Content)
             assert item.additional_properties.get("_variable_reference") is True
-            parsed = json.loads(item.text)
+            parsed = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
             assert parsed.get("type") == "variable_reference"
 
     @pytest.mark.asyncio
@@ -1957,7 +2901,7 @@ class TestPerItemEmbeddedLabels:
             # No source_integrity = defaults to UNTRUSTED
         )
 
-        args = untrusted_function.args_schema()
+        args = untrusted_function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=untrusted_function, arguments=args)
 
         async def next_fn():
@@ -1976,13 +2920,13 @@ class TestPerItemEmbeddedLabels:
         for item in context.result:
             assert isinstance(item, Content)
             assert item.additional_properties.get("_variable_reference") is True
-            parsed = json.loads(item.text)
+            parsed = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
             assert parsed.get("type") == "variable_reference"
             assert parsed["security_label"]["integrity"] == "untrusted"
 
         # The call/result label should be UNTRUSTED
         label = context.metadata.get("result_label")
-        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.integrity == IntegrityLabel.UNTRUSTED  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     @pytest.mark.asyncio
     async def test_nested_json_in_content_item(self, middleware, mock_function):
@@ -2014,7 +2958,7 @@ class TestPerItemEmbeddedLabels:
         item = context.result[0]
         assert isinstance(item, Content)
         assert item.additional_properties.get("_variable_reference") is True
-        parsed = json.loads(item.text)
+        parsed = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert parsed.get("type") == "variable_reference"
 
     @pytest.mark.asyncio
@@ -2040,8 +2984,8 @@ class TestPerItemEmbeddedLabels:
         # Combined label should be UNTRUSTED (most restrictive integrity)
         # and PRIVATE (most restrictive confidentiality)
         label = context.metadata.get("result_label")
-        assert label.integrity == IntegrityLabel.UNTRUSTED
-        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+        assert label.integrity == IntegrityLabel.UNTRUSTED  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
 
     @pytest.mark.asyncio
     async def test_hidden_items_stored_in_variable_store(self, middleware, mock_function):
@@ -2064,7 +3008,7 @@ class TestPerItemEmbeddedLabels:
         item = context.result[0]
         assert isinstance(item, Content)
         assert item.additional_properties.get("_variable_reference") is True
-        var_ref = json.loads(item.text)
+        var_ref = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert var_ref.get("type") == "variable_reference"
 
         # Retrieve from store
@@ -2100,7 +3044,7 @@ class TestPerItemEmbeddedLabels:
         assert len(context.result) == 1
         item = context.result[0]
         assert isinstance(item, Content)
-        data = json.loads(item.text)
+        data = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert data["data"] == "untrusted but visible"
 
 
@@ -2143,7 +3087,7 @@ class TestTieredLabelPropagation:
         )
 
         # Input has an untrusted label embedded in the argument
-        args = function.args_schema(
+        args = function.args_schema(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             data={"content": "test", "security_label": {"integrity": "untrusted", "confidentiality": "public"}}
         )
         context = FunctionInvocationContext(function=function, arguments=args)
@@ -2179,7 +3123,7 @@ class TestTieredLabelPropagation:
             additional_properties={"source_integrity": "trusted"},
         )
 
-        args = function.args_schema()
+        args = function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=function, arguments=args)
 
         async def next_fn():
@@ -2219,7 +3163,7 @@ class TestTieredLabelPropagation:
         )
 
         # Input has an untrusted label
-        args = function.args_schema(
+        args = function.args_schema(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
             data={"content": "test", "security_label": {"integrity": "untrusted", "confidentiality": "public"}}
         )
         context = FunctionInvocationContext(function=function, arguments=args)
@@ -2236,7 +3180,7 @@ class TestTieredLabelPropagation:
         item = context.result[0]
         assert isinstance(item, Content)
         assert item.additional_properties.get("_variable_reference") is True
-        parsed = json.loads(item.text)
+        parsed = json.loads(item.text)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
         assert parsed.get("type") == "variable_reference"
 
     @pytest.mark.asyncio
@@ -2260,7 +3204,7 @@ class TestTieredLabelPropagation:
             args_schema=Args,
         )
 
-        args = function.args_schema()
+        args = function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=function, arguments=args)
 
         async def next_fn():
@@ -2437,7 +3381,7 @@ class TestMaxAllowedConfidentiality:
             },
         )
 
-        args = function.args_schema()
+        args = function.args_schema()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
         context = FunctionInvocationContext(function=function, arguments=args)
 
         context.metadata["context_label"] = label_middleware.get_context_label()
@@ -2521,3 +3465,373 @@ class TestCheckConfidentialityAllowed:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ---------------------------------------------------------------------------
+# MCP annotation mapping
+# ---------------------------------------------------------------------------
+
+
+class TestMCPAnnotationMapping:
+    """Tests for hint-based mapping from MCP annotations to FIDES labels."""
+
+    @pytest.mark.parametrize(
+        ("read_only", "open_world", "default_integrity", "expected_integrity", "expected_max_conf", "expected_accepts"),
+        [
+            (True, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, None, True),
+            (True, True, IntegrityLabel.TRUSTED, IntegrityLabel.UNTRUSTED, None, True),
+            (True, False, IntegrityLabel.UNTRUSTED, IntegrityLabel.TRUSTED, None, True),
+            (False, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
+            (False, True, IntegrityLabel.TRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
+            (False, False, IntegrityLabel.UNTRUSTED, IntegrityLabel.TRUSTED, ConfidentialityLabel.PUBLIC, False),
+            (None, None, IntegrityLabel.UNTRUSTED, IntegrityLabel.UNTRUSTED, ConfidentialityLabel.PUBLIC, False),
+            (None, None, IntegrityLabel.TRUSTED, IntegrityLabel.TRUSTED, ConfidentialityLabel.PUBLIC, False),
+        ],
+    )
+    def test_map_mcp_annotations_to_labels(
+        self,
+        read_only,
+        open_world,
+        default_integrity,
+        expected_integrity,
+        expected_max_conf,
+        expected_accepts,
+    ):
+        from agent_framework.security import _map_mcp_annotations_to_labels
+
+        annotations = None
+        if read_only is not None or open_world is not None:
+            annotations = SimpleNamespace(readOnlyHint=read_only, openWorldHint=open_world)
+
+        integrity, max_conf, accepts_untrusted = _map_mcp_annotations_to_labels(
+            annotations,
+            default_integrity=default_integrity,
+        )
+
+        assert integrity == expected_integrity
+        assert max_conf == expected_max_conf
+        assert accepts_untrusted is expected_accepts
+
+    def test_map_missing_annotations_defaults_to_sink(self):
+        from agent_framework.security import _map_mcp_annotations_to_labels
+
+        integrity, max_conf, accepts_untrusted = _map_mcp_annotations_to_labels(None)
+        assert integrity == IntegrityLabel.UNTRUSTED
+        assert max_conf == ConfidentialityLabel.PUBLIC
+        assert accepts_untrusted is False
+
+
+# ---------------------------------------------------------------------------
+# IFC labels from MCP _meta payload
+# ---------------------------------------------------------------------------
+
+
+class TestMCPIFCMetaLabels:
+    """Tests for parsing per-call IFC labels from MCP ``_meta`` payloads.
+
+    Covers:
+      * ``_label_from_mcp_meta`` parsing (well-formed, missing, malformed).
+      * ``MCPTool._parse_tool_result_from_mcp`` propagating ``_meta`` onto
+                every Content via the ``_meta`` key.
+      * ``_stamp_mcp_content_labels`` enforcing server-wins-over-static with
+        a static fallback when the server omits/misformats ``_meta.ifc``.
+      * ``SecureMCPToolProxy`` wrapping each ``FunctionTool`` so an MCP tool
+        result carries per-item ``security_label`` derived from the server
+        when possible, regardless of whether the server is read-only or
+        a hypothetical write-tool (server label always wins).
+    """
+
+    def test_label_from_meta_well_formed(self):
+        from agent_framework.security import _label_from_mcp_meta
+
+        label = _label_from_mcp_meta({"ifc": {"integrity": "untrusted", "confidentiality": "private"}})
+        assert label is not None
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    def test_label_from_meta_trusted_public(self):
+        from agent_framework.security import _label_from_mcp_meta
+
+        label = _label_from_mcp_meta({"ifc": {"integrity": "trusted", "confidentiality": "public"}})
+        assert label is not None
+        assert label.integrity == IntegrityLabel.TRUSTED
+        assert label.confidentiality == ConfidentialityLabel.PUBLIC
+
+    @pytest.mark.parametrize(
+        "meta",
+        [
+            None,
+            {},
+            {"ifc": None},
+            {"ifc": "trusted"},
+            {"ifc": {}},
+            {"ifc": {"integrity": "trusted"}},  # missing confidentiality
+            {"ifc": {"integrity": "garbage", "confidentiality": "public"}},
+            {"ifc": {"integrity": "trusted", "confidentiality": "garbage"}},
+            {"other_key": {"integrity": "trusted", "confidentiality": "public"}},  # non-ifc key
+        ],
+    )
+    def test_label_from_meta_invalid_returns_none(self, meta):
+        from agent_framework.security import _label_from_mcp_meta
+
+        assert _label_from_mcp_meta(meta) is None
+
+    def test_parse_tool_result_propagates_meta(self):
+        """``_parse_tool_result_from_mcp`` stamps ``_meta`` on each Content."""
+        from mcp import types as mcp_types
+
+        from agent_framework._mcp import MCPTool
+
+        class _ConcreteMCPTool(MCPTool):
+            def get_mcp_client(self):
+                raise NotImplementedError
+
+        helper = _ConcreteMCPTool(name="helper")
+        mcp_result = mcp_types.CallToolResult(
+            content=[
+                mcp_types.TextContent(type="text", text="first"),
+                mcp_types.TextContent(type="text", text="second"),
+            ],
+            _meta={"ifc": {"integrity": "untrusted", "confidentiality": "public"}, "tracing": {"span": "abc"}},
+        )
+        contents = helper._parse_tool_result_from_mcp(mcp_result)
+        assert len(contents) == 2
+        for c in contents:
+            meta = c.additional_properties.get("_meta")
+            assert meta == {
+                "ifc": {"integrity": "untrusted", "confidentiality": "public"},
+                "tracing": {"span": "abc"},
+            }
+
+    def test_parse_tool_result_without_meta_has_no_sentinel(self):
+        from mcp import types as mcp_types
+
+        from agent_framework._mcp import MCPTool
+
+        class _ConcreteMCPTool(MCPTool):
+            def get_mcp_client(self):
+                raise NotImplementedError
+
+        helper = _ConcreteMCPTool(name="helper")
+        mcp_result = mcp_types.CallToolResult(content=[mcp_types.TextContent(type="text", text="hi")])
+        contents = helper._parse_tool_result_from_mcp(mcp_result)
+        assert "_meta" not in contents[0].additional_properties
+
+    def test_stamp_contents_server_wins_over_static(self):
+        from agent_framework.security import _stamp_mcp_content_labels
+
+        static = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
+        contents = [
+            Content.from_text(
+                "x",
+                additional_properties={"_meta": {"ifc": {"integrity": "untrusted", "confidentiality": "private"}}},
+            )
+        ]
+        _stamp_mcp_content_labels(contents, static)
+        # Server label wins.
+        assert contents[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "private",
+        }
+        # Sentinel is consumed.
+        assert "_meta" not in contents[0].additional_properties
+
+    def test_stamp_contents_missing_meta_falls_back_to_static(self):
+        from agent_framework.security import _stamp_mcp_content_labels
+
+        static = ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
+        contents = [Content.from_text("x")]
+        _stamp_mcp_content_labels(contents, static)
+        assert contents[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "public",
+        }
+
+    def test_stamp_contents_malformed_meta_falls_back_to_static(self):
+        from agent_framework.security import _stamp_mcp_content_labels
+
+        static = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
+        contents = [
+            Content.from_text(
+                "x",
+                additional_properties={"_meta": {"ifc": {"integrity": "bogus", "confidentiality": "public"}}},
+            )
+        ]
+        _stamp_mcp_content_labels(contents, static)
+        assert contents[0].additional_properties["security_label"] == {
+            "integrity": "trusted",
+            "confidentiality": "public",
+        }
+        assert "_meta" not in contents[0].additional_properties
+
+    def test_stamp_contents_non_ifc_meta_falls_back_to_static(self):
+        """Generic ``_meta`` keys unrelated to IFC don't accidentally produce a label."""
+        from agent_framework.security import _stamp_mcp_content_labels
+
+        static = ContentLabel(integrity=IntegrityLabel.UNTRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
+        contents = [
+            Content.from_text(
+                "x",
+                additional_properties={"_meta": {"tracing": {"span": "abc"}}},
+            )
+        ]
+        _stamp_mcp_content_labels(contents, static)
+        assert contents[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "public",
+        }
+
+    def test_stamp_contents_multi_item_all_stamped(self):
+        from agent_framework.security import _stamp_mcp_content_labels
+
+        static = ContentLabel(integrity=IntegrityLabel.TRUSTED, confidentiality=ConfidentialityLabel.PUBLIC)
+        meta = {"_meta": {"ifc": {"integrity": "untrusted", "confidentiality": "public"}}}
+        contents = [Content.from_text(str(i), additional_properties=dict(meta)) for i in range(3)]
+        _stamp_mcp_content_labels(contents, static)
+        for c in contents:
+            assert c.additional_properties["security_label"] == {
+                "integrity": "untrusted",
+                "confidentiality": "public",
+            }
+
+    @pytest.mark.asyncio
+    async def test_wrap_mcp_function_server_label_wins(self):
+        """End-to-end: the wrapper installed by SecureMCPToolProxy stamps server label."""
+        from agent_framework.security import _wrap_mcp_function_for_ifc
+
+        async def fake_call(**kwargs):
+            return [
+                Content.from_text(
+                    "payload",
+                    additional_properties={"_meta": {"ifc": {"integrity": "untrusted", "confidentiality": "private"}}},
+                )
+            ]
+
+        func_tool = FunctionTool(
+            func=fake_call,
+            name="remote_tool",
+            description="",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "public",
+                "_mcp_remote_name": "remote_tool",
+            },
+        )
+        _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
+        assert func_tool.func is not None
+        result = await func_tool.func()
+        assert isinstance(result, list)
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "private",
+        }
+        # Static fallback would have been trusted+public; server-wins changed it.
+
+    @pytest.mark.asyncio
+    async def test_wrap_mcp_function_static_fallback(self):
+        """When the server omits ``_meta``, the static label is used."""
+        from agent_framework.security import _wrap_mcp_function_for_ifc
+
+        async def fake_call(**kwargs):
+            return [Content.from_text("payload")]
+
+        func_tool = FunctionTool(
+            func=fake_call,
+            name="remote_tool",
+            description="",
+            additional_properties={
+                "source_integrity": "untrusted",
+                "max_allowed_confidentiality": "public",
+                "_mcp_remote_name": "remote_tool",
+            },
+        )
+        _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
+        assert func_tool.func is not None
+        result = await func_tool.func()
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "public",
+        }
+
+    @pytest.mark.asyncio
+    async def test_wrap_mcp_function_write_tool_server_still_wins(self):
+        """Even for a tool marked as a write sink (max_allowed_confidentiality=public),
+        if a future MCP server emits ``_meta.ifc`` for a write result, the server
+        label is applied verbatim on the Content item. Sink invariants are enforced
+        elsewhere (by LabelTrackingFunctionMiddleware / PolicyEnforcementMiddleware
+        at composition time, not here)."""
+        from agent_framework.security import _wrap_mcp_function_for_ifc
+
+        async def fake_call(**kwargs):
+            return [
+                Content.from_text(
+                    "wrote item",
+                    additional_properties={"_meta": {"ifc": {"integrity": "trusted", "confidentiality": "private"}}},
+                )
+            ]
+
+        func_tool = FunctionTool(
+            func=fake_call,
+            name="create_issue",
+            description="",
+            additional_properties={
+                "source_integrity": "untrusted",
+                "max_allowed_confidentiality": "public",  # marked as a sink
+                "accepts_untrusted": False,
+                "_mcp_remote_name": "create_issue",
+            },
+        )
+        _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
+        assert func_tool.func is not None
+        result = await func_tool.func()
+        # Server label wins verbatim.
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "trusted",
+            "confidentiality": "private",
+        }
+
+    @pytest.mark.asyncio
+    async def test_wrap_mcp_function_str_result_passes_through(self):
+        """``str`` results (no per-item containers) are not modified by the wrapper."""
+        from agent_framework.security import _wrap_mcp_function_for_ifc
+
+        async def fake_call(**kwargs):
+            return "plain string result"
+
+        func_tool = FunctionTool(
+            func=fake_call,
+            name="remote_tool",
+            description="",
+            additional_properties={
+                "source_integrity": "trusted",
+                "max_allowed_confidentiality": "public",
+                "_mcp_remote_name": "remote_tool",
+            },
+        )
+        _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
+        assert func_tool.func is not None
+        result = await func_tool.func()
+        assert result == "plain string result"
+
+    @pytest.mark.asyncio
+    async def test_wrap_mcp_function_is_idempotent(self):
+        """Re-running ``_wrap_mcp_function_for_ifc`` (e.g. reconnect) does not double-wrap."""
+        from agent_framework.security import _wrap_mcp_function_for_ifc
+
+        async def fake_call(**kwargs):
+            return [Content.from_text("x")]
+
+        func_tool = FunctionTool(
+            func=fake_call,
+            name="remote_tool",
+            description="",
+            additional_properties={
+                "source_integrity": "untrusted",
+                "max_allowed_confidentiality": "public",
+                "_mcp_remote_name": "remote_tool",
+            },
+        )
+        _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
+        wrapped_once = func_tool.func
+        _wrap_mcp_function_for_ifc(func_tool, IntegrityLabel.UNTRUSTED)
+        assert func_tool.func is wrapped_once

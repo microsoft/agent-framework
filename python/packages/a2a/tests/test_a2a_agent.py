@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -29,9 +29,10 @@ from agent_framework import (
     SessionContext,
 )
 from agent_framework.a2a import A2AAgent
-from pytest import fixture, mark, raises
+from agent_framework.exceptions import AgentInvalidRequestException
+from pytest import fixture, mark, raises, warns
 
-from agent_framework_a2a import A2AAgentSession, A2AContinuationToken
+from agent_framework_a2a import A2AAgentSession, A2AContinuationToken, A2AServiceSessionId
 from agent_framework_a2a._utils import get_uri_data
 
 
@@ -126,14 +127,18 @@ def mock_a2a_client() -> MockA2AClient:
 @fixture
 def a2a_agent(mock_a2a_client: MockA2AClient) -> A2AAgent:
     """Fixture that provides an A2AAgent with a mock client."""
-    return A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    return A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
 
 
 def test_a2a_agent_initialization_with_client(mock_a2a_client: MockA2AClient) -> None:
     """Test A2AAgent initialization with provided client."""
     # Use model_construct to bypass Pydantic validation for mock objects
     agent = A2AAgent(
-        name="Test Agent", id="test-agent-123", description="A test agent", client=mock_a2a_client, http_client=None
+        name="Test Agent",
+        id="test-agent-123",
+        description="A test agent",
+        client=cast(Any, mock_a2a_client),
+        http_client=None,
     )
 
     assert agent.name == "Test Agent"
@@ -142,13 +147,19 @@ def test_a2a_agent_initialization_with_client(mock_a2a_client: MockA2AClient) ->
     assert agent.client == mock_a2a_client
 
 
+def test_a2a_agent_session_emits_deprecation_warning() -> None:
+    """A2AAgentSession emits a deprecation warning on construction."""
+    with warns(DeprecationWarning, match="A2AAgentSession is deprecated"):
+        A2AAgentSession()
+
+
 def test_a2a_agent_defaults_name_description_from_agent_card(mock_a2a_client: MockA2AClient) -> None:
     """Test A2AAgent defaults name and description from agent_card when not explicitly provided."""
     mock_card = MagicMock(spec=AgentCard)
     mock_card.name = "Card Agent Name"
     mock_card.description = "Card agent description"
 
-    agent = A2AAgent(agent_card=mock_card, client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(agent_card=mock_card, client=cast(Any, mock_a2a_client), http_client=None)
 
     assert agent.name == "Card Agent Name"
     assert agent.description == "Card agent description"
@@ -164,7 +175,7 @@ def test_a2a_agent_explicit_name_description_overrides_agent_card(mock_a2a_clien
         name="Explicit Name",
         description="Explicit description",
         agent_card=mock_card,
-        client=mock_a2a_client,
+        client=cast(Any, mock_a2a_client),
         http_client=None,
     )
 
@@ -182,7 +193,7 @@ def test_a2a_agent_empty_string_name_description_not_overridden(mock_a2a_client:
         name="",
         description="",
         agent_card=mock_card,
-        client=mock_a2a_client,
+        client=cast(Any, mock_a2a_client),
         http_client=None,
     )
 
@@ -327,7 +338,7 @@ def test_get_uri_data_invalid_uri() -> None:
 def test_parse_contents_from_a2a_conversion(a2a_agent: A2AAgent) -> None:
     """Test A2A parts to contents conversion."""
 
-    agent = A2AAgent(name="Test Agent", client=MockA2AClient(), http_client=None)
+    agent = A2AAgent(name="Test Agent", client=cast(Any, MockA2AClient()), http_client=None)
 
     # Create A2A parts
     parts = [Part(text="First part"), Part(text="Second part")]
@@ -431,7 +442,7 @@ async def test_context_manager_cleanup() -> None:
     mock_http_client = AsyncMock()
     mock_a2a_client = MagicMock()
 
-    agent = A2AAgent(client=mock_a2a_client)
+    agent = A2AAgent(client=cast(Any, mock_a2a_client))
     agent._http_client = mock_http_client
 
     # Test context manager cleanup
@@ -447,7 +458,7 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
 
     mock_a2a_client = MagicMock()
 
-    agent = A2AAgent(client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(client=cast(Any, mock_a2a_client), http_client=None)
 
     # This should not raise any errors
     async with agent:
@@ -535,7 +546,7 @@ def test_prepare_message_for_a2a_a2a_session_context_id_takes_precedence() -> No
 def test_parse_contents_from_a2a_with_data_part() -> None:
     """Test conversion of A2A data Part."""
     from google.protobuf.json_format import ParseDict
-    from google.protobuf.struct_pb2 import Struct, Value
+    from google.protobuf.struct_pb2 import Struct, Value  # ty: ignore[unresolved-import]
 
     agent = A2AAgent(client=MagicMock(), http_client=None)
 
@@ -553,6 +564,7 @@ def test_parse_contents_from_a2a_with_data_part() -> None:
     # MessageToJson may format slightly differently — verify the parsed structure
     import json
 
+    assert contents[0].text is not None
     parsed = json.loads(contents[0].text)
     assert parsed["key"] == "value"
     assert parsed["number"] == 42
@@ -658,7 +670,7 @@ def test_transport_negotiation_both_fail() -> None:
 
 def test_create_timeout_config_httpx_timeout() -> None:
     """Test _create_timeout_config with httpx.Timeout object returns it unchanged."""
-    agent = A2AAgent(name="Test Agent", client=MockA2AClient(), http_client=None)
+    agent = A2AAgent(name="Test Agent", client=cast(Any, MockA2AClient()), http_client=None)
 
     custom_timeout = httpx.Timeout(connect=15.0, read=180.0, write=20.0, pool=8.0)
     timeout_config = agent._create_timeout_config(custom_timeout)
@@ -672,10 +684,10 @@ def test_create_timeout_config_httpx_timeout() -> None:
 
 def test_create_timeout_config_invalid_type() -> None:
     """Test _create_timeout_config with invalid type raises TypeError."""
-    agent = A2AAgent(name="Test Agent", client=MockA2AClient(), http_client=None)
+    agent = A2AAgent(name="Test Agent", client=cast(Any, MockA2AClient()), http_client=None)
 
     with raises(TypeError, match="Invalid timeout type: <class 'str'>. Expected float, httpx.Timeout, or None."):
-        agent._create_timeout_config("invalid")
+        agent._create_timeout_config(cast(Any, "invalid"))
 
 
 def test_a2a_agent_initialization_with_timeout_parameter() -> None:
@@ -802,8 +814,9 @@ async def test_working_task_emits_continuation_token(a2a_agent: A2AAgent, mock_a
 
     assert isinstance(response, AgentResponse)
     assert response.continuation_token is not None
-    assert response.continuation_token["task_id"] == "task-wip"
-    assert response.continuation_token["context_id"] == "ctx-1"
+    token = cast(dict[str, Any], response.continuation_token)
+    assert token["task_id"] == "task-wip"
+    assert token["context_id"] == "ctx-1"
 
 
 async def test_submitted_task_emits_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
@@ -813,7 +826,8 @@ async def test_submitted_task_emits_continuation_token(a2a_agent: A2AAgent, mock
     response = await a2a_agent.run("Submit task", background=True)
 
     assert response.continuation_token is not None
-    assert response.continuation_token["task_id"] == "task-sub"
+    token = cast(dict[str, Any], response.continuation_token)
+    assert token["task_id"] == "task-sub"
 
 
 async def test_input_required_task_emits_continuation_token(
@@ -824,8 +838,33 @@ async def test_input_required_task_emits_continuation_token(
 
     response = await a2a_agent.run("Need input", background=True)
 
+    [request] = response.user_input_requests
+    assert request.text == "Remote A2A task requires input."
     assert response.continuation_token is not None
-    assert response.continuation_token["task_id"] == "task-input"
+    token = cast(dict[str, Any], response.continuation_token)
+    assert token["task_id"] == "task-input"
+
+
+async def test_background_input_required_preserves_request_and_continuation_token(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Background callers retain both caller input and polling contracts."""
+    mock_a2a_client.add_in_progress_task_response(
+        "task-input-prompt",
+        context_id="ctx-input",
+        state=TaskState.TASK_STATE_INPUT_REQUIRED,
+        text="Approve deployment?",
+    )
+
+    response = await a2a_agent.run("Need input", background=True)
+
+    [request] = response.user_input_requests
+    assert request.text == "Approve deployment?"
+    assert response.continuation_token == {
+        "task_id": "task-input-prompt",
+        "context_id": "ctx-input",
+    }
 
 
 async def test_working_task_no_token_without_background(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
@@ -879,8 +918,8 @@ async def test_non_streaming_run_uses_non_streaming_client() -> None:
     non_streaming_client = MockA2AClient()
     non_streaming_client.add_task_response("task-ns", [{"id": "art-1", "content": "Non-streaming result"}])
 
-    agent = A2AAgent(name="Test Agent", id="test-ns", client=streaming_client, http_client=None)
-    agent._non_streaming_client = non_streaming_client  # type: ignore[assignment]
+    agent = A2AAgent(name="Test Agent", id="test-ns", client=cast(Any, streaming_client), http_client=None)
+    agent._non_streaming_client = cast(Any, non_streaming_client)  # type: ignore[assignment]
 
     response = await agent.run("Hello")
 
@@ -897,8 +936,8 @@ async def test_streaming_run_uses_streaming_client() -> None:
     non_streaming_client = MockA2AClient()
     streaming_client.add_task_response("task-s", [{"id": "art-1", "content": "Streaming result"}])
 
-    agent = A2AAgent(name="Test Agent", id="test-s", client=streaming_client, http_client=None)
-    agent._non_streaming_client = non_streaming_client  # type: ignore[assignment]
+    agent = A2AAgent(name="Test Agent", id="test-s", client=cast(Any, streaming_client), http_client=None)
+    agent._non_streaming_client = cast(Any, non_streaming_client)  # type: ignore[assignment]
 
     updates: list[AgentResponseUpdate] = []
     async for update in agent.run("Hello", stream=True):
@@ -946,8 +985,9 @@ async def test_streaming_emits_continuation_token(a2a_agent: A2AAgent, mock_a2a_
 
     assert len(updates) == 1
     assert updates[0].continuation_token is not None
-    assert updates[0].continuation_token["task_id"] == "task-stream"
-    assert updates[0].continuation_token["context_id"] == "ctx-s"
+    token = cast(dict[str, Any], updates[0].continuation_token)
+    assert token["task_id"] == "task-stream"
+    assert token["context_id"] == "ctx-s"
 
 
 async def test_resume_via_continuation_token(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
@@ -994,7 +1034,8 @@ async def test_resume_streaming_via_continuation_token(a2a_agent: A2AAgent, mock
     # First update: in-progress with token, second: completed with content
     assert len(updates) == 2
     assert updates[0].continuation_token is not None
-    assert updates[0].continuation_token["task_id"] == "task-rs"
+    continuation_payload = cast(dict[str, Any], updates[0].continuation_token)
+    assert continuation_payload["task_id"] == "task-rs"
     assert updates[1].continuation_token is None
     assert updates[1].contents[0].text == "Stream resumed"
 
@@ -1008,7 +1049,36 @@ async def test_poll_task_in_progress(a2a_agent: A2AAgent, mock_a2a_client: MockA
     response = await a2a_agent.poll_task(token)
 
     assert response.continuation_token is not None
-    assert response.continuation_token["task_id"] == "task-poll"
+    response_token = cast(dict[str, Any], response.continuation_token)
+    assert response_token["task_id"] == "task-poll"
+
+
+async def test_poll_task_input_required_preserves_request_and_continuation_token(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Polling preserves both caller input and later resubscription paths."""
+    mock_a2a_client.get_task_response = Task(
+        id="task-poll-input",
+        context_id="ctx-poll-input",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=A2AMessage(
+                message_id="poll-input-request",
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="Approve deployment?")],
+            ),
+        ),
+    )
+
+    response = await a2a_agent.poll_task(A2AContinuationToken(task_id="task-poll-input", context_id="ctx-poll-input"))
+
+    [request] = response.user_input_requests
+    assert request.text == "Approve deployment?"
+    assert response.continuation_token == {
+        "task_id": "task-poll-input",
+        "context_id": "ctx-poll-input",
+    }
 
 
 async def test_poll_task_completed(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
@@ -1040,7 +1110,7 @@ async def test_poll_task_completed(a2a_agent: A2AAgent, mock_a2a_client: MockA2A
 @mark.asyncio
 async def test_run_passes_session_service_session_id_as_context_id(mock_a2a_client: MockA2AClient) -> None:
     """Test that run() wires session.service_session_id to the A2A message context_id."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
     mock_a2a_client.add_message_response("msg-ctx", "reply")
 
     session = AgentSession(service_session_id="svc-session-42")
@@ -1053,7 +1123,7 @@ async def test_run_passes_session_service_session_id_as_context_id(mock_a2a_clie
 @mark.asyncio
 async def test_run_a2a_session_context_id_used_over_service_session_id(mock_a2a_client: MockA2AClient) -> None:
     """Test that A2AAgentSession.context_id is used for outbound messages."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
     mock_a2a_client.add_message_response("msg-ctx2", "reply")
 
     session = A2AAgentSession(context_id="a2a-ctx-99")
@@ -1107,7 +1177,7 @@ async def test_run_invokes_context_providers(mock_a2a_client: MockA2AClient) -> 
     provider = TrackingContextProvider()
     agent = A2AAgent(
         name="Test Agent",
-        client=mock_a2a_client,
+        client=cast(Any, mock_a2a_client),
         context_providers=[provider],
         http_client=None,
     )
@@ -1126,7 +1196,7 @@ async def test_run_streaming_invokes_context_providers(mock_a2a_client: MockA2AC
     provider = TrackingContextProvider()
     agent = A2AAgent(
         name="Test Agent",
-        client=mock_a2a_client,
+        client=cast(Any, mock_a2a_client),
         context_providers=[provider],
         http_client=None,
     )
@@ -1149,7 +1219,7 @@ async def test_context_providers_receive_response(mock_a2a_client: MockA2AClient
     provider = TrackingContextProvider()
     agent = A2AAgent(
         name="Test Agent",
-        client=mock_a2a_client,
+        client=cast(Any, mock_a2a_client),
         context_providers=[provider],
         http_client=None,
     )
@@ -1168,7 +1238,7 @@ async def test_context_providers_receive_input_messages(mock_a2a_client: MockA2A
     provider = TrackingContextProvider()
     agent = A2AAgent(
         name="Test Agent",
-        client=mock_a2a_client,
+        client=cast(Any, mock_a2a_client),
         context_providers=[provider],
         http_client=None,
     )
@@ -1186,7 +1256,7 @@ async def test_run_without_context_providers(mock_a2a_client: MockA2AClient) -> 
     """Test that run works normally when no context providers are configured."""
     agent = A2AAgent(
         name="Test Agent",
-        client=mock_a2a_client,
+        client=cast(Any, mock_a2a_client),
         http_client=None,
     )
     mock_a2a_client.add_message_response("msg-1", "Hello")
@@ -1201,7 +1271,7 @@ async def test_run_creates_session_for_providers_when_none_provided(mock_a2a_cli
     provider = TrackingContextProvider()
     agent = A2AAgent(
         name="Test Agent",
-        client=mock_a2a_client,
+        client=cast(Any, mock_a2a_client),
         context_providers=[provider],
         http_client=None,
     )
@@ -1217,15 +1287,47 @@ async def test_run_creates_session_for_providers_when_none_provided(mock_a2a_cli
 async def test_run_raises_when_no_messages_and_no_continuation_token(
     mock_a2a_client: MockA2AClient, messages: list[str] | None
 ) -> None:
-    """Test that run() raises ValueError when messages is None/empty and no continuation_token is provided."""
+    """Empty A2A input requires a real message or an explicit continuation token."""
     agent = A2AAgent(
         name="Test Agent",
-        client=mock_a2a_client,
+        client=cast(Any, mock_a2a_client),
         http_client=None,
     )
 
-    with raises(ValueError, match="At least one message is required"):
+    with raises(
+        AgentInvalidRequestException,
+        match="A2A agent 'Test Agent' requires a real message or an explicit continuation token",
+    ):
         await agent.run(messages)
+
+
+async def test_empty_input_error_includes_session_task_context_without_resuming(
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Durable A2A task state explains an invalid call but never authorizes continuation."""
+    agent = A2AAgent(
+        name="Remote specialist",
+        client=cast(Any, mock_a2a_client),
+        http_client=None,
+    )
+    session = AgentSession(
+        service_session_id=A2AServiceSessionId(
+            context_id="customer-42",
+            task_id="task-17",
+            task_state=TaskState.TASK_STATE_COMPLETED,
+        )
+    )
+
+    with raises(
+        AgentInvalidRequestException,
+        match=(
+            "A2A agent 'Remote specialist' requires a real message or an explicit continuation token. "
+            "Session context: context_id='customer-42', task_id='task-17', task_state=TASK_STATE_COMPLETED."
+        ),
+    ):
+        await agent.run([], session=session)
+
+    assert mock_a2a_client.call_count == 0
 
 
 async def test_run_with_continuation_token_does_not_require_messages(mock_a2a_client: MockA2AClient) -> None:
@@ -1239,7 +1341,7 @@ async def test_run_with_continuation_token_does_not_require_messages(mock_a2a_cl
 
     agent = A2AAgent(
         name="Test Agent",
-        client=mock_a2a_client,
+        client=cast(Any, mock_a2a_client),
         http_client=None,
     )
 
@@ -1331,7 +1433,8 @@ async def test_background_with_status_message_yields_continuation_token(
 
     assert len(updates) == 1
     assert updates[0].continuation_token is not None
-    assert updates[0].continuation_token["task_id"] == "task-bg"
+    token = cast(dict[str, Any], updates[0].continuation_token)
+    assert token["task_id"] == "task-bg"
     assert updates[0].contents == []
 
 
@@ -1459,13 +1562,131 @@ async def test_streaming_input_required_emits_content(a2a_agent: A2AAgent, mock_
     )
     mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
 
+    stream = a2a_agent.run("Hello", stream=True)
     updates: list[AgentResponseUpdate] = []
-    async for update in a2a_agent.run("Hello", stream=True):
+    async for update in stream:
         updates.append(update)
+    response = await stream.get_final_response()
 
     assert len(updates) == 1
     assert updates[0].text == "What is your name?"
     assert updates[0].message_id == "msg-input-req"
+    [update_request] = updates[0].user_input_requests
+    [response_request] = response.user_input_requests
+    assert update_request.id == response_request.id
+    assert update_request.id != "task-status"
+    assert update_request.text == "What is your name?"
+
+
+async def test_streaming_background_input_required_preserves_request_and_token(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Streaming background status retains caller and resubscription contracts."""
+    update_event = TaskStatusUpdateEvent(
+        task_id="task-status-background",
+        context_id="ctx-status",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=A2AMessage(
+                message_id="msg-input-req",
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="Approve deployment?")],
+            ),
+        ),
+    )
+    mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
+
+    stream = a2a_agent.run("Hello", stream=True, background=True)
+    updates = [update async for update in stream]
+
+    assert len(updates) == 1
+    [request] = updates[0].user_input_requests
+    assert request.text == "Approve deployment?"
+    assert updates[0].continuation_token == {
+        "task_id": "task-status-background",
+        "context_id": "ctx-status",
+    }
+
+
+async def test_streaming_input_required_without_message_emits_generic_request(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """A message-less INPUT_REQUIRED status update still pauses for the caller."""
+    update_event = TaskStatusUpdateEvent(
+        task_id="task-status-no-message",
+        context_id="ctx-status",
+        status=TaskStatus(state=TaskState.TASK_STATE_INPUT_REQUIRED),
+    )
+    mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
+
+    stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert len(updates) == 1
+    [request] = response.user_input_requests
+    assert request.text == "Remote A2A task requires input."
+    assert request.id != "task-status-no-message"
+
+
+async def test_streaming_input_required_multipart_prompt_remains_one_complete_request(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """All status prompt parts survive stream finalization as one request."""
+    update_event = TaskStatusUpdateEvent(
+        task_id="task-status-multipart",
+        context_id="ctx-status",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=A2AMessage(
+                message_id="msg-input-req",
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="Choose a deployment."), Part(text="Options: blue or green.")],
+            ),
+        ),
+    )
+    mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
+
+    stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert len(updates) == 1
+    [request] = response.user_input_requests
+    assert request.text == "Choose a deployment.\nOptions: blue or green."
+
+
+async def test_streaming_input_required_prompt_preserves_non_text_parts(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Streaming caller requests retain links and durable remote message data."""
+    update_event = TaskStatusUpdateEvent(
+        task_id="task-status-file",
+        context_id="ctx-status",
+        status=TaskStatus(
+            state=TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=A2AMessage(
+                message_id="msg-input-req",
+                role=A2ARole.ROLE_AGENT,
+                parts=[Part(text="Review the attached document."), Part(url="hosted://files/report.pdf")],
+            ),
+        ),
+    )
+    mock_a2a_client.responses.append(StreamResponse(status_update=update_event))
+
+    stream = a2a_agent.run("Hello", stream=True)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+
+    assert len(updates) == 1
+    [request] = response.user_input_requests
+    assert request.text == "Review the attached document.\nhosted://files/report.pdf"
+    serialized_message = request.additional_properties["a2a_input_required_message"]
+    assert serialized_message["parts"][1]["url"] == "hosted://files/report.pdf"
 
 
 @mark.asyncio
@@ -1701,8 +1922,10 @@ async def test_task_artifact_update_event_metadata_merged(a2a_agent: A2AAgent, m
         updates.append(update)
 
     artifact_update = updates[0]
-    assert artifact_update.additional_properties["a2a_metadata"]["from_artifact"] is True
-    assert artifact_update.additional_properties["a2a_metadata"]["from_event"] is True
+    assert artifact_update.additional_properties is not None
+    metadata = artifact_update.additional_properties["a2a_metadata"]
+    assert metadata["from_artifact"] is True
+    assert metadata["from_event"] is True
 
 
 async def test_task_status_update_event_metadata_merged(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
@@ -1729,8 +1952,10 @@ async def test_task_status_update_event_metadata_merged(a2a_agent: A2AAgent, moc
         updates.append(update)
 
     status_update = updates[0]
-    assert status_update.additional_properties["a2a_metadata"]["msg_key"] == "msg_val"
-    assert status_update.additional_properties["a2a_metadata"]["event_key"] == "event_val"
+    assert status_update.additional_properties is not None
+    metadata = status_update.additional_properties["a2a_metadata"]
+    assert metadata["msg_key"] == "msg_val"
+    assert metadata["event_key"] == "event_val"
 
 
 async def test_history_message_metadata_propagated(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
@@ -1890,7 +2115,7 @@ async def test_non_streaming_artifact_update_surfaces_content(
 @mark.asyncio
 async def test_first_message_has_no_reference_task_ids(mock_a2a_client: MockA2AClient) -> None:
     """Test that the first message sent has no reference_task_ids."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
     mock_a2a_client.add_task_response("task-first", [{"content": "Hello back"}])
 
     session = A2AAgentSession()
@@ -1903,7 +2128,7 @@ async def test_first_message_has_no_reference_task_ids(mock_a2a_client: MockA2AC
 @mark.asyncio
 async def test_follow_up_message_includes_reference_task_ids(mock_a2a_client: MockA2AClient) -> None:
     """Test that a follow-up message references the previous task_id."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
     mock_a2a_client.add_task_response("task-abc-123", [{"content": "First reply"}])
 
     session = A2AAgentSession()
@@ -1923,7 +2148,7 @@ async def test_follow_up_message_includes_reference_task_ids(mock_a2a_client: Mo
 @mark.asyncio
 async def test_reference_task_ids_updated_after_each_interaction(mock_a2a_client: MockA2AClient) -> None:
     """Test that reference_task_ids always points to the most recent task."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
 
     session = A2AAgentSession()
 
@@ -1948,7 +2173,7 @@ async def test_reference_task_ids_updated_after_each_interaction(mock_a2a_client
 @mark.asyncio
 async def test_task_id_tracked_from_status_update_events(mock_a2a_client: MockA2AClient) -> None:
     """Test that task_id is tracked even when response only contains status update events."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
 
     # Simulate a stream that only has status_update events (no full task payload)
     status_event = TaskStatusUpdateEvent(
@@ -1975,7 +2200,7 @@ async def test_task_id_tracked_from_status_update_events(mock_a2a_client: MockA2
 @mark.asyncio
 async def test_no_session_does_not_crash_reference_task_ids(mock_a2a_client: MockA2AClient) -> None:
     """Test that running without a session (no reference tracking) works fine."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
     mock_a2a_client.add_task_response("task-no-session", [{"content": "Reply"}])
 
     # Should not raise — no session means no reference_task_ids
@@ -1987,7 +2212,7 @@ async def test_no_session_does_not_crash_reference_task_ids(mock_a2a_client: Moc
 @mark.asyncio
 async def test_task_id_not_tracked_from_message_payload(mock_a2a_client: MockA2AClient) -> None:
     """Test that task_id is NOT tracked from message payloads (simple interactions without task tracking)."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
 
     # Simulate a response that is a message with task_id set (no task/status_update events).
     # Per A2A spec, a Message response indicates simple interaction — task_id should not be persisted.
@@ -2008,7 +2233,7 @@ async def test_task_id_not_tracked_from_message_payload(mock_a2a_client: MockA2A
 @mark.asyncio
 async def test_context_id_assigned_from_response(mock_a2a_client: MockA2AClient) -> None:
     """Test that context_id is assigned from the response when not set on session."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
     mock_a2a_client.add_task_response("task-ctx", [{"content": "Reply"}])
 
     session = A2AAgentSession()
@@ -2018,13 +2243,17 @@ async def test_context_id_assigned_from_response(mock_a2a_client: MockA2AClient)
 
     # context_id from the task response should be assigned
     assert session.context_id == "test-context"
-    assert session.service_session_id == "test-context"
+    assert session.service_session_id == A2AServiceSessionId(
+        context_id="test-context",
+        task_id="task-ctx",
+        task_state=TaskState.TASK_STATE_COMPLETED,
+    )
 
 
 @mark.asyncio
 async def test_context_id_tracked_from_message_payload(mock_a2a_client: MockA2AClient) -> None:
     """Test that context_id is captured from message-only responses (no task payload)."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
 
     # Simulate a response with only a message that has context_id but no task_id
     message_with_context = A2AMessage(
@@ -2040,14 +2269,18 @@ async def test_context_id_tracked_from_message_payload(mock_a2a_client: MockA2AC
 
     # context_id should be captured even without a task_id
     assert session.context_id == "server-ctx-123"
-    assert session.service_session_id == "server-ctx-123"
+    assert session.service_session_id == A2AServiceSessionId(
+        context_id="server-ctx-123",
+        task_id=None,
+        task_state=None,
+    )
     assert session.task_id is None
 
 
 @mark.asyncio
 async def test_context_id_mismatch_raises_error(mock_a2a_client: MockA2AClient) -> None:
     """Test that a context_id mismatch between session and response raises an error."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
 
     # Task response has context_id="test-context" (from add_task_response helper)
     mock_a2a_client.add_task_response("task-mismatch", [{"content": "Reply"}])
@@ -2062,7 +2295,7 @@ async def test_context_id_mismatch_raises_error(mock_a2a_client: MockA2AClient) 
 @mark.asyncio
 async def test_task_state_tracked_on_session(mock_a2a_client: MockA2AClient) -> None:
     """Test that task_state is tracked on A2AAgentSession."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
 
     # Add a task that ends in INPUT_REQUIRED
     mock_a2a_client.add_in_progress_task_response(
@@ -2080,21 +2313,131 @@ async def test_task_state_tracked_on_session(mock_a2a_client: MockA2AClient) -> 
 
 
 @mark.asyncio
-async def test_plain_agent_session_no_reference_tracking(mock_a2a_client: MockA2AClient) -> None:
-    """Test that a plain AgentSession works but does not get reference_task_ids tracking."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+@mark.parametrize("stream", [False, True])
+async def test_input_required_exposes_stable_user_input_request(
+    mock_a2a_client: MockA2AClient,
+    stream: bool,
+) -> None:
+    """INPUT_REQUIRED preserves the remote question and task identity."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
+    mock_a2a_client.add_in_progress_task_response(
+        "task-input",
+        context_id="ctx-input",
+        state=TaskState.TASK_STATE_INPUT_REQUIRED,
+        text="What is your name?",
+    )
+
+    updates: list[AgentResponseUpdate] = []
+    if stream:
+        response_stream = agent.run("Start", stream=True)
+        updates = [update async for update in response_stream]
+        response = await response_stream.get_final_response()
+        assert len(updates) == 1
+    else:
+        response = await agent.run("Start")
+
+    [request] = response.user_input_requests
+    assert request.id != "task-input"
+    assert request.text == "What is your name?"
+    if stream:
+        assert updates[0].user_input_requests[0].id == request.id
+
+
+async def test_input_required_without_message_exposes_generic_user_input_request(
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """INPUT_REQUIRED pauses even when the remote omits its optional prompt."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
+    mock_a2a_client.add_in_progress_task_response(
+        "task-input-no-message",
+        context_id="ctx-input",
+        state=TaskState.TASK_STATE_INPUT_REQUIRED,
+    )
+
+    response = await agent.run("Start")
+
+    [request] = response.user_input_requests
+    assert request.text == "Remote A2A task requires input."
+    assert request.id != "task-input-no-message"
+
+
+async def test_input_required_multipart_prompt_remains_one_complete_request(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """All prompt parts survive non-streaming response finalization."""
+    mock_a2a_client.responses.append(
+        StreamResponse(
+            task=Task(
+                id="task-input-multipart",
+                context_id="ctx-input",
+                status=TaskStatus(
+                    state=TaskState.TASK_STATE_INPUT_REQUIRED,
+                    message=A2AMessage(
+                        message_id="input-request",
+                        role=A2ARole.ROLE_AGENT,
+                        parts=[Part(text="Choose a deployment."), Part(text="Options: blue or green.")],
+                    ),
+                ),
+            )
+        )
+    )
+
+    response = await a2a_agent.run("Start")
+
+    [request] = response.user_input_requests
+    assert request.text == "Choose a deployment.\nOptions: blue or green."
+
+
+async def test_input_required_prompt_preserves_non_text_parts(
+    a2a_agent: A2AAgent,
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Caller-visible requests retain links and durable remote message data."""
+    mock_a2a_client.responses.append(
+        StreamResponse(
+            task=Task(
+                id="task-input-file",
+                context_id="ctx-input",
+                status=TaskStatus(
+                    state=TaskState.TASK_STATE_INPUT_REQUIRED,
+                    message=A2AMessage(
+                        message_id="input-request",
+                        role=A2ARole.ROLE_AGENT,
+                        parts=[Part(text="Review the attached document."), Part(url="hosted://files/report.pdf")],
+                    ),
+                ),
+            )
+        )
+    )
+
+    response = await a2a_agent.run("Start")
+
+    [request] = response.user_input_requests
+    assert request.text == "Review the attached document.\nhosted://files/report.pdf"
+    serialized_message = request.additional_properties["a2a_input_required_message"]
+    assert serialized_message["parts"][1]["url"] == "hosted://files/report.pdf"
+
+
+@mark.asyncio
+async def test_plain_agent_session_tracks_structured_service_session_id(mock_a2a_client: MockA2AClient) -> None:
+    """Plain AgentSession should persist A2A continuation state in structured service_session_id."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
     mock_a2a_client.add_task_response("task-plain", [{"content": "Reply"}])
 
     session = AgentSession()
     await agent.run("Hello", session=session)
 
-    # Plain session does not get task_id tracking
-    assert "a2a_task_id" not in session.state
+    assert session.service_session_id == A2AServiceSessionId(
+        context_id="test-context",
+        task_id="task-plain",
+        task_state=TaskState.TASK_STATE_COMPLETED,
+    )
 
-    # Follow-up has no reference_task_ids (no tracking on plain session)
+    # Follow-up should use the tracked task_id in reference_task_ids
     mock_a2a_client.add_task_response("task-plain-2", [{"content": "Reply 2"}])
     await agent.run("Follow up", session=session)
-    assert list(mock_a2a_client.last_message.reference_task_ids) == []
+    assert list(mock_a2a_client.last_message.reference_task_ids) == ["task-plain"]
 
 
 @mark.asyncio
@@ -2113,12 +2456,58 @@ async def test_a2a_agent_session_serialization() -> None:
     assert restored.context_id == "ctx-456"
     assert restored.task_id == "task-789"
     assert restored.task_state == TaskState.TASK_STATE_COMPLETED
+    assert restored.service_session_id == A2AServiceSessionId(
+        context_id="ctx-456",
+        task_id="task-789",
+        task_state=TaskState.TASK_STATE_COMPLETED,
+    )
+
+
+@mark.asyncio
+async def test_plain_agent_session_structured_service_session_id_for_input_required(
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Structured service_session_id should drive INPUT_REQUIRED follow-up task_id behavior."""
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
+    session = AgentSession(
+        service_session_id=A2AServiceSessionId(
+            context_id="ctx-ir",
+            task_id="task-ir-123",
+            task_state=TaskState.TASK_STATE_INPUT_REQUIRED,
+        )
+    )
+
+    mock_a2a_client.add_in_progress_task_response(
+        "task-ir-456",
+        context_id="ctx-ir",
+        state=TaskState.TASK_STATE_COMPLETED,
+        text="Thanks!",
+    )
+    await agent.run("My name is Alice", session=session)
+
+    last_msg = mock_a2a_client.last_message
+    assert last_msg.task_id == "task-ir-123"
+    assert list(last_msg.reference_task_ids) == []
+
+
+def test_a2a_agent_otel_conversation_id_uses_context_id() -> None:
+    """Telemetry conversation id should map to context_id for structured A2A sessions."""
+    agent = A2AAgent(client=MagicMock(), http_client=None)
+    session = AgentSession(
+        service_session_id=A2AServiceSessionId(
+            context_id="ctx-otel",
+            task_id="task-otel",
+            task_state=TaskState.TASK_STATE_WORKING,
+        )
+    )
+
+    assert agent._get_otel_conversation_id(session) == "ctx-otel"
 
 
 @mark.asyncio
 async def test_input_required_sets_task_id_instead_of_reference(mock_a2a_client: MockA2AClient) -> None:
     """Test that when task_state is INPUT_REQUIRED, follow-up sets task_id (not reference_task_ids)."""
-    agent = A2AAgent(name="Test Agent", id="test-agent", client=mock_a2a_client, http_client=None)
+    agent = A2AAgent(name="Test Agent", id="test-agent", client=cast(Any, mock_a2a_client), http_client=None)
 
     # First turn: task ends in INPUT_REQUIRED
     mock_a2a_client.add_in_progress_task_response(

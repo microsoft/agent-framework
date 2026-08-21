@@ -41,6 +41,7 @@ public sealed class AggregatorPromptAgentFactory : PromptAgentFactory
             var agent = await agentFactory.TryCreateAsync(promptAgent, cancellationToken).ConfigureAwait(false);
             if (agent is not null)
             {
+                Declarative.FeatureUsageMarker.MarkUsed();
                 return agent;
             }
         }
