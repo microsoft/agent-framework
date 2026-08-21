@@ -746,7 +746,10 @@ class FunctionTool(SerializationMixin):
                 "response_format",
             }
         }
-        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
+        # gen_ai.tool.call.arguments/result were introduced above v1.36.0; only emit them
+        # as span attributes when that semconv version is active.
+        emit_tool_call_attrs = OBSERVABILITY_SETTINGS.emit_tool_call_attributes
+        if emit_tool_call_attrs:
             attributes.update({
                 OtelAttr.TOOL_ARGUMENTS: (
                     json.dumps(serializable_kwargs, default=str, ensure_ascii=False) if serializable_kwargs else "None"
@@ -773,8 +776,9 @@ class FunctionTool(SerializationMixin):
                     logger.info(f"Function {self.name} succeeded.")
                     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                         result_str = str(result)
-                        span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                         logger.debug(f"Function result: {result_str}")
+                        if emit_tool_call_attrs:
+                            span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                     return result
                 try:
                     parsed = parser(result)
@@ -786,8 +790,9 @@ class FunctionTool(SerializationMixin):
                 logger.info(f"Function {self.name} succeeded.")
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:
                     result_str = "\n".join(c.text or "" for c in parsed if c.type == "text") or str(parsed)
-                    span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                     logger.debug(f"Function result: {result_str}")
+                    if emit_tool_call_attrs:
+                        span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
                 return parsed
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp

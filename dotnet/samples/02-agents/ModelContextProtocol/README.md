@@ -23,7 +23,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Agent with MCP server tools and authorization](./Agent_MCP_Server_Auth/)|This sample demonstrates how to use MCP Server tools from a protected MCP server with a simple agent|
 |[Agent with per-run MCP authentication headers](./Agent_MCP_PerRun_AuthHeaders/)|This sample demonstrates how to attach per-run, refreshable authentication headers to MCP requests using a custom HttpClient handler and an AsyncLocal scope. Uses Microsoft Foundry (`FOUNDRY_PROJECT_ENDPOINT` / `FOUNDRY_MODEL`) rather than the Azure OpenAI variables in the prerequisites above.|
 |[Responses Agent with Hosted MCP tool](./ResponseAgent_Hosted_MCP/)|This sample demonstrates how to use the Hosted MCP tool with the Responses Service, where the service invokes any MCP tools directly|
-|[Agent with long-running MCP task (transparent polling)](./Agent_MCP_LongRunningTask_Client/)|This sample demonstrates how an agent transparently drives a long-running MCP task (SEP-2663) to completion. The wrapper polls the task internally on both `RunAsync` and `RunStreamingAsync` invocations.|
+|[Agent with MCP Tasks extension (transparent polling)](./Agent_MCP_LongRunningTask_Client/)|This sample demonstrates how an agent transparently drives an MCP 2026-07-28 Tasks extension invocation to completion. The wrapper handles inline fallback and polls task-backed calls internally for both `RunAsync` and `RunStreamingAsync`.|
 
 ## Running the samples from the console
 

@@ -114,6 +114,10 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreToolApproval);
+#pragma warning restore MAAI001
+
         var requestMessages = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         // Steps 1–2: Unwrap AlwaysApprove wrappers, process any queued approval requests.
@@ -191,6 +195,10 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreToolApproval);
+#pragma warning restore MAAI001
+
         var requestMessages = messages as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
         // Steps 1–2: Unwrap AlwaysApprove wrappers, process any queued approval requests.
@@ -742,7 +750,7 @@ public sealed class ToolApprovalAgent : DelegatingAIAgent
         ToolApprovalState state,
         JsonSerializerOptions jsonSerializerOptions)
     {
-        var messageList = messages as IList<ChatMessage> ?? new List<ChatMessage>(messages);
+        var messageList = messages as IList<ChatMessage> ?? [.. messages];
         var result = new List<ChatMessage>(messageList.Count);
         bool anyModified = false;
 

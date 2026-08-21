@@ -137,7 +137,7 @@ public sealed class DockerShellExecutor : ShellExecutor
         this._pidsLimit = options.PidsLimit;
         this._user = options.User ?? ContainerUser.Default;
         this._readOnlyRoot = options.ReadOnlyRoot;
-        this._extraRunArgs = options.ExtraRunArgs ?? Array.Empty<string>();
+        this._extraRunArgs = options.ExtraRunArgs ?? [];
         this._env = options.Environment ?? new Dictionary<string, string>();
         this._policy = options.Policy ?? new ShellPolicy();
         this._timeout = options.Timeout;
@@ -161,6 +161,8 @@ public sealed class DockerShellExecutor : ShellExecutor
             {
                 return;
             }
+
+            FeatureUsageMarker.MarkUsed();
             await this.StartContainerAsync(cancellationToken).ConfigureAwait(false);
             this._containerStarted = true;
             if (this._mode == ShellMode.Persistent)
@@ -228,6 +230,7 @@ public sealed class DockerShellExecutor : ShellExecutor
                 $"Command rejected by policy: {decision.Reason ?? "(unspecified)"}");
         }
 
+        FeatureUsageMarker.MarkUsed();
         if (this._mode == ShellMode.Persistent)
         {
             if (this._session is null)
@@ -406,7 +409,7 @@ public sealed class DockerShellExecutor : ShellExecutor
         }
         if (extraArgs is not null)
         {
-            foreach (var a in extraArgs) { argv.Add(a); }
+            argv.AddRange(extraArgs);
         }
         argv.Add(image);
         argv.Add("sleep");
@@ -422,7 +425,7 @@ public sealed class DockerShellExecutor : ShellExecutor
     /// </summary>
     public static IReadOnlyList<string> BuildExecArgv(string binary, string containerName)
     {
-        return new List<string> { binary, "exec", "-i", containerName, "bash", "--noprofile", "--norc" };
+        return [binary, "exec", "-i", containerName, "bash", "--noprofile", "--norc"];
     }
 
     private async Task StartContainerAsync(CancellationToken cancellationToken)
@@ -457,11 +460,13 @@ public sealed class DockerShellExecutor : ShellExecutor
     private async Task<ShellResult> RunStatelessAsync(string command, CancellationToken cancellationToken)
     {
         var perCallName = GenerateContainerName();
-        var argv = new List<string>(this.BuildRunArgvStateless(perCallName));
-        argv.Add(this._image);
-        argv.Add("bash");
-        argv.Add("-c");
-        argv.Add(command);
+        var argv = new List<string>(this.BuildRunArgvStateless(perCallName))
+        {
+            this._image,
+            "bash",
+            "-c",
+            command
+        };
 
         var stopwatch = Stopwatch.StartNew();
         var stdoutBuf = new HeadTailBuffer(this._maxOutputBytes);
@@ -558,7 +563,7 @@ public sealed class DockerShellExecutor : ShellExecutor
             argv.Add("-e");
             argv.Add($"{kv.Key}={kv.Value}");
         }
-        foreach (var a in this._extraRunArgs) { argv.Add(a); }
+        argv.AddRange(this._extraRunArgs);
         return argv;
     }
 
@@ -568,7 +573,7 @@ public sealed class DockerShellExecutor : ShellExecutor
         {
             using var killCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             _ = await RunDockerCommandAsync(
-                new[] { this.DockerBinary, "kill", "--signal", "KILL", containerName }, killCts.Token).ConfigureAwait(false);
+                [this.DockerBinary, "kill", "--signal", "KILL", containerName], killCts.Token).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is OperationCanceledException || ex is Win32Exception || ex is InvalidOperationException)
         {

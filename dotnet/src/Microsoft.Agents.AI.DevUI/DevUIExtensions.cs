@@ -59,6 +59,7 @@ public static class DevUIExtensions
 
         protectedGroup.MapDevUI(pattern: "/devui");
         protectedGroup.MapEntities();
+        FeatureUsageMarker.MarkUsed();
 
         return protectedGroup;
     }
