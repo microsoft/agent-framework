@@ -13,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 // The terminal stream events are named the same in two namespaces this file pulls in, and the short
 // name binds to the one the event objects are not. Naming them here keeps `is` checks against the
@@ -53,8 +54,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         ILogger<AgentFrameworkResponseHandler> logger,
         FoundryToolboxService? toolboxService = null)
     {
-        ArgumentNullException.ThrowIfNull(serviceProvider);
-        ArgumentNullException.ThrowIfNull(logger);
+        _ = Throw.IfNull(serviceProvider);
+        _ = Throw.IfNull(logger);
 
         this._serviceProvider = serviceProvider;
         this._logger = logger;
@@ -71,20 +72,6 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var agent = this.ResolveAgent(request);
         var sessionStore = this.ResolveSessionStore(request);
 
-        // Fail fast with a clear, actionable error when this 2.0.0-only image is served container
-        // protocol 1.0.0. The x-agent-foundry-call-id header is exclusive to protocol 2.0.0, so when the
-        // container is hosted by Foundry yet receives no call id, the platform is talking 1.0.0 to an
-        // image that does not support it. Detecting this here turns an opaque 500 into a 501 that names
-        // the cause and the fix instead of bubbling up as a generic server error on every request.
-        var unsupportedProtocolError = HostedProtocolCompatibility.GetUnsupportedProtocolError(
-            FoundryEnvironment.IsHosted, context.PlatformContext?.CallId);
-        if (unsupportedProtocolError is not null)
-        {
-            this._logger.LogError(
-                "Hosted container served unsupported Responses protocol 1.0.0 (no x-agent-foundry-call-id header); this image requires protocol 2.0.0.");
-            throw unsupportedProtocolError;
-        }
-
         // 2. Resolve the per-request hosted session identity context, so the session can be
         // loaded from a per-user partition. Fresh sessions are tagged once; resumed sessions are
         // validated against the live request to detect cross-user session leaks and in-process tampering.
@@ -93,8 +80,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var resolvedHostedContext = await isolationKeyProvider.GetKeysAsync(context, request, cancellationToken).ConfigureAwait(false);
         if (resolvedHostedContext is null && FoundryEnvironment.IsHosted)
         {
-            // Hosted by Foundry yet the provider produced no user identity. Protocol 1.0.0 (no call id)
-            // was already turned into a clear 501 above, so this is the unexpected case of a 2.0.0
+            // Hosted by Foundry yet the provider produced no user identity. The endpoint filter
+            // already rejected protocol 1.0.0, so this is the unexpected case of a 2.0.0
             // request that carried a call id but no x-agent-user-id, or a custom provider that returned
             // null in production. Reject rather than silently persist an unscoped, cross-user session.
             throw new InvalidOperationException(
@@ -130,9 +117,21 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // Load the session for this conversation, or start a new one. The store returns null when
         // nothing is persisted for the key, so a fresh conversation and a resumed one both end up with
         // a session to run against.
-        AgentSession? session = !string.IsNullOrWhiteSpace(agentSessionId)
-            ? await sessionStore.GetOrCreateSessionAsync(agent, agentSessionId, resolvedUserId, cancellationToken).ConfigureAwait(false)
-            : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        AgentSession? session;
+        if (string.IsNullOrWhiteSpace(agentSessionId))
+        {
+            session = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            session = await sessionStore.GetSessionAsync(
+                agent,
+                agentSessionId,
+                resolvedUserId,
+                cancellationToken).ConfigureAwait(false);
+
+            session ??= await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         // Capture the platform per-request call id (x-agent-foundry-call-id, protocol 2.0.0 only).
         // It is re-applied to the ambient HostedCallContext immediately before each outbound egress
@@ -508,7 +507,12 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             // Persist the session for the next turn of this conversation, unless this one is being failed.
             if (session is not null && !turnFailed)
             {
-                await sessionStore.SaveSessionAsync(agent, agentSessionId!, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
+                await sessionStore.SaveSessionAsync(
+                    agent,
+                    agentSessionId!,
+                    session,
+                    resolvedUserId,
+                    cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -583,8 +587,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             var agent = this._serviceProvider.GetKeyedService<AIAgent>(agentName);
             if (agent is not null)
             {
-                FoundryHostingExtensions.TryApplyUserAgent(agent);
-                return FoundryHostingExtensions.ApplyOpenTelemetry(agent);
+                string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(
+                    agent,
+                    agentName,
+                    this._serviceProvider.GetService<AIAgent>());
+                return this.PrepareResolvedAgent(agent, storageIdentity);
             }
 
             if (this._logger.IsEnabled(LogLevel.Warning))
@@ -597,8 +604,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var defaultAgent = this._serviceProvider.GetService<AIAgent>();
         if (defaultAgent is not null)
         {
-            FoundryHostingExtensions.TryApplyUserAgent(defaultAgent);
-            return FoundryHostingExtensions.ApplyOpenTelemetry(defaultAgent);
+            string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(
+                defaultAgent,
+                registrationKey: null,
+                defaultAgent);
+            return this.PrepareResolvedAgent(defaultAgent, storageIdentity);
         }
 
         var errorMessage = string.IsNullOrEmpty(agentName)
@@ -606,6 +616,18 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             : $"Agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
+    }
+
+    private AIAgent PrepareResolvedAgent(AIAgent agent, string sessionStorageIdentity)
+    {
+        FoundryHostingExtensions.TryApplyUserAgent(agent);
+
+        AIAgent prepared = FoundryHostingExtensions.ApplyWorkflowCheckpointing(
+            agent,
+            this._serviceProvider.GetService<ILoggerFactory>());
+        prepared = new FoundryHostingAgent(prepared, sessionStorageIdentity);
+
+        return FoundryHostingExtensions.ApplyOpenTelemetry(prepared);
     }
 
     /// <summary>

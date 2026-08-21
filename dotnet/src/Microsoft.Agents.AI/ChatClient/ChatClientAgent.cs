@@ -38,8 +38,6 @@ namespace Microsoft.Agents.AI;
 /// </remarks>
 public sealed partial class ChatClientAgent : AIAgent
 {
-    private const string AGUIProviderName = "ag-ui";
-
     private readonly ChatClientAgentOptions? _agentOptions;
     private readonly HashSet<string> _aiContextProviderStateKeys;
     private readonly AIAgentMetadata _agentMetadata;
@@ -826,7 +824,7 @@ public sealed partial class ChatClientAgent : AIAgent
 
         if (!string.IsNullOrWhiteSpace(responseConversationId))
         {
-            if (!IsAGUIProviderName(this._agentMetadata.ProviderName) && this._agentOptions?.ChatHistoryProvider is not null)
+            if (this._agentOptions?.ChatHistoryProvider is not null)
             {
                 // The agent has a ChatHistoryProvider configured, but the service returned a conversation id,
                 // meaning the service manages chat history server-side. Both cannot be used simultaneously.
@@ -940,9 +938,6 @@ public sealed partial class ChatClientAgent : AIAgent
         }
     }
 
-    private static bool IsAGUIProviderName(string? providerName) =>
-        string.Equals(providerName, AGUIProviderName, StringComparison.Ordinal);
-
     /// <summary>
     /// Ensures that <see cref="AIAgent.CurrentRunContext"/> contains the resolved session.
     /// </summary>
@@ -1002,7 +997,6 @@ public sealed partial class ChatClientAgent : AIAgent
         // the provider the decorator depends on.
         bool serviceStoresHistory =
             !this.RequiresPerServiceCallChatHistoryPersistence
-            && !IsAGUIProviderName(this._agentMetadata.ProviderName)
             && (!string.IsNullOrWhiteSpace(chatOptions?.ConversationId)
                 || !string.IsNullOrWhiteSpace(session.ConversationId));
 

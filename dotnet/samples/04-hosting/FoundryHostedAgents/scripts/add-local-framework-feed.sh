@@ -7,7 +7,7 @@
 # on it in the cloud. That restore pulls the Agent Framework from nuget.org, so a contributor's
 # local framework changes are never exercised.
 #
-# Run this after `azd ai agent init` and before `azd provision`. It changes two things in the
+# Run this after `azd ai agent init` and before `azd provision`. It changes three things in the
 # folder that `init` scaffolded:
 #
 #   local-feed/    New. The Agent Framework packed from the local source tree, stamped with a
@@ -43,6 +43,9 @@ framework_projects=(
     Microsoft.Agents.AI.Abstractions
     Microsoft.Agents.AI
     Microsoft.Agents.AI.Workflows
+    Microsoft.Agents.AI.Hosting
+    Microsoft.Agents.AI.LocalCodeAct
+    Microsoft.Agents.AI.Mcp
     Microsoft.Agents.AI.Foundry
     Microsoft.Agents.AI.Foundry.Hosting
 )
@@ -141,6 +144,8 @@ EOF
 # matches whatever version is currently there. sed rewrites the line in place, leaving the file's
 # leading byte order mark untouched.
 sed -i.bak "s|<AgentFrameworkVersion>[^<]*</AgentFrameworkVersion>|<AgentFrameworkVersion>$version</AgentFrameworkVersion>|" "$project_file"
+rm -f "$project_file.bak"
+sed -E -i.bak "s|(PackageReference Include=\"Microsoft\\.Agents\\.AI[^\"]*\" Version=\")[^\"]*(\" />)|\\1$version\\2|g" "$project_file"
 rm -f "$project_file.bak"
 
 echo
