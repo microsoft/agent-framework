@@ -1846,11 +1846,11 @@ async def test_run_agent_stream_suppresses_messages_snapshot_if_configured():
     }
 
     events = [event async for event in agent.run(payload)]
-    
+
     # We should have TextMessageStart/Delta/End, but no MessagesSnapshot
     snapshot_events = [e for e in events if getattr(e, "type", None) == "MESSAGES_SNAPSHOT"]
     assert len(snapshot_events) == 0, "MessagesSnapshotEvent should be suppressed"
-    
+
     # Still finishes normally
     finished_events = [
         e
