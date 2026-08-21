@@ -510,10 +510,14 @@ class A2UIAgent:
         authorization/audit/policy middleware, the session, and approval controls all apply.
         Kept here in the adapter (not behind a new core abstraction). Returns
         ``(results, control, should_terminate)``; ``control`` are non-result contents (e.g. a
-        ``function_approval_request``) that must reach the client. Execution failures surface
-        as error results rather than aborting the surface generation.
+        ``function_approval_request``) that must reach the client. A ``MiddlewareFailure``
+        (the fail-closed escape an authorization/guardrail middleware raises) propagates,
+        exactly as the core loop treats it, so a denied turn aborts instead of continuing on
+        to render a surface. Ordinary execution failures surface as error results — carrying a
+        generic, non-leaking message unless ``include_detailed_errors`` is enabled, matching
+        the core function-error formatting — rather than aborting the surface generation.
         """
-        from agent_framework._middleware import FunctionMiddlewarePipeline, categorize_middleware
+        from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareFailure, categorize_middleware
         from agent_framework._tools import _try_execute_function_call_groups
 
         client = getattr(self.inner_agent, "client", None)
@@ -530,11 +534,24 @@ class A2UIAgent:
                 invocation_session=session,
                 middleware_pipeline=pipeline,
             )
-        except Exception as exc:  # noqa: BLE001 — surface as tool results, never abort the surface
+        except MiddlewareFailure:
+            # Fail-closed escape: an authorization/guardrail abort must propagate, never be
+            # folded into an error result, or the denied turn would still go on to render a
+            # surface. Core's function loop lets this through the same way.
+            raise
+        except Exception as exc:  # noqa: BLE001 — other failures surface as tool results, never abort the surface
             logger.warning("A2UI: server tool execution failed during a mixed generate turn: %s", exc)
+            # Match core's error formatting: keep the model-visible result generic (a raw
+            # ``str(exc)`` can carry credentials, provider payloads, or tenant data); expose
+            # detail only when the run explicitly enabled it. The full text still rides the
+            # non-model-visible ``exception`` field for logs/telemetry.
+            detailed = bool(config.get("include_detailed_errors", False)) if hasattr(config, "get") else False
+            message = "Error: Function failed."
+            if detailed:
+                message = f"{message} Exception: {exc}"
             errors = [
                 Content.from_function_result(
-                    call_id=getattr(c, "call_id", "") or "", result=json.dumps({"error": str(exc)})
+                    call_id=getattr(c, "call_id", "") or "", result=message, exception=str(exc)
                 )
                 for c in server_calls
             ]

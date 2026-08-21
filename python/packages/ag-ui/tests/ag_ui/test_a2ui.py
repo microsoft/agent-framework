@@ -939,7 +939,7 @@ def test_a2ui_existing_tool_names_includes_agent_default_tools():
     from agent_framework_ag_ui._agent_run import _a2ui_existing_tool_names
 
     tool = FunctionTool(name="generate_a2ui", description="d", func=lambda: None)
-    agent = Agent(name="a", instructions="i", client=None, tools=[tool])  # type: ignore[arg-type]
+    agent = Agent(name="a", instructions="i", client=None, tools=[tool])  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     assert "generate_a2ui" in _a2ui_existing_tool_names(agent, None)  # no runtime tools
 
 
@@ -972,6 +972,52 @@ def test_mixed_batch_server_tool_runs_through_middleware_pipeline():
 
     assert "middleware-ran" in seen  # executed through the real pipeline, not a bypass
     assert any(k[0] == "result" and k[1] == "s1" and "Ritz" in k[2] for k in kinds)
+
+
+def test_mixed_batch_middleware_failure_aborts_without_rendering():
+    # A fail-closed authorization/guardrail abort (MiddlewareFailure) raised while executing a
+    # server tool alongside generate_a2ui must propagate and stop the run, exactly as the core
+    # loop treats it, never be folded into an error result that lets the surface render anyway.
+    from agent_framework import FunctionTool
+    from agent_framework._middleware import FunctionMiddleware, MiddlewareFailure
+
+    class _DenyMiddleware(FunctionMiddleware):
+        async def process(self, context, call_next):
+            raise MiddlewareFailure("denied by policy")
+
+    class _ClientWithDenyMiddleware:
+        function_middleware = (_DenyMiddleware(),)
+        function_invocation_configuration = None
+
+    def search(query: str = "") -> str:
+        return json.dumps({"results": ["Ritz"]})
+
+    class _InnerWithDeny(_SearchThenGenerateInner):
+        client = _ClientWithDenyMiddleware()
+
+    search_tool = FunctionTool(name="search", description="search", func=search)
+    with pytest.raises(MiddlewareFailure):
+        asyncio.run(_drive(A2UIAgent(_InnerWithDeny(), _RenderSub()), tools=[search_tool]))
+
+
+def test_mixed_batch_tool_error_result_is_generic_not_leaking():
+    # A server tool that raises must yield a generic error result (core's formatting), never the
+    # raw exception text, which can carry credentials, provider payloads, or tenant data. Unlike
+    # a MiddlewareFailure this is non-fatal, so the surface still renders.
+    from agent_framework import FunctionTool
+
+    secret = "sk-super-secret-token"  # noqa: S105 — test literal, not a real credential
+
+    def search(query: str = "") -> str:
+        raise RuntimeError(f"boom {secret}")
+
+    search_tool = FunctionTool(name="search", description="search", func=search)
+    kinds = asyncio.run(_drive(A2UIAgent(_SearchThenGenerateInner(), _RenderSub()), tools=[search_tool]))
+
+    err = next(k for k in kinds if k[0] == "result" and k[1] == "s1")
+    assert secret not in err[2]  # raw exception text never reaches the model
+    assert "Error: Function failed." in err[2]
+    assert _generate_envelope(kinds) is not None  # surface still rendered
 
 
 class _ClientToolThenGenerateInner:
@@ -1091,7 +1137,7 @@ async def test_bridge_client_tool_with_generate_surfaces_resumable_not_synthesiz
 
     inner = _ClientToolThenGenerateBridgeInner()
     runner = A2UIAgent(inner, _RenderSub())  # manual enable_a2ui path
-    wrapper = AgentFrameworkAgent(agent=runner)  # type: ignore[arg-type]
+    wrapper = AgentFrameworkAgent(agent=runner)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
     input_data = {
         "messages": [{"role": "user", "content": "hi"}],
         "tools": [{"name": "browser_action", "description": "d", "parameters": {"type": "object"}}],
