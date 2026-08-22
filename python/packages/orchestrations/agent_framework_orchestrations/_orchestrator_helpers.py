@@ -28,7 +28,7 @@ def clean_conversation_for_handoff(conversation: list[Message]) -> list[Message]
     Args:
         conversation: Full conversation history, including tool-control content
     Returns:
-        Cleaned conversation history with only text content, suitable for handoff routing
+        Cleaned conversation history with semantic multimodal content preserved, suitable for handoff routing
     """
     ALLOWED_CONTENT_TYPES = {
         "text",

@@ -1028,8 +1028,11 @@ def test_clean_conversation_for_handoff_keeps_allowlist_history() -> None:
     ]
     
     # Assert Multimodal URI is preserved in the first user message
-    user_contents = [c.type for c in cleaned[0].contents]
-    assert "uri" in user_contents
+    user_contents = cleaned[0].contents
+    assert len(user_contents) == 2
+    assert user_contents[0].type == "text"
+    assert user_contents[1].type == "uri"
+    assert user_contents[1].uri == "https://example.com/broken_product.jpg"
     
     # Assert Tool call is stripped from the assistant message
     assistant_contents = [c.type for c in cleaned[1].contents]
