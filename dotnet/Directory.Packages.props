@@ -11,7 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
-    <PackageVersion Include="Anthropic" Version="12.35.1" />
+    <PackageVersion Include="Anthropic" Version="12.42.0" />
     <PackageVersion Include="Anthropic.Foundry" Version="0.7.1" />
     <PackageVersion Include="Aspire.Hosting" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
@@ -23,15 +23,16 @@
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
     <PackageVersion Include="MessagePack" Version="3.1.7" /> <!-- Transitive dependency of Aspire pinned to newer version due to vulnerability in 2.5.192 -->
     <!-- Azure.* -->
-    <PackageVersion Include="Azure.AI.AgentServer.Core" Version="1.0.0-beta.26" />
-    <PackageVersion Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.5" />
-    <PackageVersion Include="Azure.AI.AgentServer.Responses" Version="1.0.0-beta.6" />
+    <PackageVersion Include="Azure.AI.AgentServer.Core" Version="1.0.0-beta.28" />
+    <PackageVersion Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.6" />
+    <PackageVersion Include="Azure.AI.AgentServer.Responses" Version="1.0.0-beta.8" />
     <PackageVersion Include="Azure.Search.Documents" Version="12.0.0" />
     <PackageVersion Include="Azure.AI.Projects" Version="2.1.0-beta.4" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.10" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
-    <PackageVersion Include="Azure.Core" Version="1.60.0" />
+    <PackageVersion Include="Azure.Core" Version="1.61.0" />
     <PackageVersion Include="Azure.Identity" Version="1.21.0" />
+    <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.1" />
     <PackageVersion Include="DotNetEnv" Version="3.1.1" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.5.0" />
     <!-- Google Gemini  -->
@@ -44,15 +45,15 @@
     <!-- System.* -->
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
-    <PackageVersion Include="Microsoft.Bcl.Memory" Version="10.0.5" />
-    <PackageVersion Include="System.ClientModel" Version="1.14.0" />
+    <PackageVersion Include="Microsoft.Bcl.Memory" Version="10.0.10" />
+    <PackageVersion Include="System.ClientModel" Version="1.15.0" />
     <PackageVersion Include="System.CodeDom" Version="10.0.0" />
-    <PackageVersion Include="System.Collections.Immutable" Version="10.0.1" />
+    <PackageVersion Include="System.Collections.Immutable" Version="10.0.10" />
     <PackageVersion Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
     <PackageVersion Include="System.Diagnostics.DiagnosticSource" Version="10.0.11" />
     <PackageVersion Include="System.Linq.AsyncEnumerable" Version="10.0.5" />
     <PackageVersion Include="System.Net.Http.Json" Version="10.0.0" />
-    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.8" />
+    <PackageVersion Include="System.Net.ServerSentEvents" Version="10.0.10" />
     <!-- AG-UI .NET SDK packages (published by the AG-UI team). -->
     <PackageVersion Include="AGUI.Abstractions" Version="0.0.5" />
     <PackageVersion Include="AGUI.Formatting" Version="0.0.5" />
@@ -119,7 +120,8 @@
     <PackageVersion Include="A2A" Version="1.0.0-preview2" />
     <PackageVersion Include="A2A.AspNetCore" Version="1.0.0-preview2" />
     <!-- MCP -->
-    <PackageVersion Include="ModelContextProtocol" Version="1.2.0" />
+    <PackageVersion Include="ModelContextProtocol" Version="2.1.0" />
+    <PackageVersion Include="ModelContextProtocol.Extensions.Tasks" Version="2.1.0" />
     <!-- Hyperlight -->
     <PackageVersion Include="Hyperlight.HyperlightSandbox.Api" Version="0.4.0" />
     <PackageVersion Include="Hyperlight.HyperlightSandbox.Guest.Python" Version="0.4.0" />

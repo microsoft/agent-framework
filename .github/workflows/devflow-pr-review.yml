@@ -34,17 +34,41 @@ env:
   MODEL_CONFIG_PATH: ${{ github.workspace }}/devflow/config.ci.yaml
 
 jobs:
-  team_check:
+  command_check:
     if: >-
       github.event_name != 'issue_comment' ||
       (
         github.event.issue.pull_request &&
-        github.event.comment.body == '/review' &&
         (
           github.event.comment.author_association == 'MEMBER' ||
           github.event.comment.author_association == 'OWNER'
         )
       )
+    runs-on: ubuntu-latest
+    outputs:
+      should_review: ${{ steps.check.outputs.should_review }}
+    steps:
+      - name: Checkout review command validation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+          sparse-checkout: .github/scripts/review_command.js
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check review command
+        id: check
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const isReviewCommand = require('./.github/scripts/review_command.js');
+            const shouldReview = context.eventName !== 'issue_comment' ||
+              isReviewCommand(context.payload.comment?.body);
+            core.setOutput('should_review', shouldReview ? 'true' : 'false');
+
+  team_check:
+    needs: command_check
+    if: ${{ needs.command_check.outputs.should_review == 'true' }}
     runs-on: ubuntu-latest
     environment: github-app-auth
     outputs:

@@ -90,7 +90,6 @@ class FoundryCheckpointStore:
         return await FoundryStateStore.get_or_create(
             f"{self.DEFAULT_ROOT_SCOPE}/{self.context_id}",
             user_isolation=True,
-            user_id=self.platform_context.user_id,
         )
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
@@ -232,7 +231,6 @@ class FoundryFunctionApprovalStore:
         return await FoundryStateStore.get_or_create(
             self.DEFAULT_ROOT_SCOPE,
             user_isolation=True,
-            user_id=self.platform_context.user_id,
         )
 
     async def save_approval_request(self, approval_request_id: str, request: Content) -> None:
@@ -280,7 +278,6 @@ class FoundryAgentSessionStore(SessionStore):
         return await FoundryStateStore.get_or_create(
             f"{self.DEFAULT_ROOT_SCOPE}",
             user_isolation=True,
-            user_id=self.platform_context.user_id,
         )
 
     async def get(self, session_id: str) -> AgentSession | None:

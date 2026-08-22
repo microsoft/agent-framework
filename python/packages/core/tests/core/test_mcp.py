@@ -8,6 +8,7 @@ import os
 import sys
 import warnings
 from contextlib import _AsyncGeneratorContextManager  # type: ignore
+from contextvars import ContextVar
 from datetime import timedelta
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
@@ -4744,6 +4745,52 @@ async def test_mcp_tool_call_tool_requires_loaded_tools() -> None:
         await tool.call_tool("remote_tool")
 
 
+async def test_generated_mcp_function_ignores_model_supplied_remote_tool_name() -> None:
+    """A model-supplied argument must not be able to redirect the call to another remote tool."""
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]
+    tool.session = Mock(spec=ClientSession)
+    tool.session.list_tools = AsyncMock(  # ty: ignore[unresolved-attribute]
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="search_docs",
+                    description="Search docs.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                ),
+                types.Tool(
+                    name="delete_repo",
+                    description="Delete a repository.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {"repo": {"type": "string"}},
+                        "required": ["repo"],
+                    },
+                ),
+            ]
+        )
+    )
+    tool.session.call_tool = AsyncMock(  # ty: ignore[unresolved-attribute]
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+    )
+
+    await tool.load_tools()
+
+    search_docs = next(func for func in tool.functions if func.name == "search_docs")
+    await search_docs.invoke(
+        arguments={"query": "quarterly report", "_remote_tool_name": "delete_repo", "repo": "corp/prod"}
+    )
+
+    tool.session.call_tool.assert_awaited_once()  # ty: ignore[unresolved-attribute]
+    await_args = tool.session.call_tool.await_args  # ty: ignore[unresolved-attribute]
+    assert await_args is not None
+    assert await_args.args[0] == "search_docs"
+    assert await_args.kwargs["arguments"] == {"query": "quarterly report"}
+
+
 async def test_mcp_tool_get_prompt_requires_loaded_prompts() -> None:
     tool = MCPTool(name="test_tool", load_prompts=False)  # type: ignore[abstract]
 
@@ -7812,7 +7859,7 @@ def test_prepare_call_kwargs_rejects_invalid_meta_key_names(key: str) -> None:
 
 
 async def test_call_tool_forwards_only_declared_arguments() -> None:
-    """End-to-end: framework runtime kwargs are stripped before reaching the server."""
+    """End-to-end: runtime kwargs the tool does not declare are stripped before reaching the server."""
 
     class TestServer(MCPTool):
         async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
@@ -7854,6 +7901,130 @@ async def test_call_tool_forwards_only_declared_arguments() -> None:
         session_mock.call_tool.assert_called_once()  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         _, call_kwargs = session_mock.call_tool.call_args  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         assert call_kwargs["arguments"] == {"param": "value", "conversation_id": "c"}
+
+
+async def test_call_tool_forwards_runtime_kwargs_the_server_declares() -> None:
+    """A runtime kwarg is forwarded when the server declares a property of the same name.
+
+    Invokes the generated ``FunctionTool`` with a ``FunctionInvocationContext`` so the merge in
+    ``_call_tool_with_runtime_kwargs`` is on the tested path: the model supplies only ``param``,
+    while ``api_token`` arrives solely through ``FunctionInvocationContext.kwargs``. The allowlist
+    in ``_prepare_call_kwargs`` is built from the server's advertised ``inputSchema.properties``,
+    so declaring an optional property is enough for the server to receive that runtime value,
+    without the name appearing in ``additional_tool_argument_names``. This pins the behavior the
+    ``function_invocation_kwargs`` guidance describes.
+    """
+
+    class TestServer(MCPTool):
+        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {
+                                    "param": {"type": "string"},
+                                    # Declared but not required, so the model never supplies it.
+                                    "api_token": {"type": "string"},
+                                },
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        session_mock = server.session
+
+        # Invoke the generated FunctionTool the way the function-calling loop does, so the
+        # runtime kwargs are merged by _call_tool_with_runtime_kwargs rather than being passed
+        # to call_tool directly. Only "param" is model-supplied.
+        tool = next(f for f in server.functions if f.name == "test_tool")
+        context = FunctionInvocationContext(
+            function=tool,
+            arguments={"param": "value"},
+            kwargs={"api_token": "runtime-value"},
+        )
+        await tool.invoke(arguments={"param": "value"}, context=context)
+
+        _, call_kwargs = session_mock.call_tool.call_args  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert call_kwargs["arguments"] == {"param": "value", "api_token": "runtime-value"}
+
+
+async def test_header_provider_reading_contextvar_keeps_credential_out_of_arguments() -> None:
+    """A credential sourced outside ``function_invocation_kwargs`` is not exposed to the filter.
+
+    Documents the pattern the ``header_provider`` guidance recommends: the provider reads a
+    ``ContextVar`` instead of its ``kwargs`` argument, so the credential never enters the runtime
+    kwargs and cannot be forwarded as a tool argument even though the server declares a property
+    of that name. The value still varies per request.
+    """
+    token_var: ContextVar[str] = ContextVar("test_token_var")
+    seen_headers: list[dict[str, str]] = []
+
+    class TestServer(MCPStreamableHTTPTool):
+        async def connect(self):  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="get_weather",
+                            description="Weather",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"city": {"type": "string"}, "api_key": {"type": "string"}},
+                                "required": ["city"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="sunny")])
+            )
+            self.session.send_ping = AsyncMock()
+            self.is_connected = True
+
+        def get_mcp_client(self):  # pyrefly: ignore[bad-override]
+            return None
+
+    def provider(_kwargs: dict[str, Any]) -> dict[str, str]:
+        headers = {"Authorization": f"Bearer {token_var.get()}"}
+        seen_headers.append(headers)
+        return headers
+
+    server = TestServer(name="test_server", url="http://example.com/mcp", header_provider=provider)
+    async with server:
+        await server.load_tools()
+        tool = next(f for f in server.functions if f.name == "get_weather")
+
+        token_var.set("secret-1")
+        context = FunctionInvocationContext(function=tool, arguments={"city": "Seattle"}, kwargs={})
+        await tool.invoke(arguments={"city": "Seattle"}, context=context)
+
+        _, call_kwargs = server.session.call_tool.call_args  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
+        assert seen_headers[-1] == {"Authorization": "Bearer secret-1"}
+        assert call_kwargs["arguments"] == {"city": "Seattle"}
+
+        # The same provider yields a different credential on the next request.
+        token_var.set("secret-2")
+        context = FunctionInvocationContext(function=tool, arguments={"city": "Oslo"}, kwargs={})
+        await tool.invoke(arguments={"city": "Oslo"}, context=context)
+        assert seen_headers[-1] == {"Authorization": "Bearer secret-2"}
 
 
 # endregion

@@ -240,6 +240,34 @@ def _mcp_config_candidate_names(*, local_name: str, normalized_name: str, remote
     return tuple(names)
 
 
+def _make_mcp_tool_caller(
+    mcp_tool: MCPTool, remote_tool_name: str
+) -> Callable[..., Coroutine[Any, Any, str | list[Content]]]:
+    """Build the callable backing a generated MCP ``FunctionTool``.
+
+    The remote tool name is captured in this factory's closure rather than declared as a
+    parameter of the returned callable. Model-supplied arguments are splatted into that
+    callable, so any name it declares could be bound - and overridden - by the model. Keeping
+    the call target out of the signature means it can only ever be reached through ``**kwargs``,
+    which is forwarded as tool arguments and can never redirect the call to another tool.
+    """
+
+    async def _call_tool_with_runtime_kwargs(
+        ctx: FunctionInvocationContext,
+        **kwargs: Any,
+    ) -> str | list[Content]:
+        trusted_meta = ctx.kwargs.get("_meta")
+        call_kwargs = dict(ctx.kwargs)
+        call_kwargs.update(kwargs)
+        if trusted_meta is not None:
+            call_kwargs["_meta"] = trusted_meta
+        else:
+            call_kwargs.pop("_meta", None)
+        return await mcp_tool.call_tool(remote_tool_name, **call_kwargs)
+
+    return _call_tool_with_runtime_kwargs
+
+
 def _validate_mcp_meta_key(key: str) -> None:
     """Validate an MCP ``_meta`` key against the 2025-06-18 key-name format."""
     if not _MCP_META_KEY_PATTERN.fullmatch(key):
@@ -1894,24 +1922,9 @@ class MCPTool:
                     )
                 )
 
-                async def _call_tool_with_runtime_kwargs(
-                    ctx: FunctionInvocationContext,
-                    *,
-                    _remote_tool_name: str = tool.name,
-                    **kwargs: Any,
-                ) -> str | list[Content]:
-                    trusted_meta = ctx.kwargs.get("_meta")
-                    call_kwargs = dict(ctx.kwargs)
-                    call_kwargs.update(kwargs)
-                    if trusted_meta is not None:
-                        call_kwargs["_meta"] = trusted_meta
-                    else:
-                        call_kwargs.pop("_meta", None)
-                    return await self.call_tool(_remote_tool_name, **call_kwargs)
-
                 # Create FunctionTools out of each tool
                 func: FunctionTool = FunctionTool(
-                    func=_call_tool_with_runtime_kwargs,
+                    func=_make_mcp_tool_caller(self, tool.name),
                     name=local_name,
                     description=tool.description or "",
                     approval_mode=approval_mode,
@@ -2041,7 +2054,12 @@ class MCPTool:
                 ``meta`` parameter of the underlying ``session.call_tool`` call rather than as a tool argument.
                 OpenTelemetry propagation overrides caller-supplied keys, and metadata from ``tools/list``
                 overrides both.
-            kwargs: Remaining arguments to pass to the tool.
+            kwargs: Remaining arguments to pass to the tool. Before the ``tools/call`` these are
+                filtered to the tool's server-declared ``inputSchema.properties`` plus names
+                opted in via ``additional_tool_argument_names``; ``_meta`` and the framework
+                denylist names are excluded. Because the declared set is server-controlled, a
+                runtime kwarg from ``function_invocation_kwargs`` is forwarded when the server
+                declares a matching name.
 
         Returns:
             A list of Content items representing the tool output.  The default
@@ -2152,14 +2170,19 @@ class MCPTool:
         user_meta = _validate_mcp_meta(kwargs.get("_meta"))
 
         # Allowlist: forward only the tool's declared parameters (from inputSchema.properties)
-        # plus any user-configured extra argument names. Everything else - notably the
-        # framework runtime kwargs injected through the function-invocation pipeline - is
-        # stripped so it is never forwarded to the MCP server. Tools that declare no usable
-        # properties forward only the user-configured extras.
+        # plus any user-configured extra argument names. Everything else is stripped. Tools that
+        # declare no usable properties forward only the user-configured extras.
         #
-        # The extra names come exclusively from additional_tool_argument_names, which is set in
-        # user code at construction time; there is no per-call override, so a model-issued tool
-        # call cannot change which names are allowed through.
+        # Runtime kwargs (FunctionInvocationContext.kwargs, seeded from function_invocation_kwargs)
+        # were merged with the model-supplied arguments upstream in _call_tool_with_runtime_kwargs,
+        # so provenance is not available here. A runtime kwarg is forwarded whenever its name is in
+        # `declared`, and `declared` comes from the server's own advertised schema (see load_tools).
+        # The server therefore selects which runtime kwarg names it receives; callers must not
+        # assume a name is withheld just because it is absent from additional_tool_argument_names.
+        #
+        # The extra names come exclusively from additional_tool_argument_names, set in user code at
+        # construction time; there is no per-call override, so a model-issued tool call cannot
+        # change which names pass. That constrains the model, not the server.
         #
         # The framework denylist acts as a safety net for keys a server *declares* in its
         # schema that collide with internal, non-serializable framework objects (e.g. a tool
@@ -2823,9 +2846,8 @@ class MCPStdioTool(MCPTool):
                 ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             additional_tool_argument_names: Extra argument names to forward to the MCP server in
                 addition to each tool's declared parameters (from its ``inputSchema.properties``).
-                By default only declared parameters are sent; framework runtime kwargs injected
-                through the function-invocation pipeline are stripped. Use this to opt specific
-                keys back in. Accepts either a ``Sequence[str]`` applied to every tool, or a
+                By default only declared parameters and these extras are sent. Accepts either a
+                ``Sequence[str]`` applied to every tool, or a
                 ``Mapping[str, Sequence[str]]`` keyed by remote tool name where the reserved key
                 ``"*"`` applies to every tool. This is configured only here in user code; there is
                 no per-call override, so a model-issued tool call cannot change which names pass
@@ -2835,6 +2857,15 @@ class MCPStdioTool(MCPTool):
                 them, or (2) supply the values yourself through ``function_invocation_kwargs``. If
                 a name is supplied via both the model and ``function_invocation_kwargs``, the
                 model-supplied value wins.
+
+                Note: this widens the allowlist, it does not bound it. The allowlist is built
+                from the server's advertised ``inputSchema.properties``, so a runtime kwarg from
+                ``function_invocation_kwargs`` is forwarded whenever the server declares a
+                property of that name, even if you never listed it here and the model never
+                mentioned it (``_meta`` and the framework denylist names are the exceptions).
+                Treat those keys as visible to this server, and source credentials outside
+                ``function_invocation_kwargs`` - for example through ``env`` - for servers whose
+                process you do not control.
             kwargs: Any extra arguments to pass to the stdio client.
         """
         super().__init__(
@@ -3030,13 +3061,16 @@ class MCPStreamableHTTPTool(MCPTool):
                 origins on cross-origin redirects. If you instead supply sensitive headers
                 through a custom ``http_client``, you must enforce this same origin-scoped
                 policy yourself.
+                Note that the provider reads these kwargs without consuming them: the same
+                values continue on to the outbound argument filter, so reading a credential
+                here does not withhold it from the server. See
+                ``additional_tool_argument_names`` below.
             task_options: Options for tools that advertise
                 ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             additional_tool_argument_names: Extra argument names to forward to the MCP server in
                 addition to each tool's declared parameters (from its ``inputSchema.properties``).
-                By default only declared parameters are sent; framework runtime kwargs injected
-                through the function-invocation pipeline are stripped. Use this to opt specific
-                keys back in. Accepts either a ``Sequence[str]`` applied to every tool, or a
+                By default only declared parameters and these extras are sent. Accepts either a
+                ``Sequence[str]`` applied to every tool, or a
                 ``Mapping[str, Sequence[str]]`` keyed by remote tool name where the reserved key
                 ``"*"`` applies to every tool. This is configured only here in user code; there is
                 no per-call override, so a model-issued tool call cannot change which names pass
@@ -3046,6 +3080,18 @@ class MCPStreamableHTTPTool(MCPTool):
                 them, or (2) supply the values yourself through ``function_invocation_kwargs``. If
                 a name is supplied via both the model and ``function_invocation_kwargs``, the
                 model-supplied value wins.
+
+                Note: this widens the allowlist, it does not bound it. The allowlist is built
+                from the server's advertised ``inputSchema.properties``, so a runtime kwarg from
+                ``function_invocation_kwargs`` is forwarded whenever the server declares a
+                property of that name, even if you never listed it here and the model never
+                mentioned it (``_meta`` and the framework denylist names are the exceptions).
+                The same dict is shared with every MCP server attached to the run, and
+                ``header_provider`` does not withhold anything - it reads these kwargs without
+                consuming them. To keep a credential out of tool arguments, source it outside
+                ``function_invocation_kwargs``: read a ``ContextVar`` inside the provider (which
+                still allows a different value per request), or configure a custom
+                ``http_client``.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
@@ -3175,6 +3221,9 @@ class MCPStreamableHTTPTool(MCPTool):
         *kwargs* (originating from ``FunctionInvocationContext.kwargs``) are passed
         to the provider.  The returned headers are attached to every HTTP request
         made during this tool call via a request hook on the underlying HTTP client.
+
+        The provider does not consume the kwargs: the same mapping continues to
+        :meth:`MCPTool.call_tool` and its outbound argument filter.
 
         Args:
             tool_name: The name of the tool to call.
@@ -3310,9 +3359,8 @@ class MCPWebsocketTool(MCPTool):
                 ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             additional_tool_argument_names: Extra argument names to forward to the MCP server in
                 addition to each tool's declared parameters (from its ``inputSchema.properties``).
-                By default only declared parameters are sent; framework runtime kwargs injected
-                through the function-invocation pipeline are stripped. Use this to opt specific
-                keys back in. Accepts either a ``Sequence[str]`` applied to every tool, or a
+                By default only declared parameters and these extras are sent. Accepts either a
+                ``Sequence[str]`` applied to every tool, or a
                 ``Mapping[str, Sequence[str]]`` keyed by remote tool name where the reserved key
                 ``"*"`` applies to every tool. This is configured only here in user code; there is
                 no per-call override, so a model-issued tool call cannot change which names pass
@@ -3322,6 +3370,15 @@ class MCPWebsocketTool(MCPTool):
                 them, or (2) supply the values yourself through ``function_invocation_kwargs``. If
                 a name is supplied via both the model and ``function_invocation_kwargs``, the
                 model-supplied value wins.
+
+                Note: this widens the allowlist, it does not bound it. The allowlist is built
+                from the server's advertised ``inputSchema.properties``, so a runtime kwarg from
+                ``function_invocation_kwargs`` is forwarded whenever the server declares a
+                property of that name, even if you never listed it here and the model never
+                mentioned it (``_meta`` and the framework denylist names are the exceptions).
+                The same dict is shared with every MCP server attached to the run. This
+                transport has no header hook, so source credentials outside
+                ``function_invocation_kwargs`` for servers you do not control.
             kwargs: Any extra arguments to pass to the WebSocket client.
         """
         super().__init__(

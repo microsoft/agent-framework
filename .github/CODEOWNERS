@@ -66,8 +66,8 @@
 /python/packages/declarative/                                   @chetantoshniwal @moonbox3 @peibekwe
 /python/packages/devui/                                         @chetantoshniwal @eavanvalkenburg @moonbox3
 /python/packages/foundry/                                       @chetantoshniwal @eavanvalkenburg @TaoChenOSU @moonbox3 @giles17
-/python/packages/foundry_hosting/                               @chetantoshniwal @TaoChenOSU @eavanvalkenburg
-/python/packages/foundry_local/                                 @chetantoshniwal @eavanvalkenburg @giles17
+/python/packages/foundry_hosting/                               @chetantoshniwal @TaoChenOSU @eavanvalkenburg @moonbox3
+/python/packages/foundry_local/                                 @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/gemini/                                        @chetantoshniwal @giles17 @eavanvalkenburg @moonbox3
 /python/packages/github_copilot/                                @chetantoshniwal @giles17 @eavanvalkenburg @moonbox3
 /python/packages/hosting/                                       @chetantoshniwal @eavanvalkenburg @TaoChenOSU @moonbox3
@@ -113,6 +113,7 @@
 /dotnet/src/Microsoft.Agents.AI.Hosting.A2A.AspNetCore/         @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
 /dotnet/src/Microsoft.Agents.AI.Hosting.AGUI.AspNetCore/        @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
 /dotnet/src/Microsoft.Agents.AI.Hosting.AspNetCore/             @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
+/dotnet/src/Microsoft.Agents.AI.Hosting.AzureStorage/           @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
 /dotnet/src/Microsoft.Agents.AI.Hosting.OpenAI/                 @chetantoshniwal @rogerbarreto @SergeyMenshykh @westey-m
 /dotnet/src/Microsoft.Agents.AI.Hyperlight/                     @chetantoshniwal @westey-m @SergeyMenshykh
 /dotnet/src/Microsoft.Agents.AI.LocalCodeAct/                   @chetantoshniwal @westey-m @SergeyMenshykh
@@ -127,4 +128,3 @@
 /dotnet/src/Microsoft.Agents.AI.Workflows.Declarative.Foundry/  @chetantoshniwal @peibekwe @rogerbarreto
 /dotnet/src/Microsoft.Agents.AI.Workflows.Declarative.Mcp/      @chetantoshniwal @peibekwe @rogerbarreto
 /dotnet/src/Microsoft.Agents.AI.Workflows.Generators/           @chetantoshniwal @peibekwe @rogerbarreto
-
