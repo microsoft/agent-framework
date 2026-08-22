@@ -6401,6 +6401,7 @@ async def test_max_duration_seconds_non_streaming_triggers_graceful_degradation(
     def step_func() -> str:
         nonlocal exec_counter
         exec_counter += 1
+        current_time[0] = 10.0  # Advance time so the next check triggers expiration
         return "done"
 
     chat_client_base.function_invocation_configuration["max_duration_seconds"] = 5.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -6421,15 +6422,10 @@ async def test_max_duration_seconds_non_streaming_triggers_graceful_degradation(
         ChatResponse(messages=Message(role="assistant", contents=["giving up"])),
     ]
 
-    call_count = 0
+    current_time = [0.0]
 
     def fake_perf_counter() -> float:
-        nonlocal call_count
-        call_count += 1
-        # Call 1: start_time (t=0.0)
-        # Call 2: Phase 1 duration check (t=0.0)
-        # Call 3+: post-iteration limit check (t=10.0)
-        return 0.0 if call_count <= 2 else 10.0
+        return current_time[0]
 
     from unittest.mock import patch
 
@@ -6454,6 +6450,7 @@ async def test_max_duration_seconds_streaming_triggers_graceful_degradation(
     def step_func() -> str:
         nonlocal exec_counter
         exec_counter += 1
+        current_time[0] = 10.0  # Advance time so the next check triggers expiration
         return "done"
 
     chat_client_base.function_invocation_configuration["max_duration_seconds"] = 5.0  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
@@ -6475,15 +6472,10 @@ async def test_max_duration_seconds_streaming_triggers_graceful_degradation(
         ],
     ]
 
-    call_count = 0
+    current_time = [0.0]
 
     def fake_perf_counter() -> float:
-        nonlocal call_count
-        call_count += 1
-        # Call 1: start_time (t=0.0)
-        # Call 2: Phase 1 duration check (t=0.0)
-        # Call 3+: post-iteration limit check (t=10.0)
-        return 0.0 if call_count <= 2 else 10.0
+        return current_time[0]
 
     from unittest.mock import patch
 
@@ -6609,12 +6601,12 @@ async def test_duration_wins_precedence_over_iterations(chat_client_base: Suppor
         ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
-    call_count = 0
+    current_time = [0.0]
 
     def fake_perf_counter() -> float:
-        nonlocal call_count
-        call_count += 1
-        return 0.0 if call_count == 1 else 100.0  # always exceeded after start
+        res = current_time[0]
+        current_time[0] = 100.0  # Advance time so the next check triggers expiration
+        return res
 
     from unittest.mock import patch
 
@@ -6683,14 +6675,12 @@ async def test_batch_limit_decision_precedence_duration_over_call_count(
             ),
         ]
 
-    call_count = 0
+    current_time = [0.0]
 
     def fake_perf_counter() -> float:
-        nonlocal call_count
-        call_count += 1
-        # Calls 1 & 2 (start_time, Phase 1 duration check): t=0.0
-        # Call 3+ (post-batch limit decision): t=10.0 (duration limit expired)
-        return 0.0 if call_count <= 2 else 10.0
+        res = current_time[0]
+        current_time[0] = 10.0  # Advance time so the next check triggers expiration
+        return res
 
     from unittest.mock import patch
 
@@ -6755,8 +6745,15 @@ def test_max_duration_seconds_rejects_nan():
 
 
 async def test_phase1_duration_expiry_prevents_approval_execution(chat_client_base: SupportsChatGetResponse):
+    from agent_framework._harness._tool_approval import ToolApprovalMiddleware
+    from agent_framework._sessions import AgentSession
+
+    tool_executed = False
+
     @tool(name="op", approval_mode="always_require")
     def op() -> str:
+        nonlocal tool_executed
+        tool_executed = True
         return "done"
 
     chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]
@@ -6769,26 +6766,46 @@ async def test_phase1_duration_expiry_prevents_approval_execution(chat_client_ba
         ),
     ]
 
-    call_count = 0
+    current_time = [0.0]
 
     def fake_perf_counter() -> float:
-        nonlocal call_count
-        call_count += 1
-        return 0.0 if call_count <= 2 else 10.0
+        return current_time[0]
+
+    session = AgentSession()
+    middleware = ToolApprovalMiddleware()
+    agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
 
     from unittest.mock import patch
     with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
-        from agent_framework._sessions import AgentSession
-        session = AgentSession()
-        session.state["_approval_op1"] = True
+        # First run: getting the approval request. Time is 0.0, so duration is not exceeded.
+        first_response = await agent.run("Go", session=session)
 
-        agent = Agent(client=chat_client_base, tools=[op])
-        response = await agent.run("Go", session=session)
+        # Find the approval request in the response
+        approval_request = next(
+            c for c in first_response.messages[-1].contents if c.type == "function_approval_request"
+        )
 
+        # Now advance time to exceed max_duration_seconds (1.0s limit)
+        current_time[0] = 10.0
+
+        # Second run: user provides the approval response, but duration is exceeded.
+        resume_message = Message(
+            role="user",
+            contents=[approval_request.to_function_approval_response(approved=True)]
+        )
+        response = await agent.run(resume_message, session=session)
+
+    # The tool should NOT have executed
+    assert not tool_executed
+    # The phase 1 check should have blocked it and set stop_reason
     assert response.additional_properties.get("_agent_framework_stop_reason") == "max_duration_seconds"
 
 
-async def test_duration_expiry_drops_unexecutable_provider_call(chat_client_base: SupportsChatGetResponse):
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_duration_expiry_drops_unexecutable_provider_call(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+):
     @tool(name="op")
     def op() -> str:
         return "done"
@@ -6796,27 +6813,38 @@ async def test_duration_expiry_drops_unexecutable_provider_call(chat_client_base
     chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]
 
     call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
-    chat_client_base.run_responses = [  # type: ignore[attr-defined]
-        ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
-        ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
-        ChatResponse(
-            messages=[Message(role="assistant", contents=[Content.from_text("fallback")])], finish_reason="stop"
-        ),
-    ]
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]
+            [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+            [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+            [ChatResponseUpdate(contents=[Content.from_text("fallback")], role="assistant", finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]
+            ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
+            ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
+            ChatResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("fallback")])], finish_reason="stop"
+            ),
+        ]
 
-    call_count = 0
+    agent = Agent(client=chat_client_base, tools=[op])
+    current_time = [0.0]
 
     def fake_perf_counter() -> float:
-        nonlocal call_count
-        call_count += 1
-        return 0.0 if call_count <= 2 else 10.0
+        res = current_time[0]
+        current_time[0] = 10.0  # Advance time so the next check triggers expiration
+        return res
 
     from unittest.mock import patch
     with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
-        response = await chat_client_base.get_response(
-            [Message(role="user", contents=["Go"])],
-            options={"tool_choice": "auto", "tools": [op]}
-        )
+        if streaming:
+            stream = agent.run("Go", stream=True)
+            async for _ in stream:
+                pass
+            response = await stream.get_final_response()
+        else:
+            response = await agent.run("Go")
 
     assert response.additional_properties.get("_agent_framework_stop_reason") == "max_duration_seconds"
 
@@ -6826,6 +6854,7 @@ async def test_session_budget_state_persists_during_approval_and_cleans_up_on_co
 ):
     from agent_framework._harness._tool_approval import ToolApprovalMiddleware
     from agent_framework._sessions import AgentSession
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
 
     @tool(name="op", approval_mode="always_require")
     def op() -> str:
@@ -6844,34 +6873,38 @@ async def test_session_budget_state_persists_during_approval_and_cleans_up_on_co
     middleware = ToolApprovalMiddleware()
     agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
 
-    call_count = 0
+    current_time = [0.0]
 
     def fake_perf_counter() -> float:
-        nonlocal call_count
-        call_count += 1
-        return 0.0 if call_count <= 2 else 10.0
+        res = current_time[0]
+        current_time[0] = 10.0  # Advance time so the next check triggers expiration
+        return res
 
-    import contextlib
     from unittest.mock import patch
-
     with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
-        with contextlib.suppress(Exception):
-            await agent.run("Go", session=session)
+        first_response = await agent.run("Go", session=session)
+        assert any(c.type == "function_approval_request" for c in first_response.messages[-1].contents)
 
-        assert "_function_invocation_budget" in session.state
-        assert "start_time" in session.state["_function_invocation_budget"]
+        assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY in session.state
+        assert "start_time" in session.state[_FUNCTION_INVOCATION_BUDGET_STATE_KEY]
 
-        session.state["_approval_op1"] = True
+        approval_request = next(
+            c for c in first_response.messages[-1].contents if c.type == "function_approval_request"
+        )
+        resume_message = Message(
+            role="user", contents=[approval_request.to_function_approval_response(approved=True)]
+        )
 
-        await agent.run("Resume", session=session)
+        await agent.run(resume_message, session=session)
 
-        assert "_function_invocation_budget" not in session.state
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
 
 
 async def test_plain_session_multiturn_has_isolated_budget_state_per_invocation(
     chat_client_base: SupportsChatGetResponse,
 ):
     from agent_framework._sessions import AgentSession
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
 
     @tool(name="op")
     def op() -> str:
@@ -6891,15 +6924,16 @@ async def test_plain_session_multiturn_has_isolated_budget_state_per_invocation(
     agent = Agent(client=chat_client_base, tools=[op])
 
     await agent.run("Go", session=session)
-    assert "_function_invocation_budget" not in session.state
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
 
     await agent.run("Go again", session=session)
-    assert "_function_invocation_budget" not in session.state
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
 
 
 async def test_streaming_pending_approval_survives_budget_state_pop(chat_client_base: SupportsChatGetResponse):
     from agent_framework._harness._tool_approval import ToolApprovalMiddleware
     from agent_framework._sessions import AgentSession
+    from agent_framework._tools import _FUNCTION_INVOCATION_BUDGET_STATE_KEY
 
     @tool(name="op", approval_mode="always_require")
     def op() -> str:
@@ -6916,12 +6950,77 @@ async def test_streaming_pending_approval_survives_budget_state_pop(chat_client_
     middleware = ToolApprovalMiddleware()
     agent = Agent(client=chat_client_base, tools=[op], middleware=[middleware])
 
-    stream = agent.run("Go", session=session, stream=True)
+    from unittest.mock import patch
+    with patch("agent_framework._tools.perf_counter", return_value=0.0):
+        stream = agent.run("Go", session=session, stream=True)
 
-    try:
         async for _ in stream:
             pass
-    except Exception:
-        pass
 
-    assert "_function_invocation_budget" in session.state
+        first_response = await stream.get_final_response()
+        assert any(c.type == "function_approval_request" for c in first_response.messages[-1].contents)
+        assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY in session.state
+
+        approval_request = next(
+            c for c in first_response.messages[-1].contents if c.type == "function_approval_request"
+        )
+        resume_message = Message(
+            role="user", contents=[approval_request.to_function_approval_response(approved=True)]
+        )
+
+        stream2 = agent.run(resume_message, session=session, stream=True)
+        async for _ in stream2:
+            pass
+        await stream2.get_final_response()
+
+    assert _FUNCTION_INVOCATION_BUDGET_STATE_KEY not in session.state
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_batch_limit_decision_precedence_duration_over_consecutive_errors(
+    chat_client_base: SupportsChatGetResponse,
+    streaming: bool,
+):
+    @tool(name="op")
+    def op() -> str:
+        raise ValueError("Error")
+
+    chat_client_base.function_invocation_configuration["max_consecutive_errors_per_request"] = 1  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["max_duration_seconds"] = 1.0  # type: ignore[attr-defined]
+
+    call = Content.from_function_call(call_id="op1", name="op", arguments="{}")
+
+    if streaming:
+        chat_client_base.streaming_responses = [  # type: ignore[attr-defined]
+            [ChatResponseUpdate(contents=[call], role="assistant", finish_reason="tool_calls")],
+            [ChatResponseUpdate(contents=[Content.from_text("fallback")], role="assistant", finish_reason="stop")],
+        ]
+    else:
+        chat_client_base.run_responses = [  # type: ignore[attr-defined]
+            ChatResponse(messages=[Message(role="assistant", contents=[call])], finish_reason="tool_calls"),
+            ChatResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text("fallback")])], finish_reason="stop"
+            ),
+        ]
+
+    agent = Agent(client=chat_client_base, tools=[op])
+
+    current_time = [0.0]
+
+    def fake_perf_counter() -> float:
+        res = current_time[0]
+        current_time[0] = 10.0  # Advance time so the next check triggers expiration
+        return res
+
+    from unittest.mock import patch
+
+    with patch("agent_framework._tools.perf_counter", side_effect=fake_perf_counter):
+        if streaming:
+            stream = agent.run("Go", stream=True)
+            async for _ in stream:
+                pass
+            response = await stream.get_final_response()
+        else:
+            response = await agent.run("Go")
+
+    assert response.additional_properties.get("_agent_framework_stop_reason") == "max_duration_seconds"
