@@ -985,8 +985,8 @@ async def test_handoff_clone_preserves_additional_properties() -> None:
     assert cloned_additional_properties is not coordinator.additional_properties
 
 
-def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
-    """Tool-control messages must be excluded from persisted handoff history."""
+def test_clean_conversation_for_handoff_keeps_allowlist_history() -> None:
+    """Tool-control messages must be excluded, but text and multimodal data must be preserved."""
     function_call = Content.from_function_call(
         call_id="handoff-call-1",
         name="handoff_to_refund_agent",
@@ -997,9 +997,12 @@ def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
         id="approval-1",
         function_call=function_call,
     )
+    
+    # Simulate a user attaching an image to their message
+    multimodal_content = Content(type="uri", uri="https://example.com/image.png", media_type="image/png")
 
     conversation = [
-        Message(role="user", contents=["My order arrived damaged."]),
+        Message(role="user", contents=["My order arrived damaged.", multimodal_content]),
         Message(
             role="assistant",
             contents=[
@@ -1017,10 +1020,20 @@ def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
 
     cleaned = clean_conversation_for_handoff(conversation)
     assert [message.role for message in cleaned] == ["user", "assistant"]
+    
+    # Assert Text is preserved
     assert [message.text for message in cleaned] == [
         "My order arrived damaged.",
         "Triage Agent: Routing you to Refund.",
     ]
+    
+    # Assert Multimodal URI is preserved in the first user message
+    user_contents = [c.type for c in cleaned[0].contents]
+    assert "uri" in user_contents
+    
+    # Assert Tool call is stripped from the assistant message
+    assistant_contents = [c.type for c in cleaned[1].contents]
+    assert "function_call" not in assistant_contents
 
 
 async def test_autonomous_mode_yields_output_without_user_request():

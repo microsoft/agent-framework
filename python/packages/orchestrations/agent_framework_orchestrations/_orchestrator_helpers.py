@@ -30,20 +30,40 @@ def clean_conversation_for_handoff(conversation: list[Message]) -> list[Message]
     Returns:
         Cleaned conversation history with only text content, suitable for handoff routing
     """
+    ALLOWED_CONTENT_TYPES = {
+        "text",
+        "text_reasoning",
+        "data",
+        "uri",
+        "hosted_file",
+        "hosted_vector_store",
+    }
+
     cleaned: list[Message] = []
     for msg in conversation:
-        # Keep only plain text history for handoff routing. Tool-control content
+        # Keep non-tool history for handoff routing. Tool-control content
         # (function_call/function_result/approval payloads) is runtime-only and
         # must not be replayed in future model turns.
-        text_parts = [content.text for content in msg.contents if content.type == "text" and content.text]
-        # TODO(@taochen): This is a simplified check that considers any non-text content as a tool call.
-        # We need to enhance this logic to specifically identify tool related contents.
-        if not text_parts:
+        retained_contents = []
+        for content in msg.contents:
+            ctype = getattr(content, "type", "text")
+            
+            # Skip disallowed types (tools, usage, errors, etc.)
+            if ctype not in ALLOWED_CONTENT_TYPES:
+                continue
+                
+            # Skip empty text parts
+            if ctype == "text" and not getattr(content, "text", None):
+                continue
+                
+            retained_contents.append(content)
+        
+        if not retained_contents:
             continue
 
         msg_copy = Message(
             role=msg.role,
-            contents=[" ".join(text_parts)],
+            contents=retained_contents,
             author_name=msg.author_name,
             additional_properties=dict(msg.additional_properties) if msg.additional_properties else None,
         )
