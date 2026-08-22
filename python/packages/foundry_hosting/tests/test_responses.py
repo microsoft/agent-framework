@@ -70,8 +70,10 @@ from agent_framework_foundry_hosting import ResponsesHostServer
 from agent_framework_foundry_hosting._responses import (
     CONSENT_ERROR_CODE,
     ConsentError,
+    _is_failed_stored_response,  # pyright: ignore[reportPrivateUsage]
     _item_to_message,  # pyright: ignore[reportPrivateUsage]
     _json_safe_to_str,  # pyright: ignore[reportPrivateUsage]
+    _OmitFailedConversationInputProvider,  # pyright: ignore[reportPrivateUsage]
     _output_item_to_message,  # pyright: ignore[reportPrivateUsage]
     _OutputItemTracker,  # pyright: ignore[reportPrivateUsage]
     _stringify_mcp_output,  # pyright: ignore[reportPrivateUsage]
@@ -1292,6 +1294,173 @@ class TestAgentSessionPersistence:
         assert body["status"] == "failed"
         assert stored is not None
         assert stored.state["before_failure"] == "saved"
+
+    async def test_failed_conversation_input_is_not_in_subsequent_history(self) -> None:
+        """Failed conversation input must not be replayed on the next turn.
+
+        The agentserver store, not the MAF session, is what #7630 poisons:
+        a failed request still persisted input items onto the conversation.
+        """
+        recorded_messages: list[Sequence[Message]] = []
+        agent = _make_agent(
+            response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("Hello!")])])
+        )
+        original_run = agent.run.side_effect
+
+        def run_dispatch(*args: Any, **kwargs: Any) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+            recorded_messages.append(cast(Sequence[Message], kwargs.get("messages") or []))
+            if len(recorded_messages) == 1:
+                return ResponseStream(
+                    _raising_updates("No tool call found for function call output with call_id call_12345abc."),
+                    finalizer=AgentResponse.from_updates,
+                )
+            return original_run(*args, **kwargs)
+
+        agent.run = MagicMock(side_effect=run_dispatch)
+        response_store = InMemoryResponseProvider()
+        server = _make_server(agent, response_store=response_store)
+
+        failed = await _post_json(
+            server,
+            {
+                "model": "test-model",
+                "conversation": "conv-failed",
+                "input": [
+                    {"role": "user", "content": "Hello, how are you?"},
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_12345abc",
+                        "output": "example function call output",
+                    },
+                ],
+            },
+        )
+        recovered = await _post(server, input_text="Hello, how are you?", conversation_id="conv-failed")
+
+        assert failed.json()["status"] == "failed"
+        assert recovered.json()["status"] == "completed"
+        assert len(recorded_messages) == 2
+        recovered_blob = json.dumps([
+            {
+                "role": str(message.role),
+                "contents": [getattr(content, "type", None) for content in message.contents],
+                "text": [
+                    getattr(content, "text", None) for content in message.contents if getattr(content, "text", None)
+                ],
+                "call_ids": [
+                    getattr(content, "call_id", None)
+                    for content in message.contents
+                    if getattr(content, "call_id", None)
+                ],
+            }
+            for message in recorded_messages[1]
+        ])
+        assert "call_12345abc" not in recovered_blob
+        assert "example function call output" not in recovered_blob
+        history_ids = await response_store.get_history_item_ids(None, "conv-failed", 100)
+        history_items = await response_store.get_items(history_ids)
+        history_blob = json.dumps(history_items)
+        assert "call_12345abc" not in history_blob
+
+    async def test_omit_failed_conversation_input_provider_drops_terminal_failed_input(self) -> None:
+        inner = InMemoryResponseProvider()
+        store = _OmitFailedConversationInputProvider(inner, set())
+        poison_item: dict[str, Any] = {
+            "id": "item_poison",
+            "type": "function_call_output",
+            "call_id": "call_12345abc",
+            "output": "example function call output",
+            "status": "completed",
+        }
+        ok_item: dict[str, Any] = {
+            "id": "item_ok",
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Hello, how are you?"}],
+            "status": "completed",
+        }
+
+        await store.create_response(
+            {"id": "resp_failed", "status": "failed", "conversation": "conv-1", "output": []},
+            [poison_item],
+            None,
+        )
+        await store.create_response(
+            {"id": "resp_ok", "status": "completed", "conversation": "conv-1", "output": []},
+            [ok_item],
+            None,
+        )
+
+        history_ids = await store.get_history_item_ids(None, "conv-1", 100)
+        assert "item_poison" not in history_ids
+        assert "item_ok" in history_ids
+        assert _is_failed_stored_response({"status": "failed", "conversation": "conv-1"})
+        assert not _is_failed_stored_response({"status": "completed", "conversation": "conv-1"})
+
+    async def test_omit_failed_conversation_input_provider_updates_existing_response_in_place(self) -> None:
+        inner = InMemoryResponseProvider()
+        store = _OmitFailedConversationInputProvider(inner, set())
+        poison_item: dict[str, Any] = {
+            "id": "item_poison",
+            "type": "function_call_output",
+            "call_id": "call_12345abc",
+            "output": "example function call output",
+            "status": "completed",
+        }
+        in_progress: dict[str, Any] = {
+            "id": "resp_stream_fail",
+            "status": "in_progress",
+            "conversation": "conv-1",
+            "output": [],
+        }
+
+        await store.create_response(in_progress, [poison_item], None)
+        await store.update_response({**in_progress, "status": "failed"})
+
+        persisted = await inner.get_response("resp_stream_fail")
+        input_items = await inner.get_input_items("resp_stream_fail", ascending=True)
+        assert persisted["status"] == "failed"
+        assert [item["id"] for item in input_items] == ["item_poison"]
+
+    async def test_omit_failed_conversation_input_provider_drops_known_failed_initial_input(self) -> None:
+        inner = InMemoryResponseProvider()
+        failed_response_ids = {"resp_failed"}
+        store = _OmitFailedConversationInputProvider(inner, failed_response_ids)
+        poison_item: dict[str, Any] = {
+            "id": "item_poison",
+            "type": "function_call_output",
+            "call_id": "call_12345abc",
+            "output": "example function call output",
+            "status": "completed",
+        }
+
+        await store.create_response(
+            {"id": "resp_failed", "status": "in_progress", "conversation": "conv-1", "output": []},
+            [poison_item],
+            None,
+        )
+
+        assert await inner.get_input_items("resp_failed") == []
+        assert failed_response_ids == set()
+
+    def test_default_response_store_is_resolved_before_wrapping(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("AGENTSERVER_STATE_ROOT", str(tmp_path))
+
+        server = ResponsesHostServer(_make_agent())
+        wrapped = server._endpoint._provider  # pyright: ignore[reportPrivateUsage]
+
+        assert isinstance(wrapped, _OmitFailedConversationInputProvider)
+        assert type(wrapped._inner).__name__ == "FileResponseStore"  # pyright: ignore[reportPrivateUsage]
+
+    def test_explicit_volatile_store_still_fails_resilient_background_guard(self) -> None:
+        options = ResponsesServerOptions(resilient_background=True)
+
+        with pytest.raises(ValueError, match="resilient_background=True"):
+            ResponsesHostServer(_make_agent(), store=InMemoryResponseProvider(), options=options)
 
     async def test_run_save_failure_emits_failed_response(self) -> None:
         store = _FailingSessionStore()

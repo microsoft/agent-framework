@@ -372,6 +372,65 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
 # endregion Foundry Toolbox Auth integration
 
 
+def _response_field(response: Any, name: str) -> Any:
+    """Read a field from a mapping or attribute-bearing response envelope."""
+    if isinstance(response, Mapping):
+        return cast(Mapping[str, Any], response).get(name)
+    return getattr(response, name, None)
+
+
+def _is_failed_stored_response(response: Any) -> bool:
+    """Return whether a persisted response envelope is a failed turn."""
+    return _response_field(response, "status") == "failed"
+
+
+class _OmitFailedConversationInputProvider:
+    """Omit failed-turn input from the Responses chat-history store.
+
+    The agentserver orchestrator persists input items for every stored response,
+    including ``status=failed``. Conversation history then replays those items on
+    the next turn, which is the #7630 failure mode. Azure OpenAI does not keep
+    failed input on the conversation.
+
+    For synchronous requests, the host knows the terminal status before the
+    provider sees the initial create. Failed responses therefore omit their
+    input items in the same operation that creates the response envelope.
+    Existing responses are updated in place: the provider protocol does not
+    expose an atomic operation for changing an envelope and its input references
+    together.
+    """
+
+    def __init__(self, inner: ResponseProviderProtocol, failed_response_ids: set[str]) -> None:
+        """Wrap ``inner`` so failed turns persist without input items."""
+        self._inner = inner
+        self._failed_response_ids = failed_response_ids
+
+    async def create_response(
+        self,
+        response: Any,
+        input_items: Any,
+        history_item_ids: Any,
+        *,
+        context: Any = None,
+    ) -> None:
+        """Persist ``response``, dropping input items when the turn failed."""
+        response_id = _response_field(response, "id")
+        known_failed = response_id is not None and str(response_id) in self._failed_response_ids
+        if _is_failed_stored_response(response) or known_failed:
+            input_items = None
+        await self._inner.create_response(response, input_items, history_item_ids, context=context)
+        if known_failed:
+            self._failed_response_ids.discard(str(response_id))
+
+    async def update_response(self, response: Any, *, context: Any = None) -> None:
+        """Update ``response`` without replacing the existing store entry."""
+        await self._inner.update_response(response, context=context)
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward remaining provider methods to the wrapped store."""
+        return getattr(self._inner, name)
+
+
 # region ResponsesHostServer
 class ResponsesHostServer(ResponsesAgentServerHost):
     """A responses server host for an agent."""
@@ -502,6 +561,22 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         # No caller-owned agent state is mutated until all validation and base-host construction succeed.
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
+        # Let the base host resolve its hosted/local default and validate any
+        # explicitly supplied store before wrapping the resolved provider.
+        self._failed_sync_response_ids: set[str] = set()
+        orchestrator = self._orchestrator
+        if orchestrator is None:
+            raise RuntimeError("Responses host did not initialize its orchestrator.")
+        history_store = orchestrator._provider
+        wrapped_history_store = _OmitFailedConversationInputProvider(
+            history_store,
+            self._failed_sync_response_ids,
+        )
+        wrapped_provider = cast(ResponseProviderProtocol, wrapped_history_store)
+        orchestrator._provider = wrapped_provider
+        orchestrator._resilient_orchestrator._provider = wrapped_provider
+        self._endpoint._provider = wrapped_provider  # pyright: ignore[reportPrivateUsage]
+
         self._uses_agent_server_history = uses_agent_server_history
         self._client_stores_by_default = client_stores_by_default
         self._is_workflow_agent = is_workflow_agent
@@ -589,6 +664,49 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
     ) -> AsyncIterable[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response."""
+        events = self._handle_response_events(request, context, cancellation_signal)
+        if not self._is_workflow_agent and request.get("stream") is not True and request.get("background") is not True:
+            events = self._buffer_sync_response_events(
+                events,
+                context.response_id,
+                store=request.get("store") is not False,
+            )
+        async with aclosing(events):
+            async for event in events:
+                yield event
+
+    async def _buffer_sync_response_events(
+        self,
+        events: AsyncIterable[ResponseStreamEvent | ResponseCheckpointEvent],
+        response_id: str,
+        *,
+        store: bool,
+    ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
+        """Know a synchronous turn's terminal status before its initial store write."""
+        buffered: list[ResponseStreamEvent | ResponseCheckpointEvent] = []
+        handler_error: Exception | None = None
+        try:
+            async for event in events:
+                buffered.append(event)
+        except Exception as ex:
+            handler_error = ex
+        failed = handler_error is not None or any(
+            _response_field(event, "type") == "response.failed" for event in buffered
+        )
+        if store and failed:
+            self._failed_sync_response_ids.add(response_id)
+        for event in buffered:
+            yield event
+        if handler_error is not None:
+            raise handler_error
+
+    async def _handle_response_events(
+        self,
+        request: CreateResponse,
+        context: ResponseContext,
+        cancellation_signal: asyncio.Event,
+    ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
+        """Produce response events for workflow and non-workflow agents."""
         # Common per-request setup shared by the workflow and non-workflow paths:
         # create the response stream and the streaming output-item tracker, emit
         # the opening lifecycle events, and convert any exception raised while
