@@ -377,10 +377,22 @@
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Simple/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Simple/HostedWorkflowSimple.csproj" />
   </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Resilient/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Resilient/HostedWorkflowResilient.csproj" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Resilient-Long-Running/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Resilient-Long-Running/HostedWorkflowResilientLongRunning.csproj" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Steering/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Steering/HostedSteering.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/Hosted-Toolbox-AuthPaths-Client/Hosted-Toolbox-AuthPaths-Client.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SessionFilesClient/SessionFilesClient.csproj" />
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent/SimpleAgent.csproj" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Using-E2E-Resilience/">
+    <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Using-E2E-Resilience/Using-E2E-Resilience.csproj" />
   </Folder>
   <Folder Name="/Samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Handoff/">
     <Project Path="samples/04-hosting/FoundryHostedAgents/responses/Hosted-Workflow-Handoff/HostedWorkflowHandoff.csproj" />

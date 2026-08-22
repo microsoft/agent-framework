@@ -63,10 +63,10 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
     public const string DefaultStoreName = "agent-framework/checkpoints";
 
     /// <summary>
-    /// How many times a losing index update is retried before giving up. Each attempt re-reads the
-    /// index, so a retry only happens when another writer committed a checkpoint in between.
+    /// The default number of attempts to update a workflow checkpoint index after concurrent writers
+    /// modify it.
     /// </summary>
-    private const int MaxIndexUpdateAttempts = 8;
+    public const int DefaultMaxIndexUpdateAttempts = 8;
 
     /// <summary>The item-body field holding the serialized checkpoint JSON.</summary>
     private const string CheckpointField = "checkpoint";
@@ -83,6 +83,7 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
 
     private readonly FoundryStateStoreBinding _binding;
     private readonly ILogger? _logger;
+    private readonly int _maxIndexUpdateAttempts;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryJsonCheckpointStore"/> class.
@@ -114,10 +115,43 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
         string storeName = DefaultStoreName,
         int itemTtlSeconds = FoundryStateStore.DefaultItemTtlSeconds,
         ILoggerFactory? loggerFactory = null)
+        : this(
+            DefaultMaxIndexUpdateAttempts,
+            endpoint,
+            credential,
+            storeName,
+            itemTtlSeconds,
+            loggerFactory)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FoundryJsonCheckpointStore"/> class with a
+    /// configurable checkpoint-index update limit.
+    /// </summary>
+    /// <param name="maxIndexUpdateAttempts">
+    /// The maximum number of attempts to update a workflow checkpoint index when another writer
+    /// modifies it concurrently. Each retry re-reads the index before writing. Must be greater than
+    /// zero.
+    /// </param>
+    /// <param name="endpoint">The Foundry project endpoint, or <see langword="null"/> to resolve it from the environment.</param>
+    /// <param name="credential">The credential used for hosted state storage. May be <see langword="null"/> outside Foundry.</param>
+    /// <param name="storeName">The state-store name to hold the checkpoints.</param>
+    /// <param name="itemTtlSeconds">How long a checkpoint survives without being written, in seconds.</param>
+    /// <param name="loggerFactory">Creates the logger this store reports through.</param>
+    public FoundryJsonCheckpointStore(
+        int maxIndexUpdateAttempts,
+        Uri? endpoint = null,
+        TokenCredential? credential = null,
+        string storeName = DefaultStoreName,
+        int itemTtlSeconds = FoundryStateStore.DefaultItemTtlSeconds,
+        ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNullOrWhitespace(storeName);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxIndexUpdateAttempts, 1);
 
         this.StoreName = storeName;
+        this._maxIndexUpdateAttempts = maxIndexUpdateAttempts;
         this._logger = loggerFactory?.CreateLogger<FoundryJsonCheckpointStore>();
         this._binding = new(cancellationToken => FoundryStateStore.GetOrCreateAsync(
             storeName,
@@ -135,15 +169,22 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
     /// <param name="storeFactory">Resolves the bound state store on first use.</param>
     /// <param name="storeName">The state-store name, for diagnostics.</param>
     /// <param name="loggerFactory">Creates the logger this store reports through.</param>
+    /// <param name="maxIndexUpdateAttempts">
+    /// The maximum number of attempts to update a workflow checkpoint index after a concurrent
+    /// modification.
+    /// </param>
     internal FoundryJsonCheckpointStore(
         Func<CancellationToken, Task<FoundryStateStore>> storeFactory,
         string storeName = DefaultStoreName,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        int maxIndexUpdateAttempts = DefaultMaxIndexUpdateAttempts)
     {
         _ = Throw.IfNull(storeFactory);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxIndexUpdateAttempts, 1);
 
         this._binding = new(storeFactory);
         this.StoreName = storeName;
+        this._maxIndexUpdateAttempts = maxIndexUpdateAttempts;
         this._logger = loggerFactory?.CreateLogger<FoundryJsonCheckpointStore>();
     }
 
@@ -176,7 +217,7 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
 
         // Announce the stored checkpoint by appending its identifier to the session's index, giving
         // way and reading again whenever another instance updated that same index first.
-        for (int attempt = 0; attempt < MaxIndexUpdateAttempts; attempt++)
+        for (int attempt = 0; attempt < this._maxIndexUpdateAttempts; attempt++)
         {
             StateStoreItem? indexItem = await store.GetItemAsync(sessionIndexKey, CancellationToken.None).ConfigureAwait(false);
             List<IndexEntry> entries = ReadEntries(indexItem);
@@ -207,7 +248,7 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
                         ex,
                         "Attempt {Attempt} of {MaxAttempts} to index checkpoint '{CheckpointId}' for session '{SessionId}' lost to another writer. Retrying.",
                         attempt + 1,
-                        MaxIndexUpdateAttempts,
+                        this._maxIndexUpdateAttempts,
                         checkpointInfo.CheckpointId,
                         sessionId);
                 }
@@ -217,7 +258,7 @@ public sealed class FoundryJsonCheckpointStore : JsonCheckpointStore
         }
 
         throw new InvalidOperationException(
-            $"Could not add a checkpoint for session '{sessionId}' to the Foundry state store after {MaxIndexUpdateAttempts} attempts because other writers kept updating the same session index.");
+            $"Could not add a checkpoint for session '{sessionId}' to the Foundry state store after {this._maxIndexUpdateAttempts} attempts because other writers kept updating the same session index.");
     }
 
     /// <summary>

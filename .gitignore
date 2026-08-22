@@ -207,6 +207,10 @@ temp*/
 
 # AI
 **/.checkpoints/
+# Local AgentServer file store + crash-recovery HOME roots used by hosted samples
+**/.agentserver-state/
+**/.agentserver-state-*/
+**/.home-*/
 .claude/
 .omc/
 .omx/

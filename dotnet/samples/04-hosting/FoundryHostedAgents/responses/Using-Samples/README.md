@@ -48,6 +48,9 @@ never hits the TLS check.
 | [`Hosted-Toolbox-AuthPaths-Client/`](./Hosted-Toolbox-AuthPaths-Client/) | Hosted toolbox agents | Handles OAuth consent, function-tool approvals, and native MCP approvals. Use it with `Hosted-Toolbox-AuthPaths` or `Hosted-ToolboxMcpSkills`. |
 | [`SessionFilesClient/`](./SessionFilesClient/) | [`Hosted-Files`](../Hosted-Files/) | Same shape as `SimpleAgent`, framed around the bundled-files demo. |
 
+For a self-contained crash-recovery demonstration that starts, interrupts, and restarts its own
+local server, see [`Using-E2E-Resilience`](../Using-E2E-Resilience/).
+
 ## Configuration (common to all clients)
 
 ```env

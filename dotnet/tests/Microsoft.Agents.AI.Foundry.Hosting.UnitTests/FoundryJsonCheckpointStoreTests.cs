@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Core.Storage;
+using Azure.Core;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.Logging;
@@ -24,6 +25,59 @@ public sealed class FoundryJsonCheckpointStoreTests
 
         // Assert
         Assert.Equal(FoundryJsonCheckpointStore.DefaultStoreName, store.StoreName);
+    }
+
+    [Fact]
+    public void DefaultMaxIndexUpdateAttempts_IsEight()
+    {
+        // Assert
+        Assert.Equal(8, FoundryJsonCheckpointStore.DefaultMaxIndexUpdateAttempts);
+    }
+
+    [Fact]
+    public void Constructor_MaxIndexUpdateAttemptsLessThanOne_Throws()
+    {
+        // Act
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(
+            () => new FoundryJsonCheckpointStore(maxIndexUpdateAttempts: 0));
+
+        // Assert
+        Assert.Equal("maxIndexUpdateAttempts", exception.ParamName);
+    }
+
+    [Fact]
+    public void Constructor_ExistingFiveParameterSignature_IsPreserved()
+    {
+        // Act
+        var constructor = typeof(FoundryJsonCheckpointStore).GetConstructor(
+            [
+                typeof(Uri),
+                typeof(TokenCredential),
+                typeof(string),
+                typeof(int),
+                typeof(ILoggerFactory),
+            ]);
+
+        // Assert
+        Assert.NotNull(constructor);
+    }
+
+    [Fact]
+    public async Task CreateCheckpointAsync_CustomMaxIndexUpdateAttempts_LimitsRetriesAsync()
+    {
+        // Arrange
+        var backing = new FakeCheckpointStateStore();
+        var store = NewStore(backing, maxIndexUpdateAttempts: 2);
+        await store.CreateCheckpointAsync("session-1", Json("{\"step\":1}"));
+        backing.FailNextIndexWrites = 2;
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await store.CreateCheckpointAsync("session-1", Json("{\"step\":2}")));
+
+        // Assert
+        Assert.Contains("after 2 attempts", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(0, backing.FailNextIndexWrites);
     }
 
     [Fact]
@@ -381,8 +435,14 @@ public sealed class FoundryJsonCheckpointStoreTests
         Assert.NotEqual(first, second);
     }
 
-    private static FoundryJsonCheckpointStore NewStore(FoundryStateStore backing, ILoggerFactory? loggerFactory = null)
-        => new(_ => Task.FromResult(backing), loggerFactory: loggerFactory);
+    private static FoundryJsonCheckpointStore NewStore(
+        FoundryStateStore backing,
+        ILoggerFactory? loggerFactory = null,
+        int maxIndexUpdateAttempts = FoundryJsonCheckpointStore.DefaultMaxIndexUpdateAttempts)
+        => new(
+            _ => Task.FromResult(backing),
+            loggerFactory: loggerFactory,
+            maxIndexUpdateAttempts: maxIndexUpdateAttempts);
 
     private static JsonElement Json(string json)
     {

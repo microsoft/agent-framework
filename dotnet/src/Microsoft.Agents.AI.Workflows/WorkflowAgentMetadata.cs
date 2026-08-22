@@ -10,7 +10,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <para>
 /// Retrieve it with <c>agent.GetService&lt;WorkflowAgentMetadata&gt;()</c>. Getting an instance back
 /// is what identifies the agent as running a workflow; <see langword="null"/> means it does not.
-/// Going through <see cref="AIAgent.GetService(System.Type, object?)"/> means the answer is still
+/// Going through <see cref="AIAgent.GetService"/> means the answer is still
 /// found when the agent has been wrapped, by middleware for example, which a test on the type of the
 /// agent would miss.
 /// </para>
