@@ -32,7 +32,6 @@ def clean_conversation_for_handoff(conversation: list[Message]) -> list[Message]
     """
     ALLOWED_CONTENT_TYPES = {
         "text",
-        "text_reasoning",
         "data",
         "uri",
         "hosted_file",

@@ -1032,7 +1032,8 @@ def test_clean_conversation_for_handoff_keeps_allowlist_history() -> None:
     assert len(user_contents) == 2
     assert user_contents[0].type == "text"
     assert user_contents[1].type == "uri"
-    assert user_contents[1].uri == "https://example.com/broken_product.jpg"
+    assert user_contents[1].uri == "https://example.com/image.png"
+    assert getattr(user_contents[1], "media_type", None) == "image/png"
     
     # Assert Tool call is stripped from the assistant message
     assistant_contents = [c.type for c in cleaned[1].contents]
