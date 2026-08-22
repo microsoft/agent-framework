@@ -127,7 +127,7 @@ The implementation is validated through:
 ```csharp
 // Create TracerProvider
 using var tracerProvider = Sdk.CreateTracerProviderBuilder()
-    .AddSource(AgentOpenTelemetryConsts.DefaultSourceName)
+    .AddSource(OpenTelemetryAgent.DefaultSourceName)
     .AddConsoleExporter()
     .Build();
 
