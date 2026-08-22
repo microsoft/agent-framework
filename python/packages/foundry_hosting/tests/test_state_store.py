@@ -114,6 +114,51 @@ async def test_load_raises_for_missing_checkpoint() -> None:
         await FoundryCheckpointStore("context-1", _platform_context()).load("missing")
 
 
+async def test_load_defaults_to_restricted_unpickler_and_blocks_unlisted_types() -> None:
+    # A raw store item that was NOT produced by encode_checkpoint_value (e.g. planted
+    # directly into the backing store) carries an arbitrary pickle payload. Under the
+    # default (restricted) unpickler this must be rejected rather than executed.
+    import base64
+    import os
+    import pickle
+
+    class _Gadget:
+        def __reduce__(self) -> Any:
+            return (os.system, ("echo should-not-run",))
+
+    malicious_value = {
+        "__pickled__": base64.b64encode(pickle.dumps(_Gadget())).decode("ascii"),
+        "__type__": "builtins:int",
+    }
+
+    store = _store()
+    store.get_item = AsyncMock(return_value=SimpleNamespace(value=malicious_value))
+
+    with (
+        patch(
+            "agent_framework_foundry_hosting._state_store.FoundryStateStore.get_or_create",
+            new=AsyncMock(return_value=store),
+        ),
+        pytest.raises(WorkflowCheckpointException),
+    ):
+        await FoundryCheckpointStore("context-1", _platform_context()).load("checkpoint-1")
+
+
+def test_checkpoint_store_provider_threads_allowed_types() -> None:
+    provider = CheckpointStoreProvider(allowed_checkpoint_types=["my_app.models:MyState"])
+    store = provider.get_store(
+        config=_config(is_hosted=True), context_id="context-1", platform_context=_platform_context()
+    )
+
+    assert isinstance(store, FoundryCheckpointStore)
+    assert store._allowed_types == frozenset({"my_app.models:MyState"})
+
+
+def test_checkpoint_store_defaults_to_empty_allowlist() -> None:
+    store = FoundryCheckpointStore("context-1", _platform_context())
+    assert store._allowed_types == frozenset()
+
+
 async def test_list_checkpoints_paginates_and_filters_by_workflow() -> None:
     store = _store()
     matching = _checkpoint("checkpoint-1")
