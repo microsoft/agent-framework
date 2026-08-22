@@ -1,0 +1,22 @@
+# azd tooling files
+azure.yaml
+.agentignore
+
+# Security / secrets
+.env
+.env.*
+.azure/
+.git/
+
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Local agent state
+.checkpoints/
+.agentserver-state/
+.agentserver-state-*/
+.home-*/
