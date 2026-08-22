@@ -246,6 +246,35 @@ async def test_sequential_checkpoint_resume_round_trip() -> None:
     assert baseline_text == resumed_text
 
 
+async def test_sequential_builder_preserves_multimodal_content() -> None:
+    """Ensure that multimodal content (like URI) is preserved and passed down to subsequent agents in the sequence."""
+    class _InspectorAgent(BaseAgent):
+        def run(
+            self, messages: AgentRunInputs | None = None, **kwargs: Any
+        ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+            async def _run() -> AgentResponse:
+                uri_contents = [
+                    c.uri for m in (messages or []) for c in getattr(m, "contents", []) if getattr(c, "type", "") == "uri"
+                ]
+                return AgentResponse(messages=[Message("assistant", [f"Found URIs: {uri_contents}"])])
+            return _run()
+
+    a1 = _EchoAgent(id="agent1", name="A1")
+    inspector = _InspectorAgent(id="inspector", name="Inspector")
+
+    wf = SequentialBuilder(participants=[a1, inspector]).build()
+    
+    multimodal_msg = Message("user", [Content(type="text", text="Look at this"), Content(type="uri", uri="https://example.com/image.png", media_type="image/png")])
+    output_events = [ev for ev in await wf.run([multimodal_msg]) if ev.type == "output"]
+    
+    assert len(output_events) == 1
+    response = output_events[0].data
+    assert isinstance(response, AgentResponse)
+    
+    combined = " ".join(m.text for m in response.messages)
+    assert "https://example.com/image.png" in combined
+
+
 async def test_sequential_checkpoint_runtime_only() -> None:
     """Test checkpointing configured ONLY at runtime, not at build time."""
     storage = InMemoryCheckpointStorage()
