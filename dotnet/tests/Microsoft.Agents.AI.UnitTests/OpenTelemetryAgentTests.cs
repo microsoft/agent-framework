@@ -874,10 +874,11 @@ public class OpenTelemetryAgentTests
     }
 
     [Fact]
-    public void DefaultSourceName_MatchesSourceOfEmittedActivities()
+    public void DefaultSourceName_ReturnsDocumentedSourceName()
     {
-        // Callers pass this constant to TracerProviderBuilder.AddSource, so it must stay in sync with the
-        // source name the agent actually emits spans under; comparing against the literal guards the rename.
+        // Callers pass this to TracerProviderBuilder.AddSource, so it must stay in sync with the source name the
+        // agent emits spans under, which Ctor_NullOrWhitespaceSourceName_AutoWiredChatClientUsesDefaultSource_Async
+        // pins to the same literal. Comparing against the literal here guards a rename of the internal constant.
 
         // Arrange & Act & Assert
         Assert.Equal("Experimental.Microsoft.Agents.AI", OpenTelemetryAgent.DefaultSourceName);

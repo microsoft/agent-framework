@@ -42,14 +42,16 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     // calls back into the inner agent.
 
     /// <summary>
-    /// The default <see cref="ActivitySource"/> name used by <see cref="OpenTelemetryAgent"/> when no source name
-    /// is supplied to the constructor.
+    /// Gets the default <see cref="ActivitySource"/> name used by <see cref="OpenTelemetryAgent"/> when no source
+    /// name is supplied to the constructor.
     /// </summary>
     /// <remarks>
     /// Pass this value to the tracing pipeline (for example, <c>TracerProviderBuilder.AddSource</c>) to subscribe to
-    /// the spans emitted by agents that use the default source name, instead of hardcoding the literal name.
+    /// the spans emitted by agents that use the default source name, instead of hardcoding the literal name. This is
+    /// a property rather than a constant so that the value is read at run time: a consumer that upgrades the package
+    /// picks up the current source name without recompiling.
     /// </remarks>
-    public const string DefaultSourceName = OpenTelemetryConsts.DefaultSourceName;
+    public static string DefaultSourceName => OpenTelemetryConsts.DefaultSourceName;
 
     /// <summary>The <see cref="OpenTelemetryChatClient"/> providing the bulk of the telemetry.</summary>
     private readonly OpenTelemetryChatClient _otelClient;
