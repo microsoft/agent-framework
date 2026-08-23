@@ -15,6 +15,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Moq;
 using OpenAI.Responses;
 
@@ -64,7 +65,11 @@ public class ServiceCollectionExtensionsTests
         var descriptor = services.FirstOrDefault(
             d => d.ServiceType == typeof(ResponseHandler));
         Assert.NotNull(descriptor);
-        Assert.Equal(typeof(AgentFrameworkResponseHandler), descriptor.ImplementationType);
+        Assert.NotNull(descriptor.ImplementationFactory);
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        Assert.IsType<AgentFrameworkResponseHandler>(
+            provider.GetRequiredService<ResponseHandler>());
     }
 
     [Fact]
@@ -93,6 +98,45 @@ public class ServiceCollectionExtensionsTests
 
         var count = services.Count(d => d.ServiceType == typeof(ResponseHandler));
         Assert.Equal(1, count);
+    }
+
+    [Fact]
+    public void AddFoundryResponses_SecondCall_PreservesNonServerOptions()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        // Act
+        services.AddFoundryResponses();
+        services.AddFoundryResponses(options =>
+            options.AllowStoredOutputEnabled = true);
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        // Assert
+        Assert.True(
+            provider.GetRequiredService<IOptions<FoundryResponsesOptions>>()
+                .Value.AllowStoredOutputEnabled);
+    }
+
+    [Fact]
+    public void AddFoundryResponses_SecondCallEnablesServerFeature_Throws()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddFoundryResponses();
+
+        // Act
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => services.AddFoundryResponses(options =>
+                options.SteerableConversations = true));
+
+        // Assert
+        Assert.Contains(
+            "first AddFoundryResponses",
+            exception.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]

@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.InProc;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -134,6 +135,41 @@ public class WorkflowHostingExtensionsTests
     }
 
     [Fact]
+    public async Task GetService_WorkflowSession_ExposesCheckpointRecoveryAsync()
+    {
+        // Arrange
+        AIAgent agent = BuildWorkflowAgent(
+            InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory()));
+        AgentSession session = await agent.CreateSessionAsync();
+        WorkflowSessionCheckpointRecovery recovery = session.GetService<WorkflowSessionCheckpointRecovery>()
+            ?? throw new InvalidOperationException("Workflow checkpoint recovery was not available.");
+
+        // Act
+        bool prepared = recovery.TryPrepare("checkpoint-from-response");
+
+        // Assert
+        Assert.True(prepared);
+        CheckpointInfo? checkpoint = recovery.CurrentCheckpoint;
+        Assert.NotNull(checkpoint);
+        Assert.Equal("checkpoint-from-response", checkpoint.CheckpointId);
+        Assert.False(string.IsNullOrWhiteSpace(checkpoint.SessionId));
+    }
+
+    [Fact]
+    public void GetService_NonWorkflowSession_HasNoCheckpointRecovery()
+    {
+        // Arrange
+        var session = new NonWorkflowSession();
+
+        // Act
+        WorkflowSessionCheckpointRecovery? recovery =
+            session.GetService<WorkflowSessionCheckpointRecovery>();
+
+        // Assert
+        Assert.Null(recovery);
+    }
+
+    [Fact]
     public void GetService_WorkflowAgentBehindAWrapper_IsStillFound()
     {
         // Arrange: detection has to see through middleware, which is why it goes through GetService
@@ -180,4 +216,6 @@ public class WorkflowHostingExtensionsTests
     }
 
     private sealed class PassThroughAgent(AIAgent innerAgent) : DelegatingAIAgent(innerAgent);
+
+    private sealed class NonWorkflowSession : AgentSession;
 }
