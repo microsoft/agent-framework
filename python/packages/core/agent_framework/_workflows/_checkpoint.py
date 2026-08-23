@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
 import logging
 import os
@@ -15,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 from ..exceptions import WorkflowCheckpointException
+from ._checkpoint_encoding import isolate_checkpoint_value
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,19 @@ class WorkflowCheckpoint:
 
 
 class CheckpointStorage(Protocol):
-    """Protocol for checkpoint storage backends."""
+    """Protocol for checkpoint storage backends.
+
+    Ownership:
+        Checkpoints returned by ``load``, ``list_checkpoints`` and
+        ``get_latest`` are owned by the caller. Mutating a returned
+        checkpoint must not change stored state, and repeated reads must
+        return independent objects. Symmetrically, ``save`` snapshots the
+        checkpoint at call time, so mutating the caller's object
+        afterwards must not change what was stored. Backends that
+        serialize satisfy this implicitly, because decoding allocates a
+        fresh object graph; backends that retain live objects must copy
+        explicitly.
+    """
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint and return its ID.
@@ -208,7 +220,7 @@ class InMemoryCheckpointStorage:
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint and return its ID."""
-        self._checkpoints[checkpoint.checkpoint_id] = copy.deepcopy(checkpoint)
+        self._checkpoints[checkpoint.checkpoint_id] = isolate_checkpoint_value(checkpoint)
         logger.debug(f"Saved checkpoint {checkpoint.checkpoint_id} to memory")
         return checkpoint.checkpoint_id
 
@@ -217,12 +229,12 @@ class InMemoryCheckpointStorage:
         checkpoint = self._checkpoints.get(checkpoint_id)
         if checkpoint:
             logger.debug(f"Loaded checkpoint {checkpoint_id} from memory")
-            return checkpoint
+            return isolate_checkpoint_value(checkpoint)
         raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         """List checkpoint objects for a given workflow name."""
-        return [cp for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
+        return [isolate_checkpoint_value(cp) for cp in self._checkpoints.values() if cp.workflow_name == workflow_name]
 
     async def delete(self, checkpoint_id: CheckpointID) -> bool:
         """Delete a checkpoint by ID."""
@@ -239,7 +251,7 @@ class InMemoryCheckpointStorage:
             return None
         latest_checkpoint = max(checkpoints, key=lambda cp: datetime.fromisoformat(cp.timestamp))
         logger.debug(f"Latest checkpoint for workflow {workflow_name} is {latest_checkpoint.checkpoint_id}")
-        return latest_checkpoint
+        return isolate_checkpoint_value(latest_checkpoint)
 
     async def list_checkpoint_ids(self, *, workflow_name: str) -> list[CheckpointID]:
         """List checkpoint IDs. If workflow_id is provided, filter by that workflow."""

@@ -2,9 +2,28 @@
 
 """Unit tests for the State class superstep caching behavior."""
 
+import copy
+import pickle
+from dataclasses import dataclass
+
 import pytest
 
 from agent_framework._workflows._state import State
+
+
+# Test dataclass for pickle-serializable but not deepcopyable regression test
+@dataclass
+class _PickleableNotDeepcopyable:
+    """A class that is pickle-serializable but explicitly rejects deepcopy."""
+
+    value: str
+
+    def __deepcopy__(self, memo):
+        raise TypeError("This class explicitly rejects deepcopy for testing purposes")
+
+    def __reduce__(self):
+        # Custom pickle support that doesn't require deepcopy
+        return (_PickleableNotDeepcopyable, (self.value,))
 
 
 class TestStateBasicOperations:
@@ -301,3 +320,101 @@ class TestExportImport:
         # Pending is still there
         assert state.get("pending_key") == "pending_value"
         assert "pending_key" in state._pending  # pyright: ignore[reportPrivateUsage]
+
+
+class TestExportImportIsolation:
+    """Tests for state export/import isolation via pickle round-trip."""
+
+    def test_export_returns_isolated_copy(self) -> None:
+        """export_state must return an isolated copy that doesn't alias committed state."""
+        state = State()
+        state.set("key", "original")
+        state.commit()
+
+        exported = state.export_state()
+        exported["key"] = "mutated"
+
+        # Committed state should be unchanged
+        assert state.get("key") == "original"
+
+    def test_export_isolates_nested_mutable_values(self) -> None:
+        """export_state must isolate nested mutable structures."""
+        state = State()
+        state.set("nested", {"deep": {"value": "original"}})
+        state.commit()
+
+        exported = state.export_state()
+        exported["nested"]["deep"]["value"] = "mutated"
+
+        # Committed state should be unchanged
+        assert state.get("nested")["deep"]["value"] == "original"
+
+    def test_import_isolates_incoming_state(self) -> None:
+        """import_state must isolate the incoming state before merging."""
+        state = State()
+        state.set("existing", "original")
+        state.commit()
+
+        incoming = {"key": "value"}
+        state.import_state(incoming)
+        incoming["key"] = "mutated"
+
+        # Committed state should have the original imported value
+        assert state.get("key") == "value"
+
+    def test_import_isolates_nested_mutable_values(self) -> None:
+        """import_state must isolate nested mutable structures in incoming state."""
+        state = State()
+        state.set("existing", "original")
+        state.commit()
+
+        incoming = {"nested": {"deep": {"value": "original"}}}
+        state.import_state(incoming)
+        incoming["nested"]["deep"]["value"] = "mutated"
+
+        # Committed state should have the original imported value
+        assert state.get("nested")["deep"]["value"] == "original"
+
+    def test_pickleable_not_deepcopyable_roundtrips(self) -> None:
+        """Values that are pickle-serializable but not deepcopyable must roundtrip correctly.
+
+        This test MUST FAIL against a deepcopy-based implementation and MUST PASS
+        against the pickle round-trip implementation, proving the regression is closed.
+        """
+        # This value would fail with copy.deepcopy but works with pickle round-trip
+        test_value = _PickleableNotDeepcopyable(value="test")
+
+        # Verify it's not deepcopyable (this should raise)
+        with pytest.raises(TypeError, match="explicitly rejects deepcopy"):
+            copy.deepcopy(test_value)
+
+        # But it should be pickle-serializable
+        pickled = pickle.dumps(test_value)
+        unpickled = pickle.loads(pickled)
+        assert unpickled.value == "test"
+
+        # Now test that it roundtrips through export/import
+        state = State()
+        state.set("custom", test_value)
+        state.commit()
+
+        exported = state.export_state()
+        assert isinstance(exported["custom"], _PickleableNotDeepcopyable)
+        assert exported["custom"].value == "test"
+
+        # Verify it's truly isolated from the original state
+        exported["custom"].value = "mutated"
+        reexported = state.export_state()
+        assert reexported["custom"].value == "test"
+
+        # Test import isolation - the incoming state is isolated during import
+        state2 = State()
+        state2.import_state(exported)
+        assert state2.get("custom").value == "mutated"
+
+        # Re-export from state2 to verify it has the imported value
+        exported2 = state2.export_state()
+        assert exported2["custom"].value == "mutated"
+
+        # The original state should still have the original value
+        assert state.get("custom").value == "test"
