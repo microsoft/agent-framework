@@ -66,8 +66,8 @@
 /python/packages/declarative/                                   @chetantoshniwal @moonbox3 @peibekwe
 /python/packages/devui/                                         @chetantoshniwal @eavanvalkenburg @moonbox3
 /python/packages/foundry/                                       @chetantoshniwal @eavanvalkenburg @TaoChenOSU @moonbox3 @giles17
-/python/packages/foundry_hosting/                               @chetantoshniwal @TaoChenOSU @eavanvalkenburg
-/python/packages/foundry_local/                                 @chetantoshniwal @eavanvalkenburg @giles17
+/python/packages/foundry_hosting/                               @chetantoshniwal @TaoChenOSU @eavanvalkenburg @moonbox3
+/python/packages/foundry_local/                                 @chetantoshniwal @eavanvalkenburg @giles17 @moonbox3
 /python/packages/gemini/                                        @chetantoshniwal @giles17 @eavanvalkenburg @moonbox3
 /python/packages/github_copilot/                                @chetantoshniwal @giles17 @eavanvalkenburg @moonbox3
 /python/packages/hosting/                                       @chetantoshniwal @eavanvalkenburg @TaoChenOSU @moonbox3

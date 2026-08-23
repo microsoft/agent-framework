@@ -58,18 +58,27 @@ public static class FoundryHostingExtensions
     /// <param name="services">The service collection.</param>
     /// <param name="configure">
     /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
-    /// agent's own service to store the responses it produces.
+    /// agent's own service to store the responses it produces, or to opt in to durable long-running
+    /// (resilient) background responses via <see cref="FoundryResponsesOptions.ResilientBackground"/>.
     /// </param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryResponses(this IServiceCollection services, Action<FoundryResponsesOptions>? configure = null)
     {
         _ = Throw.IfNull(services);
-        AddResponsesServerOnce(services);
+        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(configure);
+        bool serverAdded = AddResponsesServerOnce(
+            services,
+            configuredOptions,
+            configure is not null);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
-        ConfigureFoundryResponsesOptions(services, configure);
+        ConfigureFoundryResponsesOptions(
+            services,
+            configuredOptions,
+            includeServerOptions: serverAdded,
+            applyOptions: serverAdded || configure is not null);
         services.TryAddSingleton<AgentSessionStore>(_ => CreateDefaultAgentSessionStore());
-        services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
+        RegisterResponseHandler(services);
         MarkFeatureUsed();
         return services;
     }
@@ -99,7 +108,8 @@ public static class FoundryHostingExtensions
     /// <param name="agentSessionStore">The agent session store to use for managing agent sessions server-side. If null, <see cref="FoundryAgentSessionStore"/> is used: the Foundry durable state store when hosted, and the AgentServer SDK's local state-store fallback otherwise.</param>
     /// <param name="configure">
     /// Optional callback to configure <see cref="FoundryResponsesOptions"/>, for example to allow the
-    /// agent's own service to store the responses it produces.
+    /// agent's own service to store the responses it produces, or to opt in to durable long-running
+    /// (resilient) background responses via <see cref="FoundryResponsesOptions.ResilientBackground"/>.
     /// </param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddFoundryResponses(
@@ -111,10 +121,18 @@ public static class FoundryHostingExtensions
         _ = Throw.IfNull(services);
         _ = Throw.IfNull(agent);
 
-        AddResponsesServerOnce(services);
+        FoundryResponsesOptions configuredOptions = CreateFoundryResponsesOptions(configure);
+        bool serverAdded = AddResponsesServerOnce(
+            services,
+            configuredOptions,
+            configure is not null);
         services.AddHealthChecks();
         ConfigureFoundryListenPort(services);
-        ConfigureFoundryResponsesOptions(services, configure);
+        ConfigureFoundryResponsesOptions(
+            services,
+            configuredOptions,
+            includeServerOptions: serverAdded,
+            applyOptions: serverAdded || configure is not null);
         agentSessionStore ??= CreateDefaultAgentSessionStore();
 
         if (!string.IsNullOrWhiteSpace(agent.Name))
@@ -128,7 +146,7 @@ public static class FoundryHostingExtensions
         services.TryAddSingleton(agent);
         services.TryAddSingleton(agentSessionStore);
 
-        services.TryAddSingleton<ResponseHandler, AgentFrameworkResponseHandler>();
+        RegisterResponseHandler(services);
         MarkFeatureUsed();
         return services;
     }
@@ -142,12 +160,44 @@ public static class FoundryHostingExtensions
     /// The checks are registered on the same <c>/readiness</c> pipeline that <see cref="MapFoundryResponses"/>
     /// maps, so such a container never takes traffic.
     /// <c>AddCheck</c> does not dedupe by name, so a repeated registration is guarded here.
+    /// Resilience flags on <see cref="FoundryResponsesOptions"/> are forwarded to
+    /// <see cref="ResponsesServerOptions"/> so the AgentServer SDK enables recovery for the same host.
     /// </remarks>
-    private static void ConfigureFoundryResponsesOptions(IServiceCollection services, Action<FoundryResponsesOptions>? configure)
+    private static FoundryResponsesOptions CreateFoundryResponsesOptions(Action<FoundryResponsesOptions>? configure)
     {
-        if (configure is not null)
+        FoundryResponsesOptions options = new();
+        configure?.Invoke(options);
+        return options;
+    }
+
+    private static void RegisterResponseHandler(IServiceCollection services)
+    {
+        services.TryAddSingleton<ResponseHandler>(serviceProvider =>
+            new AgentFrameworkResponseHandler(
+                serviceProvider,
+                serviceProvider.GetRequiredService<ILogger<AgentFrameworkResponseHandler>>(),
+                serviceProvider.GetRequiredService<IOptions<FoundryResponsesOptions>>(),
+                serviceProvider.GetService<FoundryToolboxService>()));
+    }
+
+    private static void ConfigureFoundryResponsesOptions(
+        IServiceCollection services,
+        FoundryResponsesOptions configuredOptions,
+        bool includeServerOptions,
+        bool applyOptions)
+    {
+        if (applyOptions)
         {
-            services.Configure(configure);
+            services.Configure<FoundryResponsesOptions>(options =>
+            {
+                options.AllowStoredOutputEnabled = configuredOptions.AllowStoredOutputEnabled;
+                options.IncludeReasoningEncryptedContent = configuredOptions.IncludeReasoningEncryptedContent;
+                if (includeServerOptions)
+                {
+                    options.ResilientBackground = configuredOptions.ResilientBackground;
+                    options.SteerableConversations = configuredOptions.SteerableConversations;
+                }
+            });
         }
 
         AddReadinessCheckOnce(services, "foundry-stored-output", sp => ActivatorUtilities.CreateInstance<HostedStoredOutputHealthCheck>(sp));
@@ -358,15 +408,37 @@ public static class FoundryHostingExtensions
     /// a host that registers several agents naturally does, so the second and later calls are
     /// skipped here.
     /// </remarks>
-    private static void AddResponsesServerOnce(IServiceCollection services)
+    private static bool AddResponsesServerOnce(
+        IServiceCollection services,
+        FoundryResponsesOptions configuredOptions,
+        bool hasConfigureCallback)
     {
-        if (services.Any(static d => d.ServiceType == typeof(FoundryResponsesServerMarker)))
+        FoundryResponsesServerMarker? marker = services
+            .LastOrDefault(static descriptor =>
+                descriptor.ServiceType == typeof(FoundryResponsesServerMarker))
+            ?.ImplementationInstance as FoundryResponsesServerMarker;
+        if (marker is not null)
         {
-            return;
+            if (hasConfigureCallback
+                && ((!marker.ResilientBackground && configuredOptions.ResilientBackground)
+                    || (!marker.SteerableConversations && configuredOptions.SteerableConversations)))
+            {
+                throw new InvalidOperationException(
+                    "ResilientBackground and SteerableConversations must be configured on the first AddFoundryResponses call because AgentServer registers its durable tasks during that call.");
+            }
+
+            return false;
         }
 
-        services.AddSingleton<FoundryResponsesServerMarker>();
-        services.AddResponsesServer();
+        services.AddSingleton(new FoundryResponsesServerMarker(
+            configuredOptions.ResilientBackground,
+            configuredOptions.SteerableConversations));
+        services.AddResponsesServer(options =>
+        {
+            options.ResilientBackground = configuredOptions.ResilientBackground;
+            options.SteerableConversations = configuredOptions.SteerableConversations;
+        });
+        return true;
     }
 
     /// <summary>
@@ -407,7 +479,14 @@ public static class FoundryHostingExtensions
     /// Marker registered once per <see cref="IServiceCollection"/> so the Responses Server SDK is
     /// registered at most once, even across multiple <c>AddFoundryResponses</c> calls.
     /// </summary>
-    private sealed class FoundryResponsesServerMarker;
+    private sealed class FoundryResponsesServerMarker(
+        bool resilientBackground,
+        bool steerableConversations)
+    {
+        public bool ResilientBackground { get; } = resilientBackground;
+
+        public bool SteerableConversations { get; } = steerableConversations;
+    }
 
     /// <summary>
     /// Binds Kestrel to the port the Foundry hosted runtime probes and routes to, so a plain
