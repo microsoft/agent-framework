@@ -2,10 +2,12 @@
 
 """Tests for AG-UI thread snapshot storage primitives."""
 
+from collections.abc import AsyncGenerator
 from dataclasses import fields
+from typing import Any, cast
 
 import pytest
-from agent_framework import AgentResponseUpdate, Content
+from agent_framework import AgentResponseUpdate, Content, SupportsAgentRun
 
 from agent_framework_ag_ui import (
     AgentFrameworkAgent,
@@ -215,6 +217,8 @@ async def test_in_memory_snapshot_store_rejects_invalid_keys() -> None:
 
 
 class _InputSpyAgent:
+    """Minimal agent implementation for spying on provider input."""
+
     name = "spy"
     description = ""
     default_options: dict = {}
@@ -223,8 +227,8 @@ class _InputSpyAgent:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def run(self, messages, *, session, stream=False, **kwargs):
-        async def updates():
+    def run(self, messages: Any, *, session: Any, stream: bool = False, **kwargs: Any) -> Any:
+        async def updates() -> AsyncGenerator[Any, None]:
             self.calls.append(
                 {
                     "roles": [m.role for m in messages],
@@ -254,7 +258,7 @@ async def test_service_session_snapshot_split_authority() -> None:
     agent = _InputSpyAgent()
     store = InMemoryAGUIThreadSnapshotStore()
     runner = AgentFrameworkAgent(
-        agent=agent,
+        agent=cast(SupportsAgentRun, agent),
         use_service_session=True,
         snapshot_store=store,
     )
@@ -288,3 +292,88 @@ async def test_service_session_snapshot_split_authority() -> None:
     assert roles == ["user", "assistant", "user", "assistant"], (
         f"Snapshot must contain full transcript for UI hydration, got: {roles}"
     )
+
+
+@pytest.mark.asyncio
+async def test_service_session_snapshot_incremental_request() -> None:
+    """Verify identity matching handles incremental requests where UI sends only new messages.
+
+    - Stored snapshot has [u1, a1]
+    - UI sends ONLY [u2] (incremental, not full history)
+    - Provider should receive [u2]
+    - Snapshot store should retain [u1, a1, u2, a2]
+    """
+    agent = _InputSpyAgent()
+    store = InMemoryAGUIThreadSnapshotStore()
+    runner = AgentFrameworkAgent(
+        agent=cast(SupportsAgentRun, agent),
+        use_service_session=True,
+        snapshot_store=store,
+    )
+
+    first_turn = {
+        "threadId": "conv_INCREMENTAL",
+        "__ag_ui_snapshot_scope": "incremental-test",
+        "messages": [{"id": "u1", "role": "user", "content": "first"}],
+    }
+    await _drain(runner, first_turn)
+
+    incremental_turn = {
+        "threadId": "conv_INCREMENTAL",
+        "__ag_ui_snapshot_scope": "incremental-test",
+        "messages": [{"id": "u2", "role": "user", "content": "second"}],
+    }
+    await _drain(runner, incremental_turn)
+
+    assert agent.calls[1]["roles"] == ["user"], (
+        f"Provider should receive incremental input, got: {agent.calls[1]['roles']}"
+    )
+
+    snapshot = await store.get(scope="incremental-test", thread_id="conv_INCREMENTAL")
+    assert snapshot is not None
+    roles = [m.get("role") for m in snapshot.messages]
+    assert roles == ["user", "assistant", "user", "assistant"], f"Snapshot must contain full transcript, got: {roles}"
+
+
+@pytest.mark.asyncio
+async def test_service_session_snapshot_stale_snapshot() -> None:
+    """Verify identity matching handles stale snapshots where UI and store diverge.
+
+    - Stored snapshot has [u1, a1]
+    - UI sends [u1, u2] (UI is ahead, missing a1)
+    - Provider should receive [u2] (identity match skips u1)
+    - Snapshot store should retain UI's view [u1, u2, a2]
+    """
+    agent = _InputSpyAgent()
+    store = InMemoryAGUIThreadSnapshotStore()
+    runner = AgentFrameworkAgent(
+        agent=cast(SupportsAgentRun, agent),
+        use_service_session=True,
+        snapshot_store=store,
+    )
+
+    first_turn = {
+        "threadId": "conv_STALE",
+        "__ag_ui_snapshot_scope": "stale-test",
+        "messages": [{"id": "u1", "role": "user", "content": "first"}],
+    }
+    await _drain(runner, first_turn)
+
+    stale_turn = {
+        "threadId": "conv_STALE",
+        "__ag_ui_snapshot_scope": "stale-test",
+        "messages": [
+            {"id": "u1", "role": "user", "content": "first"},
+            {"id": "u2", "role": "user", "content": "second"},
+        ],
+    }
+    await _drain(runner, stale_turn)
+
+    assert agent.calls[1]["roles"] == ["user"], (
+        f"Provider should receive only new messages, got: {agent.calls[1]['roles']}"
+    )
+
+    snapshot = await store.get(scope="stale-test", thread_id="conv_STALE")
+    assert snapshot is not None
+    msg_ids = [m.get("id") for m in snapshot.messages]
+    assert "u1" in msg_ids and "u2" in msg_ids, f"Snapshot should contain UI's messages, got: {msg_ids}"

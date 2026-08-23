@@ -2225,6 +2225,60 @@ def _safe_serialize_session_continuation_state(
     return None
 
 
+def _split_service_session_input(
+    stored_snapshot_messages: list[dict[str, Any]],
+    current_turn_messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Splits current turn messages into provider suffix and full snapshot messages.
+
+    Uses identity (message ID) matching with a role-based fallback for assistant
+    messages (whose agent-generated IDs may differ from what the UI relays) to
+    safely handle stale snapshots, incremental requests, and truncated histories
+    without relying on brittle length cursors.
+
+    Args:
+        stored_snapshot_messages: The messages persisted from the previous turn.
+        current_turn_messages: The incoming messages from the UI for the current turn.
+
+    Returns:
+        A tuple containing the provider suffix and the reconstructed snapshot messages.
+    """
+
+    def _get_msg_id(msg: Mapping[str, Any]) -> str | None:
+        return msg.get("id") or msg.get("message_id")
+
+    def _get_msg_role(msg: Mapping[str, Any]) -> str | None:
+        return msg.get("role")
+
+    i = 0
+    j = 0
+    while i < len(stored_snapshot_messages) and j < len(current_turn_messages):
+        stored_msg = stored_snapshot_messages[i]
+        current_msg = current_turn_messages[j]
+        stored_id = _get_msg_id(stored_msg)
+        current_id = _get_msg_id(current_msg)
+        stored_role = _get_msg_role(stored_msg)
+        current_role = _get_msg_role(current_msg)
+
+        if stored_id and current_id and stored_id == current_id:
+            i += 1
+            j += 1
+        elif stored_role == "assistant" and current_role == "assistant":
+            i += 1
+            j += 1
+        else:
+            break
+
+    provider_suffix = current_turn_messages[j:]
+
+    if j > 0:
+        snapshot_messages = list(current_turn_messages)
+    else:
+        snapshot_messages = list(stored_snapshot_messages) + list(current_turn_messages)
+
+    return provider_suffix, snapshot_messages
+
+
 async def run_agent_stream(
     input_data: dict[str, Any],
     agent: SupportsAgentRun,
@@ -2296,6 +2350,8 @@ async def run_agent_stream(
             yield event
         return
 
+    snapshot_seed_messages: list[dict[str, Any]] | None = None
+
     if stored_snapshot is not None:
         if resume_payload is not None and stored_pending_approval_interrupt_ids:
             seeded_resume_from_snapshot = True
@@ -2303,8 +2359,11 @@ async def run_agent_stream(
             if not config.use_service_session:
                 raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
             else:
-                stored_count = len(stored_snapshot.messages)
-                raw_messages = raw_messages[stored_count:]
+                provider_suffix, snapshot_seed_messages = _split_service_session_input(
+                    stored_snapshot_messages=stored_snapshot.messages,
+                    current_turn_messages=raw_messages,
+                )
+                raw_messages = provider_suffix
         elif not config.use_service_session:
             raw_messages = _reconstruct_messages_from_thread_snapshot(
                 stored_messages=stored_snapshot.messages,
@@ -2312,8 +2371,11 @@ async def run_agent_stream(
                 stored_interrupt=stored_snapshot.interrupt,
             )
         else:
-            stored_count = len(stored_snapshot.messages)
-            raw_messages = raw_messages[stored_count:]
+            provider_suffix, snapshot_seed_messages = _split_service_session_input(
+                stored_snapshot_messages=stored_snapshot.messages,
+                current_turn_messages=raw_messages,
+            )
+            raw_messages = provider_suffix
 
     # Initialize flow state with stored state plus request-provided overrides;
     # endpoint-deferred defaults apply only to keys missing from both.
@@ -2416,7 +2478,12 @@ async def run_agent_stream(
         protected_tool_call_ids=protected_tool_call_ids,
     )
 
-    if config.use_service_session and stored_snapshot is not None:
+    if config.use_service_session and snapshot_seed_messages is not None:
+        _, snapshot_messages = normalize_agui_input_messages(
+            snapshot_seed_messages,
+            protected_tool_call_ids=protected_tool_call_ids,
+        )
+    elif config.use_service_session and stored_snapshot is not None:
         if seeded_resume_from_snapshot:
             snapshot_messages = snapshot_session.resume_seeded_messages(snapshot_messages)
         else:
