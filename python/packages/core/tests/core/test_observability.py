@@ -2169,7 +2169,7 @@ def test_create_workflow_span(span_exporter):
     spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
     assert len(spans) == 1
     assert spans[0].name == "test_workflow"
-    assert spans[0].attributes["key"] == "value"
+    assert spans[0].attributes["key"] == "value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 def test_start_workflow_span_does_not_attach_as_current(span_exporter: InMemorySpanExporter) -> None:
@@ -2187,7 +2187,7 @@ def test_start_workflow_span_does_not_attach_as_current(span_exporter: InMemoryS
     spans = span_exporter.get_finished_spans()  # type: ignore[attr-defined]
     assert len(spans) == 1
     assert spans[0].name == "test_workflow_unattached"
-    assert spans[0].attributes["key"] == "value"
+    assert spans[0].attributes["key"] == "value"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
 
 
 def test_create_workflow_span_uses_scoped_conversation_id(span_exporter: InMemorySpanExporter) -> None:

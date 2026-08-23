@@ -46,7 +46,7 @@ def _current_event_origin() -> WorkflowEventSource:
 
 
 @contextmanager
-def _framework_event_origin() -> Generator[None]:  # pyright: ignore[reportUnusedFunction]
+def _framework_event_origin() -> Generator[None]:
     """Temporarily mark subsequently created events as originating from the framework (internal).
 
     Callers must not ``yield`` from an async generator while this manager is active.
@@ -65,7 +65,9 @@ def _framework_event_origin() -> Generator[None]:  # pyright: ignore[reportUnuse
             _event_origin_context.reset(token)
 
 
-def _framework_event(factory: Callable[..., WorkflowEvent[Any]], *args: Any, **kwargs: Any) -> WorkflowEvent[Any]:
+def _framework_event(  # pyright: ignore[reportUnusedFunction]
+    factory: Callable[..., WorkflowEvent[Any]], *args: Any, **kwargs: Any
+) -> WorkflowEvent[Any]:
     """Build a framework-origin event and return it after resetting the origin token.
 
     Callers can ``yield`` the result without holding ``_framework_event_origin()``
