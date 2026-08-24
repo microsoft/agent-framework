@@ -1,12 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel.Primitives;
 using System.ComponentModel;
 using AGUIServer;
-using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using Microsoft.Extensions.AI;
+using OpenAI;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient().AddLogging();
@@ -18,13 +19,13 @@ string deploymentName = builder.Configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ??
 
 const string AgentName = "AGUIAssistant";
 
-// Create a Responses-backed chat client so that hosted tools are sent in the tools array.
+// Create a Responses-backed OpenAI client that sends a bearer token to the Azure endpoint.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-IChatClient chatClient = new AzureOpenAIClient(
-        new Uri(endpoint),
-        new DefaultAzureCredential())
+IChatClient chatClient = new OpenAIClient(
+        new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = new Uri(endpoint) })
     .GetResponsesClient()
     .AsIChatClient(deploymentName);
 

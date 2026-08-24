@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 public sealed class AgentHostingServiceCollectionExtensionsTests
 {
     [Fact]
-    public async Task AddAIAgent_WithHostedWebSearchTool_UsesResponsesToolAsync()
+    public async Task HostedWebSearchTool_WithResponsesClient_UsesResponsesWireFormatAsync()
     {
         // Arrange
         using var handler = new RecordingHandler();
@@ -46,12 +46,11 @@ public sealed class AgentHostingServiceCollectionExtensionsTests
         await agent.RunAsync("What happened in the news today?");
 
         // Assert
-        Assert.Equal("/v1/responses", handler.RequestUri?.AbsolutePath);
         using JsonDocument request = JsonDocument.Parse(Assert.IsType<string>(handler.RequestBody));
-        Assert.Contains(
-            request.RootElement.GetProperty("tools").EnumerateArray(),
-            tool => tool.GetProperty("type").GetString() == "web_search");
         Assert.False(request.RootElement.TryGetProperty("web_search_options", out _));
+        JsonElement webSearchTool = Assert.Single(request.RootElement.GetProperty("tools").EnumerateArray());
+        Assert.Equal("web_search", webSearchTool.GetProperty("type").GetString());
+        Assert.Equal("/v1/responses", handler.RequestUri?.AbsolutePath);
     }
 
     private sealed class RecordingHandler : HttpMessageHandler
