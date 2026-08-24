@@ -301,3 +301,48 @@ class TestExportImport:
         # Pending is still there
         assert state.get("pending_key") == "pending_value"
         assert "pending_key" in state._pending  # pyright: ignore[reportPrivateUsage]
+
+    def test_export_isolates_nested_mutable_values(self) -> None:
+        state = State()
+        state.set("history", ["step-1"])
+        state.set("settings", {"enabled": True})
+        state.commit()
+
+        exported = state.export_state()
+        state.get("history").append("step-2")
+        state.get("settings")["enabled"] = False
+
+        assert exported == {"history": ["step-1"], "settings": {"enabled": True}}
+
+    def test_exported_dict_does_not_mutate_state(self) -> None:
+        state = State()
+        state.set("key", "value")
+        state.commit()
+
+        exported = state.export_state()
+        exported["added"] = True
+        del exported["key"]
+
+        assert state.get("key") == "value"
+        assert state.has("added") is False
+
+    def test_import_does_not_alias_caller_state(self) -> None:
+        state = State()
+        incoming = {"history": ["step-1"]}
+
+        state.import_state(incoming)
+        incoming["history"].append("step-2")
+
+        assert state.get("history") == ["step-1"]
+
+    def test_export_import_roundtrip_isolates_snapshot(self) -> None:
+        source = State()
+        source.set("history", ["step-1"])
+        source.commit()
+        snapshot = source.export_state()
+
+        restored = State()
+        restored.import_state(snapshot)
+        restored.get("history").append("step-2")
+
+        assert snapshot == {"history": ["step-1"]}

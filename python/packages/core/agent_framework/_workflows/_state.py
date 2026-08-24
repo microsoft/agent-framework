@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import copy
 from typing import Any
 
 
@@ -104,18 +105,20 @@ class State:
         self._pending.clear()
 
     def export_state(self) -> dict[str, Any]:
-        """Export a serialized copy of the committed state.
+        """Export a deepcopy of the committed state.
 
-        Note: Does not include pending changes.
+        Note:
+            Does not include pending changes. Values must support :func:`copy.deepcopy`.
         """
-        return dict(self._committed)
+        return copy.deepcopy(self._committed)
 
     def import_state(self, state: dict[str, Any]) -> None:
         """Import state from a serialized dictionary.
 
-        Merges into committed state. Does not affect pending changes.
+        Merges a deepcopy into committed state. Does not affect pending changes.
+        Values must support :func:`copy.deepcopy`.
         """
-        self._committed.update(state)
+        self._committed.update(copy.deepcopy(state))
 
 
 class _DeleteSentinelType:
