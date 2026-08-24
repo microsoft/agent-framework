@@ -24,6 +24,8 @@ $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
 
 > **Note:** This sample uses `DefaultAzureCredential` for authentication. Make sure you're authenticated with Azure (e.g., via `az login`, Visual Studio, or environment variables).
 
+> **Note:** The server uses the Azure OpenAI Responses API because hosted web search is a Responses API tool. Web search uses Grounding with Bing and may incur additional charges; review the [web search documentation and data usage terms](https://learn.microsoft.com/azure/foundry/openai/how-to/web-search) before using it.
+
 ## Running the Sample
 
 ### Step 1: Start the AG-UI Server
@@ -117,13 +119,18 @@ User (:q or quit to exit): :q
 The `AGUIServer` uses the `MapAGUIServer` extension method to expose an agent through the AG-UI protocol:
 
 ```csharp
-AIAgent agent = new OpenAIClient(apiKey)
-    .GetChatClient(model)
-    .AsAIAgent(
-        instructions: "You are a helpful assistant.",
-        name: "AGUIAssistant");
+IChatClient chatClient = new AzureOpenAIClient(
+        new Uri(endpoint),
+        new DefaultAzureCredential())
+    .GetResponsesClient()
+    .AsIChatClient(deploymentName);
 
-app.MapAGUIServer("/", agent);
+builder
+    .AddAIAgent("AGUIAssistant", "You are a helpful assistant.", chatClient)
+    .WithAITool(new HostedWebSearchTool())
+    .WithInMemorySessionStore();
+
+app.MapAGUIServer("AGUIAssistant", "/");
 ```
 
 This automatically handles:
