@@ -1084,7 +1084,7 @@ class DeclarativeActionExecutor(Executor):
         Follows .NET's DefaultTransform pattern - accepts any input type:
         - dict/Mapping: Used directly as workflow.inputs
         - str: Converted to {"input": value}
-        - list[Message]: Treated as the agent-facing message contract
+        - Message or list[Message]: Treated as the agent-facing message contract
           (e.g. from WorkflowAgent / as_agent()). The prior conversation
           history is stored in ``Conversation.messages``/
           ``Conversation.history`` and mirrored to
@@ -1113,9 +1113,11 @@ class DeclarativeActionExecutor(Executor):
         if isinstance(trigger, dict):
             # Structured inputs - use directly
             state.initialize(trigger)  # type: ignore
-        elif isinstance(trigger, list) and all(isinstance(m, Message) for m in trigger):  # pyright: ignore[reportUnknownVariableType]
-            # list[Message] (e.g. from WorkflowAgent / as_agent()).
-            messages_list = cast(list[Message], trigger)
+        elif isinstance(trigger, Message) or (
+            isinstance(trigger, list) and all(isinstance(m, Message) for m in trigger)  # pyright: ignore[reportUnknownVariableType]
+        ):
+            # Message (e.g. from DevUI) or list[Message] (e.g. from WorkflowAgent / as_agent()).
+            messages_list = [trigger] if isinstance(trigger, Message) else cast(list[Message], trigger)
 
             # Detect continuation: if the workflow's shared state already
             # carries declarative data from a prior turn (because the host

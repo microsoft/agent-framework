@@ -400,6 +400,7 @@ class JoinExecutor(DeclarativeActionExecutor):
         self,
         trigger: dict[str, Any]
         | str
+        | Message
         | list[Message]
         | ActionTrigger
         | ActionComplete
