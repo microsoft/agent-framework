@@ -18,7 +18,7 @@ import os
 from typing import Any
 
 from agent_framework import Agent, AgentExecutorResponse, WorkflowBuilder
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -98,7 +98,7 @@ reviewer = Agent(
         "- feedback: concise, actionable feedback\n"
         "- clarity, completeness, accuracy, structure: individual scores (0-100)"
     ),
-    default_options={"response_format": ReviewResult},
+    default_options=OpenAIChatOptions[Any](response_format=ReviewResult),
 )
 
 # Create Editor agent - improves content based on feedback

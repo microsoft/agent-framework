@@ -10,8 +10,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using AGUI.Abstractions;
+using AGUI.Client;
+using AGUI.Server;
 using FluentAssertions;
-using Microsoft.Agents.AI.AGUI;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.TestHost;
@@ -26,124 +28,95 @@ public sealed class SharedStateTests : IAsyncDisposable
     private HttpClient? _client;
 
     [Fact]
-    public async Task StateSnapshot_IsReturnedAsDataContent_WithCorrectMediaTypeAsync()
+    public async Task StateSnapshot_IsSurfacedAsRawStateSnapshotEventAsync()
     {
         // Arrange
-        var initialState = new { counter = 42, status = "active" };
         var fakeAgent = new FakeStateAgent();
-
         await this.SetupTestServerAsync(fakeAgent);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
+        AIAgent agent = this.CreateAgent();
+        ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
-        string stateJson = JsonSerializer.Serialize(initialState);
-        byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
-        DataContent stateContent = new(stateBytes, "application/json");
-        ChatMessage stateMessage = new(ChatRole.System, [stateContent]);
+        // The AG-UI thread state travels on RunAgentInput.State, supplied to the stateless client via
+        // RawRepresentationFactory. The agent echoes it back as a STATE_SNAPSHOT event which the client
+        // surfaces as ChatResponseUpdate.RawRepresentation (issue #4869: no DataContent / ConversationId).
+        var initialState = JsonSerializer.SerializeToElement(new { counter = 42, status = "active" });
         ChatMessage userMessage = new(ChatRole.User, "update state");
 
         List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, StateRunOptions(initialState), CancellationToken.None))
         {
             updates.Add(update);
         }
 
-        // Assert
+        // Assert - the state snapshot is surfaced as a StateSnapshotEvent raw representation.
         updates.Should().NotBeEmpty();
 
-        // Should receive state snapshot as DataContent with application/json media type
-        AgentResponseUpdate? stateUpdate = updates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
-        stateUpdate.Should().NotBeNull("should receive state snapshot update");
-
-        DataContent? dataContent = stateUpdate!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
-        dataContent.Should().NotBeNull();
-
-        // Verify the state content
-        string receivedJson = System.Text.Encoding.UTF8.GetString(dataContent!.Data.ToArray());
-        JsonElement receivedState = JsonElement.Parse(receivedJson);
-        receivedState.GetProperty("counter").GetInt32().Should().Be(43, "state should be incremented");
-        receivedState.GetProperty("status").GetString().Should().Be("active");
+        StateSnapshotEvent? snapshot = FindStateSnapshot(updates);
+        snapshot.Should().NotBeNull("should receive a STATE_SNAPSHOT event");
+        snapshot!.Snapshot.GetProperty("counter").GetInt32().Should().Be(43, "state should be incremented");
+        snapshot.Snapshot.GetProperty("status").GetString().Should().Be("active");
     }
 
     [Fact]
-    public async Task StateSnapshot_HasCorrectAdditionalPropertiesAsync()
+    public async Task StateSnapshot_UpdateHasAssistantRoleAndNoConversationIdAsync()
     {
         // Arrange
-        var initialState = new { step = 1 };
         var fakeAgent = new FakeStateAgent();
-
         await this.SetupTestServerAsync(fakeAgent);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
+        AIAgent agent = this.CreateAgent();
+        ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
-        string stateJson = JsonSerializer.Serialize(initialState);
-        byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
-        DataContent stateContent = new(stateBytes, "application/json");
-        ChatMessage stateMessage = new(ChatRole.System, [stateContent]);
+        var initialState = JsonSerializer.SerializeToElement(new { step = 1 });
         ChatMessage userMessage = new(ChatRole.User, "process");
 
         List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, StateRunOptions(initialState), CancellationToken.None))
         {
             updates.Add(update);
         }
 
-        // Assert
-        AgentResponseUpdate? stateUpdate = updates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
+        // Assert - the state update carries the StateSnapshotEvent and the stateless client leaves
+        // ConversationId unset (state identity stays on the AG-UI wire events).
+        AgentResponseUpdate? stateUpdate = updates
+            .FirstOrDefault(u => u.AsChatResponseUpdate().RawRepresentation is StateSnapshotEvent);
         stateUpdate.Should().NotBeNull();
 
         ChatResponseUpdate chatUpdate = stateUpdate!.AsChatResponseUpdate();
-        chatUpdate.AdditionalProperties.Should().NotBeNull();
-        chatUpdate.AdditionalProperties.Should().ContainKey("is_state_snapshot");
-        ((bool)chatUpdate.AdditionalProperties!["is_state_snapshot"]!).Should().BeTrue();
+        chatUpdate.RawRepresentation.Should().BeOfType<StateSnapshotEvent>();
+        chatUpdate.ConversationId.Should().BeNull();
+        chatUpdate.Role.Should().Be(ChatRole.Assistant);
     }
 
     [Fact]
     public async Task ComplexState_WithNestedObjectsAndArrays_RoundTripsCorrectlyAsync()
     {
         // Arrange
-        var complexState = new
-        {
-            sessionId = "test-123",
-            nested = new { value = "test", count = 10 },
-            array = new[] { 1, 2, 3 },
-            tags = new[] { "tag1", "tag2" }
-        };
         var fakeAgent = new FakeStateAgent();
-
         await this.SetupTestServerAsync(fakeAgent);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
+        AIAgent agent = this.CreateAgent();
+        ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
-        string stateJson = JsonSerializer.Serialize(complexState);
-        byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
-        DataContent stateContent = new(stateBytes, "application/json");
-        ChatMessage stateMessage = new(ChatRole.System, [stateContent]);
+        JsonElement complexState = JsonDocument.Parse(
+            """{"sessionId":"test-123","nested":{"value":"test","count":10},"array":[1,2,3],"tags":["tag1","tag2"]}""").RootElement.Clone();
         ChatMessage userMessage = new(ChatRole.User, "process complex state");
 
         List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, StateRunOptions(complexState), CancellationToken.None))
         {
             updates.Add(update);
         }
 
         // Assert
-        AgentResponseUpdate? stateUpdate = updates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
-        stateUpdate.Should().NotBeNull();
+        StateSnapshotEvent? snapshot = FindStateSnapshot(updates);
+        snapshot.Should().NotBeNull();
 
-        DataContent? dataContent = stateUpdate!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
-        string receivedJson = System.Text.Encoding.UTF8.GetString(dataContent!.Data.ToArray());
-        JsonElement receivedState = JsonElement.Parse(receivedJson);
-
+        JsonElement receivedState = snapshot!.Snapshot;
         receivedState.GetProperty("sessionId").GetString().Should().Be("test-123");
         receivedState.GetProperty("nested").GetProperty("count").GetInt32().Should().Be(10);
         receivedState.GetProperty("array").GetArrayLength().Should().Be(3);
@@ -154,52 +127,39 @@ public sealed class SharedStateTests : IAsyncDisposable
     public async Task StateSnapshot_CanBeUsedInSubsequentRequest_ForStateRoundTripAsync()
     {
         // Arrange
-        var initialState = new { counter = 1, sessionId = "round-trip-test" };
         var fakeAgent = new FakeStateAgent();
-
         await this.SetupTestServerAsync(fakeAgent);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
+        AIAgent agent = this.CreateAgent();
+        ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
-        string stateJson = JsonSerializer.Serialize(initialState);
-        byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
-        DataContent stateContent = new(stateBytes, "application/json");
-        ChatMessage stateMessage = new(ChatRole.System, [stateContent]);
+        var initialState = JsonSerializer.SerializeToElement(new { counter = 1, sessionId = "round-trip-test" });
         ChatMessage userMessage = new(ChatRole.User, "increment");
 
         List<AgentResponseUpdate> firstRoundUpdates = [];
 
         // Act - First round
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, StateRunOptions(initialState), CancellationToken.None))
         {
             firstRoundUpdates.Add(update);
         }
 
-        // Extract state snapshot from first round
-        AgentResponseUpdate? firstStateUpdate = firstRoundUpdates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
-        firstStateUpdate.Should().NotBeNull();
-        DataContent? firstStateContent = firstStateUpdate!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
+        // Feed the returned state snapshot back into the second round.
+        StateSnapshotEvent? firstSnapshot = FindStateSnapshot(firstRoundUpdates);
+        firstSnapshot.Should().NotBeNull();
+        firstSnapshot!.Snapshot.GetProperty("counter").GetInt32().Should().Be(2);
 
-        // Second round - use returned state
-        ChatMessage secondStateMessage = new(ChatRole.System, [firstStateContent!]);
         ChatMessage secondUserMessage = new(ChatRole.User, "increment again");
 
         List<AgentResponseUpdate> secondRoundUpdates = [];
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage, secondStateMessage], session, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([secondUserMessage], session, StateRunOptions(firstSnapshot.Snapshot), CancellationToken.None))
         {
             secondRoundUpdates.Add(update);
         }
 
-        // Assert - Second round should have incremented counter again
-        AgentResponseUpdate? secondStateUpdate = secondRoundUpdates.FirstOrDefault(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
-        secondStateUpdate.Should().NotBeNull();
-
-        DataContent? secondStateContent = secondStateUpdate!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
-        string secondStateJson = System.Text.Encoding.UTF8.GetString(secondStateContent!.Data.ToArray());
-        JsonElement secondState = JsonElement.Parse(secondStateJson);
-
-        secondState.GetProperty("counter").GetInt32().Should().Be(3, "counter should be incremented twice: 1 -> 2 -> 3");
+        // Assert - Second round should have incremented counter again.
+        StateSnapshotEvent? secondSnapshot = FindStateSnapshot(secondRoundUpdates);
+        secondSnapshot.Should().NotBeNull();
+        secondSnapshot!.Snapshot.GetProperty("counter").GetInt32().Should().Be(3, "counter should be incremented twice: 1 -> 2 -> 3");
     }
 
     [Fact]
@@ -207,17 +167,15 @@ public sealed class SharedStateTests : IAsyncDisposable
     {
         // Arrange
         var fakeAgent = new FakeStateAgent();
-
         await this.SetupTestServerAsync(fakeAgent);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
+        AIAgent agent = this.CreateAgent();
+        ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
         List<AgentResponseUpdate> updates = [];
 
-        // Act
+        // Act - no RunAgentInput.State provided.
         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, new AgentRunOptions(), CancellationToken.None))
         {
             updates.Add(update);
@@ -225,12 +183,7 @@ public sealed class SharedStateTests : IAsyncDisposable
 
         // Assert
         updates.Should().NotBeEmpty();
-
-        // Should NOT have state snapshot when no state is sent
-        bool hasStateSnapshot = updates.Any(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
-        hasStateSnapshot.Should().BeFalse("should not return state snapshot when no state is provided");
-
-        // Should have normal text response
+        FindStateSnapshot(updates).Should().BeNull("should not return state snapshot when no state is provided");
         updates.Should().Contain(u => u.Contents.Any(c => c is TextContent));
     }
 
@@ -238,86 +191,81 @@ public sealed class SharedStateTests : IAsyncDisposable
     public async Task EmptyState_DoesNotTriggerStateHandlingAsync()
     {
         // Arrange
-        var emptyState = new { };
         var fakeAgent = new FakeStateAgent();
-
         await this.SetupTestServerAsync(fakeAgent);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
+        AIAgent agent = this.CreateAgent();
+        ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
-        string stateJson = JsonSerializer.Serialize(emptyState);
-        byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
-        DataContent stateContent = new(stateBytes, "application/json");
-        ChatMessage stateMessage = new(ChatRole.System, [stateContent]);
+        var emptyState = JsonSerializer.SerializeToElement(new { });
         ChatMessage userMessage = new(ChatRole.User, "hello");
 
         List<AgentResponseUpdate> updates = [];
 
         // Act
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync([userMessage], session, StateRunOptions(emptyState), CancellationToken.None))
         {
             updates.Add(update);
         }
 
-        // Assert
+        // Assert - empty state {} should be treated as no state.
         updates.Should().NotBeEmpty();
-
-        // Empty state {} should not trigger state snapshot mechanism
-        bool hasEmptyStateSnapshot = updates.Any(u => u.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
-        hasEmptyStateSnapshot.Should().BeFalse("empty state should be treated as no state");
-
-        // Should have normal response
+        FindStateSnapshot(updates).Should().BeNull("empty state should be treated as no state");
         updates.Should().Contain(u => u.Contents.Any(c => c is TextContent));
     }
 
     [Fact]
-    public async Task NonStreamingRunAsync_WithState_ReturnsStateInResponseAsync()
+    public async Task NonStreamingRunAsync_WithState_ReturnsTextResponseAsync()
     {
         // Arrange
-        var initialState = new { counter = 5 };
         var fakeAgent = new FakeStateAgent();
-
         await this.SetupTestServerAsync(fakeAgent);
-        var chatClient = new AGUIChatClient(this._client!, "", null);
-        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
-        ChatClientAgentSession? session = (ChatClientAgentSession)await agent.CreateSessionAsync();
+        AIAgent agent = this.CreateAgent();
+        ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync();
 
-        string stateJson = JsonSerializer.Serialize(initialState);
-        byte[] stateBytes = System.Text.Encoding.UTF8.GetBytes(stateJson);
-        DataContent stateContent = new(stateBytes, "application/json");
-        ChatMessage stateMessage = new(ChatRole.System, [stateContent]);
+        var initialState = JsonSerializer.SerializeToElement(new { counter = 5 });
         ChatMessage userMessage = new(ChatRole.User, "process");
 
-        // Act
-        AgentResponse response = await agent.RunAsync([userMessage, stateMessage], session, new AgentRunOptions(), CancellationToken.None);
+        // Act - non-streaming run.
+        AgentResponse response = await agent.RunAsync([userMessage], session, StateRunOptions(initialState), CancellationToken.None);
 
-        // Assert
+        // Assert - AG-UI state events are a streaming concern: the non-streaming aggregation drops the
+        // content-less STATE_SNAPSHOT update (Microsoft.Extensions.AI only materializes updates that carry
+        // content), so the non-streaming path surfaces the aggregated text response. The state round-trip
+        // itself is verified by the streaming tests above.
         response.Should().NotBeNull();
         response.Messages.Should().NotBeEmpty();
-
-        // Should have message with DataContent containing state
-        bool hasStateMessage = response.Messages.Any(m => m.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
-        hasStateMessage.Should().BeTrue("response should contain state message");
-
-        ChatMessage? stateResponseMessage = response.Messages.FirstOrDefault(m => m.Contents.Any(c => c is DataContent dc && dc.MediaType == "application/json"));
-        stateResponseMessage.Should().NotBeNull();
-
-        DataContent? dataContent = stateResponseMessage!.Contents.OfType<DataContent>().FirstOrDefault(dc => dc.MediaType == "application/json");
-        string receivedJson = System.Text.Encoding.UTF8.GetString(dataContent!.Data.ToArray());
-        JsonElement receivedState = JsonElement.Parse(receivedJson);
-        receivedState.GetProperty("counter").GetInt32().Should().Be(6);
+        response.Text.Should().Contain("State processed");
     }
+
+    private ChatClientAgent CreateAgent()
+    {
+        var chatClient = new AGUIChatClient(new(this._client!, ""));
+        return chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+    }
+
+    private static ChatClientAgentRunOptions StateRunOptions(JsonElement state) =>
+        new()
+        {
+            ChatOptions = new ChatOptions
+            {
+                RawRepresentationFactory = _ => new RunAgentInput { State = state },
+            },
+        };
+
+    private static StateSnapshotEvent? FindStateSnapshot(IEnumerable<AgentResponseUpdate> updates) =>
+        updates
+            .Select(u => u.AsChatResponseUpdate().RawRepresentation as StateSnapshotEvent)
+            .FirstOrDefault(e => e is not null);
 
     private async Task SetupTestServerAsync(FakeStateAgent fakeAgent)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        builder.Services.AddAGUI();
+        builder.Services.AddAGUIServer();
         builder.WebHost.UseTestServer();
 
         this._app = builder.Build();
 
-        this._app.MapAGUI("/agent", fakeAgent);
+        this._app.MapAGUIServer("/agent", fakeAgent);
 
         await this._app.StartAsync();
 
@@ -354,59 +302,49 @@ internal sealed class FakeStateAgent : AIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Check for state in ChatOptions.AdditionalProperties (set by AG-UI hosting layer)
-        if (options is ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } properties } &&
-            properties.TryGetValue("ag_ui_state", out object? stateObj) &&
-            stateObj is JsonElement state &&
-            state.ValueKind == JsonValueKind.Object)
+        // Recover the originating AG-UI input from the request options (set by the hosting layer).
+        if (options is ChatClientAgentRunOptions { ChatOptions: { } chatOptions } &&
+            chatOptions.TryGetRunAgentInput(out RunAgentInput? agentInput) &&
+            agentInput.State is { ValueKind: JsonValueKind.Object } state &&
+            HasProperties(state))
         {
-            // Check if state object has properties (not empty {})
-            bool hasProperties = false;
-            foreach (JsonProperty _ in state.EnumerateObject())
+            Dictionary<string, object?> modifiedState = [];
+            foreach (JsonProperty prop in state.EnumerateObject())
             {
-                hasProperties = true;
-                break;
-            }
-
-            if (hasProperties)
-            {
-                // State is present and non-empty - modify it and return as DataContent
-                Dictionary<string, object?> modifiedState = [];
-                foreach (JsonProperty prop in state.EnumerateObject())
+                if (prop.Name == "counter" && prop.Value.ValueKind == JsonValueKind.Number)
                 {
-                    if (prop.Name == "counter" && prop.Value.ValueKind == JsonValueKind.Number)
-                    {
-                        modifiedState[prop.Name] = prop.Value.GetInt32() + 1;
-                    }
-                    else if (prop.Value.ValueKind == JsonValueKind.Number)
-                    {
-                        modifiedState[prop.Name] = prop.Value.GetInt32();
-                    }
-                    else if (prop.Value.ValueKind == JsonValueKind.String)
-                    {
-                        modifiedState[prop.Name] = prop.Value.GetString();
-                    }
-                    else if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
-                    {
-                        modifiedState[prop.Name] = prop.Value;
-                    }
+                    modifiedState[prop.Name] = prop.Value.GetInt32() + 1;
                 }
-
-                // Return modified state as DataContent
-                string modifiedStateJson = JsonSerializer.Serialize(modifiedState);
-                byte[] modifiedStateBytes = System.Text.Encoding.UTF8.GetBytes(modifiedStateJson);
-                DataContent modifiedStateContent = new(modifiedStateBytes, "application/json");
-
-                yield return new AgentResponseUpdate
+                else if (prop.Value.ValueKind == JsonValueKind.Number)
                 {
-                    MessageId = Guid.NewGuid().ToString("N"),
-                    Role = ChatRole.Assistant,
-                    Contents = [modifiedStateContent]
-                };
+                    modifiedState[prop.Name] = prop.Value.GetInt32();
+                }
+                else if (prop.Value.ValueKind == JsonValueKind.String)
+                {
+                    modifiedState[prop.Name] = prop.Value.GetString();
+                }
+                else if (prop.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                {
+                    modifiedState[prop.Name] = prop.Value;
+                }
             }
+
+            // Emit the modified state as an AG-UI STATE_SNAPSHOT event. An AIAgent surfaces AG-UI raw
+            // events by wrapping a ChatResponseUpdate (whose RawRepresentation is the event) so the
+            // AgentResponseUpdate -> ChatResponseUpdate bridge forwards it to the server's event stream.
+            JsonElement snapshot = JsonSerializer.SerializeToElement(modifiedState);
+            yield return new AgentResponseUpdate
+            {
+                Role = ChatRole.Assistant,
+                RawRepresentation = new ChatResponseUpdate
+                {
+                    Role = ChatRole.Assistant,
+                    RawRepresentation = new StateSnapshotEvent { Snapshot = snapshot }
+                }
+            };
         }
 
-        // Always return a text response
+        // Always return a text response.
         string messageId = Guid.NewGuid().ToString("N");
         yield return new AgentResponseUpdate
         {
@@ -416,6 +354,16 @@ internal sealed class FakeStateAgent : AIAgent
         };
 
         await Task.CompletedTask;
+    }
+
+    private static bool HasProperties(JsonElement element)
+    {
+        foreach (JsonProperty _ in element.EnumerateObject())
+        {
+            return true;
+        }
+
+        return false;
     }
 
     protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>

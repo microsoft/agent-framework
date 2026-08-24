@@ -117,10 +117,7 @@ class ScopedContentProcessor:
             A tuple of (requests, resolved_user_id)
         """
         results: list[ProcessContentRequest] = []
-        token_info = None
-
-        if not (self._settings.get("tenant_id") and self._settings.get("purview_app_location")):
-            token_info = await self._client.get_user_info_from_token(tenant_id=self._settings.get("tenant_id"))
+        token_info = await self._client.get_user_info_from_token(tenant_id=self._settings.get("tenant_id"))
 
         tenant_id = (token_info or {}).get("tenant_id") or self._settings.get("tenant_id")
         if not tenant_id or not _is_valid_guid(tenant_id):
@@ -128,6 +125,9 @@ class ScopedContentProcessor:
 
         resolved_user_id = (token_info or {}).get("user_id")
         resolved_author_name = None
+        if not resolved_user_id:
+            resolved_user_id = provided_user_id if provided_user_id and _is_valid_guid(provided_user_id) else None
+
         if not resolved_user_id:
             for m in messages:
                 if m.additional_properties:
@@ -140,9 +140,6 @@ class ScopedContentProcessor:
 
         if not resolved_user_id and resolved_author_name:
             resolved_user_id = resolved_author_name
-
-        if not resolved_user_id:
-            resolved_user_id = provided_user_id if provided_user_id and _is_valid_guid(provided_user_id) else None
 
         # Return empty results if user_id is empty
         if not resolved_user_id or not _is_valid_guid(resolved_user_id):

@@ -56,13 +56,13 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 
 | Sample | Description |
 |--------|-------------|
-| `01_document_qa.py` | Upload a PDF via URL, ask questions about it |
-| `02_multi_turn_session.py` | AgentSession persistence across turns |
-| `03_multimodal_chat.py` | PDF + audio + video parallel analysis |
-| `04_invoice_processing.py` | Structured field extraction with `prebuilt-invoice` analyzer |
-| `05_large_doc_file_search.py` | CU extraction + OpenAI vector store RAG |
-| `02-devui/01-multimodal_agent/` | DevUI web UI for CU-powered chat |
-| `02-devui/02-file_search_agent/` | DevUI web UI combining CU + file_search RAG |
+| `samples/02-agents/context_providers/azure_content_understanding/01_document_qa.py` | Upload a PDF via URL, ask questions about it |
+| `samples/02-agents/context_providers/azure_content_understanding/02_multi_turn_session.py` | AgentSession persistence across turns |
+| `samples/02-agents/context_providers/azure_content_understanding/03_multimodal_chat.py` | PDF + audio + video parallel analysis |
+| `samples/02-agents/context_providers/azure_content_understanding/04_invoice_processing.py` | Structured field extraction with `prebuilt-invoice` analyzer |
+| `samples/02-agents/context_providers/azure_content_understanding/05_large_doc_file_search.py` | CU extraction + OpenAI vector store RAG |
+| `samples/02-agents/devui/agent_content_understanding/` | DevUI web UI for CU-powered chat |
+| `samples/02-agents/devui/agent_content_understanding_file_search_*/` | DevUI web UI combining CU + file_search RAG |
 
 ## Running Tests
 

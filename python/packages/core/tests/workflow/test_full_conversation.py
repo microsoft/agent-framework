@@ -20,13 +20,13 @@ from agent_framework import (
     Executor,
     Message,
     ResponseStream,
+    ServiceSessionId,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowRunState,
     executor,
     handler,
 )
-from agent_framework.orchestrations import SequentialBuilder
 
 
 class _SimpleAgent(BaseAgent):
@@ -158,7 +158,7 @@ class _CaptureFullConversation(Executor):
     """Captures AgentExecutorResponse.full_conversation and completes the workflow."""
 
     @handler
-    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[Never, dict[str, Any]]) -> None:
+    async def capture(self, response: AgentExecutorResponse, ctx: WorkflowContext[Never, dict[str, Any]]) -> None:  # type: ignore[valid-type]
         full = response.full_conversation
         # The AgentExecutor contract guarantees full_conversation is populated.
         assert full is not None
@@ -232,7 +232,7 @@ class _CaptureAgent(BaseAgent):
         # Normalize and record messages for verification
         norm: list[Message] = []
         if messages:
-            for m in messages:  # type: ignore[iteration-over-optional]
+            for m in messages:  # type: ignore[iteration-over-optional, union-attr]  # ty: ignore[not-iterable]
                 if isinstance(m, Message):
                     norm.append(m)
                 elif isinstance(m, str):
@@ -253,6 +253,9 @@ class _CaptureAgent(BaseAgent):
 
 
 async def test_sequential_adapter_uses_full_conversation() -> None:
+    pytest.importorskip("agent_framework_orchestrations")
+    from agent_framework.orchestrations import SequentialBuilder
+
     # Arrange: two streaming agents; the second records what it receives
     a1 = _CaptureAgent(id="agent1", name="A1", reply_text="A1 reply")
     a2 = _CaptureAgent(id="agent2", name="A2", reply_text="A2 reply")
@@ -272,6 +275,9 @@ async def test_sequential_adapter_uses_full_conversation() -> None:
 
 
 async def test_sequential_handoff_preserves_function_call_for_non_reasoning_model() -> None:
+    pytest.importorskip("agent_framework_orchestrations")
+    from agent_framework.orchestrations import SequentialBuilder
+
     # Arrange: non-reasoning agent emits function_call + function_result + summary
     first = _ToolHistoryAgent(
         id="tool_history_agent",
@@ -368,7 +374,7 @@ async def test_agent_executor_full_conversation_round_trip_does_not_duplicate_hi
 class _SessionIdCapturingAgent(BaseAgent):
     """Records service_session_id of the session at run() time."""
 
-    _captured_service_session_id: str | None = PrivateAttr(default="NOT_CAPTURED")
+    _captured_service_session_id: str | ServiceSessionId | None = PrivateAttr(default="NOT_CAPTURED")
 
     @overload
     def run(

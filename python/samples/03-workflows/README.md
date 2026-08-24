@@ -2,12 +2,12 @@
 
 ## Installation
 
-Microsoft Agent Framework Workflows support ships with the core `agent-framework` or `agent-framework-core` package, so no extra installation step is required.
+Microsoft Agent Framework Workflows support ships with `agent-framework-core`.
 
 To install with visualization support:
 
 ```bash
-pip install agent-framework[viz] --pre
+pip install agent-framework-core graphviz
 ```
 
 To export visualization images you also need to [install GraphViz](https://graphviz.org/download/).
@@ -228,7 +228,7 @@ If you need persistent server-side agent resources, use the hosted-agent flows r
 
 Workflow samples that use `FoundryChatClient` expect:
 
-- `FOUNDRY_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
+- `FOUNDRY_PROJECT_ENDPOINT` (Microsoft Foundry Agent Service (V2) project endpoint)
 - `FOUNDRY_MODEL` (model deployment name)
 
 These values are passed directly into the client constructor via `os.getenv()` in sample code.

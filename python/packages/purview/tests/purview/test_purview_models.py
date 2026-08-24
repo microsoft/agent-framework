@@ -100,7 +100,9 @@ class TestComplexModels:
 
         assert len(content.content_entries) == 1
         assert content.activity_metadata.activity == Activity.UPLOAD_TEXT
-        assert content.device_metadata.operating_system_specifications.operating_system_platform == "Windows"
+        os_specs = content.device_metadata.operating_system_specifications
+        assert os_specs is not None
+        assert os_specs.operating_system_platform == "Windows"
         assert content.integrated_app_metadata.name == "App"
         assert content.protected_app_metadata.name == "Protected"
 
@@ -162,6 +164,7 @@ class TestModelDeserialization:
 
         assert response.id == "response-123"
         assert response.protection_scope_state == "blocked"
+        assert response.policy_actions is not None
         assert len(response.policy_actions) == 1
 
     def test_content_serialization_uses_aliases(self) -> None:

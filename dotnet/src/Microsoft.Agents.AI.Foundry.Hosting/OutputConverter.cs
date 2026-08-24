@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -31,6 +32,9 @@ internal static class OutputConverter
     /// <param name="updates">The agent response updates to convert.</param>
     /// <param name="stream">The SDK event stream builder.</param>
     /// <param name="stateBag">Optional session state bag used to persist tool-approval id mappings across turns.</param>
+    /// <param name="persistWorkflowCheckpointHandler">
+    /// Optional callback invoked after all output from a completed workflow superstep has been closed.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>An async enumerable of SDK response stream events (excluding lifecycle events).</returns>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call arguments dictionary.")]
@@ -39,12 +43,14 @@ internal static class OutputConverter
         IAsyncEnumerable<AgentResponseUpdate> updates,
         ResponseEventStream stream,
         AgentSessionStateBag? stateBag = null,
+        Func<CheckpointInfo, CancellationToken, ValueTask<ResponseStreamEvent?>>? persistWorkflowCheckpointHandler = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ResponseUsage? accumulatedUsage = null;
         OutputItemMessageBuilder? currentMessageBuilder = null;
         TextContentBuilder? currentTextBuilder = null;
         StringBuilder? accumulatedText = null;
+        List<Annotation>? accumulatedAnnotations = null;
         string? previousMessageId = null;
         bool hasTerminalEvent = false;
         var executorItemIds = new Dictionary<string, string>();
@@ -60,7 +66,7 @@ internal static class OutputConverter
             if (update.RawRepresentation is WorkflowEvent workflowEvent && update.Contents.Count == 0)
             {
                 // Close any open message builder before emitting workflow items
-                foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                 {
                     yield return evt;
                 }
@@ -68,11 +74,27 @@ internal static class OutputConverter
                 currentTextBuilder = null;
                 currentMessageBuilder = null;
                 accumulatedText = null;
+                accumulatedAnnotations = null;
                 previousMessageId = null;
 
                 foreach (var evt in EmitWorkflowEvent(stream, workflowEvent, executorItemIds))
                 {
                     yield return evt;
+                }
+
+                if (workflowEvent is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } checkpoint }
+                    && persistWorkflowCheckpointHandler is not null)
+                {
+                    ResponseStreamEvent? checkpointStateEvent =
+                        await persistWorkflowCheckpointHandler(checkpoint, cancellationToken).ConfigureAwait(false);
+                    if (checkpointStateEvent is not null)
+                    {
+                        // AgentServer persists its orchestrator-owned response snapshot. Emit the
+                        // updated response state first so internal metadata becomes part of that
+                        // authoritative snapshot, then persist it with the control event.
+                        yield return checkpointStateEvent;
+                        yield return stream.Checkpoint();
+                    }
                 }
 
                 continue;
@@ -86,7 +108,7 @@ internal static class OutputConverter
                     {
                         if (!IsSameMessage(update.MessageId, previousMessageId) && currentMessageBuilder is not null)
                         {
-                            foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                            foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                             {
                                 yield return evt;
                             }
@@ -94,6 +116,7 @@ internal static class OutputConverter
                             currentTextBuilder = null;
                             currentMessageBuilder = null;
                             accumulatedText = null;
+                            accumulatedAnnotations = null;
                         }
 
                         previousMessageId = update.MessageId;
@@ -115,6 +138,14 @@ internal static class OutputConverter
                             yield return currentTextBuilder!.EmitDelta(textContent.Text);
                         }
 
+                        if (textContent.Annotations is { Count: > 0 })
+                        {
+                            foreach (var sdkAnnotation in ConvertToSdkAnnotations(textContent.Annotations))
+                            {
+                                (accumulatedAnnotations ??= []).Add(sdkAnnotation);
+                            }
+                        }
+
                         break;
                     }
 
@@ -125,7 +156,7 @@ internal static class OutputConverter
                             break;
                         }
 
-                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
                         }
@@ -133,6 +164,7 @@ internal static class OutputConverter
                         currentTextBuilder = null;
                         currentMessageBuilder = null;
                         accumulatedText = null;
+                        accumulatedAnnotations = null;
                         previousMessageId = null;
 
                         var arguments = functionCall.Arguments is not null
@@ -149,7 +181,7 @@ internal static class OutputConverter
 
                     case TextReasoningContent reasoningContent:
                     {
-                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
                         }
@@ -157,6 +189,7 @@ internal static class OutputConverter
                         currentTextBuilder = null;
                         currentMessageBuilder = null;
                         accumulatedText = null;
+                        accumulatedAnnotations = null;
                         previousMessageId = null;
 
                         var reasoningBuilder = stream.AddOutputItemReasoningItem();
@@ -176,7 +209,7 @@ internal static class OutputConverter
 
                     case ToolApprovalRequestContent approvalRequest when approvalRequest.ToolCall is FunctionCallContent approvalFunctionCall:
                     {
-                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
                         }
@@ -184,6 +217,7 @@ internal static class OutputConverter
                         currentTextBuilder = null;
                         currentMessageBuilder = null;
                         accumulatedText = null;
+                        accumulatedAnnotations = null;
                         previousMessageId = null;
 
                         // The Responses API only standardizes the MCP-flavored approval primitive.
@@ -237,7 +271,7 @@ internal static class OutputConverter
 
                     case ErrorContent errorContent:
                     {
-                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
                         }
@@ -245,6 +279,7 @@ internal static class OutputConverter
                         currentTextBuilder = null;
                         currentMessageBuilder = null;
                         accumulatedText = null;
+                        accumulatedAnnotations = null;
                         previousMessageId = null;
                         hasTerminalEvent = true;
 
@@ -269,7 +304,7 @@ internal static class OutputConverter
                             break;
                         }
 
-                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+                        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
                         {
                             yield return evt;
                         }
@@ -277,6 +312,7 @@ internal static class OutputConverter
                         currentTextBuilder = null;
                         currentMessageBuilder = null;
                         accumulatedText = null;
+                        accumulatedAnnotations = null;
                         previousMessageId = null;
 
                         var outputText = EncodeFunctionResultAsJsonStringPayload(functionResult.Result);
@@ -304,7 +340,7 @@ internal static class OutputConverter
         }
 
         // Close any remaining open message
-        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText))
+        foreach (var evt in CloseCurrentMessage(currentMessageBuilder, currentTextBuilder, accumulatedText, accumulatedAnnotations))
         {
             yield return evt;
         }
@@ -318,7 +354,8 @@ internal static class OutputConverter
     private static IEnumerable<ResponseStreamEvent> CloseCurrentMessage(
         OutputItemMessageBuilder? messageBuilder,
         TextContentBuilder? textBuilder,
-        StringBuilder? accumulatedText)
+        StringBuilder? accumulatedText,
+        List<Annotation>? annotations = null)
     {
         if (messageBuilder is null)
         {
@@ -329,6 +366,16 @@ internal static class OutputConverter
         {
             var finalText = accumulatedText?.ToString() ?? string.Empty;
             yield return textBuilder.EmitTextDone(finalText);
+
+            // Annotations must be emitted after EmitTextDone and before EmitDone.
+            if (annotations is not null)
+            {
+                foreach (var annotation in annotations)
+                {
+                    yield return textBuilder.EmitAnnotationAdded(annotation);
+                }
+            }
+
             yield return textBuilder.EmitDone();
         }
 
@@ -337,6 +384,41 @@ internal static class OutputConverter
 
     private static bool IsSameMessage(string? currentId, string? previousId) =>
         currentId is not { Length: > 0 } || previousId is not { Length: > 0 } || currentId == previousId;
+
+    /// <summary>
+    /// Converts MEAI <see cref="AIAnnotation"/> instances to Responses SDK <see cref="Annotation"/> objects.
+    /// Only <see cref="CitationAnnotation"/> with a URL and at least one <see cref="TextSpanAnnotatedRegion"/>
+    /// with explicit start/end indices is converted; all other shapes are skipped.
+    /// </summary>
+    private static IEnumerable<Annotation> ConvertToSdkAnnotations(IList<AIAnnotation> annotations)
+    {
+        foreach (var ann in annotations)
+        {
+            if (ann is not CitationAnnotation citation || citation.Url is null)
+            {
+                continue;
+            }
+
+            var regions = citation.AnnotatedRegions?
+                .OfType<TextSpanAnnotatedRegion>()
+                .Where(r => r.StartIndex is not null && r.EndIndex is not null)
+                .ToList();
+
+            if (regions is not { Count: > 0 })
+            {
+                continue;
+            }
+
+            foreach (var region in regions)
+            {
+                yield return new UrlCitationBody(
+                    citation.Url,
+                    region.StartIndex!.Value,
+                    region.EndIndex!.Value,
+                    citation.Title ?? string.Empty);
+            }
+        }
+    }
 
     private static ResponseUsage ConvertUsage(UsageDetails details, ResponseUsage? existing)
     {

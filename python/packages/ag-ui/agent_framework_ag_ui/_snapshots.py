@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
@@ -26,26 +27,30 @@ _SnapshotKey: TypeAlias = tuple[SnapshotScope, AGUIThreadID]
 DEFAULT_MAX_THREAD_SNAPSHOTS = 1_000
 _SNAPSHOT_SCOPE_INPUT_KEY = "__ag_ui_snapshot_scope"
 _DEFAULT_STATE_INPUT_KEY = "__ag_ui_default_state"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
 class AGUIThreadSnapshot:
-    """Replayable AG-UI Thread state.
+    """AG-UI Thread state.
 
-    AG-UI Thread Snapshots intentionally contain only data that can be replayed
-    to a UI: message snapshots, optional Shared State, and optional interruption
-    state. They do not include raw events, request metadata, auth claims,
+    AG-UI Thread Snapshots contain client-replayable message, Shared State, and
+    interruption data plus optional private Session Continuation State. Private
+    continuation is trusted server data and must never be replayed to the client.
+    Snapshots do not include raw events, request metadata, auth claims,
     diagnostics, traces, or provider responses.
 
     Attributes:
         messages: Replayable AG-UI message snapshots.
         state: Optional AG-UI Shared State snapshot.
-        interrupt: Optional interruption state from ``RUN_FINISHED.interrupt``.
+        interrupt: Optional interruption state from ``RUN_FINISHED.outcome.interrupts``.
+        session_state: Optional private serialized ``AgentSession.state`` payload.
     """
 
     messages: list[dict[str, Any]] = field(default_factory=list)
     state: dict[str, Any] | None = None
     interrupt: list[dict[str, Any]] | None = None
+    session_state: dict[str, Any] | None = None
 
 
 @runtime_checkable
@@ -200,3 +205,33 @@ class InMemoryAGUIThreadSnapshotStore:
     def _evict_oldest(self) -> None:
         while len(self._snapshots) > self._max_snapshots:
             del self._snapshots[next(iter(self._snapshots))]
+
+
+async def _clear_thread_snapshot_interrupt(
+    *,
+    snapshot_store: AGUIThreadSnapshotStore,
+    scope: SnapshotScope,
+    thread_id: AGUIThreadID,
+    interrupt_ids: set[str] | None = None,
+) -> None:
+    """Clear completed interruption state from the latest replayable thread snapshot."""
+    try:
+        snapshot = await snapshot_store.get(scope=scope, thread_id=thread_id)
+        if snapshot is None or snapshot.interrupt is None:
+            return
+        if interrupt_ids is None:
+            snapshot.interrupt = None
+        else:
+            remaining_interrupts = [
+                interrupt
+                for interrupt in snapshot.interrupt
+                if str(interrupt.get("id") or interrupt.get("interruptId")) not in interrupt_ids
+            ]
+            snapshot.interrupt = remaining_interrupts or None
+        await snapshot_store.save(scope=scope, thread_id=thread_id, snapshot=snapshot)
+    except Exception:
+        logger.exception(
+            "Failed to clear AG-UI Thread Snapshot interrupt for scope=%s thread_id=%s; keeping previous snapshot.",
+            scope,
+            thread_id,
+        )

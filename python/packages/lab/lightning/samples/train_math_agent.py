@@ -94,7 +94,7 @@ def _scalar_are_results_same(pred_result: str, true_result: str, rel_tol: float)
         pred_float = _float_eval(pred_result)
         true_float = _float_eval(true_result)
         return math.isclose(pred_float, true_float, rel_tol=rel_tol)
-    except Exception:  # noqa: S110
+    except Exception:  # ruff:ignore[try-except-pass]
         pass
 
     return False

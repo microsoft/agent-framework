@@ -2,10 +2,12 @@
 
   <PropertyGroup>
     <InjectSharedIntegrationTestCode>true</InjectSharedIntegrationTestCode>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Declarative.Foundry\Microsoft.Agents.AI.Workflows.Declarative.Foundry.csproj" />
   </ItemGroup>
 
   <ItemGroup>

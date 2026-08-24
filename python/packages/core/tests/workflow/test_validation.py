@@ -50,7 +50,7 @@ class AnyExecutor(Executor):
 class NoOutputTypesExecutor(Executor):
     @handler
     async def handle_message(self, message: str, ctx: WorkflowContext) -> None:
-        await ctx.send_message("processed")  # type: ignore[arg-type]
+        await ctx.send_message("processed")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 class MultiTypeExecutor(Executor):
@@ -187,7 +187,7 @@ def test_disconnected_start_executor_not_in_graph():
 
 def test_missing_start_executor():
     with pytest.raises(TypeError):
-        WorkflowBuilder()  # type: ignore[call-arg]
+        WorkflowBuilder()  # type: ignore[call-arg]  # ty: ignore[missing-argument]
 
 
 def test_workflow_validation_error_base_class():
@@ -498,7 +498,7 @@ def test_handler_ctx_invalid_t_out_entries_raises() -> None:
 
         class BadExecutor(Executor):  # pyright: ignore[reportUnusedClass]
             @handler  # pyright: ignore[reportUnknownArgumentType]
-            async def handle(self, message: str, ctx: WorkflowContext[123]) -> None:  # type: ignore[valid-type]
+            async def handle(self, message: str, ctx: WorkflowContext[123]) -> None:  # type: ignore[valid-type]  # ty: ignore[invalid-type-form]
                 pass
 
     assert "invalid type entry" in str(exc.value)

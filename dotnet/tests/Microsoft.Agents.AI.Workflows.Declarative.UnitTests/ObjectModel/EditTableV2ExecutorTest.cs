@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
@@ -144,7 +146,7 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         this.State.Set("TestTable", tableValue);
 
         // Arrange, Act, Assert
-        await this.ExecuteTestAsync<RecordValue>(
+        await this.ExecuteTestAsync<TableValue>(
             displayName: nameof(AddItemOperationWithSingleFieldRecordAsync),
             variableName: "TestTable",
             changeType: this.CreateAddItemOperation(new RecordDataValue.Builder
@@ -154,8 +156,8 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
                     ["Name"] = new StringDataValue("John")
                 }
             }.Build()),
-            verifyAction: (variableName, recordValue) =>
-                Assert.Equal("John", recordValue.GetField("Name").ToObject())
+            verifyAction: (variableName, resultTable) =>
+                Assert.Equal("John", Assert.Single(resultTable.Rows).Value.GetField("Name").ToObject())
             );
     }
 
@@ -168,13 +170,44 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         this.State.Set("TestTable", tableValue);
 
         // Act & Assert
-        await this.ExecuteTestAsync<RecordValue>(
+        await this.ExecuteTestAsync<TableValue>(
             displayName: nameof(AddItemOperationWithScalarValueAsync),
             variableName: "TestTable",
             changeType: this.CreateAddItemOperation(new StringDataValue("TestValue")),
-            verifyAction: (variableName, recordValue) =>
-                Assert.Equal("TestValue", recordValue.GetField("Value").ToObject())
+            verifyAction: (variableName, resultTable) =>
+                Assert.Equal("TestValue", Assert.Single(resultTable.Rows).Value.GetField("Value").ToObject())
             );
+    }
+
+    [Fact]
+    public async Task ConsecutiveAddItemOperationsPreserveTableAsync()
+    {
+        // Arrange
+        RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
+        RecordValue initialRecord = FormulaValue.NewRecordFromFields(
+            recordType,
+            new NamedValue("Value", FormulaValue.New("Initial")));
+        this.State.Set("TestTable", FormulaValue.NewTable(recordType, initialRecord));
+
+        EditTableV2 firstAdd = this.CreateModel(
+            nameof(ConsecutiveAddItemOperationsPreserveTableAsync),
+            "TestTable",
+            this.CreateAddItemOperation(new StringDataValue("First")));
+        EditTableV2 secondAdd = this.CreateModel(
+            nameof(ConsecutiveAddItemOperationsPreserveTableAsync),
+            "TestTable",
+            this.CreateAddItemOperation(new StringDataValue("Second")));
+
+        // Act
+        await this.ExecuteAsync(new EditTableV2Executor(firstAdd, this.State));
+        await this.ExecuteAsync(new EditTableV2Executor(secondAdd, this.State));
+
+        // Assert
+        TableValue resultTable = Assert.IsAssignableFrom<TableValue>(this.State.Get("TestTable"));
+        string[] values = resultTable.Rows
+            .Select(row => Assert.IsType<StringValue>(row.Value.GetField("Value")).Value)
+            .ToArray();
+        Assert.Equal(["Initial", "First", "Second"], values);
     }
 
     [Fact]
@@ -188,10 +221,43 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         this.State.Set("TestTable", tableValue);
 
         // Act & Assert
-        await this.ExecuteTestAsync<BlankValue>(
+        await this.ExecuteTestAsync<TableValue>(
             displayName: nameof(ClearItemsOperationAsync),
             variableName: "TestTable",
-            changeType: new ClearItemsOperation.Builder().Build());
+            changeType: new ClearItemsOperation.Builder().Build(),
+            verifyAction: (_, resultTable) =>
+            {
+                Assert.Empty(resultTable.Rows);
+                Assert.Equal(FormulaType.String, resultTable.Type.GetFieldType("Value"));
+            });
+    }
+
+    [Fact]
+    public async Task ClearThenRestoreThenAddPreservesTableAsync()
+    {
+        // Arrange
+        RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
+        RecordValue record1 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item1")));
+        RecordValue record2 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item2")));
+        this.State.Set("TestTable", FormulaValue.NewTable(recordType, record1, record2));
+
+        EditTableV2 clearAction = this.CreateModel(
+            nameof(ClearThenRestoreThenAddPreservesTableAsync),
+            "TestTable",
+            new ClearItemsOperation.Builder().Build());
+        EditTableV2 addAction = this.CreateModel(
+            nameof(ClearThenRestoreThenAddPreservesTableAsync),
+            "TestTable",
+            this.CreateAddItemOperation(new StringDataValue("Item3")));
+
+        // Act
+        await this.ExecuteAsync(new EditTableV2Executor(clearAction, this.State));
+        this.State.Set("TestTable", new PortableValue(this.State.Get("TestTable").AsPortable()).ToFormula());
+        await this.ExecuteAsync(new EditTableV2Executor(addAction, this.State));
+
+        // Assert
+        TableValue resultTable = Assert.IsAssignableFrom<TableValue>(this.State.Get("TestTable"));
+        Assert.Equal("Item3", Assert.Single(resultTable.Rows).Value.GetField("Value").ToObject());
     }
 
     [Fact]
@@ -205,10 +271,40 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         this.State.Set("TestTable", tableValue);
 
         // Act & Assert
-        await this.ExecuteTestAsync<BlankValue>(
+        await this.ExecuteTestAsync<TableValue>(
             displayName: nameof(RemoveItemOperationAsync),
             variableName: "TestTable",
-            changeType: this.CreateRemoveItemOperation("Item1"));
+            changeType: this.CreateRemoveItemOperation("Item1"),
+            verifyAction: (_, resultTable) =>
+                Assert.Equal("Item2", Assert.Single(resultTable.Rows).Value.GetField("Value").ToObject()));
+    }
+
+    [Fact]
+    public async Task RemoveAllThenRestoreThenAddPreservesTableAsync()
+    {
+        // Arrange
+        RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
+        RecordValue record1 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item1")));
+        RecordValue record2 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item2")));
+        this.State.Set("TestTable", FormulaValue.NewTable(recordType, record1, record2));
+
+        EditTableV2 removeAction = this.CreateModel(
+            nameof(RemoveAllThenRestoreThenAddPreservesTableAsync),
+            "TestTable",
+            this.CreateRemoveItemOperation("Item1", "Item2"));
+        EditTableV2 addAction = this.CreateModel(
+            nameof(RemoveAllThenRestoreThenAddPreservesTableAsync),
+            "TestTable",
+            this.CreateAddItemOperation(new StringDataValue("Item3")));
+
+        // Act
+        await this.ExecuteAsync(new EditTableV2Executor(removeAction, this.State));
+        this.State.Set("TestTable", new PortableValue(this.State.Get("TestTable").AsPortable()).ToFormula());
+        await this.ExecuteAsync(new EditTableV2Executor(addAction, this.State));
+
+        // Assert
+        TableValue resultTable = Assert.IsAssignableFrom<TableValue>(this.State.Get("TestTable"));
+        Assert.Equal("Item3", Assert.Single(resultTable.Rows).Value.GetField("Value").ToObject());
     }
 
     [Fact]
@@ -222,14 +318,25 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         TableValue tableValue = FormulaValue.NewTable(recordType, record1, record2, record3);
         this.State.Set("TestTable", tableValue);
 
-        // Arrange, Act, Assert
-        await this.ExecuteTestAsync<RecordValue>(
+        // Act
+        await this.ExecuteTestAsync<TableValue>(
             displayName: nameof(TakeLastItemOperationWithItemsAsync),
             variableName: "TestTable",
-            changeType: new TakeLastItemOperation.Builder().Build(),
-            verifyAction: (variableName, recordValue) =>
-                Assert.Equal("Item3", recordValue.GetField("Value").ToObject())
-            );
+            changeType: new TakeLastItemOperation.Builder
+            {
+                ResultVariable = PropertyPath.Create(FormatVariablePath("TakenItem"))
+            }.Build(),
+            verifyAction: (_, resultTable) =>
+            {
+                string[] values = resultTable.Rows
+                    .Select(row => Assert.IsType<StringValue>(row.Value.GetField("Value")).Value)
+                    .ToArray();
+                Assert.Equal(["Item1", "Item2"], values);
+            });
+
+        // Assert
+        RecordValue resultRecord = Assert.IsAssignableFrom<RecordValue>(this.State.Get("TakenItem"));
+        Assert.Equal("Item3", resultRecord.GetField("Value").ToObject());
     }
 
     [Fact]
@@ -239,12 +346,19 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
         TableValue tableValue = FormulaValue.NewTable(recordType);
         this.State.Set("TestTable", tableValue);
+        this.State.Set("TakenItem", FormulaValue.NewRecordFromFields(new NamedValue("Value", FormulaValue.New("stale"))));
 
-        // Arrange, Act, Assert
+        // Act
         await this.ExecuteTestAsync<TableValue>(
             displayName: nameof(TakeLastItemOperationEmptyTableAsync),
             variableName: "TestTable",
-            changeType: new TakeLastItemOperation.Builder().Build());
+            changeType: new TakeLastItemOperation.Builder
+            {
+                ResultVariable = PropertyPath.Create(FormatVariablePath("TakenItem"))
+            }.Build());
+
+        // Assert
+        Assert.IsType<BlankValue>(this.State.Get("TakenItem"));
     }
 
     [Fact]
@@ -258,14 +372,77 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         TableValue tableValue = FormulaValue.NewTable(recordType, record1, record2, record3);
         this.State.Set("TestTable", tableValue);
 
-        // Act & Assert
-        await this.ExecuteTestAsync<RecordValue>(
+        // Act
+        await this.ExecuteTestAsync<TableValue>(
             displayName: nameof(TakeFirstItemOperationWithItemsAsync),
             variableName: "TestTable",
+            changeType: new TakeFirstItemOperation.Builder
+            {
+                ResultVariable = PropertyPath.Create(FormatVariablePath("TakenItem"))
+            }.Build(),
+            verifyAction: (_, resultTable) =>
+            {
+                string[] values = resultTable.Rows
+                    .Select(row => Assert.IsType<StringValue>(row.Value.GetField("Value")).Value)
+                    .ToArray();
+                Assert.Equal(["Item2", "Item3"], values);
+            });
+
+        // Assert
+        RecordValue resultRecord = Assert.IsAssignableFrom<RecordValue>(this.State.Get("TakenItem"));
+        Assert.Equal("Item1", resultRecord.GetField("Value").ToObject());
+    }
+
+    [Fact]
+    public async Task TakeFirstItemOperationWithoutResultPreservesTableAsync()
+    {
+        // Arrange
+        RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
+        RecordValue record1 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item1")));
+        RecordValue record2 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item2")));
+        this.State.Set("TestTable", FormulaValue.NewTable(recordType, record1, record2));
+
+        // Act & Assert
+        await this.ExecuteTestAsync<TableValue>(
+            displayName: nameof(TakeFirstItemOperationWithoutResultPreservesTableAsync),
+            variableName: "TestTable",
             changeType: new TakeFirstItemOperation.Builder().Build(),
-            verifyAction: (variableName, recordValue) =>
-                Assert.Equal("Item1", recordValue.GetField("Value").ToObject())
-            );
+            verifyAction: (_, resultTable) =>
+                Assert.Equal("Item2", Assert.Single(resultTable.Rows).Value.GetField("Value").ToObject()));
+    }
+
+    [Fact]
+    public async Task TakeLastThenAddPreservesTableAsync()
+    {
+        // Arrange
+        RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
+        RecordValue record1 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item1")));
+        RecordValue record2 = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New("Item2")));
+        this.State.Set("TestTable", FormulaValue.NewTable(recordType, record1, record2));
+
+        EditTableV2 takeAction = this.CreateModel(
+            nameof(TakeLastThenAddPreservesTableAsync),
+            "TestTable",
+            new TakeLastItemOperation.Builder
+            {
+                ResultVariable = PropertyPath.Create(FormatVariablePath("TakenItem"))
+            }.Build());
+        EditTableV2 addAction = this.CreateModel(
+            nameof(TakeLastThenAddPreservesTableAsync),
+            "TestTable",
+            this.CreateAddItemOperation(new StringDataValue("Item3")));
+
+        // Act
+        await this.ExecuteAsync(new EditTableV2Executor(takeAction, this.State));
+        await this.ExecuteAsync(new EditTableV2Executor(addAction, this.State));
+
+        // Assert
+        TableValue resultTable = Assert.IsAssignableFrom<TableValue>(this.State.Get("TestTable"));
+        string[] values = resultTable.Rows
+            .Select(row => Assert.IsType<StringValue>(row.Value.GetField("Value")).Value)
+            .ToArray();
+        Assert.Equal(["Item1", "Item3"], values);
+        Assert.Equal("Item2", Assert.IsAssignableFrom<RecordValue>(this.State.Get("TakenItem")).GetField("Value").ToObject());
     }
 
     [Fact]
@@ -275,12 +452,19 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
         TableValue tableValue = FormulaValue.NewTable(recordType);
         this.State.Set("TestTable", tableValue);
+        this.State.Set("TakenItem", FormulaValue.NewRecordFromFields(new NamedValue("Value", FormulaValue.New("stale"))));
 
-        // Act & Assert
+        // Act
         await this.ExecuteTestAsync<TableValue>(
             displayName: nameof(TakeFirstItemOperationEmptyTableAsync),
             variableName: "TestTable",
-            changeType: new TakeFirstItemOperation.Builder().Build());
+            changeType: new TakeFirstItemOperation.Builder
+            {
+                ResultVariable = PropertyPath.Create(FormatVariablePath("TakenItem"))
+            }.Build());
+
+        // Assert
+        Assert.IsType<BlankValue>(this.State.Get("TakenItem"));
     }
 
     private async Task ExecuteTestAsync<TValue>(
@@ -325,12 +509,18 @@ public sealed class EditTableV2ExecutorTest(ITestOutputHelper output) : Workflow
         }.Build();
     }
 
-    private RemoveItemOperation CreateRemoveItemOperation(string itemValue)
+    private RemoveItemOperation CreateRemoveItemOperation(params string[] itemValues)
     {
         // Create a table with the item to remove
         RecordType recordType = RecordType.Empty().Add("Value", FormulaType.String);
-        RecordValue recordToRemove = FormulaValue.NewRecordFromFields(recordType, new NamedValue("Value", FormulaValue.New(itemValue)));
-        TableValue tableToRemove = FormulaValue.NewTable(recordType, recordToRemove);
+        TableValue tableToRemove =
+            FormulaValue.NewTable(
+                recordType,
+                itemValues.Select(
+                    itemValue =>
+                        FormulaValue.NewRecordFromFields(
+                            recordType,
+                            new NamedValue("Value", FormulaValue.New(itemValue)))));
 
         // Store in state for expression evaluation
         this.State.Set("RemoveItems", tableToRemove);

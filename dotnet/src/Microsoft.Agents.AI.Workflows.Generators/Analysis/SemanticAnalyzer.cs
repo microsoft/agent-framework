@@ -280,9 +280,8 @@ internal static class SemanticAnalyzer
         if (!first.DerivesFromExecutor)
         {
             allDiagnostics.Add(Diagnostic.Create(
-                DiagnosticDescriptors.NotAnExecutor,
+                DiagnosticDescriptors.ProtocolClassNotAnExecutor,
                 classLocation,
-                first.ClassName,
                 first.ClassName));
             return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
         }
@@ -290,7 +289,7 @@ internal static class SemanticAnalyzer
         if (!first.IsPartialClass)
         {
             allDiagnostics.Add(Diagnostic.Create(
-                DiagnosticDescriptors.ClassMustBePartial,
+                DiagnosticDescriptors.ProtocolClassMustBePartial,
                 classLocation,
                 first.ClassName));
             return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());

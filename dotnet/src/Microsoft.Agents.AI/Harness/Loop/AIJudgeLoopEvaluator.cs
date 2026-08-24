@@ -39,6 +39,17 @@ namespace Microsoft.Agents.AI;
 /// LLM-judged loops are costly and probabilistic, so consider setting a stricter
 /// <see cref="LoopAgentOptions.MaxIterations"/> on the owning <see cref="LoopAgent"/>.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Using this evaluator is an explicit opt-in — the caller
+/// must construct an <see cref="AIJudgeLoopEvaluator"/> with a judge <see cref="IChatClient"/> and add
+/// it to the <see cref="LoopAgent"/>'s evaluator set; no judge is used by default. The judge
+/// introduces a second external LLM boundary in addition to the agent's own model: on every iteration
+/// it is sent the original request and the agent's latest response, both of which may contain
+/// sensitive or untrusted content. A compromised or malicious judge endpoint could exfiltrate that
+/// data, or return a manipulated <see cref="JudgeVerdict"/>/gap analysis that is fed back into the loop
+/// as feedback, potentially steering the agent via indirect prompt injection. Only configure a judge
+/// <see cref="IChatClient"/> that points at a service you trust as much as the primary model.
+/// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AIJudgeLoopEvaluator : LoopEvaluator
@@ -104,7 +115,12 @@ public sealed class AIJudgeLoopEvaluator : LoopEvaluator
     /// <summary>
     /// Initializes a new instance of the <see cref="AIJudgeLoopEvaluator"/> class.
     /// </summary>
-    /// <param name="judgeClient">The chat client used to judge whether the original request was answered.</param>
+    /// <param name="judgeClient">
+    /// The chat client used to judge whether the original request was answered. <strong>Security:</strong>
+    /// This client is sent the original request and the agent's latest response on every iteration, so
+    /// only point it at a service you trust as much as the primary model — see the type-level security
+    /// considerations for the exfiltration and prompt-injection risks of an untrusted judge.
+    /// </param>
     /// <param name="options">Optional configuration for the judge. When <see langword="null"/>, defaults are used.</param>
     /// <exception cref="ArgumentNullException"><paramref name="judgeClient"/> is <see langword="null"/>.</exception>
     public AIJudgeLoopEvaluator(IChatClient judgeClient, AIJudgeLoopEvaluatorOptions? options = null)

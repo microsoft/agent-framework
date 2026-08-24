@@ -8,16 +8,15 @@
 //       docker run -d --name valkey -p 6379:6379 valkey/valkey:latest
 //   - Azure OpenAI endpoint and deployment configured via environment variables
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Valkey;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 using Valkey.Glide;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 var valkeyConnection = Environment.GetEnvironmentVariable("VALKEY_CONNECTION") ?? "localhost:6379";
 
 var connection = await ConnectionMultiplexer.ConnectAsync(valkeyConnection);
@@ -33,11 +32,10 @@ var historyProvider = new ValkeyChatHistoryProvider(
         MaxMessages = 20
     });
 
-AIAgent historyAgent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+AIAgent historyAgent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
     .AsAIAgent(new ChatClientAgentOptions()
     {
-        ChatOptions = new() { Instructions = "You are a helpful assistant that remembers our conversation." },
+        ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a helpful assistant that remembers our conversation." },
         ChatHistoryProvider = historyProvider
     });
 

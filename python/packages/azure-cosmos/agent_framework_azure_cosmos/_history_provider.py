@@ -13,11 +13,13 @@ from typing import Any, ClassVar, TypedDict
 from agent_framework import Message
 from agent_framework._sessions import HistoryProvider
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import get_user_agent
+from agent_framework._telemetry import get_user_agent, mark_feature_used
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.cosmos import PartitionKey
 from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
+
+from ._feature_usage import FeatureIndex
 
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
@@ -136,6 +138,7 @@ class CosmosHistoryProvider(HistoryProvider):
         **kwargs: Any,
     ) -> list[Message]:
         """Retrieve stored messages for this session from Azure Cosmos DB."""
+        mark_feature_used(FeatureIndex.AZURE_COSMOS)
         await self._ensure_container_proxy()
         session_key = self._session_partition_key(session_id)
 
@@ -176,6 +179,7 @@ class CosmosHistoryProvider(HistoryProvider):
         **kwargs: Any,
     ) -> None:
         """Persist messages for this session to Azure Cosmos DB."""
+        mark_feature_used(FeatureIndex.AZURE_COSMOS)
         if not messages:
             return
 

@@ -40,9 +40,9 @@ public sealed class PlanningOutputObserver : ConsoleObserver
     }
 
     /// <inheritdoc/>
-    public override void ConfigureRunOptions(AgentRunOptions options, AIAgent agent, AgentSession session)
+    public override async ValueTask ConfigureRunOptionsAsync(AgentRunOptions options, AIAgent agent, AgentSession session)
     {
-        if (this.IsPlanningMode(this._modeProvider.GetMode(session)))
+        if (this.IsPlanningMode(await this._modeProvider.GetModeAsync(session).ConfigureAwait(false)))
         {
             options.ResponseFormat = ChatResponseFormat.ForJsonSchema<PlanningResponse>();
         }
@@ -205,7 +205,7 @@ public sealed class PlanningOutputObserver : ConsoleObserver
 
                 if (selection == ApproveOption)
                 {
-                    this._modeProvider.SetMode(session, this._executionModeName);
+                    await this._modeProvider.SetModeAsync(session, this._executionModeName).ConfigureAwait(false);
                     await ux.WriteInfoLineAsync(
                         $"✅ Switched to {this._executionModeName} mode.",
                         ModeColors.Get(this._executionModeName, this._modeColors)).ConfigureAwait(false);

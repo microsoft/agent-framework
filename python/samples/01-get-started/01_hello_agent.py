@@ -10,7 +10,7 @@ from azure.identity import AzureCliCredential
 Hello Agent — Simplest possible agent
 
 This sample creates a minimal agent using FoundryChatClient via an
-Azure AI Foundry project endpoint, and runs it in both non-streaming and streaming modes.
+Microsoft Foundry project endpoint, and runs it in both non-streaming and streaming modes.
 
 There are XML tags in all of the get started samples, those are used to display the same code in the docs repo.
 """

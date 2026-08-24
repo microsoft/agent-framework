@@ -24,12 +24,12 @@ from agent_framework._workflows._events import (
 )
 
 # Import factory functions from conftest for parameterized test data creation
-from conftest import (
+from conftest import (  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
     create_agent_run_response,
     create_executor_completed_event,
     create_executor_failed_event,
     create_executor_invoked_event,
-)
+)  # pyrefly: ignore[missing-import]
 
 from agent_framework_devui._mapper import MessageMapper
 from agent_framework_devui.models._openai_custom import (
@@ -139,6 +139,36 @@ async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentF
     assert "TestCity" in full_json
 
 
+async def test_streaming_function_call_mapping_adds_item_once(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test repeated function metadata does not add duplicate output items."""
+    first_update = create_test_agent_update([
+        Content.from_function_call(
+            call_id="call_123",
+            name="get_weather",
+            arguments='{"location":',
+        )
+    ])
+    second_update = create_test_agent_update([
+        Content.from_function_call(
+            call_id="call_123",
+            name="get_weather",
+            arguments='"Seattle"}',
+        )
+    ])
+
+    events = [
+        *await mapper.convert_event(first_update, test_request),
+        *await mapper.convert_event(second_update, test_request),
+    ]
+
+    added_events = [event for event in events if event.type == "response.output_item.added"]
+    assert len(added_events) == 1
+    delta_events = [event for event in events if event.type == "response.function_call_arguments.delta"]
+    assert "".join(event.delta for event in delta_events) == '{"location":"Seattle"}'
+
+
 async def test_function_result_content_with_string_result(
     mapper: MessageMapper, test_request: AgentFrameworkRequest
 ) -> None:
@@ -206,6 +236,63 @@ async def test_mixed_content_types(mapper: MessageMapper, test_request: AgentFra
     event_types = {event.type for event in events}
     assert "response.output_text.delta" in event_types
     assert "response.function_call_arguments.delta" in event_types
+
+
+async def test_usage_content_preserves_token_details(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test usage aggregation preserves cache and reasoning token details."""
+    first_update = create_test_agent_update([
+        Content.from_usage({
+            "input_token_count": 10,
+            "output_token_count": 5,
+            "total_token_count": 15,
+            "cache_creation_input_token_count": 3,
+            "cache_read_input_token_count": 4,
+            "reasoning_output_token_count": 2,
+        })
+    ])
+    second_update = create_test_agent_update([
+        Content.from_usage({
+            "input_token_count": 4,
+            "output_token_count": 3,
+            "total_token_count": 7,
+            "cache_creation_input_token_count": 1,
+            "cache_read_input_token_count": 2,
+            "reasoning_output_token_count": 1,
+        })
+    ])
+
+    assert await mapper.convert_event(first_update, test_request) == []
+    assert await mapper.convert_event(second_update, test_request) == []
+
+    response = await mapper.aggregate_to_response([], test_request)
+
+    assert response.usage is not None
+    assert response.usage.input_tokens == 14
+    assert response.usage.output_tokens == 8
+    assert response.usage.total_tokens == 22
+    assert response.usage.input_tokens_details.cached_tokens == 6
+    assert response.usage.input_tokens_details.cache_write_tokens == 4
+    assert response.usage.output_tokens_details.reasoning_tokens == 3
+
+
+async def test_zero_usage_content_does_not_use_estimate(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test explicit zero usage remains zero instead of falling back to estimates."""
+    update = create_test_agent_update([
+        Content.from_usage({"input_token_count": 0, "output_token_count": 0, "total_token_count": 0})
+    ])
+
+    assert await mapper.convert_event(update, test_request) == []
+
+    response = await mapper.aggregate_to_response([], test_request)
+
+    assert response.usage is not None
+    assert response.usage.input_tokens == 0
+    assert response.usage.output_tokens == 0
+    assert response.usage.total_tokens == 0
 
 
 # =============================================================================

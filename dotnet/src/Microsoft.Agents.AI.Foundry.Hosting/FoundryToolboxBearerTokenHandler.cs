@@ -54,6 +54,14 @@ internal sealed class FoundryToolboxBearerTokenHandler : DelegatingHandler
 
         request.Headers.TryAddWithoutValidation("Foundry-Features", BuildFeaturesHeaderValue(this._additionalFeaturesHeaderValue));
 
+        // Per PlatformContext, forward the platform per-request call id (x-agent-foundry-call-id,
+        // container protocol 2.0.0) so the toolbox proxy can resolve the server-side caller context.
+        var callId = HostedCallContext.CallId;
+        if (!string.IsNullOrWhiteSpace(callId) && !request.Headers.Contains("x-agent-foundry-call-id"))
+        {
+            request.Headers.TryAddWithoutValidation("x-agent-foundry-call-id", callId);
+        }
+
         PropagateTraceContext(request);
 
         // MaxRetries is the total number of attempts (not additional retries after the first).

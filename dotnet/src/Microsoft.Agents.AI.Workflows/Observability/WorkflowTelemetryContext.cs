@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
@@ -226,7 +227,10 @@ internal sealed class WorkflowTelemetryContext
         {
             return JsonSerializer.Serialize(value, value.GetType());
         }
-        catch (JsonException)
+        // Telemetry must never fail workflow execution. Serialization can throw arbitrary exceptions
+        // (unregistered polymorphic types, reflection-disabled AOT, throwing property getters, custom
+        // converters), so fall back for every serialization failure.
+        catch (Exception)
         {
             return $"[Unserializable: {value.GetType().FullName}]";
         }

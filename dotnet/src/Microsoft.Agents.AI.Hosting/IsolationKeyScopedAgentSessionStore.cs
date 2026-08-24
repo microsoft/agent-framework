@@ -8,12 +8,12 @@ namespace Microsoft.Agents.AI.Hosting;
 
 /// <summary>
 /// A delegating <see cref="AgentSessionStore"/> that scopes session keys by an isolation key
-/// provided by a <see cref="SessionIsolationKeyProvider"/>, ensuring that sessions are isolated
+/// provided by an <see cref="AgentIsolationKeyProvider"/>, ensuring that sessions are isolated
 /// per logical partition (e.g., user, tenant, or composite key).
 /// </summary>
 public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
 {
-    private readonly SessionIsolationKeyProvider? _keyProvider;
+    private readonly AgentIsolationKeyProvider? _keyProvider;
     private readonly bool _strict;
 
     /// <summary>
@@ -21,7 +21,7 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
     /// </summary>
     /// <param name="innerStore">The underlying <see cref="AgentSessionStore"/> to delegate to.</param>
     /// <param name="keyProvider">
-    /// The <see cref="SessionIsolationKeyProvider"/> used to retrieve the isolation key for the current context.
+    /// The <see cref="AgentIsolationKeyProvider"/> used to retrieve the isolation key for the current context.
     /// </param>
     /// <param name="options">The options for configuring the session store. If null, defaults are used.</param>
     /// <exception cref="ArgumentNullException">
@@ -29,7 +29,7 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
     /// </exception>
     public IsolationKeyScopedAgentSessionStore(
         AgentSessionStore innerStore,
-        SessionIsolationKeyProvider? keyProvider,
+        AgentIsolationKeyProvider? keyProvider,
         IsolationKeyScopedAgentSessionStoreOptions? options = null)
         : base(innerStore)
     {
@@ -51,59 +51,66 @@ public class IsolationKeyScopedAgentSessionStore : DelegatingAgentSessionStore
     private async ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken)
     {
         string? key = this._keyProvider != null
-                    ? await this._keyProvider.GetSessionIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
+                    ? await this._keyProvider.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false)
                     : null;
 
         if (this._strict && key == null)
         {
-            throw new InvalidOperationException("Session isolation key is required but was not provided by the configured SessionIsolationKeyProvider.");
+            throw new InvalidOperationException("Agent isolation key is required but was not provided by the configured AgentIsolationKeyProvider.");
         }
 
         return key;
     }
 
     /// <summary>
-    /// Escapes special characters in the isolation key to ensure unambiguous scoped conversation IDs.
+    /// Escapes special characters in the isolation key to ensure unambiguous scoped session store IDs.
     /// </summary>
     /// <param name="key">The raw isolation key.</param>
     /// <returns>The escaped isolation key.</returns>
     /// <remarks>
     /// Backslashes are escaped first (\ becomes \\), then colons (: becomes \:).
-    /// This ensures the scoped conversation ID format {key}::{conversationId} can be parsed correctly.
+    /// This ensures the scoped session store ID format {key}::{sessionStoreId} can be parsed correctly.
     /// </remarks>
     private static string EscapeIsolationKey(string key) => key.Replace("\\", "\\\\").Replace(":", "\\:");
 
     /// <summary>
-    /// Constructs a scoped conversation ID by prefixing the bare conversation ID with the escaped isolation key.
+    /// Constructs a scoped session store ID by prefixing the bare session store ID with the escaped isolation key.
     /// </summary>
-    /// <param name="bareConversationId">The original conversation ID.</param>
+    /// <param name="bareSessionStoreId">The original session store ID.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>
-    /// The scoped conversation ID in the format {escapedKey}::{conversationId}, or the bare conversation ID
+    /// The scoped session store ID in the format {escapedKey}::{sessionStoreId}, or the bare session store ID
     /// if no isolation key is available and non-strict mode is enabled.
     /// </returns>
-    private async ValueTask<string> GetScopedConversationIdAsync(string bareConversationId, CancellationToken cancellationToken)
+    private async ValueTask<string> GetScopedSessionStoreIdAsync(string bareSessionStoreId, CancellationToken cancellationToken)
     {
         string? key = await this.GetIsolationKeyAsync(cancellationToken).ConfigureAwait(false);
         if (key == null)
         {
-            return bareConversationId;
+            return bareSessionStoreId;
         }
 
-        return $"{EscapeIsolationKey(key)}::{bareConversationId}";
+        return $"{EscapeIsolationKey(key)}::{bareSessionStoreId}";
     }
 
     /// <inheritdoc />
-    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string conversationId, CancellationToken cancellationToken = default)
+    public override async ValueTask<AgentSession> GetSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
     {
-        string scopedConversationId = await this.GetScopedConversationIdAsync(conversationId, cancellationToken).ConfigureAwait(false);
-        return await this.InnerStore.GetSessionAsync(agent, scopedConversationId, cancellationToken).ConfigureAwait(false);
+        string scopedSessionStoreId = await this.GetScopedSessionStoreIdAsync(sessionStoreId, cancellationToken).ConfigureAwait(false);
+        return await this.InnerStore.GetSessionAsync(agent, scopedSessionStoreId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
-    public override async ValueTask SaveSessionAsync(AIAgent agent, string conversationId, AgentSession session, CancellationToken cancellationToken = default)
+    public override async ValueTask SaveSessionAsync(AIAgent agent, string sessionStoreId, AgentSession session, CancellationToken cancellationToken = default)
     {
-        string scopedConversationId = await this.GetScopedConversationIdAsync(conversationId, cancellationToken).ConfigureAwait(false);
-        await this.InnerStore.SaveSessionAsync(agent, scopedConversationId, session, cancellationToken).ConfigureAwait(false);
+        string scopedSessionStoreId = await this.GetScopedSessionStoreIdAsync(sessionStoreId, cancellationToken).ConfigureAwait(false);
+        await this.InnerStore.SaveSessionAsync(agent, scopedSessionStoreId, session, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask DeleteSessionAsync(AIAgent agent, string sessionStoreId, CancellationToken cancellationToken = default)
+    {
+        string scopedSessionStoreId = await this.GetScopedSessionStoreIdAsync(sessionStoreId, cancellationToken).ConfigureAwait(false);
+        await this.InnerStore.DeleteSessionAsync(agent, scopedSessionStoreId, cancellationToken).ConfigureAwait(false);
     }
 }

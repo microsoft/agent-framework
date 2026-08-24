@@ -284,7 +284,7 @@ class WorkflowState:
         if existing is None:
             self.set(path, [value])
         elif isinstance(existing, list):
-            existing_list = cast(list[Any], existing)  # type: ignore[redundant-cast]
+            existing_list = cast(list[Any], existing)
             existing_list.append(value)
             self.set(path, existing_list)
         else:

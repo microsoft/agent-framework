@@ -15,13 +15,16 @@ from agent_framework import (
     UsageDetails,
     load_settings,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework.observability import EmbeddingTelemetryLayer
 from ollama import AsyncClient
 
+from ._feature_usage import FeatureIndex
+
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 
 logger = logging.getLogger("agent_framework.ollama")
@@ -120,7 +123,7 @@ class RawOllamaEmbeddingClient(
         self,
         values: Sequence[str],
         *,
-        options: OllamaEmbeddingOptionsT | None = None,  # type: ignore
+        options: OllamaEmbeddingOptionsT | None = None,
     ) -> GeneratedEmbeddings[list[float], OllamaEmbeddingOptionsT]:
         """Call the Ollama embed API.
 
@@ -150,13 +153,14 @@ class RawOllamaEmbeddingClient(
         if dimensions := opts.get("dimensions"):
             kwargs["dimensions"] = dimensions
 
+        mark_feature_used(FeatureIndex.OLLAMA)
         response = await self.client.embed(**kwargs)
 
         embeddings = [
             Embedding(
                 vector=list(emb),
                 dimensions=len(emb),
-                model=response.get("model") or model,  # type: ignore[assignment]
+                model=response.get("model") or model,
             )
             for emb in response.get("embeddings", [])
         ]

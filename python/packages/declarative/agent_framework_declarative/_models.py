@@ -5,7 +5,7 @@ import logging
 import os
 from collections.abc import MutableMapping
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union, cast, overload
 
 from agent_framework._serialization import SerializationMixin
 
@@ -121,7 +121,7 @@ class Property(SerializationMixin):
         # Only dispatch if we're being called on the base Property class
         if cls is not Property:
             # We're being called on a subclass, use the normal from_dict
-            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
+            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)
 
         # The YAML spec uses 'type' for the data type, but Property stores it as 'kind'
         if "type" in value:
@@ -135,7 +135,7 @@ class Property(SerializationMixin):
         if kind == "object":
             return ObjectProperty.from_dict(value, dependencies=dependencies)
         # Default to Property for kind="property" or empty
-        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
+        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)
 
 
 class ArrayProperty(Property):
@@ -203,6 +203,52 @@ class ObjectProperty(Property):
         self.properties = converted_properties
 
 
+def _normalize_nested_schemas(node: dict[str, Any]) -> None:
+    """Recursively convert a node's nested schemas to JSON Schema form.
+
+    Nested schemas (array ``items``, object ``properties``) keep the declarative
+    shape after serialization: ``kind`` instead of ``type``, empty ``enum``
+    placeholders, and object properties as a list of ``{"name": ..., ...}``
+    entries. OpenAI rejects schemas whose nested nodes lack a ``type`` key, so
+    apply the same conversion the top-level properties loop performs.
+    """
+    items = node.get("items")
+    if isinstance(items, dict):
+        _normalize_schema_node(cast("dict[str, Any]", items))
+    props = node.get("properties")
+    if not isinstance(props, list):
+        return
+    # Serialized PropertySchema shape: [{"name": ..., "kind": ..., ...}, ...].
+    # Validate every element BEFORE mutating any, so an unexpected shape
+    # leaves the node fully untouched rather than half-converted.
+    if not all(isinstance(prop, dict) and "name" in prop for prop in cast("list[Any]", props)):
+        return
+    new_props: dict[str, Any] = {}
+    required_fields: list[str] = []
+    for prop in cast("list[dict[str, Any]]", props):
+        prop_name = prop.pop("name")
+        if prop.pop("required", False):
+            required_fields.append(prop_name)
+        _normalize_schema_node(prop)
+        new_props[prop_name] = prop
+    node["properties"] = new_props
+    if required_fields:
+        node["required"] = required_fields
+
+
+def _normalize_schema_node(node: dict[str, Any]) -> None:
+    """Rename ``kind`` -> ``type``, drop empty ``enum``, and recurse into children."""
+    if "kind" in node:
+        node["type"] = node.pop("kind")
+    if not node.get("enum"):
+        node.pop("enum", None)
+    if node.get("type") == "object":
+        # OpenAI strict structured outputs require additionalProperties: false on
+        # every object node; chat clients only inject it at the schema root.
+        node.setdefault("additionalProperties", False)
+    _normalize_nested_schemas(node)
+
+
 class PropertySchema(SerializationMixin):
     """Object representing a property schema."""
 
@@ -235,7 +281,7 @@ class PropertySchema(SerializationMixin):
         # Filter out 'kind', 'type', 'name', and 'description' fields that may appear in YAML
         # but aren't PropertySchema params
         kwargs = {k: v for k, v in value.items() if k not in ("type", "kind", "name", "description")}
-        return SerializationMixin.from_dict.__func__(cls, kwargs, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
+        return SerializationMixin.from_dict.__func__(cls, kwargs, dependencies=dependencies)
 
     def to_json_schema(self) -> dict[str, Any]:
         """Get a schema out of this PropertySchema to create pydantic models."""
@@ -244,13 +290,10 @@ class PropertySchema(SerializationMixin):
         required_fields: list[str] = []
         for prop in json_schema.get("properties", []):
             prop_name = prop.pop("name")
-            prop["type"] = prop.pop("kind", None)
             # Convert property-level 'required' boolean to a top-level 'required' array
             if prop.pop("required", False):
                 required_fields.append(prop_name)
-            # Remove empty enum arrays
-            if not prop.get("enum"):
-                prop.pop("enum", None)
+            _normalize_schema_node(prop)
             new_props[prop_name] = prop
         json_schema["type"] = "object"
         json_schema["properties"] = new_props
@@ -287,26 +330,18 @@ class Connection(SerializationMixin):
         # Only dispatch if we're being called on the base Connection class
         if cls is not Connection:
             # We're being called on a subclass, use the normal from_dict
-            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
+            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)
 
         kind = value.get("kind", "").lower()
         if kind == "reference":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                ReferenceConnection, value, dependencies=dependencies
-            )
+            return SerializationMixin.from_dict.__func__(ReferenceConnection, value, dependencies=dependencies)
         if kind == "remote":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                RemoteConnection, value, dependencies=dependencies
-            )
+            return SerializationMixin.from_dict.__func__(RemoteConnection, value, dependencies=dependencies)
         if kind in ("key", "apikey"):
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                ApiKeyConnection, value, dependencies=dependencies
-            )
+            return SerializationMixin.from_dict.__func__(ApiKeyConnection, value, dependencies=dependencies)
         if kind == "anonymous":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                AnonymousConnection, value, dependencies=dependencies
-            )
-        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
+            return SerializationMixin.from_dict.__func__(AnonymousConnection, value, dependencies=dependencies)
+        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)
 
 
 class ReferenceConnection(Connection):
@@ -525,13 +560,13 @@ class AgentDefinition(SerializationMixin):
         # Only dispatch if we're being called on the base AgentDefinition class
         if cls is not AgentDefinition:
             # We're being called on a subclass, use the normal from_dict
-            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
+            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)
 
         kind = value.get("kind", "")
         if kind == "Prompt" or kind == "Agent":
             return PromptAgent.from_dict(value, dependencies=dependencies)
         # Default to AgentDefinition
-        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
+        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)
 
 
 ToolT = TypeVar("ToolT", bound="Tool")
@@ -571,39 +606,25 @@ class Tool(SerializationMixin):
         # Only dispatch if we're being called on the base Tool class
         if cls is not Tool:
             # We're being called on a subclass, use the normal from_dict
-            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
+            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)
 
         kind = value.get("kind", "")
         if kind == "function":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                FunctionTool, value, dependencies=dependencies
-            )
+            return SerializationMixin.from_dict.__func__(FunctionTool, value, dependencies=dependencies)
         if kind == "custom":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                CustomTool, value, dependencies=dependencies
-            )
+            return SerializationMixin.from_dict.__func__(CustomTool, value, dependencies=dependencies)
         if kind == "web_search":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                WebSearchTool, value, dependencies=dependencies
-            )
+            return SerializationMixin.from_dict.__func__(WebSearchTool, value, dependencies=dependencies)
         if kind == "file_search":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                FileSearchTool, value, dependencies=dependencies
-            )
+            return SerializationMixin.from_dict.__func__(FileSearchTool, value, dependencies=dependencies)
         if kind == "mcp":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                McpTool, value, dependencies=dependencies
-            )
+            return SerializationMixin.from_dict.__func__(McpTool, value, dependencies=dependencies)
         if kind == "openapi":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                OpenApiTool, value, dependencies=dependencies
-            )
+            return SerializationMixin.from_dict.__func__(OpenApiTool, value, dependencies=dependencies)
         if kind == "code_interpreter":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                CodeInterpreterTool, value, dependencies=dependencies
-            )
+            return SerializationMixin.from_dict.__func__(CodeInterpreterTool, value, dependencies=dependencies)
         # Default to base Tool class
-        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
+        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)
 
 
 class FunctionTool(Tool):
@@ -901,18 +922,14 @@ class Resource(SerializationMixin):
         # Only dispatch if we're being called on the base Resource class
         if cls is not Resource:
             # We're being called on a subclass, use the normal from_dict
-            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
+            return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)
 
         kind = value.get("kind", "")
         if kind == "model":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                ModelResource, value, dependencies=dependencies
-            )
+            return SerializationMixin.from_dict.__func__(ModelResource, value, dependencies=dependencies)
         if kind == "tool":
-            return SerializationMixin.from_dict.__func__(  # type: ignore[attr-defined, no-any-return]
-                ToolResource, value, dependencies=dependencies
-            )
-        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)  # type: ignore[attr-defined, no-any-return]
+            return SerializationMixin.from_dict.__func__(ToolResource, value, dependencies=dependencies)
+        return SerializationMixin.from_dict.__func__(cls, value, dependencies=dependencies)
 
 
 class ModelResource(Resource):

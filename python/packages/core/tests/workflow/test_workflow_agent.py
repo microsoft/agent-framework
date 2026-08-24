@@ -19,6 +19,7 @@ from agent_framework import (
     InMemoryHistoryProvider,
     Message,
     ResponseStream,
+    ServiceSessionId,
     SupportsAgentRun,
     UsageDetails,
     WorkflowAgent,
@@ -120,6 +121,27 @@ class RequestingExecutor(Executor):
                 ],
             )
         )
+
+
+class OAuthConsentRequestingExecutor(Executor):
+    """Executor that pauses for OAuth consent through a specialized request content."""
+
+    @handler
+    async def handle_message(self, _: list[Message], ctx: WorkflowContext) -> None:
+        await ctx.request_info(
+            Content.from_oauth_consent_request(consent_link="https://example.com/consent"),
+            Content,
+            request_id="oauth-consent",
+        )
+
+    @response_handler
+    async def handle_response(
+        self,
+        original_request: Content,
+        response: Content,
+        ctx: WorkflowContext,
+    ) -> None:
+        del original_request, response, ctx
 
 
 class ConversationHistoryCapturingExecutor(Executor):
@@ -273,7 +295,7 @@ class TestWorkflowAgent:
         assert request_event.get("type") == "request_info"
         assert deserialize_type(request_event.get("response_type")) is str
 
-        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(request_function_call.arguments)
+        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(request_function_call.arguments)  # ty: ignore[invalid-argument-type]
         assert deserialized_args.request_id == request_function_call.call_id
         assert isinstance(deserialized_args.request_event, WorkflowEvent)
         assert deserialized_args.request_event.type == "request_info"
@@ -303,6 +325,17 @@ class TestWorkflowAgent:
         pending_requests = await workflow._runner_context.get_pending_request_info_events()
         assert len(pending_requests) == 0
 
+    async def test_oauth_consent_request_remains_specialized_content(self) -> None:
+        """Workflow agents expose OAuth consent directly instead of wrapping it as a function call."""
+        workflow = WorkflowBuilder(start_executor=OAuthConsentRequestingExecutor(id="oauth")).build()
+        agent = workflow.as_agent(name="OAuth Workflow Agent")
+
+        response = await agent.run("Connect my account")
+
+        [request] = response.user_input_requests
+        assert request.type == "oauth_consent_request"
+        assert request.consent_link == "https://example.com/consent"
+
     def test_request_info_dataclass_arguments_are_serialized_when_content_is_created(self) -> None:
         """Test WorkflowAgent prepares request_info arguments before observability captures messages."""
         executor = SimpleExecutor(id="executor1", response_text="Response")
@@ -327,12 +360,38 @@ class TestWorkflowAgent:
         assert deserialize_type(request_event.get("response_type")) is str
         assert request_event.get("data") == HandoffRequest(target_agent="helper", reason="overflow")
 
-        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(request_function_call.arguments)
+        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(request_function_call.arguments)  # ty: ignore[invalid-argument-type]
         assert deserialized_args.request_id == "request_123"
         assert isinstance(deserialized_args.request_event, WorkflowEvent)
         assert deserialized_args.request_event.type == "request_info"
         assert deserialized_args.request_event.data == HandoffRequest(target_agent="helper", reason="overflow")
         assert deserialized_args.request_event.response_type is str
+
+    def test_request_info_function_args_from_dict_accepts_explicit_allowed_types(self) -> None:
+        """Envelope reconstruction forwards exact trusted custom types."""
+
+        @dataclass
+        class ExplicitRequest:
+            prompt: str
+
+        serialized_name = f"{ExplicitRequest.__module__}.{ExplicitRequest.__qualname__}"
+        args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(
+            {
+                "request_id": "request-123",
+                "request_event": {
+                    "type": "request_info",
+                    "data": ExplicitRequest(prompt="Approve?"),
+                    "request_id": "request-123",
+                    "source_executor_id": "review_gateway",
+                    "request_type": serialized_name,
+                    "response_type": "builtins.bool",
+                },
+            },
+            allowed_types={serialized_name: ExplicitRequest},
+        )
+
+        assert type(args.request_event.data) is ExplicitRequest
+        assert args.request_event.response_type is bool
 
     def test_process_request_info_event_passes_through_function_approval_request(self) -> None:
         """If the event data is already a function approval request, it is forwarded unchanged.
@@ -469,12 +528,12 @@ class TestWorkflowAgent:
                 self,
                 original_request: Content,
                 response: Content,
-                ctx: WorkflowContext[Never, AgentResponse],
+                ctx: WorkflowContext[Never, AgentResponse],  # type: ignore[valid-type]
             ) -> None:
                 assert response.type == "function_approval_response"
                 assert response.id == approval_id  # type: ignore[attr-defined]
                 approved = bool(response.approved)  # type: ignore[attr-defined]
-                tool_name = original_request.function_call.name  # type: ignore[attr-defined]
+                tool_name = original_request.function_call.name  # type: ignore[attr-defined, union-attr]  # ty: ignore[unresolved-attribute]
                 await ctx.yield_output(
                     AgentResponse(
                         messages=[
@@ -543,12 +602,12 @@ class TestWorkflowAgent:
                 self,
                 original_request: Content,
                 response: Content,
-                ctx: WorkflowContext[Never, AgentResponse],
+                ctx: WorkflowContext[Never, AgentResponse],  # type: ignore[valid-type]
             ) -> None:
                 assert response.type == "function_approval_response"
                 assert response.id == approval_id  # type: ignore[attr-defined]
                 approved = bool(response.approved)  # type: ignore[attr-defined]
-                tool_name = original_request.function_call.name  # type: ignore[attr-defined]
+                tool_name = original_request.function_call.name  # type: ignore[attr-defined, union-attr]  # ty: ignore[unresolved-attribute]
                 await ctx.yield_output(
                     AgentResponse(
                         messages=[
@@ -608,7 +667,7 @@ class TestWorkflowAgent:
                 self,
                 original_request: HandoffRequest,
                 response: str,
-                ctx: WorkflowContext[Never, AgentResponse],
+                ctx: WorkflowContext[Never, AgentResponse],  # type: ignore[valid-type]
             ) -> None:
                 captured["original"] = original_request
                 captured["response"] = response
@@ -651,7 +710,7 @@ class TestWorkflowAgent:
         assert request_payload.get("type") == "request_info"
         assert request_payload.get("data") == HandoffRequest(target_agent="helper", reason="overflow")
 
-        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(function_call.arguments)
+        deserialized_args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(function_call.arguments)  # ty: ignore[invalid-argument-type]
         assert deserialized_args.request_id == request_id
         assert isinstance(deserialized_args.request_event, WorkflowEvent)
         assert deserialized_args.request_event.type == "request_info"
@@ -752,7 +811,7 @@ class TestWorkflowAgent:
         """
 
         @executor
-        async def yielding_executor(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+        async def yielding_executor(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
             # Extract text from input for demonstration
             input_text = messages[0].text if messages else "no input"
             await ctx.yield_output(f"processed: {input_text}")
@@ -777,7 +836,7 @@ class TestWorkflowAgent:
         """Test that ctx.yield_output() surfaces as AgentResponseUpdate when streaming."""
 
         @executor
-        async def yielding_executor(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:
+        async def yielding_executor(messages: list[Message], ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
             await ctx.yield_output("first output")
             await ctx.yield_output("second output")
 
@@ -797,7 +856,7 @@ class TestWorkflowAgent:
         """Test that yield_output preserves different content types (Content, Content, etc.)."""
 
         @executor
-        async def content_yielding_executor(messages: list[Message], ctx: WorkflowContext[Never, Content]) -> None:
+        async def content_yielding_executor(messages: list[Message], ctx: WorkflowContext[Never, Content]) -> None:  # type: ignore[valid-type]
             # Yield different content types
             await ctx.yield_output(Content.from_text(text="text content"))
             await ctx.yield_output(Content.from_data(data=b"binary data", media_type="application/octet-stream"))
@@ -825,7 +884,7 @@ class TestWorkflowAgent:
         """Test that yield_output with Message preserves the message structure."""
 
         @executor
-        async def chat_message_executor(messages: list[Message], ctx: WorkflowContext[Never, Message]) -> None:
+        async def chat_message_executor(messages: list[Message], ctx: WorkflowContext[Never, Message]) -> None:  # type: ignore[valid-type]
             msg = Message(
                 role="assistant",
                 contents=[Content.from_text(text="response text")],
@@ -856,7 +915,8 @@ class TestWorkflowAgent:
 
         @executor
         async def raw_yielding_executor(
-            messages: list[Message], ctx: WorkflowContext[Never, Content | CustomData | str]
+            messages: list[Message],
+            ctx: WorkflowContext[Never, Content | CustomData | str],  # type: ignore[valid-type]
         ) -> None:
             # Yield different types of data
             await ctx.yield_output("simple string")
@@ -892,7 +952,7 @@ class TestWorkflowAgent:
         """
 
         @executor
-        async def list_yielding_executor(messages: list[Message], ctx: WorkflowContext[Never, list[Message]]) -> None:
+        async def list_yielding_executor(messages: list[Message], ctx: WorkflowContext[Never, list[Message]]) -> None:  # type: ignore[valid-type]
             # Yield a list of Messages (as SequentialBuilder does)
             msg_list = [
                 Message(role="user", contents=["first message"]),
@@ -1233,7 +1293,7 @@ class TestWorkflowAgent:
             def create_session(self, **kwargs: Any) -> AgentSession:
                 return AgentSession()
 
-            def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+            def get_session(self, *, service_session_id: str | ServiceSessionId, **kwargs: Any) -> AgentSession:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
                 return AgentSession()
 
             @overload
@@ -1343,7 +1403,7 @@ class TestWorkflowAgent:
             def create_session(self, **kwargs: Any) -> AgentSession:
                 return AgentSession()
 
-            def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+            def get_session(self, *, service_session_id: str | ServiceSessionId, **kwargs: Any) -> AgentSession:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
                 return AgentSession()
 
             @overload
@@ -1979,7 +2039,7 @@ class _ToolApprovalMockAgent(SupportsAgentRun):
     def create_session(self, **kwargs: Any) -> AgentSession:
         return AgentSession()
 
-    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+    def get_session(self, *, service_session_id: str | ServiceSessionId, **kwargs: Any) -> AgentSession:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
         return AgentSession()
 
     def _next_request_id(self) -> str:

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-# ruff: noqa: RUF070, RUF100
+# ruff:file-ignore[unnecessary-assign-before-yield]
 from __future__ import annotations
 
 import asyncio
@@ -11,15 +11,17 @@ import logging
 import types
 import uuid
 import warnings
+import weakref
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .._sessions import ContextProvider
-from .._types import ResponseStream
+from .._types import Content, ResponseStream
+from ..exceptions import WorkflowException
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._checkpoint import CheckpointStorage
-from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
+from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, INTERNAL_SOURCE_ID, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
     EdgeGroup,
     FanOutEdgeGroup,
@@ -32,8 +34,8 @@ from ._events import (
 )
 from ._executor import Executor
 from ._model_utils import DictConvertible
-from ._runner import Runner
-from ._runner_context import RunnerContext
+from ._runner import RunnerImpl
+from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
 from ._validation import ValidationTypeEnum, WorkflowValidationError
@@ -171,7 +173,7 @@ class WorkflowRunResult(list[WorkflowEvent]):
 class OutputDesignation:
     """Immutable rule for labeling executor yields as terminal, intermediate, or hidden outputs.
 
-    ``outputs`` is ``None`` in omitted-selection compatibility mode (every yield is terminal). In explicit mode,
+    ``outputs`` is ``None`` in the default all-output mode (every yield is terminal). In explicit mode,
     ``outputs`` and ``intermediates`` are disjoint executor ID sets; unlisted executor
     yields are hidden from caller-facing output/intermediate events.
     Package-internal value type owned by ``Workflow``; not exported from ``agent_framework``.
@@ -297,15 +299,16 @@ class Workflow(DictConvertible):
             start_executor: The starting executor for the workflow.
             runner_context: The RunnerContext instance to be used during workflow execution.
             max_iterations: The maximum number of iterations the workflow will run for convergence.
+                The first iteration is the initial run of the start executor, and each subsequent
+                iteration is a superstep.
             name: A human-readable name for the workflow. This can be used to identify the workflow in
                 checkpoints, and telemetry. If the workflow is built using WorkflowBuilder, this will be the
                 name of the builder. This name should be unique across different workflow definitions for
                 better observability and management.
             description: Optional description of what the workflow does. If the workflow is built using
                 WorkflowBuilder, this will be the description of the builder.
-            output_from: List of executor IDs designated as workflow outputs, or
-                ``None`` for omitted-selection compatibility behavior when ``intermediate_output_from`` is also
-                ``None``.
+            output_from: List of executor IDs designated as workflow outputs, or ``None`` for the default
+                all-output behavior when ``intermediate_output_from`` is also ``None``.
             intermediate_output_from: List of executor IDs designated as intermediate outputs.
                 In explicit designation mode, unlisted executor yields are hidden from
                 caller-facing output/intermediate events.
@@ -332,7 +335,7 @@ class Workflow(DictConvertible):
         self.graph_signature = self._compute_graph_signature()
         self.graph_signature_hash = self._hash_graph_signature(self.graph_signature)
 
-        # Single value type encodes omitted-selection compatibility vs explicit output-designation policy.
+        # Single value type encodes default all-output vs explicit output-designation policy.
         output_designation_ids = (
             frozenset(output_from)
             if output_from is not None
@@ -346,24 +349,28 @@ class Workflow(DictConvertible):
         # Store non-serializable runtime objects as private attributes
         self._runner_context = runner_context
         self._runner_context.set_yield_output_classifier(self._output_designation.classify)
-        self._state = State()
-        self._runner: Runner = Runner(
+        self._runner: RunnerImpl = RunnerImpl(
             self.edge_groups,
             self.executors,
-            self._state,
+            State(),
             runner_context,
             self.name,
             self.graph_signature_hash,
             max_iterations=max_iterations,
         )
 
-        # Flag to prevent concurrent workflow executions
-        self._is_running = False
-
         # Current run-level status of this workflow instance. Updated in lockstep with
         # the status events emitted from `_run_workflow_with_tracing`. Defaults to IDLE
         # for a freshly built workflow that has not yet been run.
         self._status: WorkflowRunState = WorkflowRunState.IDLE
+
+        # Weak reference to the in-flight run's ``ResponseStream``. Used as the single
+        # concurrency lock: if the previous stream is still alive, ``run()`` rejects a
+        # new run synchronously (before any await). When the stream is fully consumed
+        # ``_run_core``'s finally clears this; if the caller drops the stream without
+        # ever iterating, the weakref dereferences to ``None`` once Python collects it,
+        # so a subsequent ``run()`` is allowed.
+        self._active_run: weakref.ref[ResponseStream[WorkflowEvent, WorkflowRunResult]] | None = None
 
     @property
     def status(self) -> WorkflowRunState:
@@ -375,16 +382,6 @@ class Workflow(DictConvertible):
         CPython GIL, so no locking is required.
         """
         return self._status
-
-    def _ensure_not_running(self) -> None:
-        """Ensure the workflow is not already running."""
-        if self._is_running:
-            raise RuntimeError("Workflow is already running. Concurrent executions are not allowed.")
-        self._is_running = True
-
-    def _reset_running_flag(self) -> None:
-        """Reset the running flag."""
-        self._is_running = False
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the workflow definition into a JSON-ready dictionary."""
@@ -437,8 +434,8 @@ class Workflow(DictConvertible):
     def get_output_executors(self) -> list[Executor]:
         """Get the list of output executors in the workflow.
 
-        In omitted-selection compatibility mode (no explicit ``output_from``), returns every
-        executor in the workflow. In explicit mode, returns only the designated output executors.
+        In the default all-output mode, returns every executor in the workflow. In explicit mode,
+        returns only the designated output executors.
         """
         designated = self._output_designation.outputs
         if designated is None:
@@ -528,20 +525,19 @@ class Workflow(DictConvertible):
                 # Emit explicit start/status events to the stream
                 with _framework_event_origin():
                     started = WorkflowEvent.started()
-                yield started  # noqa: RUF070
+                yield started
                 self._status = WorkflowRunState.IN_PROGRESS
                 with _framework_event_origin():
                     in_progress = WorkflowEvent.status(self._status)
-                yield in_progress  # noqa: RUF070
+                yield in_progress
 
                 # Per-run reset for fresh-message runs only. We deliberately
-                # do NOT clear shared workflow state (`_state.clear()`) or the
-                # runner context's in-flight messages (`reset_for_new_run()`)
-                # here - state and pending work persist across `run()` calls
-                # so that a `WorkflowAgent` can deliver multi-turn input on
-                # the same instance and have prior turns' context survive.
-                # Iteration counting and per-run kwargs ARE per-run though,
-                # so they're reset here.
+                # do NOT clear shared workflow state or the runner context's
+                # in-flight messages here - state and pending work persist
+                # across `run()` calls so that a `WorkflowAgent` can deliver
+                # multi-turn input on the same instance and have prior turns'
+                # context survive. Iteration counting and per-run kwargs ARE
+                # per-run though, so they're reset here.
                 if not is_continuation:
                     self._runner.reset_iteration_count()
 
@@ -564,14 +560,13 @@ class Workflow(DictConvertible):
                         combined_kwargs["client_kwargs"] = self._resolve_invocation_kwargs(
                             client_kwargs, "client_kwargs"
                         )
-                    self._state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
+                    self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
                 elif not is_continuation:
-                    self._state.set(WORKFLOW_RUN_KWARGS_KEY, {})
-                self._state.commit()  # Commit immediately so kwargs are available
+                    self._runner.state.set(WORKFLOW_RUN_KWARGS_KEY, {})
+                self._runner.state.commit()  # Commit immediately so kwargs are available
 
-                # Set streaming mode (always set explicitly per run since
-                # reset_for_new_run() no longer runs to clear it).
-                self._runner_context.set_streaming(streaming)
+                # Explicitly set streaming mode per run
+                self._runner.context.set_streaming(streaming)
 
                 # Execute initial setup if provided
                 if initial_executor_fn:
@@ -589,7 +584,7 @@ class Workflow(DictConvertible):
                         self._status = WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS
                         with _framework_event_origin():
                             pending_status = WorkflowEvent.status(self._status)
-                        yield pending_status  # noqa: RUF070
+                        yield pending_status
                 # Workflow runs until idle - emit final status based on whether requests are pending
                 if saw_request:
                     self._status = WorkflowRunState.IDLE_WITH_PENDING_REQUESTS
@@ -612,11 +607,11 @@ class Workflow(DictConvertible):
                 details = WorkflowErrorDetails.from_exception(exc)
                 with _framework_event_origin():
                     failed_event = WorkflowEvent.failed(details)
-                yield failed_event  # noqa: RUF070
+                yield failed_event
                 self._status = WorkflowRunState.FAILED
                 with _framework_event_origin():
                     failed_status = WorkflowEvent.status(WorkflowRunState.FAILED)
-                yield failed_status  # noqa: RUF070
+                yield failed_status
                 span.add_event(
                     name=OtelAttr.WORKFLOW_ERROR,
                     attributes={
@@ -661,15 +656,28 @@ class Workflow(DictConvertible):
 
         # Handle initial message
         elif message is not None:
-            executor = self.get_start_executor()
-            await executor.execute(
-                message,
-                [self.__class__.__name__],
-                self._state,
-                self._runner.context,
-                trace_contexts=None,
-                source_span_ids=None,
+            # Seed the initial input through the start executor's internal self-edge. If the caller
+            # passed a WorkflowMessage, unwrap it so we don't double-wrap.
+            start_id = self.start_executor_id
+            data = message.data if isinstance(message, WorkflowMessage) else message
+            entry_message = WorkflowMessage(
+                data=data,
+                source_id=INTERNAL_SOURCE_ID(start_id),
+                target_id=start_id,
             )
+
+            # Ensure that the start executor can handle the input type.
+            start_executor = self.get_start_executor()
+            if not start_executor.can_handle(entry_message):
+                raise RuntimeError(
+                    f"Start executor '{start_id}' cannot handle input of type '{type(data).__name__}'. "
+                    f"Expected input types: {start_executor.input_types}."
+                )
+
+            await self._runner.context.send_message(entry_message)
+            # Record the entry checkpoint capturing the seeded input before any
+            # executor runs. The runner only checkpoints after each superstep.
+            await self._runner.create_checkpoint_if_enabled()
 
     @overload
     def run(
@@ -745,9 +753,28 @@ class Workflow(DictConvertible):
         Raises:
             ValueError: If parameter combination is invalid.
         """
-        # Validate parameters and set running flag eagerly (before any async work)
+        # Validate parameters first so misuse fails before we touch any run state.
         self._validate_run_params(message, responses, checkpoint_id)
-        self._ensure_not_running()
+
+        # Concurrency check: reject a second run synchronously - before constructing
+        # the ResponseStream or yielding control to the event loop - so a concurrent
+        # ``run`` call can't slip past the guard while the first call is suspended
+        # inside its async generator. The ``ResponseStream`` returned below is the
+        # lock: as long as the caller holds a reference to it, ``self._active_run()``
+        # resolves to a live object and a new ``run`` is rejected. When the stream is
+        # fully consumed, ``_run_core``'s finally clears the attribute. When the
+        # caller drops the stream without iterating, garbage collection invalidates
+        # the weakref, so a subsequent ``run`` is permitted.
+        if self._is_run_active():
+            raise WorkflowException(
+                "Workflow is already running; concurrent runs are not allowed on the same instance."
+            )
+
+        # No run is active, so any runtime checkpoint storage override still set on the
+        # context is stale - left over from a prior run whose stream was dropped before
+        # its async-generator finalizer ran. Clear it so this run starts clean and does
+        # not silently inherit the prior run's runtime checkpoint storage.
+        self._runner.context.clear_runtime_checkpoint_storage()
 
         response_stream = ResponseStream[WorkflowEvent, WorkflowRunResult](
             self._run_core(
@@ -760,10 +787,8 @@ class Workflow(DictConvertible):
                 client_kwargs=client_kwargs,
             ),
             finalizer=functools.partial(self._finalize_events, include_status_events=include_status_events),
-            cleanup_hooks=[
-                functools.partial(self._run_cleanup, checkpoint_storage),
-            ],
         )
+        self._active_run = weakref.ref(response_stream)
 
         if stream:
             return response_stream
@@ -785,55 +810,105 @@ class Workflow(DictConvertible):
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
         """
-        # Enable runtime checkpointing if storage provided
+        # Capture the weakref instance ``run()`` installed for *this* run. We
+        # compare by object identity in the finally so a stale finalizer (e.g.
+        # the caller dropped this stream after partial iteration, then started
+        # a new run before async-gen finalization throws ``GeneratorExit`` into
+        # us) does not clobber a successor run's freshly installed weakref.
+        # ``run()`` runs synchronously and assigns ``self._active_run`` before
+        # this generator's body is first iterated, so by the time we read it
+        # here it already points at our own ``ResponseStream``.
+        my_active_run = self._active_run
+
+        # Enable runtime checkpointing if storage provided.
         if checkpoint_storage is not None:
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
 
-        # Async validation: a fresh-message run is only allowed when the
-        # runner context has fully drained from any prior run. If it still
-        # has in-flight executor messages, the prior run didn't complete -
-        # the caller must either resume from a checkpoint or wait for the
-        # prior run to drain. (Pending request_info events are intentionally
-        # NOT blocked here: a follow-up run with message=... is the normal
-        # way to deliver a response to those pending requests, e.g. via
-        # WorkflowAgent._process_pending_requests.)
-        # NOTE: _validate_run_params already enforces that ``message`` is
-        # mutually exclusive with both ``checkpoint_id`` and ``responses``,
-        # so we don't need to re-check those here.
-        if message is not None and await self._runner.context.has_messages():
-            raise RuntimeError(
-                "Cannot start a new run with 'message' while in-flight executor "
-                "messages remain from a prior run. Resume from a checkpoint "
-                "(checkpoint_id=...) or wait for the prior run to complete. "
-                "Workflows that need to recover from a mid-run failure must use "
-                "checkpointing; there is no in-process recovery path."
-            )
+        try:
+            # Async validation: a fresh-message run is only allowed when the
+            # runner context has fully drained from any prior run. If it still
+            # has in-flight executor messages, the prior run didn't complete -
+            # the caller must either resume from a checkpoint or wait for the
+            # prior run to drain. Pending request_info events are intentionally
+            # NOT blocked here (they are answered via a follow-up ``responses=...``
+            # run); the warning below surfaces the abandon/overwrite cases instead.
+            # NOTE: _validate_run_params already enforces that ``message`` is
+            # mutually exclusive with both ``checkpoint_id`` and ``responses``,
+            # so we don't need to re-check those here.
+            if message is not None and await self._runner.context.has_messages():
+                raise RuntimeError(
+                    "Cannot start a new run with 'message' while in-flight executor "
+                    "messages remain from a prior run. Resume from a checkpoint "
+                    "(checkpoint_id=...) or wait for the prior run to complete. "
+                    "Workflows that need to recover from a mid-run failure must use "
+                    "checkpointing; there is no in-process recovery path."
+                )
 
-        initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
+            # Warn (but don't block) when a fresh message or a checkpoint restore begins while the
+            # workflow still has pending request_info events from an unfinished request/response
+            # cycle. A fresh ``message`` does NOT drop those pending requests - they remain pending and
+            # can still be answered later - but the new run advances executor and shared state, so when
+            # a response for an earlier request eventually arrives the workflow may have moved on,
+            # yielding inconsistent results. A ``checkpoint_id`` restore instead replaces the context's
+            # pending requests with the checkpoint's state. Delivering ``responses`` is the normal way to
+            # answer pending requests and is intentionally not warned. Mirrors the WorkflowExecutor
+            # warning for overlapping sub-workflow executions.
+            if message is not None or checkpoint_id is not None:
+                pending_request_info_events = await self._runner.context.get_pending_request_info_events()
+                if pending_request_info_events:
+                    logger.warning(
+                        "Workflow %s received %s while %d request_info event(s) are still pending from an "
+                        "unfinished request/response cycle; %s. Deliver responses (responses=...) to complete "
+                        "the pending cycle before starting new input.",
+                        self.id,
+                        "a fresh message" if message is not None else "a checkpoint restore",
+                        len(pending_request_info_events),
+                        (
+                            "those requests remain pending, but this run advances executor and shared state, "
+                            "so a response that arrives later may apply to a workflow that has moved on"
+                            if message is not None
+                            else "those pending requests will be overwritten by the checkpoint's state"
+                        ),
+                    )
 
-        async for event in self._run_workflow_with_tracing(
-            initial_executor_fn=initial_executor_fn,
-            is_continuation=(message is None),
-            streaming=streaming,
-            function_invocation_kwargs=function_invocation_kwargs,
-            client_kwargs=client_kwargs,
-        ):
-            if event.type == "request_info" and event.request_id in (responses or {}):
-                # Don't yield request_info events for which we have responses to send -
-                # these are considered "handled". This prevents the caller from seeing
-                # events for requests they are already responding to.
-                # This usually happens when responses are provided with a checkpoint
-                # (restore then send), because the request_info events are stored in the
-                # checkpoint and would be emitted on restoration by the runner regardless
-                # of if a response is provided or not.
-                continue
-            yield event
+            initial_executor_fn = self._resolve_execution_mode(message, responses, checkpoint_id, checkpoint_storage)
 
-    async def _run_cleanup(self, checkpoint_storage: CheckpointStorage | None) -> None:
-        """Cleanup hook called after stream consumption."""
-        if checkpoint_storage is not None:
-            self._runner.context.clear_runtime_checkpoint_storage()
-        self._reset_running_flag()
+            async for event in self._run_workflow_with_tracing(
+                initial_executor_fn=initial_executor_fn,
+                is_continuation=(message is None),
+                streaming=streaming,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=client_kwargs,
+            ):
+                if event.type == "request_info" and event.request_id in (responses or {}):
+                    # Don't yield request_info events for which we have responses to send -
+                    # these are considered "handled". This prevents the caller from seeing
+                    # events for requests they are already responding to.
+                    # This usually happens when responses are provided with a checkpoint
+                    # (restore then send), because the request_info events are stored in the
+                    # checkpoint and would be emitted on restoration by the runner regardless
+                    # of if a response is provided or not.
+                    continue
+                yield event
+        finally:
+            # Whether this run is still the active one (no successor ``run()`` has
+            # installed a new weakref since we started). Captured once because the
+            # active-run clear below mutates ``self._active_run``. Used to scope both
+            # the run-lock release and the runtime-storage clear so a dropped run's
+            # deferred finalizer cannot clobber a successor run's state.
+            owns_run = self._active_run is my_active_run
+            if owns_run:
+                # Clear the active-run weakref so a subsequent ``run()`` is allowed.
+                # If the caller dropped this stream after partial iteration and a new
+                # ``run()`` already installed its own weakref before our async-gen
+                # finalizer ran, ``self._active_run`` points at the successor and we
+                # leave it untouched to preserve the successor's concurrency guard.
+                self._active_run = None
+                # Same ownership scoping applies to the runtime checkpoint storage:
+                # only clear it when this run still owns it, so a dropped run's
+                # deferred finalizer can't clear a successor's storage.
+                if checkpoint_storage is not None:
+                    self._runner.context.clear_runtime_checkpoint_storage()
 
     @staticmethod
     def _finalize_events(
@@ -935,7 +1010,7 @@ class Workflow(DictConvertible):
 
     async def _send_responses_internal(self, responses: Mapping[str, Any]) -> None:
         """Internal method to validate and send responses to the executors."""
-        pending_requests = await self._runner_context.get_pending_request_info_events()
+        pending_requests = await self._runner.context.get_pending_request_info_events()
         if not pending_requests:
             raise RuntimeError("No pending requests found in workflow context.")
 
@@ -945,6 +1020,8 @@ class Workflow(DictConvertible):
             if request_id not in pending_requests:
                 raise ValueError(f"Response provided for unknown request ID: {request_id}")
             pending_request = pending_requests[request_id]
+            if pending_request.response_type is Content and isinstance(response, str):
+                response = Content.from_text(text=response)
             # Try to coerce raw values (e.g., dicts from JSON) to the expected type
             response = try_coerce_to_type(response, pending_request.response_type)
             if not is_instance_of(response, pending_request.response_type):
@@ -955,9 +1032,15 @@ class Workflow(DictConvertible):
             coerced_responses[request_id] = response
 
         await asyncio.gather(*[
-            self._runner_context.send_request_info_response(request_id, response)
+            self._runner.context.send_request_info_response(request_id, response)
             for request_id, response in coerced_responses.items()
         ])
+
+        # Record a response-entry checkpoint capturing the delivered responses in-flight, before the
+        # runner processes them in the next superstep. This mirrors the initial-message entry
+        # checkpoint so a human-in-the-loop continuation is fully replayable: resuming from this
+        # checkpoint re-delivers the responses and replays the superstep that consumes them.
+        await self._runner.create_checkpoint_if_enabled()
 
     def _get_executor_by_id(self, executor_id: str) -> Executor:
         """Get an executor by its ID.
@@ -1151,3 +1234,12 @@ class Workflow(DictConvertible):
             context_providers=context_providers,
             **kwargs,
         )
+
+    def _is_run_active(self) -> bool:
+        """Check if a workflow run is currently active.
+
+        Returns:
+            True if a run is active, False otherwise.
+        """
+        existing_stream = self._active_run() if self._active_run is not None else None
+        return existing_stream is not None

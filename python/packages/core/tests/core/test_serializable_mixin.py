@@ -5,6 +5,9 @@
 import logging
 from typing import Any
 
+import pytest
+from typing_extensions import Self
+
 from agent_framework._serialization import SerializationMixin
 
 
@@ -224,6 +227,26 @@ class TestSerializationMixin:
         assert data["outer_value"] == "outer_test"
         assert data["inner"]["inner_value"] == "inner_test"
 
+    def test_to_dict_with_nested_structural_serialization_protocol(self):
+        """Test to_dict handles a structural protocol implementation without the mixin."""
+
+        class InnerClass:
+            def __init__(self, inner_value: str):
+                self.inner_value = inner_value
+
+            def to_dict(self, **kwargs: Any) -> dict[str, Any]:
+                return {"inner_value": self.inner_value}
+
+            @classmethod
+            def from_dict(cls, value: dict[str, Any], **kwargs: Any) -> Self:
+                return cls(value["inner_value"])
+
+        class OuterClass(SerializationMixin):
+            def __init__(self, inner: InnerClass):
+                self.inner = inner
+
+        assert OuterClass(InnerClass("inner_test")).to_dict()["inner"] == {"inner_value": "inner_test"}
+
     def test_to_dict_with_list_of_serialization_protocol(self):
         """Test to_dict handles lists containing SerializationProtocol objects."""
 
@@ -346,6 +369,26 @@ class TestSerializationMixin:
         # Verify to_dict includes the type
         out = obj.to_dict()
         assert out["type"] == "my_custom_type"
+
+    def test_from_dict_rejects_mismatched_type(self):
+        """from_dict raises ValueError when the payload type doesn't match the class."""
+
+        class TestClass(SerializationMixin):
+            def __init__(self, value: str):
+                self.value = value
+
+        with pytest.raises(ValueError, match="Type mismatch: expected 'test_class', got 'function_tool'"):
+            TestClass.from_dict({"type": "function_tool", "value": "x"})
+
+    def test_from_json_rejects_mismatched_type(self):
+        """from_json surfaces the same mismatch error instead of silently coercing."""
+
+        class TestClass(SerializationMixin):
+            def __init__(self, value: str):
+                self.value = value
+
+        with pytest.raises(ValueError, match="Type mismatch"):
+            TestClass.from_json('{"type": "some_other_type", "value": "x"}')
 
     def test_from_json(self):
         """Test from_json deserializes JSON string."""

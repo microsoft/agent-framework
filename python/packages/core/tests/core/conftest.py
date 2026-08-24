@@ -2,14 +2,19 @@
 
 import asyncio
 import logging
+import os
+import stat
+import subprocess
 import sys
 import warnings
 from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
+from pathlib import Path
 from typing import Any, Generic
+from typing import TypedDict as TypedDict  # noqa: F401  # pydantic mypy plugin needs TypedDict in module scope
 from unittest.mock import patch
 from uuid import uuid4
 
-from pytest import fixture
+from pytest import fixture, skip
 
 warnings.filterwarnings(
     "ignore",
@@ -43,6 +48,28 @@ else:
 # region Chat History
 
 logger = logging.getLogger(__name__)
+
+
+def create_junction_or_skip(*, link: Path, target: Path) -> None:
+    """Create a Windows directory junction or skip when the environment cannot."""
+    if sys.platform != "win32":
+        skip("Windows directory junctions are only available on Windows")
+
+    result = subprocess.run(
+        [os.environ.get("COMSPEC", "cmd"), "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        skip(f"Could not create Windows directory junction: {result.stderr or result.stdout}")
+
+    is_junction = getattr(link, "is_junction", None)
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    is_reparse_point = bool(reparse_attribute and getattr(link.lstat(), "st_file_attributes", 0) & reparse_attribute)
+    if not (callable(is_junction) and is_junction()) and not is_reparse_point:
+        link.rmdir()
+        skip("Created junction was not reported as a reparse point")
 
 
 @fixture(scope="function")
@@ -148,12 +175,12 @@ class MockBaseChatClient(
         self.call_count: int = 0
 
     @override
-    def _inner_get_response(
+    def _inner_get_response(  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
         self,
         *,
-        messages: MutableSequence[Message],
+        messages: MutableSequence[Message],  # type: ignore[override]
         stream: bool,
-        options: dict[str, Any],
+        options: dict[str, Any],  # type: ignore[override]
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Send a chat request to the AI service.
@@ -271,19 +298,19 @@ class MockAgentSession(AgentSession):
 # Mock Agent implementation for testing
 class MockAgent(SupportsAgentRun):
     @property
-    def id(self) -> str:
+    def id(self) -> str:  # type: ignore[override]  # pyrefly: ignore[bad-override]
         return str(uuid4())
 
     @property
-    def name(self) -> str | None:
+    def name(self) -> str | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]
         """Returns the name of the agent."""
         return "Name"
 
     @property
-    def description(self) -> str | None:
+    def description(self) -> str | None:  # type: ignore[override]  # pyrefly: ignore[bad-override]
         return "Description"
 
-    def run(
+    def run(  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
         self,
         messages: str | Message | list[str] | list[Message] | None = None,
         *,
@@ -315,7 +342,7 @@ class MockAgent(SupportsAgentRun):
         logger.debug(f"Running mock agent stream, with: {messages=}, {session=}, {kwargs=}")
         yield AgentResponseUpdate(contents=[Content.from_text("Response")])
 
-    def create_session(self) -> AgentSession:
+    def create_session(self) -> AgentSession:  # type: ignore[override]  # pyrefly: ignore[bad-override]  # ty: ignore[invalid-method-override]
         return MockAgentSession()
 
 
@@ -326,4 +353,4 @@ def agent_session() -> AgentSession:
 
 @fixture
 def agent() -> SupportsAgentRun:
-    return MockAgent()
+    return MockAgent()  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]

@@ -186,7 +186,7 @@ def load_monty() -> Any:
     ``FunctionSnapshot``, ``FutureSnapshot``, ``NameLookupSnapshot`` from it.
     """
     try:
-        import pydantic_monty  # type: ignore[import-not-found]
+        import pydantic_monty
     except ImportError as exc:
         raise RuntimeError(
             "The `pydantic-monty` package is required to execute Monty CodeAct code. "

@@ -5,6 +5,7 @@
 import base64
 import json
 import logging
+from typing import Any
 
 import pytest
 from agent_framework import Content, Message
@@ -99,6 +100,56 @@ def test_agui_tool_result_to_agent_framework():
     assert message.additional_properties.get("tool_call_id") == "call_123"
 
 
+@pytest.mark.parametrize("approved", [None, "true", "false", 1, 0, []])
+def test_function_approval_requires_real_boolean(approved: Any) -> None:
+    """Missing and malformed decisions are converted to explicit rejection."""
+    approval: dict[str, Any] = {
+        "id": "approval_1",
+        "call_id": "call_1",
+        "name": "sensitive_action",
+        "arguments": {},
+    }
+    if approved is not None:
+        approval["approved"] = approved
+
+    messages = agui_messages_to_agent_framework([{"role": "user", "content": "", "function_approvals": [approval]}])
+
+    response = messages[0].contents[0]
+    assert response.type == "function_approval_response"
+    assert response.approved is False
+
+
+@pytest.mark.parametrize(
+    ("accepted", "expected"),
+    [(True, True), (False, False), ("true", False), (1, False), (None, False)],
+)
+def test_tool_approval_accepted_requires_real_boolean(accepted: Any, expected: bool) -> None:
+    """Only the literal boolean true authorizes a raw tool approval payload."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "sensitive_action", "arguments": {}},
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "toolCallId": "call_1",
+                "content": json.dumps({"accepted": accepted}),
+            },
+        ]
+    )
+
+    response = messages[1].contents[0]
+    assert response.type == "function_approval_response"
+    assert response.approved is expected
+
+
 def test_agui_tool_approval_updates_tool_call_arguments():
     """Tool approval updates matching tool call arguments for snapshots and agent context.
 
@@ -108,7 +159,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
     The raw messages (for MESSAGES_SNAPSHOT) should contain all steps with status,
     so the UI can show which steps were enabled/disabled.
     """
-    messages_input = [
+    messages_input: list[dict[str, Any]] = [
         {
             "role": "assistant",
             "content": "",
@@ -171,6 +222,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
     approval_content = next(
         content for content in approval_msg.contents if content.type == "function_approval_response"
     )
+    assert approval_content.function_call is not None
     assert approval_content.function_call.parse_arguments() == {
         "steps": [
             {"description": "Boil water", "status": "enabled"},
@@ -189,7 +241,7 @@ def test_agui_tool_approval_updates_tool_call_arguments():
 
 def test_agui_tool_approval_from_confirm_changes_maps_to_function_call():
     """Confirm_changes approvals map back to the original tool call when metadata is present."""
-    messages_input = [
+    messages_input: list[dict[str, Any]] = [
         {
             "role": "assistant",
             "content": "",
@@ -224,15 +276,18 @@ def test_agui_tool_approval_from_confirm_changes_maps_to_function_call():
         content for content in approval_msg.contents if content.type == "function_approval_response"
     )
 
+    assert approval_content.function_call is not None
     assert approval_content.function_call.call_id == "call_tool"
+    assert approval_content.function_call is not None
     assert approval_content.function_call.name == "get_datetime"
+    assert approval_content.function_call is not None
     assert approval_content.function_call.parse_arguments() == {}
     assert messages_input[0]["tool_calls"][0]["function"]["arguments"] == {}
 
 
 def test_agui_tool_approval_from_confirm_changes_falls_back_to_sibling_call():
     """Confirm_changes approvals map to the only sibling tool call when metadata is missing."""
-    messages_input = [
+    messages_input: list[dict[str, Any]] = [
         {
             "role": "assistant",
             "content": "",
@@ -269,15 +324,18 @@ def test_agui_tool_approval_from_confirm_changes_falls_back_to_sibling_call():
         content for content in approval_msg.contents if content.type == "function_approval_response"
     )
 
+    assert approval_content.function_call is not None
     assert approval_content.function_call.call_id == "call_tool"
+    assert approval_content.function_call is not None
     assert approval_content.function_call.name == "get_datetime"
+    assert approval_content.function_call is not None
     assert approval_content.function_call.parse_arguments() == {}
     assert messages_input[0]["tool_calls"][0]["function"]["arguments"] == {}
 
 
 def test_agui_tool_approval_from_generate_task_steps_maps_to_function_call():
     """Approval tool payloads map to the referenced function call when function_call_id is present."""
-    messages_input = [
+    messages_input: list[dict[str, Any]] = [
         {
             "role": "assistant",
             "content": "",
@@ -322,14 +380,17 @@ def test_agui_tool_approval_from_generate_task_steps_maps_to_function_call():
         content for content in approval_msg.contents if content.type == "function_approval_response"
     )
 
+    assert approval_content.function_call is not None
     assert approval_content.function_call.call_id == "call_tool"
+    assert approval_content.function_call is not None
     assert approval_content.function_call.name == "get_datetime"
+    assert approval_content.function_call is not None
     assert approval_content.function_call.parse_arguments() == {}
 
 
 def test_agui_multiple_messages_to_agent_framework():
     """Test converting multiple AG-UI messages."""
-    messages_input = [
+    messages_input: list[dict[str, Any]] = [
         {"role": "user", "content": "First message", "id": "msg-1"},
         {"role": "assistant", "content": "Second message", "id": "msg-2"},
         {"role": "user", "content": "Third message", "id": "msg-3"},
@@ -382,7 +443,9 @@ def test_agui_function_approvals():
     assert msg.contents[0].type == "function_approval_response"
     assert msg.contents[0].approved is True
     assert msg.contents[0].id == "approval-1"
+    assert msg.contents[0].function_call is not None
     assert msg.contents[0].function_call.name == "search"
+    assert msg.contents[0].function_call is not None
     assert msg.contents[0].function_call.call_id == "call-1"
 
     assert msg.contents[1].type == "function_approval_response"
@@ -405,7 +468,7 @@ def test_agui_non_string_content():
     assert len(messages) == 1
     assert len(messages[0].contents) == 1
     assert messages[0].contents[0].type == "text"
-    assert "nested" in messages[0].contents[0].text
+    assert "nested" in messages[0].contents[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 def test_agui_multimodal_legacy_binary_to_agent_framework():
@@ -907,7 +970,7 @@ def test_agui_to_agent_framework_tool_result():
         },
     ]
 
-    result = agui_messages_to_agent_framework(messages)
+    result = agui_messages_to_agent_framework(messages)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]
 
     assert len(result) == 2
     # Second message should be tool result
@@ -994,6 +1057,92 @@ def test_sanitize_pending_tool_skip_on_user_followup():
     assert "skipped" in str(tool_results[0].contents[0].result).lower()
 
 
+def test_sanitize_pending_tool_does_not_skip_server_owned_approval_call():
+    """Server-owned approval state means a pending tool call is not abandoned."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="get_weather", arguments="{}")],
+    )
+    user_msg = Message(
+        role="user",
+        contents=[Content.from_text(text="Actually, never mind")],
+    )
+
+    result = _sanitize_tool_history([assistant_msg, user_msg], protected_tool_call_ids={"c1"})
+
+    assert [msg.role for msg in result] == ["assistant", "user"]
+    assert not [msg for msg in result if msg.role == "tool"]
+
+
+def test_sanitize_pending_tool_does_not_skip_current_resume_decision():
+    """A current approval response means the pending tool call is not abandoned."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    function_call = Content.from_function_call(call_id="c1", name="get_weather", arguments="{}")
+    assistant_msg = Message(role="assistant", contents=[function_call])
+    user_msg = Message(
+        role="user",
+        contents=[
+            Content.from_function_approval_response(
+                approved=True,
+                id="c1",
+                function_call=function_call,
+            )
+        ],
+    )
+
+    result = _sanitize_tool_history([assistant_msg, user_msg])
+
+    assert [msg.role for msg in result] == ["assistant", "user"]
+    assert not [msg for msg in result if msg.role == "tool"]
+
+
+def test_sanitize_consecutive_assistant_tool_calls_closes_previous_call():
+    """Consecutive assistant tool-call messages are separated by a synthetic tool result."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    first_assistant = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="get_weather", arguments="{}")],
+    )
+    second_assistant = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c2", name="get_time", arguments="{}")],
+    )
+    user_msg = Message(role="user", contents=[Content.from_text(text="Continue")])
+
+    result = _sanitize_tool_history([first_assistant, second_assistant, user_msg])
+
+    roles = [msg.role for msg in result]
+    assert roles == ["assistant", "tool", "assistant", "tool", "user"]
+    assert result[1].contents[0].type == "function_result"
+    assert result[1].contents[0].call_id == "c1"
+    assert result[3].contents[0].type == "function_result"
+    assert result[3].contents[0].call_id == "c2"
+
+
+def test_sanitize_history_ending_with_tool_call_closes_pending_call():
+    """History ending with assistant tool calls gets synthetic results before provider replay."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="c1", name="get_weather", arguments="{}"),
+            Content.from_function_call(call_id="c2", name="get_time", arguments="{}"),
+            Content.from_function_call(call_id="c1", name="get_weather", arguments="{}"),
+        ],
+    )
+
+    result = _sanitize_tool_history([assistant_msg])
+
+    assert [msg.role for msg in result] == ["assistant", "tool", "tool"]
+    assert [result[1].contents[0].call_id, result[2].contents[0].call_id] == ["c1", "c2"]
+    assert all("skipped" in str(msg.contents[0].result).lower() for msg in result[1:])
+
+
 def test_sanitize_tool_result_clears_pending_confirm():
     """Tool result for pending confirm_changes call_id clears pending state."""
     from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
@@ -1015,7 +1164,7 @@ def test_sanitize_tool_result_clears_pending_confirm():
 
 
 def test_sanitize_non_standard_role_resets_state():
-    """System message between assistant+user resets pending tool state."""
+    """System message between assistant+user closes pending tool state."""
     from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
 
     assistant_msg = Message(
@@ -1026,9 +1175,9 @@ def test_sanitize_non_standard_role_resets_state():
     user_msg = Message(role="user", contents=[Content.from_text(text="Continue")])
 
     result = _sanitize_tool_history([assistant_msg, system_msg, user_msg])
-    # System message should reset pending state, so no synthetic tool results
     tool_results = [m for m in result if m.role == "tool"]
-    assert len(tool_results) == 0
+    assert len(tool_results) == 1
+    assert tool_results[0].contents[0].call_id == "c1"
 
 
 def test_sanitize_json_confirm_changes_response():
@@ -1305,7 +1454,7 @@ def test_convert_agui_content_unknown_part_type_without_text():
 
     result = _convert_agui_content_to_framework([{"type": "widget", "data": 42}])
     assert len(result) == 1
-    assert "widget" in result[0].text
+    assert "widget" in result[0].text  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 def test_convert_agui_content_none():
@@ -1706,7 +1855,7 @@ def test_agui_fresh_approval_is_still_processed():
     On Turn 2, the approval is fresh (no subsequent assistant message), so it
     must be processed normally to execute the tool.
     """
-    messages_input = [
+    messages_input: list[dict[str, Any]] = [
         # Turn 1: user asks something
         {"role": "user", "content": "What time is it?", "id": "msg_1"},
         # Turn 1: assistant calls a tool
@@ -1739,6 +1888,7 @@ def test_agui_fresh_approval_is_still_processed():
     ]
     assert len(approval_contents) == 1, "Fresh approval should produce function_approval_response"
     assert approval_contents[0].approved is True
+    assert approval_contents[0].function_call is not None
     assert approval_contents[0].function_call.name == "get_datetime"
 
 
@@ -1747,7 +1897,7 @@ class TestReasoningRoundTrip:
 
     def test_reasoning_skipped_on_inbound(self):
         """Reasoning messages from prior snapshot are not forwarded to the LLM."""
-        messages_input = [
+        messages_input: list[dict[str, Any]] = [
             {"id": "u1", "role": "user", "content": "Hello"},
             {"id": "r1", "role": "reasoning", "content": "Thinking..."},
             {"id": "a1", "role": "assistant", "content": "Hi there"},
@@ -1761,7 +1911,7 @@ class TestReasoningRoundTrip:
 
     def test_reasoning_preserved_in_snapshot_format(self):
         """Reasoning messages retain their role through snapshot normalization."""
-        messages_input = [
+        messages_input: list[dict[str, Any]] = [
             {"id": "u1", "role": "user", "content": "Hello"},
             {"id": "r1", "role": "reasoning", "content": "Thinking about this..."},
             {"id": "a1", "role": "assistant", "content": "Answer"},
@@ -1775,7 +1925,7 @@ class TestReasoningRoundTrip:
 
     def test_reasoning_with_encrypted_value_in_snapshot_format(self):
         """Reasoning with encryptedValue passes through snapshot normalization."""
-        messages_input = [
+        messages_input: list[dict[str, Any]] = [
             {
                 "id": "r1",
                 "role": "reasoning",
@@ -1792,7 +1942,7 @@ class TestReasoningRoundTrip:
 
     def test_reasoning_encrypted_value_snake_case_normalized(self):
         """Snake-case encrypted_value is normalized to encryptedValue in snapshot format."""
-        messages_input = [
+        messages_input: list[dict[str, Any]] = [
             {
                 "id": "r1",
                 "role": "reasoning",
@@ -1809,7 +1959,7 @@ class TestReasoningRoundTrip:
 
     def test_multi_turn_with_reasoning_in_prior_snapshot(self):
         """Second turn with reasoning from prior snapshot does not corrupt messages."""
-        messages_input = [
+        messages_input: list[dict[str, Any]] = [
             {"id": "u1", "role": "user", "content": "First question"},
             {"id": "r1", "role": "reasoning", "content": "Prior reasoning"},
             {"id": "a1", "role": "assistant", "content": "First answer"},
@@ -1841,7 +1991,7 @@ def test_parse_multimodal_media_part_base64_value_field():
         {"type": "image", "source": {"type": "base64", "value": "aGVsbG8=", "mimeType": "image/png"}}
     )
     assert result is not None
-    assert "aGVsbG8=" in result.uri
+    assert "aGVsbG8=" in result.uri  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 def test_parse_multimodal_media_part_data_source_value_field():
@@ -1852,7 +2002,7 @@ def test_parse_multimodal_media_part_data_source_value_field():
         {"type": "image", "source": {"type": "data", "value": "aGVsbG8=", "mimeType": "image/png"}}
     )
     assert result is not None
-    assert "aGVsbG8=" in result.uri
+    assert "aGVsbG8=" in result.uri  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 def test_parse_multimodal_media_part_base64_data_field_backward_compat():
@@ -1863,7 +2013,7 @@ def test_parse_multimodal_media_part_base64_data_field_backward_compat():
         {"type": "image", "source": {"type": "base64", "data": "aGVsbG8=", "mimeType": "image/png"}}
     )
     assert result is not None
-    assert "aGVsbG8=" in result.uri
+    assert "aGVsbG8=" in result.uri  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 def test_parse_multimodal_media_part_value_preferred_over_data():
@@ -1883,7 +2033,7 @@ def test_parse_multimodal_media_part_value_preferred_over_data():
     )
     assert result is not None
     # 'value' field content should be used (base64 of "value")
-    assert "dmFsdWU=" in result.uri
+    assert "dmFsdWU=" in result.uri  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
 
 
 def test_parse_multimodal_media_part_unknown_source_value_fallback():
@@ -1894,4 +2044,40 @@ def test_parse_multimodal_media_part_unknown_source_value_fallback():
         {"type": "image", "source": {"type": "custom", "value": "aGVsbG8=", "mimeType": "image/png"}}
     )
     assert result is not None
-    assert "aGVsbG8=" in result.uri
+    assert "aGVsbG8=" in result.uri  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+
+
+def test_parse_multimodal_media_part_url_value_field():
+    """Source with type='url' reads the URL from the 'value' field per AG-UI spec."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    result = _parse_multimodal_media_part(
+        {
+            "type": "document",
+            "source": {
+                "type": "url",
+                "value": "https://example.com/files/document.pdf",
+                "mime_type": "application/pdf",
+            },
+        }
+    )
+    assert result is not None
+    assert result.uri == "https://example.com/files/document.pdf"
+    assert result.media_type == "application/pdf"
+
+
+def test_parse_multimodal_media_part_url_field_backward_compat():
+    """Source with type='url' still supports the non-spec 'url' and 'uri' fields."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    from_url = _parse_multimodal_media_part(
+        {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}}
+    )
+    assert from_url is not None
+    assert from_url.uri == "https://example.com/a.png"
+
+    from_uri = _parse_multimodal_media_part(
+        {"type": "image", "source": {"type": "uri", "uri": "https://example.com/b.png"}}
+    )
+    assert from_uri is not None
+    assert from_uri.uri == "https://example.com/b.png"

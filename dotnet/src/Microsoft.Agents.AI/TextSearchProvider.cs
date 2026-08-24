@@ -109,6 +109,10 @@ public sealed class TextSearchProvider : MessageAIContextProvider
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreTextSearchProvider);
+#pragma warning restore MAAI001
+
         if (this._searchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
         {
             // Expose the search tool for on-demand invocation.
@@ -135,6 +139,10 @@ public sealed class TextSearchProvider : MessageAIContextProvider
         {
             throw new InvalidOperationException($"Using the {nameof(TextSearchProvider)} as a {nameof(MessageAIContextProvider)} is not supported when {nameof(TextSearchProviderOptions.SearchTime)} is set to {TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling}.");
         }
+
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreTextSearchProvider);
+#pragma warning restore MAAI001
 
         return base.InvokingCoreAsync(context, cancellationToken);
     }
@@ -289,11 +297,11 @@ public sealed class TextSearchProvider : MessageAIContextProvider
             {
                 sb.AppendLine($"SourceDocLink: {result.SourceLink}");
             }
-            sb.AppendLine($"Contents: {result.Text}");
-            sb.AppendLine("----");
+            sb.AppendLine($"Contents: {result.Text}")
+                .AppendLine("----");
         }
-        sb.AppendLine(this._citationsPrompt);
-        sb.AppendLine();
+        sb.AppendLine(this._citationsPrompt)
+            .AppendLine();
         return sb.ToString();
     }
 

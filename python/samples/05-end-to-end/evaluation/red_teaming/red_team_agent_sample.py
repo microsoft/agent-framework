@@ -1,7 +1,9 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#     "agent-framework-foundry",
 #     "azure-ai-evaluation",
+#     "duckdb",
 #     "pyrit==0.9.0"
 # ]
 # ///
@@ -34,7 +36,7 @@ Prerequisites:
     - Environment variables set in environment
 
 Installation:
-    pip install agent-framework-core azure-ai-evaluation pyrit==0.9.0 duckdb
+    pip install agent-framework-foundry azure-ai-evaluation pyrit==0.9.0 duckdb
 
 Reference:
     Azure AI Red Teaming: https://github.com/Azure-Samples/azureai-samples/blob/main/scenarios/evaluate/AI_RedTeaming/AI_RedTeaming.ipynb

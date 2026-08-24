@@ -663,4 +663,102 @@ public sealed class JsonDocumentExtensionsTests
         Assert.Equal(VariableType.ListType, result.Schema["list"].Type);
         Assert.Equal(typeof(string), result.Schema["empty"].Type);
     }
+
+    [Fact]
+    public void ParseJsonValue_Object_ReturnsRecord()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse("""{ "a": "alpha", "b": "beta" }""");
+
+        // Act
+        object? result = document.ParseJsonValue("""{ "a": "alpha", "b": "beta" }""");
+
+        // Assert
+        Dictionary<string, object?> record = Assert.IsType<Dictionary<string, object?>>(result);
+        Assert.Equal("alpha", record["a"]);
+        Assert.Equal("beta", record["b"]);
+    }
+
+    [Fact]
+    public void ParseJsonValue_Array_ReturnsList()
+    {
+        // Arrange
+        const string Json = """["alpha","beta"]""";
+        JsonDocument document = JsonDocument.Parse(Json);
+
+        // Act
+        object? result = document.ParseJsonValue(Json);
+
+        // Assert
+        List<object?> list = Assert.IsType<List<object?>>(result);
+        Assert.Equal(new object?[] { "alpha", "beta" }, list);
+    }
+
+    [Fact]
+    public void ParseJsonValue_EmptyArray_ReturnsEmptyList()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse("[]");
+
+        // Act
+        object? result = document.ParseJsonValue("[]");
+
+        // Assert
+        List<object?> list = Assert.IsType<List<object?>>(result);
+        Assert.Empty(list);
+    }
+
+    [Fact]
+    public void ParseJsonValue_String_ReturnsString()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse("\"hello\"");
+
+        // Act
+        object? result = document.ParseJsonValue("\"hello\"");
+
+        // Assert
+        Assert.Equal("hello", result);
+    }
+
+    [Fact]
+    public void ParseJsonValue_Number_ReturnsNumericValue()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse("42");
+
+        // Act
+        object? result = document.ParseJsonValue("42");
+
+        // Assert
+        Assert.Equal(42d, Assert.IsType<double>(result));
+    }
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("false", false)]
+    public void ParseJsonValue_Boolean_ReturnsBoolean(string json, bool expected)
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse(json);
+
+        // Act
+        object? result = document.ParseJsonValue(json);
+
+        // Assert
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void ParseJsonValue_Null_ReturnsNull()
+    {
+        // Arrange
+        JsonDocument document = JsonDocument.Parse("null");
+
+        // Act
+        object? result = document.ParseJsonValue("null");
+
+        // Assert
+        Assert.Null(result);
+    }
 }

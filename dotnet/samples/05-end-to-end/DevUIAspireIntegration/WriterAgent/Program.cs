@@ -26,6 +26,8 @@ builder.Services.AddOpenAIConversations();
 
 var app = builder.Build();
 
+app.UseHttpsRedirection();
+
 // Map OpenAI API endpoints — DevUI aggregator routes requests here
 app.MapOpenAIResponses();
 app.MapOpenAIConversations();

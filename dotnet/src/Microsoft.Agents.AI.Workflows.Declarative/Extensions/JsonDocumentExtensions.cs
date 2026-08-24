@@ -43,6 +43,28 @@ internal static class JsonDocumentExtensions
     }
 
     /// <summary>
+    /// Maps a successfully-parsed JSON document's root element to a CLR value by its <see cref="JsonValueKind"/>.
+    /// Mirrors the value-kind handling shared by the agent/tool/HTTP executors: objects become records,
+    /// arrays become lists, and scalars become their primitive value.
+    /// </summary>
+    /// <param name="jsonDocument">The parsed JSON document.</param>
+    /// <param name="rawJson">The original JSON text, returned as a fallback when the root kind is undefined.</param>
+    /// <returns>The parsed CLR value.</returns>
+    public static object? ParseJsonValue(this JsonDocument jsonDocument, string rawJson) =>
+        jsonDocument.RootElement.ValueKind switch
+        {
+            JsonValueKind.Object => jsonDocument.ParseRecord(VariableType.RecordType),
+            JsonValueKind.Array when jsonDocument.RootElement.GetArrayLength() == 0 => new List<object?>(),
+            JsonValueKind.Array => jsonDocument.ParseList(jsonDocument.RootElement.GetListTypeFromJson()),
+            JsonValueKind.String => jsonDocument.RootElement.GetString(),
+            JsonValueKind.Number => jsonDocument.RootElement.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            _ => rawJson,
+        };
+
+    /// <summary>
     /// Creates a VariableType.List with schema inferred from the first object element in the array.
     /// </summary>
     public static VariableType GetListTypeFromJson(this JsonElement arrayElement)

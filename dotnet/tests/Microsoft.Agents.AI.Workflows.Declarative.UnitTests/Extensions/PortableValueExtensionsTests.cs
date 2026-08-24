@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -82,6 +84,97 @@ public sealed class PortableValueExtensionsTests
         Assert.Equal(nameof(ChatMessage), typeValue.Value);
         StringValue textValue = Assert.IsType<StringValue>(firstElement.GetField(TypeSchema.Message.Fields.Text));
         Assert.Equal("input", textValue.Value);
+    }
+
+    [Fact]
+    public void TableAsPortableUsesLegacyArrayShape()
+    {
+        // Arrange
+        RecordType recordType = RecordType.Empty().Add("Id", FormulaType.Decimal);
+        RecordValue record =
+            FormulaValue.NewRecordFromFields(
+                recordType,
+                new NamedValue("Id", FormulaValue.New(1)));
+        TableValue source = FormulaValue.NewTable(recordType, record);
+
+        // Act
+        object result = source.AsPortable();
+
+        // Assert
+        Assert.IsType<PortableValue[]>(result);
+    }
+
+    [Fact]
+    public void RecordAsPortableUsesLegacyDictionaryShape()
+    {
+        // Arrange
+        RecordValue source =
+            FormulaValue.NewRecordFromFields(
+                new NamedValue("Id", FormulaValue.New(1)));
+
+        // Act
+        object result = source.AsPortable();
+
+        // Assert
+        Assert.IsAssignableFrom<IDictionary<string, PortableValue>>(result);
+    }
+
+    [Fact]
+    public async Task LegacyRecordTableSupportsAppendAsync()
+    {
+        // Arrange
+        Dictionary<string, decimal>[] source = [new() { ["Id"] = 1 }];
+        TableValue restored = Assert.IsAssignableFrom<TableValue>(new PortableValue(source.AsPortable()).ToFormula());
+        RecordType recordType = restored.Type.ToRecord();
+        RecordValue newRecord =
+            FormulaValue.NewRecordFromFields(
+                recordType,
+                new NamedValue("Id", FormulaValue.New(2)));
+
+        // Act
+        await restored.AppendAsync(newRecord, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, restored.Rows.Count());
+    }
+
+    [Fact]
+    public async Task LegacyPrimitiveTableSupportsAppendAsync()
+    {
+        // Arrange
+        string[] source = ["one"];
+        TableValue restored = Assert.IsAssignableFrom<TableValue>(new PortableValue(source.AsPortable()).ToFormula());
+        RecordType recordType = restored.Type.ToRecord();
+        RecordValue newRecord =
+            FormulaValue.NewRecordFromFields(
+                recordType,
+                new NamedValue("Value", FormulaValue.New("two")));
+
+        // Act
+        await restored.AppendAsync(newRecord, CancellationToken.None);
+
+        // Assert
+        string[] values = restored.Rows
+            .Select(row => Assert.IsType<StringValue>(row.Value.GetField("Value")).Value)
+            .ToArray();
+        Assert.Equal(["one", "two"], values);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LegacyDateTablePreservesFormulaType(bool includeTime)
+    {
+        // Arrange
+        DateTime value = new(2026, 7, 27, includeTime ? 12 : 0, 0, 0, DateTimeKind.Utc);
+
+        // Act
+        TableValue restored = Assert.IsAssignableFrom<TableValue>(new PortableValue(new[] { value }.AsPortable()).ToFormula());
+
+        // Assert
+        FormulaType expectedType = includeTime ? FormulaType.DateTime : FormulaType.Date;
+        Assert.Equal(expectedType, restored.Type.GetFieldType("Value"));
+        Assert.Equal(expectedType, Assert.Single(restored.Rows).Value.GetField("Value").Type);
     }
 
     [Fact]

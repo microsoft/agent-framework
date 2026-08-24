@@ -21,10 +21,10 @@ load_dotenv()
 
 """
 This sample demonstrates how to use the Neo4j GraphRAG context provider with
-Agent Framework and Azure AI Foundry.
+Agent Framework and Microsoft Foundry.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint
     FOUNDRY_MODEL            — Model deployment name (e.g. gpt-4o)
     NEO4J_URI              — Neo4j connection URI
     NEO4J_USERNAME         — Neo4j username
@@ -65,7 +65,7 @@ async def main() -> None:
     if not settings.is_configured:
         raise RuntimeError("Set NEO4J_URI, NEO4J_USERNAME, and NEO4J_PASSWORD before running this sample.")
 
-    # 2. Read the Azure AI Foundry project endpoint and model configuration.
+    # 2. Read the Microsoft Foundry project endpoint and model configuration.
     project_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not project_endpoint:
         raise RuntimeError("Set FOUNDRY_PROJECT_ENDPOINT before running this sample.")

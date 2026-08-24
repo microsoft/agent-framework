@@ -1,14 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 from agent_framework import Agent, tool
 
-from agent_framework_ag_ui._orchestration._tooling import (
+from agent_framework_ag_ui._tooling import (
     collect_server_tools,
     merge_tools,
-    register_additional_client_tools,
 )
 
 
@@ -51,21 +51,6 @@ def test_merge_tools_filters_duplicates() -> None:
         merge_tools(server, client)
 
 
-def test_register_additional_client_tools_assigns_when_configured() -> None:
-    """register_additional_client_tools should set additional_tools on the chat client."""
-    from agent_framework import BaseChatClient, normalize_function_invocation_configuration
-
-    mock_chat_client = MagicMock(spec=BaseChatClient)
-    mock_chat_client.function_invocation_configuration = normalize_function_invocation_configuration(None)
-
-    agent = Agent(client=mock_chat_client)
-
-    tools = [DummyTool("x")]
-    register_additional_client_tools(agent, tools)
-
-    assert mock_chat_client.function_invocation_configuration["additional_tools"] == tools
-
-
 def test_collect_server_tools_includes_mcp_tools_when_connected() -> None:
     """MCP tool functions should be included when the MCP tool is connected."""
     mcp_function1 = DummyTool("mcp_function_1")
@@ -73,7 +58,7 @@ def test_collect_server_tools_includes_mcp_tools_when_connected() -> None:
     mock_mcp = MockMCPTool([mcp_function1, mcp_function2], is_connected=True)
 
     agent = _create_chat_agent_with_tool("regular_tool")
-    agent.mcp_tools = [mock_mcp]
+    agent.mcp_tools = [cast(Any, mock_mcp)]
 
     tools = collect_server_tools(agent)
 
@@ -90,7 +75,7 @@ def test_collect_server_tools_excludes_mcp_tools_when_not_connected() -> None:
     mock_mcp = MockMCPTool([mcp_function], is_connected=False)
 
     agent = _create_chat_agent_with_tool("regular_tool")
-    agent.mcp_tools = [mock_mcp]
+    agent.mcp_tools = [cast(Any, mock_mcp)]
 
     tools = collect_server_tools(agent)
 
@@ -117,7 +102,7 @@ def test_collect_server_tools_with_mcp_tools_via_public_property() -> None:
     mock_mcp = MockMCPTool([mcp_function], is_connected=True)
 
     agent = _create_chat_agent_with_tool("regular_tool")
-    agent.mcp_tools = [mock_mcp]
+    agent.mcp_tools = [cast(Any, mock_mcp)]
 
     # Verify the public property works
     assert agent.mcp_tools == [mock_mcp]
@@ -135,7 +120,7 @@ def test_collect_server_tools_raises_on_duplicate_agent_and_mcp_tool_names() -> 
     mock_mcp = MockMCPTool([duplicate_tool], is_connected=True, name="docs-mcp")
 
     agent = _create_chat_agent_with_tool("regular_tool")
-    agent.mcp_tools = [mock_mcp]
+    agent.mcp_tools = [cast(Any, mock_mcp)]
 
     with pytest.raises(ValueError, match="Duplicate tool name 'regular_tool'"):
         collect_server_tools(agent)
@@ -151,31 +136,8 @@ def test_collect_server_tools_no_default_options() -> None:
         pass
 
     agent = MockAgent()
-    tools = collect_server_tools(agent)
+    tools = collect_server_tools(cast(Any, agent))
     assert tools == []
-
-
-def test_register_additional_client_tools_no_tools() -> None:
-    """register_additional_client_tools does nothing with None tools."""
-    mock_chat_client = MagicMock()
-    agent = Agent(client=mock_chat_client)
-
-    # Should not raise
-    register_additional_client_tools(agent, None)
-
-
-def test_register_additional_client_tools_no_chat_client() -> None:
-    """register_additional_client_tools does nothing when agent has no client."""
-    from agent_framework_ag_ui._orchestration._tooling import register_additional_client_tools
-
-    class MockAgent:
-        pass
-
-    agent = MockAgent()
-    tools = [DummyTool("x")]
-
-    # Should not raise
-    register_additional_client_tools(agent, tools)
 
 
 def test_merge_tools_no_client_tools() -> None:

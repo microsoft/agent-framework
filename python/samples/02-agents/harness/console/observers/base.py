@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from agent_framework import Agent, Content, Message
+    from agent_framework import Agent, AgentResponseUpdate, Content
 
     from ..app_state import FollowUpAction
     from ..state_driver import IUXStateDriver
@@ -48,18 +48,19 @@ class ConsoleObserver:
     async def on_response_update(
         self,
         ux: IUXStateDriver,
-        update: Message,
+        update: AgentResponseUpdate,
         agent: Agent,
         session: Any,
     ) -> None:
         """Called for each response update chunk.
 
-        Override to inspect update-level metadata or handle provider-specific
-        events in the raw representation.
+        Override to inspect update-level metadata (such as ``response_id`` /
+        ``message_id`` for message-boundary detection) or handle
+        provider-specific events in the raw representation.
 
         Args:
             ux: The UX state driver for UI updates.
-            update: The message update chunk.
+            update: The agent response update chunk.
             agent: The AI agent.
             session: The agent session.
         """

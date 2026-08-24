@@ -259,7 +259,7 @@ class MockChatClient(FunctionInvocationLayer[Any], BaseChatClient[Any]):
 
 
 @executor(id="test_executor")
-async def test_executor(agent_executor_response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:
+async def test_executor(agent_executor_response: AgentExecutorResponse, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
     await ctx.yield_output(agent_executor_response.agent_response.text)
 
 

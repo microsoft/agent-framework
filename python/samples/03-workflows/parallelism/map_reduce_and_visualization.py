@@ -37,7 +37,7 @@ Prerequisites:
 - Optional for SVG export: install graphviz.
 
 Installation:
-    pip install agent-framework graphviz
+    pip install agent-framework-core graphviz
 """
 
 # Define the temporary directory for storing intermediate results
@@ -301,7 +301,7 @@ async def main():
         svg_file = viz.export(format="svg")
         print(f"SVG file saved to: {svg_file}")
     except ImportError:
-        print("Tip: Install 'viz' extra to export workflow visualization: pip install agent-framework[viz] --pre")
+        print("Tip: Install graphviz to export workflow visualization: pip install graphviz")
 
     # Step 3: Open the text file and read its content.
     with open(os.path.join(DIR, "../resources", "long_text.txt")) as f:

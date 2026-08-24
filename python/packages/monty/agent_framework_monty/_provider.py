@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from agent_framework import AgentSession, ContextProvider, FunctionTool, SessionContext
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import ApprovalMode
 
 from ._execute_code_tool import MontyExecuteCodeTool
+from ._feature_usage import FeatureIndex
 from ._types import FileMount, FileMountInput
 
 
@@ -89,6 +91,7 @@ class MontyCodeActProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Inject CodeAct instructions and a run-scoped execute_code tool before each run."""
+        mark_feature_used(FeatureIndex.MONTY)
         run_tool = self._execute_code_tool.create_run_tool()
         state[self.source_id] = run_tool.build_serializable_state()
         context.extend_instructions(self.source_id, run_tool.build_instructions(tools_visible_to_model=False))

@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -60,7 +59,7 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
-    public override async Task WriteFileAsync(string path, string content, CancellationToken cancellationToken = default)
+    public override async Task WriteAsync(string path, string content, CancellationToken cancellationToken = default)
     {
         string fullPath = this.ResolveSafePath(path);
 
@@ -80,7 +79,7 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
-    public override async Task<string?> ReadFileAsync(string path, CancellationToken cancellationToken = default)
+    public override async Task<string?> ReadAsync(string path, CancellationToken cancellationToken = default)
     {
         string fullPath = this.ResolveSafePath(path);
 
@@ -98,7 +97,7 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
-    public override Task<bool> DeleteFileAsync(string path, CancellationToken cancellationToken = default)
+    public override Task<bool> DeleteAsync(string path, CancellationToken cancellationToken = default)
     {
         string fullPath = this.ResolveSafePath(path);
 
@@ -112,22 +111,47 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
-    public override Task<IReadOnlyList<string>> ListFilesAsync(string directory, CancellationToken cancellationToken = default)
+    public override Task<IReadOnlyList<FileStoreEntry>> ListChildrenAsync(string directory, CancellationToken cancellationToken = default)
     {
         string fullDir = this.ResolveSafeDirectoryPath(directory);
 
         if (!Directory.Exists(fullDir))
         {
-            return Task.FromResult<IReadOnlyList<string>>([]);
+            return Task.FromResult<IReadOnlyList<FileStoreEntry>>([]);
         }
 
-        var files = Directory.GetFiles(fullDir)
-            .Where(f => (File.GetAttributes(f) & FileAttributes.ReparsePoint) == 0)
-            .Select(Path.GetFileName)
-            .Where(name => name is not null)
-            .ToList();
+        // Subdirectories first, then files. Skip symlinks/reparse points for both.
+        var entries = new List<FileStoreEntry>();
 
-        return Task.FromResult<IReadOnlyList<string>>(files!);
+        foreach (string dir in Directory.GetDirectories(fullDir))
+        {
+            if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0)
+            {
+                continue;
+            }
+
+            string? name = Path.GetFileName(dir);
+            if (name is not null)
+            {
+                entries.Add(new FileStoreEntry(name, FileStoreEntry.Directory));
+            }
+        }
+
+        foreach (string file in Directory.GetFiles(fullDir))
+        {
+            if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+            {
+                continue;
+            }
+
+            string? name = Path.GetFileName(file);
+            if (name is not null)
+            {
+                entries.Add(new FileStoreEntry(name, FileStoreEntry.File));
+            }
+        }
+
+        return Task.FromResult<IReadOnlyList<FileStoreEntry>>(entries);
     }
 
     /// <inheritdoc />
@@ -138,10 +162,10 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
-    public override async Task<IReadOnlyList<FileSearchResult>> SearchFilesAsync(
+    public override async Task<IReadOnlyList<FileSearchResult>> SearchAsync(
         string directory,
         string regexPattern,
-        string? filePattern = null,
+        string? globPattern = null,
         bool recursive = false,
         CancellationToken cancellationToken = default)
     {
@@ -154,7 +178,7 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
 
         // Compile the regex with a timeout to guard against catastrophic backtracking (ReDoS).
         var regex = new Regex(regexPattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
-        Matcher? matcher = filePattern is not null ? StorePaths.CreateGlobMatcher(filePattern) : null;
+        Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
         var results = new List<FileSearchResult>();
 
         foreach (string filePath in EnumerateFiles(fullDir, recursive))
@@ -218,25 +242,6 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
         }
 
         return results;
-    }
-
-    /// <inheritdoc />
-    public override Task<IReadOnlyList<string>> ListDirectoriesAsync(string directory, CancellationToken cancellationToken = default)
-    {
-        string fullDir = this.ResolveSafeDirectoryPath(directory);
-
-        if (!Directory.Exists(fullDir))
-        {
-            return Task.FromResult<IReadOnlyList<string>>([]);
-        }
-
-        var directories = Directory.GetDirectories(fullDir)
-            .Where(d => (File.GetAttributes(d) & FileAttributes.ReparsePoint) == 0)
-            .Select(Path.GetFileName)
-            .Where(name => name is not null)
-            .ToList();
-
-        return Task.FromResult<IReadOnlyList<string>>(directories!);
     }
 
     /// <summary>

@@ -33,10 +33,24 @@ internal sealed class InputWaiter : IDisposable
         }
     }
 
-    public Task WaitForInputAsync(CancellationToken cancellationToken = default) => this.WaitForInputAsync(null, cancellationToken);
+    /// <summary>
+    /// Waits until input is signaled. This wait never expires; it completes only when
+    /// <see cref="SignalInput"/> is called or <paramref name="cancellationToken"/> is cancelled.
+    /// </summary>
+    /// <param name="cancellationToken">A token to cancel the wait.</param>
+    public Task WaitForInputAsync(CancellationToken cancellationToken = default) => this._inputSignal.WaitAsync(cancellationToken);
 
-    public async Task WaitForInputAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Waits until input is signaled or <paramref name="timeout"/> expires.
+    /// </summary>
+    /// <param name="timeout">The maximum time to wait for input.</param>
+    /// <param name="cancellationToken">A token to cancel the wait.</param>
+    /// <returns>
+    /// <see langword="true"/> if the wait was released by <see cref="SignalInput"/>;
+    /// <see langword="false"/> if <paramref name="timeout"/> expired first.
+    /// </returns>
+    public async Task<bool> WaitForInputAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
     {
-        await this._inputSignal.WaitAsync(timeout ?? TimeSpan.FromMilliseconds(-1), cancellationToken).ConfigureAwait(false);
+        return await this._inputSignal.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
     }
 }

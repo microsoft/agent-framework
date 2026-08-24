@@ -7,7 +7,6 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Agents.AI.Workflows.Checkpointing;
 
 namespace Microsoft.Agents.AI.Workflows.Execution;
 
@@ -120,13 +119,11 @@ internal sealed class EdgeMap
         return exportedStates;
     }
 
-    internal async ValueTask ImportStateAsync(Checkpoint checkpoint)
+    internal async ValueTask ImportStateAsync(Dictionary<EdgeId, PortableValue> edgeStateData)
     {
-        Dictionary<EdgeId, PortableValue> importedState = checkpoint.EdgeStateData;
-
-        foreach (EdgeId id in importedState.Keys)
+        foreach (EdgeId id in edgeStateData.Keys)
         {
-            PortableValue exportedState = importedState[id];
+            PortableValue exportedState = edgeStateData[id];
             await this._statefulRunners[id].ImportStateAsync(exportedState).ConfigureAwait(false);
         }
     }

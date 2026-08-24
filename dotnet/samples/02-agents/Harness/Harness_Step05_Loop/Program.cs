@@ -116,7 +116,7 @@ async Task TodoLoopAsync()
         {
             var todoProvider = context.Agent.GetService<TodoProvider>()
                 ?? throw new InvalidOperationException("The agent did not expose a TodoProvider.");
-            var remaining = await todoProvider.GetRemainingTodosAsync(context.Session).ConfigureAwait(false);
+            var remaining = await todoProvider.GetRemainingTodosAsync(context.Session, cancellationToken).ConfigureAwait(false);
             return remaining.Count > 0
                 ? LoopEvaluation.Continue($"Not all todos are complete yet ({remaining.Count} remaining). Please complete the remaining todo items.")
                 : LoopEvaluation.Stop();
@@ -174,9 +174,9 @@ async Task ApprovalLoopAsync()
         {
             AutoApprovalRules =
             [
-                functionCall =>
+                context =>
                 {
-                    Console.WriteLine($"  Auto-approving: {functionCall.Name}");
+                    Console.WriteLine($"  Auto-approving: {context.FunctionCallContent.Name}");
                     return ValueTask.FromResult(true);
                 },
             ],
@@ -252,7 +252,6 @@ AIAgent CreateLeanHarnessAgent(
         DisableAgentModeProvider = true,
         DisableTodoProvider = disableTodoProvider,
         DisableFileMemory = true,
-        DisableFileAccess = true,
         DisableWebSearch = true,
         ToolApprovalAgentOptions = toolApprovalAgentOptions,
         ChatOptions = new ChatOptions

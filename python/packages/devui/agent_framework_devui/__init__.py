@@ -8,7 +8,10 @@ import webbrowser
 from collections.abc import Callable
 from typing import Any
 
+from agent_framework._telemetry import mark_feature_used
+
 from ._conversations import CheckpointConversationManager
+from ._feature_usage import FeatureIndex
 from ._server import DevServer
 from .models import AgentFrameworkRequest, OpenAIError, OpenAIResponse, ResponseStreamEvent
 from .models._discovery_models import DiscoveryResponse, EntityInfo, EnvVarRequirement
@@ -196,6 +199,7 @@ def serve(
         threading.Thread(target=open_browser, daemon=True).start()
 
     logger.info(f"Starting Agent Framework DevUI on {host}:{port}")
+    mark_feature_used(FeatureIndex.DEVUI)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 

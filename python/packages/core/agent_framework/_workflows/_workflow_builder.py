@@ -3,11 +3,11 @@
 import logging
 import sys
 import uuid
-import warnings
 from collections.abc import Callable, Sequence
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from .._agents import SupportsAgentRun
+from .._telemetry import FeatureIndex, mark_feature_used
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent_executor import AgentExecutor
 from ._agent_utils import resolve_agent_id
@@ -36,9 +36,9 @@ from ._workflow import (
 )
 
 if sys.version_info >= (3, 11):
-    from typing import Self  # type: ignore # pragma: no cover
+    from typing import Self  # pragma: no cover
 else:
-    from typing_extensions import Self  # type: ignore # pragma: no cover
+    from typing_extensions import Self  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
@@ -86,6 +86,8 @@ class WorkflowBuilder:
             print(events.get_outputs())  # ['OLLEH']
     """
 
+    _FEATURE_USAGE_INDEX: ClassVar[FeatureIndex | None] = FeatureIndex.CORE_WORKFLOW
+
     def __init__(
         self,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
@@ -101,7 +103,9 @@ class WorkflowBuilder:
         """Initialize the WorkflowBuilder.
 
         Args:
-            max_iterations: Maximum number of iterations for workflow convergence. Default is 100.
+            max_iterations: Maximum number of iterations for workflow convergence. The first
+                iteration is the initial run of the start executor, and each subsequent iteration
+                is a superstep. Default is 100.
             name: A human-readable name for the workflow builder. This name will be the identifier
                 for all workflow instances created from this builder. If not provided, a unique name
                 will be generated. This will be useful for versioning, monitoring, checkpointing, and
@@ -120,14 +124,13 @@ class WorkflowBuilder:
                 Pass ``"all_other"`` to select every executor with declared workflow output types
                 that is not selected by ``output_from``.
                 If neither ``output_from`` nor ``intermediate_output_from`` is provided,
-                omitted-selection compatibility behavior applies and every ``yield_output`` produces
-                ``type='output'``. If either is provided, explicit mode applies: listed
+                every ``yield_output`` produces ``type='output'``. If either is provided,
+                explicit mode applies: listed
                 workflow-output executors emit ``output``, listed intermediate executors emit
                 ``intermediate``, and unlisted executor yields are hidden.
 
                 Output selection behavior:
-                - Omit both selections: every ``yield_output`` emits ``output`` for compatibility,
-                  with a deprecation warning.
+                - Omit both selections: every ``yield_output`` emits ``output``.
                 - ``output_from="all"``: every output-capable executor emits ``output``.
                 - ``output_from=[A]``: only A emits ``output``; other executor payloads are hidden.
                 - ``output_from=[A], intermediate_output_from="all_other"``: A emits ``output``;
@@ -156,8 +159,7 @@ class WorkflowBuilder:
         # being created for the same agent.
         self._agent_wrappers: dict[str, Executor] = {}
 
-        # ``None`` for both means omitted-selection compatibility behavior
-        # (every yield_output produces type='output').
+        # ``None`` for both means the default all-output behavior.
         # If either is provided, explicit mode applies and unlisted executor yields are hidden.
         self._output_from: _OutputSelection = self._coerce_output_from(output_from)
         self._intermediate_output_from: _IntermediateOutputSelection = self._coerce_intermediate_output_from(
@@ -182,7 +184,7 @@ class WorkflowBuilder:
         # New executor
         self._executors[executor.id] = executor
         # Add an internal edge group for each unique executor
-        self._edge_groups.append(InternalEdgeGroup(executor.id))  # type: ignore[call-arg]
+        self._edge_groups.append(InternalEdgeGroup(executor.id))
 
         return executor.id
 
@@ -199,13 +201,13 @@ class WorkflowBuilder:
             An Executor instance, wrapping the agent if necessary.
         """
         try:  # Local import to avoid hard dependency at import time
-            from agent_framework import SupportsAgentRun  # type: ignore
+            from agent_framework import SupportsAgentRun
         except Exception:  # pragma: no cover - defensive
-            SupportsAgentRun = object  # type: ignore
+            SupportsAgentRun = object
 
         if isinstance(candidate, Executor):  # Already an executor
             return candidate
-        if isinstance(candidate, SupportsAgentRun):  # type: ignore[arg-type]
+        if isinstance(candidate, SupportsAgentRun):
             # Reuse existing wrapper for the same agent instance if present
             agent_instance_id = str(id(candidate))
             existing = self._agent_wrappers.get(agent_instance_id)
@@ -329,7 +331,7 @@ class WorkflowBuilder:
         target_execs = [self._maybe_wrap_agent(t) for t in targets]
         source_id = self._add_executor(source_exec)
         target_ids = [self._add_executor(t) for t in target_execs]
-        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))  # type: ignore[call-arg]
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids))
 
         return self
 
@@ -410,13 +412,13 @@ class WorkflowBuilder:
         internal_cases: list[SwitchCaseEdgeGroupCase | SwitchCaseEdgeGroupDefault] = []
         for case in cases:
             # Allow case targets to be agents
-            case.target = self._maybe_wrap_agent(case.target)  # type: ignore[arg-type]
+            case.target = self._maybe_wrap_agent(case.target)
             self._add_executor(case.target)
             if isinstance(case, Default):
                 internal_cases.append(SwitchCaseEdgeGroupDefault(target_id=case.target.id))
             else:
                 internal_cases.append(SwitchCaseEdgeGroupCase(condition=case.condition, target_id=case.target.id))
-        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, internal_cases))  # type: ignore[call-arg]
+        self._edge_groups.append(SwitchCaseEdgeGroup(source_id, internal_cases))
 
         return self
 
@@ -502,7 +504,7 @@ class WorkflowBuilder:
         target_execs = [self._maybe_wrap_agent(t) for t in targets]
         source_id = self._add_executor(source_exec)
         target_ids = [self._add_executor(t) for t in target_execs]
-        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))  # type: ignore[call-arg]
+        self._edge_groups.append(FanOutEdgeGroup(source_id, target_ids, selection_func))
 
         return self
 
@@ -557,7 +559,7 @@ class WorkflowBuilder:
         target_exec = self._maybe_wrap_agent(target)
         source_ids = [self._add_executor(s) for s in source_execs]
         target_id = self._add_executor(target_exec)
-        self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))  # type: ignore[call-arg]
+        self._edge_groups.append(FanInEdgeGroup(source_ids, target_id))
 
         return self
 
@@ -794,13 +796,15 @@ class WorkflowBuilder:
                 print(events.get_outputs())  # []
                 print(events.get_intermediate_outputs())  # outputs from planner and answerer
 
-                # Explicitly preserve all-output behavior without relying on omitted-selection compatibility.
+                # Explicitly select all output-capable executors.
                 workflow = (
                     WorkflowBuilder(start_executor=planner, output_from="all").add_edge(planner, answerer).build()
                 )
                 events = await workflow.run("hello")
                 print(events.get_outputs())  # outputs from planner and answerer
         """
+        if self._FEATURE_USAGE_INDEX is not None:
+            mark_feature_used(self._FEATURE_USAGE_INDEX)
         # Create workflow build span that includes validation and workflow creation
         with create_workflow_span(OtelAttr.WORKFLOW_BUILD_SPAN) as span:
             try:
@@ -810,16 +814,6 @@ class WorkflowBuilder:
                 if not self._start_executor:
                     raise ValueError(
                         "Starting executor must be set via the start_executor constructor parameter before building."
-                    )
-
-                if self._output_from is None and self._intermediate_output_from is None:
-                    warnings.warn(
-                        "WorkflowBuilder built without explicit output_from or intermediate_output_from; "
-                        "every yield_output produces type='output' for compatibility. Pass output_from='all', "
-                        "output_from=[...], or intermediate_output_from=[...] to opt into explicit designation - "
-                        "explicit designation will be required in a future version.",
-                        DeprecationWarning,
-                        stacklevel=2,
                     )
 
                 start_executor = self._start_executor

@@ -314,7 +314,7 @@ class InMemoryConversationStore(ConversationStore):
             text_obj = first_content.get("text", "")
             text = text_obj if isinstance(text_obj, str) else str(text_obj)
 
-            chat_msg = Message(role=role, contents=[text])  # type: ignore[arg-type]
+            chat_msg = Message(role=role, contents=[text])
             chat_messages.append(chat_msg)
 
         # Add messages to internal storage
@@ -466,7 +466,7 @@ class InMemoryConversationStore(ConversationStore):
                 message = OpenAIMessage(
                     id=item_id,
                     type="message",
-                    role=role,  # type: ignore
+                    role=role,
                     content=message_contents,  # type: ignore
                     status="completed",
                 )

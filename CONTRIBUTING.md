@@ -127,8 +127,27 @@ We use and recommend the following workflow:
 7. Create a PR against the repository's **main** branch.
    - State in the description what issue or improvement your change is addressing.
    - Verify that all the Continuous Integration checks are passing.
-8. Wait for feedback or approval of your changes from the code maintainers.
+8. Address feedback from the code maintainers. Reply to every review comment with
+   the outcome and resolve each completed review conversation yourself before
+   requesting another review.
 9. When area owners have signed off, and all checks are green, your PR will be merged.
+
+### Resolving PR Review Comments
+
+PR authors are responsible for closing out all review conversations on their pull
+requests, including conversations opened by reviewers. Do not wait for the reviewer
+or a maintainer to resolve completed conversations for you.
+
+For every review comment:
+
+- If the feedback was addressed, reply with a brief explanation and, preferably,
+  the commit containing the change.
+- If the feedback was not addressed, reply with the reason why.
+
+After replying and completing any necessary discussion, **resolve the conversation
+yourself**. Leave a conversation open only while it has an unanswered question or
+active discussion. Reviewers may reopen a conversation if further changes or
+discussion are needed.
 
 ### Development Setup
 

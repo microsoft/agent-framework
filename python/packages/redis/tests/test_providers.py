@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,11 +13,21 @@ from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 
 from agent_framework_redis._context_provider import RedisContextProvider
+from agent_framework_redis._feature_usage import FeatureIndex
 from agent_framework_redis._history_provider import RedisHistoryProvider
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
+
+
+async def test_empty_history_save_marks_redis_used() -> None:
+    provider = object.__new__(RedisHistoryProvider)
+
+    with patch("agent_framework_redis._history_provider.mark_feature_used") as mark_feature_used:
+        await provider.save_messages(None, [])
+
+    mark_feature_used.assert_called_once_with(FeatureIndex.REDIS)
 
 
 @pytest.fixture
@@ -101,7 +112,7 @@ class TestRedisContextProviderInit:
         from agent_framework.exceptions import AgentException
 
         with pytest.raises(AgentException, match="not a valid type"):
-            RedisContextProvider(source_id="ctx", user_id="u1", redis_vectorizer="bad")  # type: ignore[arg-type]
+            RedisContextProvider(source_id="ctx", user_id="u1", redis_vectorizer="bad")  # type: ignore[arg-type] # ty: ignore[invalid-argument-type]
 
 
 class TestRedisContextProviderValidateFilters:
@@ -112,7 +123,7 @@ class TestRedisContextProviderValidateFilters:
 
     def test_any_single_filter_ok(self, patch_index_from_dict: MagicMock):  # noqa: ARG002
         for kwargs in [{"user_id": "u"}, {"agent_id": "a"}, {"application_id": "app"}]:
-            provider = RedisContextProvider(source_id="ctx", **kwargs)
+            provider = RedisContextProvider(source_id="ctx", **cast(Any, kwargs))
             provider._validate_filters()  # should not raise
 
 
@@ -144,7 +155,10 @@ class TestRedisContextProviderBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["test query"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         assert "ctx" in ctx.context_messages
@@ -163,7 +177,10 @@ class TestRedisContextProviderBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["   "])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_index.query.assert_not_called()
@@ -182,7 +199,10 @@ class TestRedisContextProviderBeforeRun:
 
         with patch.object(provider, "_redis_search", wraps=provider._redis_search) as spy:
             await provider.before_run(
-                agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+                agent=cast(Any, None),
+                session=session,
+                context=ctx,
+                state=session.state.setdefault(provider.source_id, {}),
             )  # type: ignore[arg-type]
 
             spy.assert_called_once()
@@ -200,7 +220,10 @@ class TestRedisContextProviderBeforeRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["hello"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         assert "ctx" not in ctx.context_messages
@@ -219,7 +242,10 @@ class TestRedisContextProviderAfterRun:
         ctx._response = response
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_index.load.assert_called_once()
@@ -238,7 +264,10 @@ class TestRedisContextProviderAfterRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["   "])], session_id="s1")
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_index.load.assert_not_called()
@@ -253,7 +282,10 @@ class TestRedisContextProviderAfterRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["hello"])], session_id="s1")
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         loaded = mock_index.load.call_args[0][0]
@@ -365,6 +397,10 @@ class TestRedisHistoryProviderInit:
         with pytest.raises(ValueError, match="host is required"):
             RedisHistoryProvider("mem", credential_provider=mock_cred)
 
+    def test_negative_max_messages_raises(self):
+        with pytest.raises(ValueError, match="max_messages"):
+            RedisHistoryProvider("mem", redis_url="redis://localhost:6379", max_messages=-5)
+
     def test_credential_provider_with_host(self):
         mock_cred = MagicMock()
         with patch("agent_framework_redis._history_provider.redis.Redis") as mock_redis_cls:
@@ -463,6 +499,41 @@ class TestRedisHistoryProviderSaveMessages:
 
         mock_redis_client.ltrim.assert_not_called()
 
+    async def test_max_messages_zero_retains_nothing(self, mock_redis_client: MagicMock):
+        """Only None means unlimited, so a retention count of 0 must retain nothing.
+
+        ``LTRIM key 0 -1`` is Redis's "keep the whole list", so trimming to
+        ``-max_messages`` cannot express a limit of zero.
+        """
+        mock_redis_client.llen = AsyncMock(return_value=15)
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", max_messages=0)
+
+        await provider.save_messages("s1", [Message(role="user", contents=["msg"])])
+
+        # No payload reaches Redis at all, so nothing is exposed to readers, AOF or replicas.
+        mock_redis_client.pipeline.assert_not_called()
+        mock_redis_client.ltrim.assert_not_called()
+
+    async def test_max_messages_zero_leaves_stored_history_alone(self, mock_redis_client: MagicMock):
+        """Disabling retention must not delete history this provider does not own.
+
+        ``_redis_key`` omits ``source_id``, so two providers with the default prefix
+        share ``{key_prefix}:{session_id}``. Persisting runs in reverse provider order,
+        so a zero-retention provider that deleted the key would drop a co-located
+        provider's just-written history on every turn. Removing stored history is
+        ``clear()``'s job, not a retention setting's.
+        """
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379", max_messages=0)
+
+        await provider.save_messages("s1", [Message(role="user", contents=["msg"])])
+
+        mock_redis_client.delete.assert_not_called()
+
 
 class TestRedisHistoryProviderClear:
     async def test_clear_calls_delete(self, mock_redis_client: MagicMock):
@@ -489,7 +560,10 @@ class TestRedisHistoryProviderBeforeAfterRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["new msg"])], session_id="s1")
 
         await provider.before_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         assert "mem" in ctx.context_messages
@@ -506,7 +580,10 @@ class TestRedisHistoryProviderBeforeAfterRun:
         ctx._response = AgentResponse(messages=[Message(role="assistant", contents=["hello"])])
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
@@ -524,7 +601,100 @@ class TestRedisHistoryProviderBeforeAfterRun:
         ctx = SessionContext(input_messages=[Message(role="user", contents=["hi"])], session_id="s1")
 
         await provider.after_run(
-            agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            agent=cast(Any, None),
+            session=session,
+            context=ctx,
+            state=session.state.setdefault(provider.source_id, {}),
         )  # type: ignore[arg-type]
 
         mock_redis_client.pipeline.assert_not_called()
+
+
+class TestRedisHistoryProviderDeduplication:
+    """Tests for Redis save_messages deduplication and trimming behavior."""
+
+    async def test_deduplicates_identical_messages(self, mock_redis_client: MagicMock):
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+
+        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict()), json.dumps(msg2.to_dict())])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        await provider.save_messages("s1", [msg1, msg2])
+
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        pipeline.rpush.assert_not_called()
+        pipeline.execute.assert_not_called()
+
+    async def test_only_appends_new_messages(self, mock_redis_client: MagicMock):
+        msg1 = Message(role="user", contents=["hello"])
+        msg2 = Message(role="assistant", contents=["hi there"])
+        msg3 = Message(role="user", contents=["how are you?"])
+
+        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict()), json.dumps(msg2.to_dict())])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        await provider.save_messages("s1", [msg1, msg2, msg3])
+
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        assert pipeline.rpush.call_count == 1
+
+        call_args = pipeline.rpush.call_args[0]
+        pushed_msg_dict = json.loads(call_args[1])
+        assert pushed_msg_dict["contents"][0]["text"] == "how are you?"
+
+    async def test_different_roles_same_text_not_deduplicated(self, mock_redis_client: MagicMock):
+        msg1 = Message(role="user", contents=["ping"])
+
+        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg1.to_dict())])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        msg2 = Message(role="assistant", contents=["ping"])
+        await provider.save_messages("s1", [msg1, msg2])
+
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        assert pipeline.rpush.call_count == 1
+
+    async def test_trimmed_messages_not_reappended(self, mock_redis_client: MagicMock):
+        """Messages trimmed by max_messages should not be re-appended
+        when the caller resends the full transcript. Sequence matching
+        handles this without needing a :seen set."""
+        msg_old = Message(role="user", contents=["old"])
+        msg_new = Message(role="assistant", contents=["new"])
+
+        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg_new.to_dict())])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        await provider.save_messages("s1", [msg_old, msg_new])
+
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+
+        pipeline.rpush.assert_not_called()
+
+    async def test_preserves_duplicate_content(self, mock_redis_client: MagicMock):
+        """Two separate user 'yes' replies must both be persisted."""
+        yes_1 = Message(role="user", contents=["yes"])
+        yes_2 = Message(role="user", contents=["yes"])
+
+        mock_redis_client.lrange = AsyncMock(return_value=[])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        await provider.save_messages("s1", [yes_1, yes_2])
+
+        pipeline = mock_redis_client.pipeline.return_value.__aenter__.return_value
+        assert pipeline.rpush.call_count == 2

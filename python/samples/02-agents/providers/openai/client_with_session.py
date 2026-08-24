@@ -123,6 +123,9 @@ async def example_with_existing_session_id() -> None:
     if existing_session_id:
         print("\n--- Continuing with the same session ID in a new agent instance ---")
 
+        # In a hosted multi-user app, do not echo this service session ID to clients
+        # and accept it back unscoped. OpenAI scopes it to the API key/project, so
+        # store it server-side and verify it belongs to the authenticated user or tenant.
         agent = Agent(
             client=OpenAIChatClient(),
             instructions="You are a helpful weather agent.",

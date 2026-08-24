@@ -9,6 +9,7 @@
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectSharedRedaction>true</InjectSharedRedaction>
+    <InjectSharedUsage>true</InjectSharedUsage>
     <InjectDiagnosticClassesOnLegacy>true</InjectDiagnosticClassesOnLegacy>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>

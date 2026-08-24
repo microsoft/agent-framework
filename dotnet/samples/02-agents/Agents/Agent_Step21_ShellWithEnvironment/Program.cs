@@ -30,21 +30,19 @@
 //      (cd into a folder and run a sequence of commands there; set a
 //      token in one step and read it in the next).
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Tools.Shell;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
+var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-var chatClient = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName);
+var aiProjectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
 const string Instructions = """
     You are an agent with a single tool: run_shell. Use it to satisfy the
@@ -59,10 +57,11 @@ Console.WriteLine("### Stateless mode\n");
 await using (var statelessShell = new LocalShellExecutor(new() { Mode = ShellMode.Stateless, AcknowledgeUnsafe = true }))
 {
     var envProvider = new ShellEnvironmentProvider(statelessShell);
-    var statelessAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
+    var statelessAgent = aiProjectClient.AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new()
         {
+            ModelId = deploymentName,
             Instructions = Instructions,
             Tools = [statelessShell.AsAIFunction(requireApproval: false)],
         },
@@ -91,10 +90,11 @@ Console.WriteLine("\n### Persistent mode\n");
 await using (var persistentShell = new LocalShellExecutor(new() { Mode = ShellMode.Persistent, AcknowledgeUnsafe = true }))
 {
     var envProvider = new ShellEnvironmentProvider(persistentShell);
-    var persistentAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
+    var persistentAgent = aiProjectClient.AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new()
         {
+            ModelId = deploymentName,
             Instructions = Instructions,
             Tools = [persistentShell.AsAIFunction(requireApproval: false)],
         },

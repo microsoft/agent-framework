@@ -32,7 +32,7 @@ public abstract class AgentFileStore
     /// <param name="content">The content to write to the file.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    public abstract Task WriteFileAsync(string path, string content, CancellationToken cancellationToken = default);
+    public abstract Task WriteAsync(string path, string content, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Reads the content of a file.
@@ -40,7 +40,7 @@ public abstract class AgentFileStore
     /// <param name="path">The relative path of the file to read.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>The file content, or <see langword="null"/> if the file does not exist.</returns>
-    public abstract Task<string?> ReadFileAsync(string path, CancellationToken cancellationToken = default);
+    public abstract Task<string?> ReadAsync(string path, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Deletes a file.
@@ -48,23 +48,18 @@ public abstract class AgentFileStore
     /// <param name="path">The relative path of the file to delete.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns><see langword="true"/> if the file was deleted; <see langword="false"/> if it did not exist.</returns>
-    public abstract Task<bool> DeleteFileAsync(string path, CancellationToken cancellationToken = default);
+    public abstract Task<bool> DeleteAsync(string path, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Lists files in a directory.
+    /// Lists the direct children (files and subdirectories) of a directory.
     /// </summary>
     /// <param name="directory">The relative path of the directory to list. Use an empty string for the root.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>A list of file names in the specified directory (direct children only).</returns>
-    public abstract Task<IReadOnlyList<string>> ListFilesAsync(string directory, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Lists the direct child subdirectories of a directory.
-    /// </summary>
-    /// <param name="directory">The relative path of the directory to list. Use an empty string for the root.</param>
-    /// <param name="cancellationToken">A token to cancel the operation.</param>
-    /// <returns>A list of subdirectory names in the specified directory (direct children only).</returns>
-    public abstract Task<IReadOnlyList<string>> ListDirectoriesAsync(string directory, CancellationToken cancellationToken = default);
+    /// <returns>
+    /// A list of the direct children of the specified directory as <see cref="FileStoreEntry"/> instances.
+    /// Subdirectories are listed before files.
+    /// </returns>
+    public abstract Task<IReadOnlyList<FileStoreEntry>> ListChildrenAsync(string directory, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Checks whether a file exists.
@@ -82,7 +77,7 @@ public abstract class AgentFileStore
     /// A regular expression pattern to match against file contents. The pattern is matched case-insensitively.
     /// For example, <c>"error|warning"</c> matches lines containing "error" or "warning".
     /// </param>
-    /// <param name="filePattern">
+    /// <param name="globPattern">
     /// An optional glob pattern to filter which files are searched (e.g., <c>"*.md"</c>, <c>"research*"</c>).
     /// When <see langword="null"/>, all files are searched.
     /// Uses standard glob syntax from <see cref="Matcher"/>, matched against each file's path relative to
@@ -97,7 +92,7 @@ public abstract class AgentFileStore
     /// A list of search results. Each result's <see cref="FileSearchResult.FileName"/> is the matching file's
     /// path relative to <paramref name="directory"/>.
     /// </returns>
-    public abstract Task<IReadOnlyList<FileSearchResult>> SearchFilesAsync(string directory, string regexPattern, string? filePattern = null, bool recursive = false, CancellationToken cancellationToken = default);
+    public abstract Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Ensures a directory exists, creating it if necessary.

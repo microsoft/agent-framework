@@ -59,7 +59,7 @@ public static class HostedAgentBuilderExtensions
 
             if (withIsolation && store.GetService<IsolationKeyScopedAgentSessionStore>() is null)
             {
-                var isolationKeyProvider = sp.GetService<SessionIsolationKeyProvider>();
+                var isolationKeyProvider = sp.GetService<AgentIsolationKeyProvider>();
 
                 // Best efforts options getting
                 IsolationKeyScopedAgentSessionStoreOptions? options = sp.GetService<IsolationKeyScopedAgentSessionStoreOptions>();

@@ -2,6 +2,7 @@
 
 import importlib.metadata
 
+from ._chat_client import MistralChatClient, MistralChatOptions, MistralSettings, RawMistralChatClient
 from ._embedding_client import MistralEmbeddingClient, MistralEmbeddingOptions, MistralEmbeddingSettings
 
 try:
@@ -10,8 +11,12 @@ except importlib.metadata.PackageNotFoundError:
     __version__ = "0.0.0"  # Fallback for development mode
 
 __all__ = [
+    "MistralChatClient",
+    "MistralChatOptions",
     "MistralEmbeddingClient",
     "MistralEmbeddingOptions",
     "MistralEmbeddingSettings",
+    "MistralSettings",
+    "RawMistralChatClient",
     "__version__",
 ]

@@ -9,7 +9,7 @@ deciders: evmattso
 
 ## What is the goal of this feature?
 
-Enable Agent Framework users to consume Foundry **toolboxes** — named, versioned bundles of tool definitions stored server-side in an Azure AI Foundry project — directly from `FoundryChatClient`, without dropping to the raw `azure-ai-projects` SDK.
+Enable Agent Framework users to consume Foundry **toolboxes** — named, versioned bundles of tool definitions stored server-side in a Microsoft Foundry project — directly from `FoundryChatClient`, without dropping to the raw `azure-ai-projects` SDK.
 
 A user who has configured a toolbox in the Foundry portal (or via the raw SDK) should be able to load it into an agent with a single call:
 

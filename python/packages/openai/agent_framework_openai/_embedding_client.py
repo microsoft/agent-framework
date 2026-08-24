@@ -10,17 +10,18 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, ov
 
 from agent_framework._clients import BaseEmbeddingClient
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import USER_AGENT_KEY
+from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._types import Embedding, EmbeddingGenerationOptions, GeneratedEmbeddings, UsageDetails
 from agent_framework.observability import EmbeddingTelemetryLayer
 from openai import AsyncAzureOpenAI, AsyncOpenAI
 
+from ._feature_usage import FeatureIndex
 from ._shared import AzureTokenProvider, load_openai_service_settings
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 
 if TYPE_CHECKING:
     from azure.core.credentials import TokenCredential
@@ -68,6 +69,7 @@ class RawOpenAIEmbeddingClient(
     """Raw OpenAI embedding client without telemetry."""
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
 
     @overload
     def __init__(
@@ -268,7 +270,7 @@ class RawOpenAIEmbeddingClient(
             ValueError: If model is not provided or values is empty.
         """
         if not values:
-            return GeneratedEmbeddings([], options=options)  # type: ignore
+            return GeneratedEmbeddings([], options=options)
 
         opts: dict[str, Any] = options or {}  # type: ignore
         model = opts.get("model") or self.model
@@ -276,6 +278,8 @@ class RawOpenAIEmbeddingClient(
             raise ValueError("model is required")
 
         kwargs: dict[str, Any] = {"input": list(values), "model": model}
+        if self._FEATURE_USAGE_INDEX is not None:
+            mark_feature_used(self._FEATURE_USAGE_INDEX)
         if dimensions := opts.get("dimensions"):
             kwargs["dimensions"] = dimensions
         if encoding_format := opts.get("encoding_format"):
@@ -283,7 +287,7 @@ class RawOpenAIEmbeddingClient(
         if user := opts.get("user"):
             kwargs["user"] = user
 
-        response = await self.client.embeddings.create(**kwargs)  # type: ignore[union-attr]
+        response = await self.client.embeddings.create(**kwargs)
 
         encoding = kwargs.get("encoding_format", "float")
         embeddings: list[Embedding[list[float]]] = []
@@ -294,7 +298,7 @@ class RawOpenAIEmbeddingClient(
                 raw = base64.b64decode(item.embedding)
                 vector = list(struct.unpack(f"<{len(raw) // 4}f", raw))
             else:
-                vector = item.embedding  # type: ignore[assignment]
+                vector = item.embedding
             embeddings.append(
                 Embedding(
                     vector=vector,
@@ -320,7 +324,7 @@ class OpenAIEmbeddingClient(
 ):
     """OpenAI embedding client with telemetry support."""
 
-    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
+    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"
 
     @overload
     def __init__(

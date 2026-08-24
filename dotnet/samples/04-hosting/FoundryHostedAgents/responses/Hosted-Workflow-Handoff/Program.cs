@@ -19,7 +19,6 @@ using System.ComponentModel;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using DotNetEnv;
-using Hosted_Shared_Contributor_Setup;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Agents.AI.Hosting;
@@ -35,15 +34,13 @@ var builder = WebApplication.CreateBuilder(args);
 // ---------------------------------------------------------------------------
 // 1. Create the shared Azure OpenAI chat client
 // ---------------------------------------------------------------------------
-var endpoint = new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set."));
-var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4o";
+var endpoint = new Uri(System.Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set."));
+var deployment = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4o";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-var azureClient = new AzureOpenAIClient(endpoint, new ChainedTokenCredential(
-    new DevTemporaryTokenCredential(),
-    new DefaultAzureCredential()));
+var azureClient = new AzureOpenAIClient(endpoint, new DefaultAzureCredential());
 IChatClient chatClient = azureClient.GetResponsesClient().AsIChatClient(deployment);
 
 // ---------------------------------------------------------------------------

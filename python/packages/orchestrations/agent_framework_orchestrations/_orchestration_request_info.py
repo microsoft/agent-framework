@@ -10,9 +10,10 @@ from agent_framework._workflows._agent_utils import resolve_agent_id
 from agent_framework._workflows._executor import Executor, handler
 from agent_framework._workflows._request_info_mixin import response_handler
 from agent_framework._workflows._workflow import Workflow
-from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
 from agent_framework._workflows._workflow_executor import WorkflowExecutor
+
+from ._workflow_builder import OrchestrationWorkflowBuilder as WorkflowBuilder
 
 
 def resolve_request_info_filter(agents: list[str | SupportsAgentRun] | None) -> set[str]:

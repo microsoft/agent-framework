@@ -18,7 +18,7 @@ This sample demonstrates three ways to customize the FoundryAgent client layer:
 3. Composition: Use Agent(client=RawFoundryAgentChatClient(...)) directly
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
+    FOUNDRY_PROJECT_ENDPOINT — Microsoft Foundry project endpoint
     FOUNDRY_AGENT_NAME       — Name of the agent in Foundry
     FOUNDRY_AGENT_VERSION    — Version of the agent
 """

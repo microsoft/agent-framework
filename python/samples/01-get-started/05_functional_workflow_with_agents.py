@@ -12,6 +12,10 @@ import asyncio
 from agent_framework import Agent, workflow
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (e.g., FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL)
+load_dotenv()
 
 # <create_agents>
 client = FoundryChatClient(credential=AzureCliCredential())
@@ -43,7 +47,8 @@ async def poem_workflow(topic: str) -> str:
 
 
 async def main() -> None:
-    result = await poem_workflow.run("a cat learning to code")
+    workflow_instance = poem_workflow.build()
+    result = await workflow_instance.run("a cat learning to code")
     print(result.get_outputs()[0])
 
 

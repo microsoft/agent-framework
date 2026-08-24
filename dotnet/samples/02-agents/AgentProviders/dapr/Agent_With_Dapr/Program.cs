@@ -1,0 +1,36 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+// This sample shows how to create and use a simple AI agent with Dapr as the backend.
+// Dapr's Conversation building block is used here to route inference to Ollama.
+
+using Dapr.AI.Conversation.Extensions;
+using Dapr.AI.Microsoft.Extensions;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+// The Dapr sidecar's gRPC endpoint. This must match the --dapr-grpc-port used when starting
+// the sidecar (see this sample's README). Override it with the DAPR_GRPC_ENDPOINT environment
+// variable if you run the sidecar on a different port.
+var daprGrpcEndpoint = Environment.GetEnvironmentVariable("DAPR_GRPC_ENDPOINT") ?? "http://localhost:3501";
+
+// Register the Dapr Conversation client with dependency injection.
+var app = Host.CreateDefaultBuilder()
+    .ConfigureServices(services =>
+    {
+        // Configure the gRPC endpoint for the Dapr sidecar.
+        services.AddDaprConversationClient((_, builder) => builder.UseGrpcEndpoint(daprGrpcEndpoint));
+        // Provide the name of the Conversation component loaded in the sidecar to use.
+        services.AddDaprChatClient(opt => opt.ConversationComponentName = "ollama");
+    }).Build();
+
+// Get an instance of the Dapr chat client from the dependency injection container.
+using var scope = app.Services.CreateScope();
+var daprChatClient = scope.ServiceProvider.GetRequiredService<IChatClient>();
+
+// Use this chat client to construct an AIAgent.
+AIAgent agent = daprChatClient.AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+
+// Invoke the agent and output the text result.
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));

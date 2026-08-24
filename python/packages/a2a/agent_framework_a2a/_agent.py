@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+import sys
 import uuid
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from typing import Any, Final, Literal, TypeAlias, overload
+from typing import Any, Final, Literal, TypeAlias, cast, overload
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
@@ -35,17 +37,32 @@ from agent_framework import (
     HistoryProvider,
     Message,
     ResponseStream,
+    ServiceSessionId,
     SessionContext,
     normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
+from agent_framework._telemetry import mark_feature_used
 from agent_framework._types import AgentRunInputs
+from agent_framework.exceptions import AgentInvalidRequestException
 from agent_framework.observability import AgentTelemetryLayer
 from google.protobuf.json_format import MessageToDict
 
-__all__ = ["A2AAgent", "A2AAgentSession", "A2AContinuationToken"]
+from ._feature_usage import FeatureIndex
+from ._utils import get_uri_data
 
-from agent_framework_a2a._utils import get_uri_data
+if sys.version_info >= (3, 11):
+    from typing import TypedDict  # pragma: no cover
+else:
+    from typing_extensions import TypedDict  # pragma: no cover
+
+
+class A2AServiceSessionId(TypedDict):
+    """Durable A2A continuation state stored in ``AgentSession.service_session_id``."""
+
+    context_id: str
+    task_id: str | None
+    task_state: TaskState | None
 
 
 class A2AAgentSession(AgentSession):
@@ -79,13 +96,27 @@ class A2AAgentSession(AgentSession):
             task_id: Optional task ID from a previous interaction.
             task_state: Optional state of the most recent task.
         """
-        super().__init__(service_session_id=context_id)
+        warnings.warn(
+            "A2AAgentSession is deprecated and will be removed in a future version. "
+            "Use AgentSession with service_session_id=A2AServiceSessionId(...) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.context_id: str | None = context_id
         self.task_id: str | None = task_id
         self.task_state: TaskState | None = task_state
+        service_session_id: str | ServiceSessionId | None = None
+        if context_id is not None:
+            service_session_id = A2AServiceSessionId(
+                context_id=context_id,
+                task_id=task_id,
+                task_state=task_state,
+            )
+        super().__init__(service_session_id=service_session_id)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize session to a plain dict for storage/transfer."""
+        self._sync_service_session_id()
         data = super().to_dict()
         if self.context_id is not None:
             data[self._CONTEXT_ID_KEY] = self.context_id
@@ -115,15 +146,39 @@ class A2AAgentSession(AgentSession):
 
         # Delegate state deserialization to the base class
         base_session = AgentSession.from_dict(data)
+        base_service_session = base_session.service_session_id
+        if isinstance(base_service_session, Mapping):
+            mapped_context_id = base_service_session.get("context_id")
+            if isinstance(mapped_context_id, str):
+                context_id = context_id or mapped_context_id
+            mapped_task_id = base_service_session.get("task_id")
+            if isinstance(mapped_task_id, str):
+                task_id = task_id or mapped_task_id
+            mapped_task_state = base_service_session.get("task_state")
+            if isinstance(mapped_task_state, int):
+                task_state = task_state if task_state is not None else cast(TaskState, mapped_task_state)
+        elif isinstance(base_service_session, str):
+            context_id = context_id or base_service_session
 
         session = cls(
-            context_id=context_id or base_session.service_session_id,
+            context_id=context_id,
             task_id=task_id,
             task_state=task_state,
         )
         session._session_id = base_session.session_id
         session.state.update(base_session.state)
         return session
+
+    def _sync_service_session_id(self) -> None:
+        """Keep compatibility fields and ``service_session_id`` aligned."""
+        if self.context_id is None:
+            self.service_session_id = None
+            return
+        self.service_session_id = A2AServiceSessionId(
+            context_id=self.context_id,
+            task_id=self.task_id,
+            task_state=self.task_state,
+        )
 
 
 class A2AContinuationToken(ContinuationToken):
@@ -316,6 +371,43 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if self._http_client is not None and self._close_http_client:
             await self._http_client.aclose()
 
+    @staticmethod
+    def _build_service_session_id(
+        *,
+        context_id: str,
+        task_id: str | None,
+        task_state: TaskState | None,
+    ) -> A2AServiceSessionId:
+        return A2AServiceSessionId(
+            context_id=context_id,
+            task_id=task_id,
+            task_state=task_state,
+        )
+
+    def _extract_a2a_session_state(
+        self,
+        session: AgentSession | None,
+    ) -> tuple[str | None, str | None, TaskState | None]:
+        """Extract A2A continuation state from supported session shapes."""
+        if session is None:
+            return None, None, None
+        if isinstance(session, A2AAgentSession):
+            return session.context_id, session.task_id, session.task_state
+        if (service_session_id := session.service_session_id) is None:
+            return None, None, None
+        if isinstance(service_session_id, str):
+            return service_session_id, None, None
+        return (
+            service_session_id.get("context_id"),
+            service_session_id.get("task_id"),
+            service_session_id.get("task_state"),
+        )
+
+    def _get_otel_conversation_id(self, session: AgentSession | None) -> str | None:
+        """Return A2A context_id as OpenTelemetry conversation id."""
+        context_id, _, _ = self._extract_a2a_session_state(session)
+        return context_id
+
     @overload
     def run(
         self,
@@ -344,7 +436,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
-    def run(  # pyright: ignore[reportIncompatibleMethodOverride]
+    def run(
         self,
         messages: AgentRunInputs | None = None,
         *,
@@ -380,7 +472,6 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             When stream=False: An Awaitable[AgentResponse].
             When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
-        del function_invocation_kwargs, client_kwargs, kwargs
         normalized_messages = normalize_messages(messages)
 
         # Use non-streaming transport for non-streaming calls when available.
@@ -394,10 +485,21 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             a2a_stream: AsyncIterable[A2AStreamItem] = self.client.subscribe(
                 SubscribeToTaskRequest(id=continuation_token["task_id"])
             )
+            input_request_occurrence_id = continuation_token["task_id"]
         else:
             if not normalized_messages:
-                raise ValueError("At least one message is required when starting a new task (no continuation_token).")
+                context_id, task_id, task_state = self._extract_a2a_session_state(session)
+                message = f"A2A agent {self.name!r} requires a real message or an explicit continuation token."
+                if context_id is not None or task_id is not None or task_state is not None:
+                    task_context = [
+                        f"context_id={context_id!r}",
+                        f"task_id={task_id!r}",
+                        f"task_state={TaskState.Name(task_state) if task_state is not None else None}",
+                    ]
+                    message = f"{message} Session context: {', '.join(task_context)}."
+                raise AgentInvalidRequestException(message)
             a2a_message = self._prepare_message_for_a2a(normalized_messages[-1], session=session)
+            input_request_occurrence_id = a2a_message.message_id
             request = SendMessageRequest(message=a2a_message)
             if background and not stream:
                 # return_immediately only applies to non-streaming (message/send)
@@ -420,6 +522,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 a2a_stream,
                 background=background,
                 emit_intermediate=stream,
+                input_request_occurrence_id=input_request_occurrence_id,
                 session=provider_session,
                 session_context=session_context,
             ),
@@ -435,6 +538,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         *,
         background: bool = False,
         emit_intermediate: bool = False,
+        input_request_occurrence_id: str,
         session: AgentSession | None = None,
         session_context: SessionContext | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
@@ -451,9 +555,12 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 carry message content are yielded to the caller.  Typically
                 set for streaming callers so non-streaming consumers only
                 receive terminal task outputs.
+            input_request_occurrence_id: Stable identity for message-less input requests observed in this run.
             session: The agent session for context providers.
             session_context: The session context for context providers.
         """
+        mark_feature_used(FeatureIndex.A2A)
+
         if session_context is None:
             session_context = SessionContext(input_messages=[], options={})
 
@@ -464,13 +571,14 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             if session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
             await provider.before_run(
-                agent=self,  # type: ignore[arg-type]
+                agent=self,
                 session=session,
                 context=session_context,
                 state=session.state.setdefault(provider.source_id, {}),
             )
 
         all_updates: list[AgentResponseUpdate] = []
+        seen_user_input_request_ids: set[str] = set()
         streamed_artifact_ids_by_task: dict[str, set[str]] = {}
         last_task_id: str | None = None
         last_context_id: str | None = None
@@ -508,8 +616,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     task,
                     background=background,
                     emit_intermediate=emit_intermediate,
+                    input_request_occurrence_id=input_request_occurrence_id,
                     streamed_artifact_ids=streamed_artifact_ids_by_task.get(task.id),
                 )
+                updates = self._deduplicate_user_input_request_updates(updates, seen_user_input_request_ids)
                 if task.status.state in TERMINAL_TASK_STATES:
                     streamed_artifact_ids_by_task.pop(task.id, None)
                     # If the terminal Task has no content, flush accumulated updates
@@ -529,7 +639,12 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 if status_event.context_id:
                     last_context_id = status_event.context_id
                 last_task_state = status_event.status.state
-                updates = self._updates_from_task_update_event(status_event)
+                updates = self._updates_from_task_update_event(
+                    status_event,
+                    background=background,
+                    input_request_occurrence_id=input_request_occurrence_id,
+                )
+                updates = self._deduplicate_user_input_request_updates(updates, seen_user_input_request_ids)
                 is_terminal = status_event.status.state in TERMINAL_TASK_STATES
                 is_input_required = status_event.status.state == TaskState.TASK_STATE_INPUT_REQUIRED
                 if emit_intermediate:
@@ -577,20 +692,29 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
 
         # Persist A2A protocol state on the session for follow-up message linking.
-        if isinstance(session, A2AAgentSession) and (last_task_id or last_context_id):
+        if session is not None and (last_task_id or last_context_id):
+            existing_context_id, existing_task_id, existing_task_state = self._extract_a2a_session_state(session)
+
             # Validate context_id consistency
-            if session.context_id is not None and last_context_id and session.context_id != last_context_id:
+            if existing_context_id is not None and last_context_id and existing_context_id != last_context_id:
                 raise RuntimeError(
                     f"The context_id returned from the A2A agent ('{last_context_id}') "
-                    f"differs from the session's context_id ('{session.context_id}')."
+                    f"differs from the session's context_id ('{existing_context_id}')."
                 )
-            # Assign server-generated context_id if not already set
-            if session.context_id is None and last_context_id:
-                session.context_id = last_context_id
-                session.service_session_id = last_context_id
-            if last_task_id:
-                session.task_id = last_task_id
-                session.task_state = last_task_state
+
+            persisted_context_id = existing_context_id or last_context_id
+            if persisted_context_id is not None:
+                task_id = last_task_id or existing_task_id
+                task_state = last_task_state if last_task_state is not None else existing_task_state
+                session.service_session_id = self._build_service_session_id(
+                    context_id=persisted_context_id,
+                    task_id=task_id,
+                    task_state=task_state,
+                )
+                if isinstance(session, A2AAgentSession):
+                    session.context_id = persisted_context_id
+                    session.task_id = task_id
+                    session.task_state = task_state
 
         await self._run_after_providers(session=session, context=session_context)
 
@@ -598,12 +722,56 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
     # Task helpers
     # ------------------------------------------------------------------
 
+    def _user_input_request_id(self, task_id: str, occurrence_id: str) -> str:
+        """Return a workflow request ID scoped to one remote prompt occurrence."""
+        scoped_occurrence = f"{len(self.id)}:{self.id}{len(task_id)}:{task_id}{occurrence_id}"
+        return f"a2a-input-{uuid.uuid5(uuid.NAMESPACE_URL, scoped_occurrence)}"
+
+    def _input_required_request(
+        self,
+        task_id: str,
+        message: A2AMessage | None,
+        *,
+        fallback_occurrence_id: str,
+    ) -> Content:
+        """Normalize an A2A input requirement into one durable caller request."""
+        contents = self._parse_contents_from_a2a(message.parts) if message is not None else []
+        prompt_parts = [
+            value for content in contents if (value := content.text or (content.uri if content.type == "uri" else None))
+        ]
+        request = Content.from_text(
+            text="\n".join(prompt_parts) or "Remote A2A task requires input.",
+            additional_properties=(
+                {"a2a_input_required_message": MessageToDict(message)} if message is not None else None
+            ),
+        )
+        occurrence_id = message.message_id if message is not None and message.message_id else fallback_occurrence_id
+        request.id = self._user_input_request_id(task_id, occurrence_id)
+        request.user_input_request = True
+        return request
+
+    @staticmethod
+    def _deduplicate_user_input_request_updates(
+        updates: list[AgentResponseUpdate],
+        seen_request_ids: set[str],
+    ) -> list[AgentResponseUpdate]:
+        """Drop duplicate representations of a user-input request within one agent run."""
+        deduplicated: list[AgentResponseUpdate] = []
+        for update in updates:
+            request_ids = {request.id for request in update.user_input_requests if request.id}
+            if request_ids and request_ids.issubset(seen_request_ids):
+                continue
+            seen_request_ids.update(request_ids)
+            deduplicated.append(update)
+        return deduplicated
+
     def _updates_from_task(
         self,
         task: Task,
         *,
         background: bool = False,
         emit_intermediate: bool = False,
+        input_request_occurrence_id: str | None = None,
         streamed_artifact_ids: set[str] | None = None,
     ) -> list[AgentResponseUpdate]:
         """Convert an A2A Task into AgentResponseUpdate(s).
@@ -618,6 +786,26 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         """
         status = task.status
         task_metadata = MessageToDict(task.metadata) if task.metadata else None
+
+        if status.state == TaskState.TASK_STATE_INPUT_REQUIRED:
+            message = status.message if status.HasField("message") and status.message.parts else None
+            occurrence_id = input_request_occurrence_id or task.id
+            return [
+                AgentResponseUpdate(
+                    contents=[
+                        self._input_required_request(
+                            task.id,
+                            message,
+                            fallback_occurrence_id=occurrence_id,
+                        )
+                    ],
+                    role="assistant" if message is None or message.role == A2ARole.ROLE_AGENT else "user",
+                    response_id=task.id,
+                    continuation_token=self._build_continuation_token(task) if background else None,
+                    additional_properties={"a2a_metadata": task_metadata} if task_metadata else None,
+                    raw_representation=task,
+                )
+            ]
 
         if status.state in TERMINAL_TASK_STATES:
             task_messages = self._parse_messages_from_task(task)
@@ -688,7 +876,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         return []
 
     def _updates_from_task_update_event(
-        self, update_event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent
+        self,
+        update_event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent,
+        *,
+        background: bool = False,
+        input_request_occurrence_id: str | None = None,
     ) -> list[AgentResponseUpdate]:
         """Convert A2A task update events into streaming AgentResponseUpdates."""
         if isinstance(update_event, TaskArtifactUpdateEvent):
@@ -712,18 +904,50 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if not isinstance(update_event, TaskStatusUpdateEvent):
             return []
 
+        state = update_event.status.state
+        continuation_token = (
+            A2AContinuationToken(task_id=update_event.task_id, context_id=update_event.context_id)
+            if background and state in IN_PROGRESS_TASK_STATES
+            else None
+        )
+        if state == TaskState.TASK_STATE_INPUT_REQUIRED:
+            message = (
+                update_event.status.message
+                if update_event.status.HasField("message") and update_event.status.message.parts
+                else None
+            )
+            message_meta = MessageToDict(message.metadata) if message is not None and message.metadata else {}
+            event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
+            merged_metadata = {**message_meta, **event_meta} or None
+            occurrence_id = input_request_occurrence_id or update_event.task_id
+            return [
+                AgentResponseUpdate(
+                    contents=[
+                        self._input_required_request(
+                            update_event.task_id,
+                            message,
+                            fallback_occurrence_id=occurrence_id,
+                        )
+                    ],
+                    role="assistant" if message is None or message.role == A2ARole.ROLE_AGENT else "user",
+                    response_id=update_event.task_id,
+                    message_id=message.message_id if message is not None else None,
+                    continuation_token=continuation_token,
+                    additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
+                    raw_representation=update_event,
+                )
+            ]
+
         if not update_event.status.HasField("message") or not update_event.status.message.parts:
             return []
 
-        state = update_event.status.state
-        if state not in TERMINAL_TASK_STATES and state != TaskState.TASK_STATE_INPUT_REQUIRED:
+        if state not in TERMINAL_TASK_STATES:
             return []
 
         message = update_event.status.message
         contents = self._parse_contents_from_a2a(message.parts)
         if not contents:
             return []
-
         msg_meta = MessageToDict(message.metadata) if message.metadata else {}
         event_meta = MessageToDict(update_event.metadata) if update_event.metadata else {}
         merged_metadata = {**msg_meta, **event_meta} or None
@@ -734,6 +958,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 role="assistant" if message.role == A2ARole.ROLE_AGENT else "user",
                 response_id=update_event.task_id,
                 message_id=message.message_id,
+                continuation_token=continuation_token,
                 additional_properties={"a2a_metadata": merged_metadata} if merged_metadata else None,
                 raw_representation=update_event,
             )
@@ -789,19 +1014,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         Keyword Args:
             session: Optional session to read A2A state from. If an
                 ``A2AAgentSession``, context_id/task_id/task_state are used for
-                linking. A plain ``AgentSession`` provides service_session_id as
-                a fallback context_id.
+                linking. A plain ``AgentSession`` may provide either a string
+                or structured A2A ``service_session_id`` mapping.
         """
         # Extract A2A state from the session
-        context_id: str | None = None
-        previous_task_id: str | None = None
-        task_state: TaskState | None = None
-        if isinstance(session, A2AAgentSession):
-            context_id = session.context_id
-            previous_task_id = session.task_id
-            task_state = session.task_state
-        elif session is not None:
-            context_id = session.service_session_id
+        context_id, previous_task_id, task_state = self._extract_a2a_session_state(session)
 
         parts: list[A2APart] = []
         if not message.contents:

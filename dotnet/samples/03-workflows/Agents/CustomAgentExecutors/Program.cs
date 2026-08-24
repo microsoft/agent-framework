@@ -2,7 +2,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -31,14 +31,14 @@ public static class Program
 {
     private static async Task Main()
     {
-        // Set up the Azure OpenAI client
-        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
-        var chatClient = new AzureOpenAIClient(new Uri(endpoint), new AzureCliCredential()).GetChatClient(deploymentName).AsIChatClient();
+        // Set up the Microsoft Foundry client
+        var endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
+        var deploymentName = Environment.GetEnvironmentVariable("FOUNDRY_MODEL") ?? "gpt-5.4-mini";
+        AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
         // Create the executors
-        var sloganWriter = new SloganWriterExecutor("SloganWriter", chatClient);
-        var feedbackProvider = new FeedbackExecutor("FeedbackProvider", chatClient);
+        var sloganWriter = new SloganWriterExecutor("SloganWriter", aiProjectClient, deploymentName);
+        var feedbackProvider = new FeedbackExecutor("FeedbackProvider", aiProjectClient, deploymentName);
 
         // Build the workflow by adding executors and connecting them
         var workflow = new WorkflowBuilder(sloganWriter)
@@ -121,19 +121,21 @@ internal sealed partial class SloganWriterExecutor : Executor
     /// Initializes a new instance of the <see cref="SloganWriterExecutor"/> class.
     /// </summary>
     /// <param name="id">A unique identifier for the executor.</param>
-    /// <param name="chatClient">The chat client to use for the AI agent.</param>
-    public SloganWriterExecutor(string id, IChatClient chatClient) : base(id)
+    /// <param name="chatClient">The AI project client to use for the AI agent.</param>
+    /// <param name="model">The model deployment name.</param>
+    public SloganWriterExecutor(string id, AIProjectClient chatClient, string model) : base(id)
     {
         ChatClientAgentOptions agentOptions = new()
         {
             ChatOptions = new()
             {
+                ModelId = model,
                 Instructions = "You are a professional slogan writer. You will be given a task to create a slogan.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<SloganResult>()
             }
         };
 
-        this._agent = new ChatClientAgent(chatClient, agentOptions);
+        this._agent = chatClient.AsAIAgent(agentOptions);
     }
 
     [MessageHandler]
@@ -198,19 +200,21 @@ internal sealed partial class FeedbackExecutor : Executor<SloganResult>
     /// Initializes a new instance of the <see cref="FeedbackExecutor"/> class.
     /// </summary>
     /// <param name="id">A unique identifier for the executor.</param>
-    /// <param name="chatClient">The chat client to use for the AI agent.</param>
-    public FeedbackExecutor(string id, IChatClient chatClient) : base(id)
+    /// <param name="chatClient">The AI project client to use for the AI agent.</param>
+    /// <param name="model">The model deployment name.</param>
+    public FeedbackExecutor(string id, AIProjectClient chatClient, string model) : base(id)
     {
         ChatClientAgentOptions agentOptions = new()
         {
             ChatOptions = new()
             {
+                ModelId = model,
                 Instructions = "You are a professional editor. You will be given a slogan and the task it is meant to accomplish.",
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<FeedbackResult>()
             }
         };
 
-        this._agent = new ChatClientAgent(chatClient, agentOptions);
+        this._agent = chatClient.AsAIAgent(agentOptions);
     }
 
     public override async ValueTask HandleAsync(SloganResult message, IWorkflowContext context, CancellationToken cancellationToken = default)

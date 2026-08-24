@@ -1,0 +1,20 @@
+[project]
+name = "agent-framework-hosting-sample-local-telegram"
+version = "0.0.1"
+description = "Local Telegram bot using Agent Framework hosting protocol helpers."
+requires-python = ">=3.10"
+dependencies = [
+    "agent-framework-foundry",
+    "agent-framework-hosting",
+    "agent-framework-hosting-telegram",
+    "aiogram>=3.29.1,<4",
+    "fastapi>=0.115.0,<0.138.1",
+    "hypercorn>=0.17",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+agent-framework-hosting = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/hosting" }
+agent-framework-hosting-telegram = { git = "https://github.com/microsoft/agent-framework.git", branch = "main", subdirectory = "python/packages/hosting-telegram" }

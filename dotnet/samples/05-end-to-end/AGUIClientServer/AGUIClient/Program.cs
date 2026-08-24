@@ -7,8 +7,9 @@ using System.CommandLine;
 using System.ComponentModel;
 using System.Reflection;
 using System.Text;
+using AGUI.Abstractions;
+using AGUI.Client;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AGUI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -78,10 +79,10 @@ public static class Program
             serializerOptions: AGUIClientSerializerContext.Default.Options
         );
 
-        var chatClient = new AGUIChatClient(
-            httpClient,
-            serverUrl,
-            jsonSerializerOptions: AGUIClientSerializerContext.Default.Options);
+        var chatClient = new AGUIChatClient(new(httpClient, serverUrl)
+        {
+            JsonSerializerOptions = AGUIClientSerializerContext.Default.Options,
+        });
 
         AIAgent agent = chatClient.AsAIAgent(
             name: "agui-client",
@@ -90,6 +91,13 @@ public static class Program
 
         AgentSession session = await agent.CreateSessionAsync(cancellationToken);
         List<ChatMessage> messages = [new(ChatRole.System, "You are a helpful assistant.")];
+
+        // AGUIChatClient is stateless: it never surfaces a ConversationId. AG-UI continuation is expressed
+        // on the wire as the same threadId plus a parentRunId equal to the previous turn's runId. We read
+        // both from each turn's RUN_STARTED event and send them back on the next turn via
+        // ChatOptions.RawRepresentationFactory (the pattern the AG-UI samples use).
+        string? threadId = null;
+        string? previousRunId = null;
         try
         {
             while (true)
@@ -110,25 +118,44 @@ public static class Program
 
                 messages.Add(new(ChatRole.User, message));
 
+                // On continuation turns, carry the thread and the previous run id back to the stateless
+                // client so the server resumes the same AG-UI conversation.
+                AgentRunOptions? runOptions = previousRunId is null
+                    ? null
+                    : new ChatClientAgentRunOptions
+                    {
+                        ChatOptions = new ChatOptions
+                        {
+                            RawRepresentationFactory = _ => new RunAgentInput
+                            {
+                                ThreadId = threadId ?? string.Empty,
+                                ParentRunId = previousRunId,
+                            },
+                        },
+                    };
+
                 // Call RunStreamingAsync to get streaming updates
                 bool isFirstUpdate = true;
-                string? sessionId = null;
+                string? currentRunId = null;
                 var updates = new List<ChatResponseUpdate>();
-                await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session, cancellationToken: cancellationToken))
+                await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session, runOptions, cancellationToken))
                 {
                     // Use AsChatResponseUpdate to access ChatResponseUpdate properties
                     ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
                     updates.Add(chatUpdate);
-                    if (chatUpdate.ConversationId != null)
+                    // AGUIChatClient is stateless and never surfaces a ConversationId; the thread
+                    // id and run id are carried on the AG-UI RUN_STARTED event's raw representation.
+                    if (chatUpdate.RawRepresentation is RunStartedEvent runStarted)
                     {
-                        sessionId = chatUpdate.ConversationId;
+                        threadId = runStarted.ThreadId;
+                        currentRunId = runStarted.RunId;
                     }
 
                     // Display run started information from the first update
-                    if (isFirstUpdate && sessionId != null && update.ResponseId != null)
+                    if (isFirstUpdate && threadId != null && update.ResponseId != null)
                     {
                         Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine($"\n[Run Started - Session: {sessionId}, Run: {update.ResponseId}]");
+                        Console.WriteLine($"\n[Run Started - Thread: {threadId}, Run: {update.ResponseId}]");
                         Console.ResetColor();
                         isFirstUpdate = false;
                     }
@@ -177,9 +204,13 @@ public static class Program
                     var lastUpdate = updates[^1];
                     Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine();
-                    Console.WriteLine($"[Run Ended - Session: {sessionId}, Run: {lastUpdate.ResponseId}]");
+                    Console.WriteLine($"[Run Ended - Thread: {threadId}, Run: {lastUpdate.ResponseId}]");
                     Console.ResetColor();
                 }
+                // Remember this run as the parent of the next turn, and drop the local message buffer:
+                // continuation now travels on the wire as threadId + parentRunId, so each turn sends only
+                // the new user message.
+                previousRunId = currentRunId;
                 messages.Clear();
                 Console.WriteLine();
             }

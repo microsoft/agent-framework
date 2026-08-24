@@ -30,6 +30,16 @@ var mcpTool = ResponseTool.CreateMcpTool(
     serverUri: new Uri("https://learn.microsoft.com/api/mcp"),
     toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.NeverRequireApproval));
 
+// Optional: authenticate the MCP server through a Foundry project connection.
+// The connection stores credentials, so the platform injects them at request time and no inline token is sent.
+// The public Microsoft Learn MCP server above needs no authentication, so this is shown for illustration only.
+// Use the FoundryAITool.CreateMcpTool overload that takes a projectConnectionId:
+//   AITool tool = FoundryAITool.CreateMcpTool(
+//       serverLabel: "github",
+//       serverUri: new Uri("https://api.githubcopilot.com/mcp"),
+//       projectConnectionId: "my-foundry-connection",
+//       toolCallApprovalPolicy: new McpToolCallApprovalPolicy(GlobalMcpToolCallApprovalPolicy.AlwaysRequireApproval));
+
 // Create a server side agent with the mcp tool, and expose it as an AIAgent.
 ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
     "MicrosoftLearnAgent",

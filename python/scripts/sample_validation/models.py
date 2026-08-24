@@ -20,6 +20,9 @@ class ValidationConfig:
     subdir: str | None = None
     exclude: list[str] | None = None
     max_parallel_workers: int = 10
+    playbooks_dir: Path | None = None
+    use_cache: bool = True
+    agent_timeout: int = 120
 
 
 @dataclass
@@ -28,7 +31,6 @@ class SampleInfo:
 
     path: Path
     relative_path: str
-    code: str
 
     @classmethod
     def from_path(cls, path: Path, samples_dir: Path) -> "SampleInfo":
@@ -36,7 +38,6 @@ class SampleInfo:
         return cls(
             path=path,
             relative_path=str(path.relative_to(samples_dir)),
-            code=path.read_text(encoding="utf-8"),
         )
 
 
@@ -48,12 +49,26 @@ class DiscoveryResult:
 
 
 @dataclass
+class ReplayResult:
+    """Outcome of attempting to replay cached playbooks for discovered samples.
+
+    Samples whose cached playbook replayed successfully are captured in
+    ``cached_results`` and skip the agent entirely. Everything else flows to the
+    agent-driven validation as ``remaining_samples``.
+    """
+
+    remaining_samples: list[SampleInfo]
+    cached_results: list["RunResult"] = field(default_factory=list)  # type: ignore[assignment]
+
+
+@dataclass
 class WorkflowCreationResult:
     """Result of creating a nested per-sample concurrent workflow."""
 
     samples: list[SampleInfo]
     workflow: Workflow | None
     agents: list[GitHubCopilotAgent]
+    cached_results: list["RunResult"] = field(default_factory=list)  # type: ignore[assignment]
 
 
 class RunStatus(Enum):
@@ -72,7 +87,6 @@ class RunResult:
     status: RunStatus
     output: str
     error: str
-    fix: str
 
 
 @dataclass
@@ -154,7 +168,6 @@ class Report:
                     "status": r.status.value,
                     "output": r.output,
                     "error": r.error,
-                    "fix": r.fix,
                 }
                 for r in self.results
             ],

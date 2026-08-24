@@ -19,8 +19,14 @@ public interface ICheckpointStore<TStoreObject>
     /// <param name="withParent">An optional parent checkpoint to filter the results. If specified, only checkpoints with the given parent are
     /// returned; otherwise, all checkpoints for the session are included.</param>
     /// <returns>A value task representing the asynchronous operation. The result contains a collection of <see
-    /// cref="CheckpointInfo"/> objects associated with the specified session. The collection is empty if no checkpoints are
-    /// found.</returns>
+    /// cref="CheckpointInfo"/> objects associated with the specified session, ordered by commit time from the oldest to the
+    /// most recently committed. The collection is empty if no checkpoints are found.</returns>
+    /// <remarks>
+    /// Implementations must return checkpoints in the order they were committed, with the most recently committed checkpoint
+    /// last. This ordering is a contract of the store: callers such as <see cref="CheckpointManager"/> rely on it to identify
+    /// the latest checkpoint for a session, so a store that returns checkpoints unordered (or newest-first) will cause the
+    /// wrong checkpoint to be resumed.
+    /// </remarks>
     ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null);
 
     /// <summary>

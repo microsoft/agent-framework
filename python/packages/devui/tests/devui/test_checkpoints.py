@@ -242,7 +242,9 @@ class TestCheckpointConversationManager:
             assert item.get("checkpoint_id") in checkpoint_ids
             assert item.get("workflow_name") == test_workflow.name
             assert "timestamp" in item
-            assert item.get("id").startswith("checkpoint_")  # ID format: checkpoint_{checkpoint_id}
+            item_id = item.get("id")
+            assert isinstance(item_id, str)
+            assert item_id.startswith("checkpoint_")  # ID format: checkpoint_{checkpoint_id}
 
     @pytest.mark.asyncio
     async def test_load_checkpoint_from_session(self, checkpoint_manager, test_workflow):

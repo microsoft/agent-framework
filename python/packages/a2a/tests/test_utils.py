@@ -19,6 +19,14 @@ def test_get_uri_data_valid() -> None:
     uri = "data:application/octet-stream;base64,AQIDBA=="
     assert get_uri_data(uri) == "AQIDBA=="
 
+    # Media type with parameters
+    uri = "data:text/plain;charset=utf-8;base64,SGVsbG8sIFdvcmxkIQ=="
+    assert get_uri_data(uri) == "SGVsbG8sIFdvcmxkIQ=="
+
+    # Media type with multiple parameters
+    uri = "data:text/plain;charset=utf-8;name=hello.txt;base64,SGVsbG8sIFdvcmxkIQ=="
+    assert get_uri_data(uri) == "SGVsbG8sIFdvcmxkIQ=="
+
 
 def test_get_uri_data_invalid_format() -> None:
     """Test get_uri_data with invalid URI formats."""
@@ -27,8 +35,10 @@ def test_get_uri_data_invalid_format() -> None:
         "http://example.com",
         "data:text/plain;SGVsbG8sIFdvcmxkIQ==",  # Missing base64 marker
         "data:base64,SGVsbG8sIFdvcmxkIQ==",  # Missing media type
-        "data:text/plain;charset=utf-8;base64,SGVsbG8sIFdvcmxkIQ==",  # Extra parameters (current regex doesn't support)
+        "data:text/plain;foo;base64,SGVsbG8sIFdvcmxkIQ==",  # Parameter without value
+        "data:text/plain;base64;base64,SGVsbG8sIFdvcmxkIQ==",  # base64 used as a parameter name
         "data:text/plain;base64,SGVsbG8sIFdvcmxkIQ== extra",
+        "data:text/plain;base64,SGVsbG8sIFdvcmxkIQ==\n",
     ]
     for uri in invalid_uris:
         with pytest.raises(ValueError, match="Invalid data URI format"):

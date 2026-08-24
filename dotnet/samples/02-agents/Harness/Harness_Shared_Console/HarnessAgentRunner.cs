@@ -64,21 +64,15 @@ public sealed class HarnessAgentRunner : IDisposable
 
     /// <summary>
     /// Replaces the current session with the specified session. Used by the UX driver
-    /// when importing a serialized session. Acquires the input gate to ensure no
-    /// concurrent agent turn is reading the session.
+    /// when importing a serialized session. This method is always called from within
+    /// a command handler (which already holds the input gate), so no additional
+    /// synchronization is needed.
     /// </summary>
     /// <param name="newSession">The new session to use.</param>
-    internal async Task ReplaceSessionAsync(AgentSession newSession)
+    internal Task ReplaceSessionAsync(AgentSession newSession)
     {
-        await this._inputGate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            this._session = newSession;
-        }
-        finally
-        {
-            this._inputGate.Release();
-        }
+        this._session = newSession;
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc/>
@@ -99,7 +93,7 @@ public sealed class HarnessAgentRunner : IDisposable
             {
                 if (await handler.TryHandleAsync(text, this._session, this._ux).ConfigureAwait(false))
                 {
-                    this._ux.CurrentMode = this._modeProvider?.GetMode(this._session);
+                    this._ux.CurrentMode = this._modeProvider is null ? null : await this._modeProvider.GetModeAsync(this._session).ConfigureAwait(false);
                     return;
                 }
             }
@@ -117,16 +111,15 @@ public sealed class HarnessAgentRunner : IDisposable
     /// enqueued via the <see cref="MessageInjectingChatClient"/> so it can be picked up
     /// by the agent on its next opportunity.
     /// </summary>
-    internal Task OnStreamingInputAsync(string text)
+    internal async Task OnStreamingInputAsync(string text)
     {
         if (this._messageInjector is null)
         {
-            return Task.CompletedTask;
+            return;
         }
 
-        this._messageInjector.EnqueueMessages(this._session, [new ChatMessage(ChatRole.User, text)]);
-        this._ux.SetQueuedMessages(this._messageInjector.GetPendingMessages(this._session));
-        return Task.CompletedTask;
+        await this._messageInjector.EnqueueMessagesAsync(this._session, [new ChatMessage(ChatRole.User, text)]).ConfigureAwait(false);
+        this._ux.SetQueuedMessages(await this._messageInjector.GetPendingMessagesAsync(this._session).ConfigureAwait(false));
     }
 
     /// <summary>
@@ -142,7 +135,7 @@ public sealed class HarnessAgentRunner : IDisposable
         {
             if (messages.Count == 0)
             {
-                this.CompleteTurn();
+                await this.CompleteTurnAsync().ConfigureAwait(false);
                 return;
             }
 
@@ -157,17 +150,19 @@ public sealed class HarnessAgentRunner : IDisposable
     private async Task RunAgentLoopAsync(IList<ChatMessage> messages)
     {
         IList<ChatMessage>? nextMessages = messages;
-        IReadOnlyList<ChatMessage> lastPendingMessages = this._messageInjector?.GetPendingMessages(this._session) ?? [];
+        IReadOnlyList<ChatMessage> lastPendingMessages = this._messageInjector is not null
+            ? await this._messageInjector.GetPendingMessagesAsync(this._session).ConfigureAwait(false)
+            : [];
 
         while (nextMessages is not null)
         {
             var runOptions = new AgentRunOptions();
             foreach (var observer in this._observers)
             {
-                observer.ConfigureRunOptions(runOptions, this._agent, this._session);
+                await observer.ConfigureRunOptionsAsync(runOptions, this._agent, this._session).ConfigureAwait(false);
             }
 
-            this._ux.CurrentMode = this._modeProvider?.GetMode(this._session);
+            this._ux.CurrentMode = this._modeProvider is null ? null : await this._modeProvider.GetModeAsync(this._session).ConfigureAwait(false);
             this._ux.BeginStreaming();
             this._ux.BeginStreamingOutput();
 
@@ -177,7 +172,7 @@ public sealed class HarnessAgentRunner : IDisposable
                 {
                     if (this._modeProvider is not null)
                     {
-                        string currentMode = this._modeProvider.GetMode(this._session);
+                        string currentMode = await this._modeProvider.GetModeAsync(this._session).ConfigureAwait(false);
                         if (currentMode != this._ux.CurrentMode)
                         {
                             this._ux.CurrentMode = currentMode;
@@ -205,7 +200,7 @@ public sealed class HarnessAgentRunner : IDisposable
                         }
                     }
 
-                    this.SyncQueuedMessageDisplay(ref lastPendingMessages);
+                    lastPendingMessages = await this.SyncQueuedMessageDisplayAsync(lastPendingMessages).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -214,7 +209,7 @@ public sealed class HarnessAgentRunner : IDisposable
             }
 
             // Final sync after streaming.
-            this.SyncQueuedMessageDisplay(ref lastPendingMessages);
+            lastPendingMessages = await this.SyncQueuedMessageDisplayAsync(lastPendingMessages).ConfigureAwait(false);
 
             this._ux.StopSpinner();
             await this._ux.EndStreamingOutputAsync().ConfigureAwait(false);
@@ -267,13 +262,13 @@ public sealed class HarnessAgentRunner : IDisposable
             nextMessages = drained.Count > 0 ? [.. drained] : null;
         }
 
-        this.CompleteTurn();
+        await this.CompleteTurnAsync().ConfigureAwait(false);
     }
 
-    private void CompleteTurn()
+    private async Task CompleteTurnAsync()
     {
         this._ux.EndStreaming();
-        this._ux.CurrentMode = this._modeProvider?.GetMode(this._session);
+        this._ux.CurrentMode = this._modeProvider is null ? null : await this._modeProvider.GetModeAsync(this._session).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -281,14 +276,15 @@ public sealed class HarnessAgentRunner : IDisposable
     /// Messages that have been consumed (drained by the service) are echoed to the output
     /// area as regular user-input entries.
     /// </summary>
-    private void SyncQueuedMessageDisplay(ref IReadOnlyList<ChatMessage> lastPendingMessages)
+    /// <returns>The updated snapshot of pending messages.</returns>
+    private async Task<IReadOnlyList<ChatMessage>> SyncQueuedMessageDisplayAsync(IReadOnlyList<ChatMessage> lastPendingMessages)
     {
         if (this._messageInjector is null)
         {
-            return;
+            return lastPendingMessages;
         }
 
-        var pending = this._messageInjector.GetPendingMessages(this._session);
+        var pending = await this._messageInjector.GetPendingMessagesAsync(this._session).ConfigureAwait(false);
 
         int consumedCount = lastPendingMessages.Count - pending.Count;
         for (int i = 0; i < consumedCount && i < lastPendingMessages.Count; i++)
@@ -297,7 +293,7 @@ public sealed class HarnessAgentRunner : IDisposable
             this._ux.WriteUserInputEcho(text);
         }
 
-        lastPendingMessages = pending;
         this._ux.SetQueuedMessages(pending);
+        return pending;
     }
 }

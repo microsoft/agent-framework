@@ -4,6 +4,7 @@ using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
@@ -559,6 +560,82 @@ public sealed class ClientHeadersExtensionsTests
         var policies = chatClient.GetService<OpenAIRequestPolicies>();
         Assert.NotNull(policies);
         Assert.Equal(1, EntriesCount(policies!));
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // 21. Non-streaming hardening: a non-streaming run must restore the ambient ClientHeadersScope
+    //     on return so a previous run's x-client-* headers do not carry into a later headerless run
+    //     on the same async flow. (Streaming already restores naturally via its async iterator.)
+    // -------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task NonStreaming_DoesNotCarryClientHeadersToSubsequentRunAsync()
+    {
+        // Arrange: a probe inner agent records ClientHeadersScope.Current observed at each run.
+        var observed = new List<IReadOnlyDictionary<string, string>?>();
+        var inner = new ProbeAgent(_ =>
+        {
+            observed.Add(ClientHeadersScope.Current);
+            return Task.CompletedTask;
+        });
+        var agent = new ClientHeadersAgent(inner);
+
+        // Act: run 1 supplies a client header; run 2 supplies fresh, empty ChatOptions (no headers).
+        var run1Options = new ChatOptions();
+        run1Options.WithClientHeader("x-client-end-user-id", "alice");
+        await agent.RunAsync(messages: [], options: new ChatClientAgentRunOptions(run1Options));
+
+        // The scope must not carry back into the caller's flow after run 1 returns.
+        Assert.Null(ClientHeadersScope.Current);
+
+        var run2Options = new ChatOptions();
+        await agent.RunAsync(messages: [], options: new ChatClientAgentRunOptions(run2Options));
+
+        // Assert: run 1 observed "alice"; run 2 observed no headers (did not inherit run 1's value).
+        Assert.Equal(2, observed.Count);
+        Assert.NotNull(observed[0]);
+        Assert.Equal("alice", observed[0]!["x-client-end-user-id"]);
+        Assert.Null(observed[1]);
+        Assert.Null(ClientHeadersScope.Current);
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // 22. End-to-end non-streaming: a second headerless run on the same async flow must not carry
+    //     the first run's x-client-end-user-id onto the wire.
+    // -------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task EndToEnd_NonStreaming_SecondRunDoesNotInheritHeaderOnWireAsync()
+    {
+        // Arrange: a real OpenAI ResponsesClient pointed at a recording handler.
+        using var handler = new RecordingHandler(MinimalResponseJson());
+#pragma warning disable CA5399
+        using var http = new HttpClient(handler);
+#pragma warning restore CA5399
+        var openAIOptions = new OpenAIClientOptions { Transport = new HttpClientPipelineTransport(http) };
+        var openAIClient = new OpenAIClient(new ApiKeyCredential("fake"), openAIOptions);
+        IChatClient chatClient = openAIClient.GetResponsesClient().AsIChatClient();
+
+        AIAgent agent = new ChatClientAgent(chatClient).AsBuilder().UseClientHeaders().Build();
+
+        // Act: run 1 carries x-client-end-user-id; run 2 supplies fresh options with no client headers.
+        var run1 = new ChatClientAgentRunOptions(new ChatOptions());
+        run1.ChatOptions!.WithClientHeader("x-client-end-user-id", "alice");
+        await agent.RunAsync("hi", options: run1);
+        var afterRun1 = handler.Requests.Count;
+
+        var run2 = new ChatClientAgentRunOptions(new ChatOptions());
+        await agent.RunAsync("hi", options: run2);
+
+        // Assert: run 1 stamped the header; none of the requests issued by run 2 carry it.
+        // (Assert per-run rather than on an exact total count, which would be brittle to
+        // any extra/internal SDK requests.)
+        Assert.True(afterRun1 > 0);
+        Assert.Equal("alice", handler.Requests[0].Headers["x-client-end-user-id"]);
+
+        var run2Requests = handler.Requests.Skip(afterRun1).ToList();
+        Assert.NotEmpty(run2Requests);
+        Assert.All(run2Requests, r => Assert.False(r.Headers.ContainsKey("x-client-end-user-id")));
     }
 
     // -------------------------------------------------------------------------------------------

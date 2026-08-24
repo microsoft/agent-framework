@@ -25,6 +25,7 @@ class AgentStatus(Static):
 
     show_spinner: reactive[bool] = reactive(False)
     usage_text: reactive[str] = reactive("")
+    queued_text: reactive[str] = reactive("")
 
     def __init__(self, **kwargs) -> None:
         """Initialize the agent status widget."""
@@ -48,7 +49,7 @@ class AgentStatus(Static):
         Returns:
             Formatted string with Rich markup for spinner and usage display.
         """
-        if not self.show_spinner and not self.usage_text:
+        if not self.show_spinner and not self.usage_text and not self.queued_text:
             return ""
 
         parts = []
@@ -62,5 +63,8 @@ class AgentStatus(Static):
 
         if self.usage_text:
             parts.append(f"[dim]{self.usage_text}[/dim]")
+
+        if self.queued_text:
+            parts.append(f"[dim]{self.queued_text}[/dim]")
 
         return " ".join(parts)

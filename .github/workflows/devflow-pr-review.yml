@@ -6,6 +6,9 @@ on:
       - opened
       - reopened
       - ready_for_review
+  issue_comment:
+    types:
+      - created
   workflow_dispatch:
     inputs:
       pr_number:
@@ -15,11 +18,12 @@ on:
 
 permissions:
   contents: read
+  id-token: write
   issues: write
   pull-requests: write
 
 concurrency:
-  group: devflow-pr-review-${{ github.repository }}-${{ github.event.pull_request.number || inputs.pr_number || github.run_id }}
+  group: devflow-pr-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -27,10 +31,46 @@ env:
   DEVFLOW_REF: main
   TARGET_REPO_PATH: ${{ github.workspace }}/target-repo
   DEVFLOW_PATH: ${{ github.workspace }}/devflow
+  MODEL_CONFIG_PATH: ${{ github.workspace }}/devflow/config.ci.yaml
 
 jobs:
-  team_check:
+  command_check:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (
+        github.event.issue.pull_request &&
+        (
+          github.event.comment.author_association == 'MEMBER' ||
+          github.event.comment.author_association == 'OWNER'
+        )
+      )
     runs-on: ubuntu-latest
+    outputs:
+      should_review: ${{ steps.check.outputs.should_review }}
+    steps:
+      - name: Checkout review command validation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+          sparse-checkout: .github/scripts/review_command.js
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check review command
+        id: check
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const isReviewCommand = require('./.github/scripts/review_command.js');
+            const shouldReview = context.eventName !== 'issue_comment' ||
+              isReviewCommand(context.payload.comment?.body);
+            core.setOutput('should_review', shouldReview ? 'true' : 'false');
+
+  team_check:
+    needs: command_check
+    if: ${{ needs.command_check.outputs.should_review == 'true' }}
+    runs-on: ubuntu-latest
+    environment: github-app-auth
     outputs:
       is_team_member: ${{ steps.check.outputs.is_team_member }}
       pr_number: ${{ steps.pr.outputs.pr_number }}
@@ -42,6 +82,7 @@ jobs:
         shell: bash
         env:
           PR_HTML_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER_COMMENT: ${{ github.event.issue.number }}
           PR_NUMBER_EVENT: ${{ github.event.pull_request.number }}
           PR_NUMBER_INPUT: ${{ inputs.pr_number }}
         run: |
@@ -50,6 +91,9 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request_target" ]]; then
             pr_number="${PR_NUMBER_EVENT}"
             pr_url="${PR_HTML_URL}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "issue_comment" ]]; then
+            pr_number="${PR_NUMBER_COMMENT}"
+            pr_url="https://github.com/${GITHUB_REPOSITORY}/pull/${pr_number}"
           else
             pr_number="${PR_NUMBER_INPUT}"
             pr_url="https://github.com/${GITHUB_REPOSITORY}/pull/${pr_number}"
@@ -64,49 +108,78 @@ jobs:
           echo "pr_number=${pr_number}" >> "$GITHUB_OUTPUT"
           echo "repo=${GITHUB_REPOSITORY}" >> "$GITHUB_OUTPUT"
 
-      - name: Check PR author team membership
+      - name: Checkout GitHub automation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+          sparse-checkout: |
+            .github/actions/github-app-token
+            .github/scripts/check_team_membership.js
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Get GitHub automation token
+        id: github-auth
+        uses: ./.github/actions/github-app-token
+        with:
+          mode: ${{ vars.GH_APP_AUTH_MODE }}
+          azure-client-id: ${{ secrets.GH_APP_AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.GH_APP_AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.GH_APP_AZURE_SUBSCRIPTION_ID }}
+          key-vault-name: ${{ secrets.GH_APP_KEY_VAULT_NAME }}
+          key-name: ${{ secrets.GH_APP_KEY_NAME }}
+          github-app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          github-app-installation-id: ${{ secrets.GH_APP_INSTALLATION_ID }}
+          repository: ${{ github.repository }}
+          fallback-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+
+      - name: Check review requester team membership
         id: check
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
+          MEMBERSHIP_USER: ${{ github.event_name == 'issue_comment' && github.event.comment.user.login || '' }}
           TEAM_NAME: ${{ secrets.DEVELOPER_TEAM }}
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
         with:
-          github-token: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          github-token: ${{ steps.github-auth.outputs.token }}
           script: |
-            let author = context.payload.pull_request?.user?.login;
-            if (!author) {
-              const { data: pr } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: Number(process.env.PR_NUMBER),
-              });
-              author = pr.user.login;
-            }
-
-            let isTeamMember = false;
-            try {
-              const teamMembership = await github.rest.teams.getMembershipForUserInOrg({
-                org: context.repo.owner,
-                team_slug: process.env.TEAM_NAME,
-                username: author,
-              });
-              isTeamMember = teamMembership.data.state === 'active';
-            } catch (error) {
-              console.log(`Team membership lookup failed for ${author}: ${error.message}`);
-              isTeamMember = false;
-            }
-
+            const checkTeamMembership = require('./.github/scripts/check_team_membership.js');
+            const { author, isTeamMember } = await checkTeamMembership({
+              github,
+              context,
+              core,
+              teamSlug: process.env.TEAM_NAME,
+              issueNumber: process.env.PR_NUMBER,
+              username: process.env.MEMBERSHIP_USER,
+            });
             core.setOutput('is_team_member', isTeamMember ? 'true' : 'false');
             if (isTeamMember) {
-              core.info(`Author ${author} is a team member; proceeding with review.`);
+              core.info(`User ${author} is a team member; proceeding with review.`);
             } else {
-              core.info(`Author ${author} is not a member of ${process.env.TEAM_NAME}; skipping review.`);
+              core.info(`User ${author} is not a member of ${process.env.TEAM_NAME}; skipping review.`);
             }
+
+      - name: React to authorized review command
+        if: ${{ github.event_name == 'issue_comment' && steps.check.outputs.is_team_member == 'true' }}
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          github-token: ${{ steps.github-auth.outputs.token }}
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              ...context.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
 
   review:
     runs-on: ubuntu-latest
     needs: team_check
     if: ${{ needs.team_check.outputs.is_team_member == 'true' }}
+    permissions:
+      copilot-requests: write
+      contents: read
+      issues: write
+      pull-requests: write
     timeout-minutes: 60
     # Advisory check: failures here should not block the PR. The reviewer
     # posts comments as a best-effort signal; if the pipeline breaks, the
@@ -116,7 +189,7 @@ jobs:
     steps:
       # Safe checkout: base repo only, not the untrusted PR head.
       - name: Checkout target repo base
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
           fetch-depth: 0
@@ -125,7 +198,7 @@ jobs:
 
       # Private DevFlow checkout: the PAT/token grants access to this repo's code.
       - name: Checkout DevFlow
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.DEVFLOW_REPOSITORY }}
           ref: ${{ env.DEVFLOW_REF }}
@@ -135,12 +208,12 @@ jobs:
           path: devflow
 
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.11.x"
           enable-cache: true
@@ -153,8 +226,8 @@ jobs:
         id: review
         working-directory: ${{ env.DEVFLOW_PATH }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_COPILOT_TOKEN: ${{ secrets.GH_COPILOT_TOKEN }}
+          DEVFLOW_TOKEN: ${{ secrets.DEVFLOW_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           SK_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           AGENT_REPO_PATH: ${{ env.TARGET_REPO_PATH }}
           PR_URL: ${{ needs.team_check.outputs.pr_url }}
@@ -162,4 +235,5 @@ jobs:
           uv run python scripts/trigger_pr_review.py \
             --pr-url "$PR_URL" \
             --github-username "$GITHUB_ACTOR" \
+            --review-compare \
             --no-require-comment-selection

@@ -4,14 +4,15 @@
 # Install the relevant packages for full type support.
 
 from agent_framework_anthropic import AnthropicFoundryClient, RawAnthropicFoundryClient
-from agent_framework_azure_contentunderstanding import (  # pyright: ignore[reportMissingImports]
-    AnalysisSection,  # pyright: ignore[reportUnknownVariableType]
-    ContentUnderstandingContextProvider,  # pyright: ignore[reportUnknownVariableType]
-    DocumentStatus,  # pyright: ignore[reportUnknownVariableType]
-    FileSearchBackend,  # pyright: ignore[reportUnknownVariableType]
-    FileSearchConfig,  # pyright: ignore[reportUnknownVariableType]
+from agent_framework_azure_contentunderstanding import (
+    AnalysisSection,
+    ContentUnderstandingContextProvider,
+    DocumentStatus,
+    FileSearchBackend,
+    FileSearchConfig,
 )
 from agent_framework_foundry import (
+    FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY,
     FoundryAgent,
     FoundryChatClient,
     FoundryChatOptions,
@@ -29,6 +30,20 @@ from agent_framework_foundry import (
     evaluate_traces,
     to_prompt_agent,
 )
+from agent_framework_foundry_hosting import (
+    AgentSessionStoreProvider,
+    CheckpointStoreProvider,
+    ContextScopedStoreProvider,
+    FoundryAgentSessionStore,
+    FoundryCheckpointStore,
+    FoundryFunctionApprovalStore,
+    FoundryToolbox,
+    FunctionApprovalStore,
+    FunctionApprovalStoreProvider,
+    InvocationsHostServer,
+    ResponsesHostServer,
+    StoreProvider,
+)
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
     FoundryLocalClient,
@@ -36,29 +51,42 @@ from agent_framework_foundry_local import (
 )
 
 __all__ = [
+    "FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY",
+    "AgentSessionStoreProvider",
     "AnalysisSection",
     "AnthropicFoundryClient",
+    "CheckpointStoreProvider",
     "ContentUnderstandingContextProvider",
+    "ContextScopedStoreProvider",
     "DocumentStatus",
     "FileSearchBackend",
     "FileSearchConfig",
     "FoundryAgent",
+    "FoundryAgentSessionStore",
     "FoundryChatClient",
     "FoundryChatOptions",
+    "FoundryCheckpointStore",
     "FoundryEmbeddingClient",
     "FoundryEmbeddingOptions",
     "FoundryEmbeddingSettings",
     "FoundryEvals",
+    "FoundryFunctionApprovalStore",
     "FoundryLocalChatOptions",
     "FoundryLocalClient",
     "FoundryLocalSettings",
     "FoundryMemoryProvider",
+    "FoundryToolbox",
+    "FunctionApprovalStore",
+    "FunctionApprovalStoreProvider",
     "GeneratedEvaluatorRef",
+    "InvocationsHostServer",
     "RawAnthropicFoundryClient",
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
     "RawFoundryChatClient",
     "RawFoundryEmbeddingClient",
+    "ResponsesHostServer",
+    "StoreProvider",
     "evaluate_foundry_target",
     "evaluate_traces",
     "to_prompt_agent",

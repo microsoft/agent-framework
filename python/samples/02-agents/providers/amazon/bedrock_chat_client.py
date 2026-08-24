@@ -4,7 +4,7 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.amazon import BedrockChatClient
+from agent_framework.amazon import BedrockChatClient, BedrockChatOptions
 from dotenv import load_dotenv
 from pydantic import Field
 
@@ -43,8 +43,8 @@ async def main() -> None:
         client=BedrockChatClient(),
         instructions="You are a concise travel assistant.",
         name="BedrockWeatherAgent",
-        tool_choice="auto",
         tools=[get_weather],
+        default_options=BedrockChatOptions(tool_choice="auto"),
     )
 
     # 2. Run a query that uses the weather tool.

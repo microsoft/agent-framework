@@ -56,6 +56,8 @@ internal sealed class ExecuteCodeFunction : AIFunction
     /// <inheritdoc />
     public override JsonElement JsonSchema => s_schema;
 
+    internal string ConfigFingerprint => this._snapshot.ConfigFingerprint;
+
     /// <inheritdoc />
     protected override async ValueTask<object?> InvokeCoreAsync(
         AIFunctionArguments arguments,

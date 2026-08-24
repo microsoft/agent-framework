@@ -229,8 +229,46 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
                 cancellationToken: cancellationToken);
 
             List<AgentResponseUpdate> updates = [];
+            string? generatedMessageId = null;
+            string? generatedMessageResponseId = null;
+            ChatRole? generatedMessageRole = null;
             await foreach (AgentResponseUpdate update in agentStream.ConfigureAwait(false))
             {
+                // Contentless updates may carry only metadata and must not become empty messages.
+                if (string.IsNullOrWhiteSpace(update.MessageId))
+                {
+                    bool hasContent =
+                        update.Contents.Any(
+                            content => content is not TextContent textContent || !string.IsNullOrEmpty(textContent.Text));
+                    if (hasContent)
+                    {
+                        if (generatedMessageId is null
+                            || (generatedMessageResponseId is not null
+                                && update.ResponseId is not null
+                                && !string.Equals(generatedMessageResponseId, update.ResponseId, StringComparison.Ordinal))
+                            || (generatedMessageRole is not null
+                                && update.Role is not null
+                                && generatedMessageRole != update.Role))
+                        {
+                            generatedMessageId = Guid.NewGuid().ToString("N");
+                        }
+
+                        generatedMessageResponseId = update.ResponseId ?? generatedMessageResponseId;
+                        generatedMessageRole = update.Role ?? generatedMessageRole;
+                        update.MessageId = generatedMessageId;
+                        if (update.RawRepresentation is ChatResponseUpdate rawUpdate)
+                        {
+                            rawUpdate.MessageId = generatedMessageId;
+                        }
+                    }
+                }
+                else
+                {
+                    generatedMessageId = null;
+                    generatedMessageResponseId = null;
+                    generatedMessageRole = null;
+                }
+
                 await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
                 collector.ProcessAgentResponseUpdate(update);
                 updates.Add(update);

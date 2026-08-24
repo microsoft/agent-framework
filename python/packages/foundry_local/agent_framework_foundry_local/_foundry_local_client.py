@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Generic, Literal, cast, overload
+from typing import Any, ClassVar, Generic, Literal, cast, overload
 
 from agent_framework import (
     ChatAndFunctionMiddlewareTypes,
@@ -27,14 +27,16 @@ from foundry_local.models import DeviceType, FoundryModelInfo
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
+from ._feature_usage import FeatureIndex
+
 if sys.version_info >= (3, 13):
-    from typing import TypeVar  # type: ignore # pragma: no cover
+    from typing import TypeVar  # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar  # pragma: no cover
 if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
+    from typing import TypedDict  # pragma: no cover
 else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
+    from typing_extensions import TypedDict  # pragma: no cover
 
 
 __all__ = [
@@ -138,6 +140,8 @@ class FoundryLocalClient(
     Generic[FoundryLocalChatOptionsT],
 ):
     """Foundry Local Chat completion class with middleware, telemetry, and function invocation support."""
+
+    _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.FOUNDRY_LOCAL
 
     @overload
     def get_response(
@@ -320,7 +324,7 @@ class FoundryLocalClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        model_setting: str = settings["model"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+        model_setting: str = settings["model"]  # type: ignore[assignment]
 
         manager = FoundryLocalManager(bootstrap=bootstrap, timeout=timeout)
         model_info: FoundryModelInfo | None = manager.get_model_info(

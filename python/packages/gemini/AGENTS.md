@@ -29,7 +29,7 @@ Integration with Google's Gemini Developer API and Vertex AI via the `google-gen
 
 ```python
 from agent_framework import Content, Message
-from agent_framework_gemini import GeminiChatClient
+from agent_framework.gemini import GeminiChatClient
 
 client = GeminiChatClient(model="gemini-2.5-flash")
 response = await client.get_response([Message(role="user", contents=[Content.from_text("Hello")])])

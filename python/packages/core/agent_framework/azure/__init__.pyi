@@ -8,7 +8,7 @@ from agent_framework_azure_ai_search import (
     AzureAISearchSettings,
 )
 from agent_framework_azure_cosmos import CosmosHistoryProvider
-from agent_framework_azurefunctions import AgentFunctionApp
+from agent_framework_azurefunctions import AgentFunctionApp, WorkflowHitlContext
 from agent_framework_durabletask import (
     AgentCallbackContext,
     AgentResponseCallbackProtocol,
@@ -16,6 +16,7 @@ from agent_framework_durabletask import (
     DurableAIAgentClient,
     DurableAIAgentOrchestrationContext,
     DurableAIAgentWorker,
+    DurableWorkflowClient,
 )
 
 __all__ = [
@@ -29,4 +30,6 @@ __all__ = [
     "DurableAIAgentClient",
     "DurableAIAgentOrchestrationContext",
     "DurableAIAgentWorker",
+    "DurableWorkflowClient",
+    "WorkflowHitlContext",
 ]

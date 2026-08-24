@@ -361,7 +361,9 @@ class EditTableV2Executor(DeclarativeActionExecutor):
 
         table_path = self._action_def.get("table") or _get_variable_path(self._action_def, "variable")
         operation = self._action_def.get("operation", "add").lower()
-        item = self._action_def.get("item") or self._action_def.get("value")
+        item = self._action_def.get("item")
+        if item is None:
+            item = self._action_def.get("value")
         key_field = self._action_def.get("key")
         index = self._action_def.get("index")
 
@@ -543,12 +545,12 @@ class ParseValueExecutor(DeclarativeActionExecutor):
             if value is None:
                 return []
             if isinstance(value, list):
-                return cast(list[Any], value)  # type: ignore[redundant-cast]
+                return cast(list[Any], value)
             if isinstance(value, str):
                 try:
                     parsed = json.loads(value)
                     if isinstance(parsed, list):
-                        return cast(list[Any], parsed)  # type: ignore[redundant-cast]
+                        return cast(list[Any], parsed)
                     return [parsed]
                 except json.JSONDecodeError:
                     return [value]

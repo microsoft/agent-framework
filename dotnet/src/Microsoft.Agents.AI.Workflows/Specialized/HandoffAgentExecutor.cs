@@ -427,10 +427,9 @@ internal sealed class HandoffAgentExecutor :
         AgentResponse response;
 
         AIAgentUnservicedRequestsCollector collector = new(this._userInputHandler, this._functionCallHandler);
-
         string? requestedHandoff = null;
         List<AgentResponseUpdate> updates = [];
-        List<FunctionCallContent> candidateRequests = [];
+        List<(FunctionCallContent Request, string? ResponseId)> candidateRequests = [];
 
         this._session ??= await this._agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -448,7 +447,7 @@ internal sealed class HandoffAgentExecutor :
                 bool isHandoffRequest = this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
                 if (isHandoffRequest)
                 {
-                    candidateRequests.Add(candidateHandoffRequest);
+                    candidateRequests.Add((candidateHandoffRequest, update.ResponseId));
                 }
 
                 return !isHandoffRequest;
@@ -457,13 +456,13 @@ internal sealed class HandoffAgentExecutor :
 
         if (candidateRequests.Count > 1)
         {
-            string message = $"Duplicate handoff requests in single turn ([{string.Join(", ", candidateRequests.Select(request => request.Name))}]). Using last ({candidateRequests.Last().Name})";
+            string message = $"Duplicate handoff requests in single turn ([{string.Join(", ", candidateRequests.Select(candidate => candidate.Request.Name))}]). Using last ({candidateRequests.Last().Request.Name})";
             await context.AddEventAsync(new WorkflowWarningEvent(message), cancellationToken).ConfigureAwait(false);
         }
 
         if (candidateRequests.Count > 0)
         {
-            FunctionCallContent handoffRequest = candidateRequests[candidateRequests.Count - 1];
+            (FunctionCallContent handoffRequest, string? handoffResponseId) = candidateRequests[candidateRequests.Count - 1];
             requestedHandoff = handoffRequest.Name;
 
             await AddUpdateAsync(
@@ -474,6 +473,7 @@ internal sealed class HandoffAgentExecutor :
                         Contents = [CreateHandoffResult(handoffRequest.CallId)],
                         CreatedAt = DateTimeOffset.UtcNow,
                         MessageId = Guid.NewGuid().ToString("N"),
+                        ResponseId = handoffResponseId,
                         Role = ChatRole.Tool,
                     },
                     cancellationToken

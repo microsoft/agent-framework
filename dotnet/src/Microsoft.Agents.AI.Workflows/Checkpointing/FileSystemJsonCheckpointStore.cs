@@ -34,7 +34,19 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     private FileStream? _indexFile;
 
     internal DirectoryInfo Directory { get; }
+
+    // O(1) membership set used to allocate unique checkpoint ids (GetUnusedCheckpointInfo) and to guard
+    // RetrieveCheckpointAsync. It intentionally coexists with OrderedCheckpointIndex below: this set answers
+    // "does this checkpoint exist?" in O(1), while the list preserves commit order. A single HashSet cannot do
+    // both because HashSet enumeration order is not a contract.
     internal HashSet<CheckpointInfo> CheckpointIndex { get; }
+
+    // Insertion-ordered mirror of CheckpointIndex. HashSet enumeration order is not a contract (it can diverge
+    // from insertion order once a slot is freed by a rollback and reused), so RetrieveIndexAsync enumerates this
+    // list to return checkpoints in commit order, which callers such as CheckpointManager.GetLatestCheckpointAsync
+    // rely on to identify the head checkpoint.
+    private List<CheckpointInfo> OrderedCheckpointIndex { get; } = [];
+
     private Dictionary<CheckpointInfo, string?> CheckpointParents { get; } = [];
     private HashSet<CheckpointInfo> CheckpointsWithKnownParent { get; } = [];
 
@@ -80,7 +92,11 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
                 {
                     // We never actually use the file names from the index entries since they can be derived from the CheckpointInfo, but it is useful to
                     // have the UrlEncoded file names in the index file for human readability
-                    this.CheckpointIndex.Add(entry.CheckpointInfo);
+                    if (this.CheckpointIndex.Add(entry.CheckpointInfo))
+                    {
+                        this.OrderedCheckpointIndex.Add(entry.CheckpointInfo);
+                    }
+
                     this.CheckpointParents[entry.CheckpointInfo] = entry.ParentCheckpointId;
                     if (entry.HasParentMetadata)
                     {
@@ -129,6 +145,8 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
             key = new(sessionId);
         } while (!this.CheckpointIndex.Add(key));
 
+        this.OrderedCheckpointIndex.Add(key);
+
         return key;
     }
 
@@ -164,6 +182,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
         catch (Exception ex)
         {
             this.CheckpointIndex.Remove(key);
+            this.OrderedCheckpointIndex.Remove(key);
             this.CheckpointParents.Remove(key);
             this.CheckpointsWithKnownParent.Remove(key);
 
@@ -202,7 +221,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     {
         this.CheckDisposed();
 
-        return new(this.CheckpointIndex
+        return new(this.OrderedCheckpointIndex
             .Where(checkpoint => checkpoint.SessionId == sessionId &&
                 (withParent is null ||
                     !this.CheckpointsWithKnownParent.Contains(checkpoint) ||

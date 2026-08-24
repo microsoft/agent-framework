@@ -19,6 +19,7 @@ from .text_output import TextOutputObserver
 from .tool_approval import ToolApprovalObserver
 from .tool_call_display import ToolCallDisplayObserver
 from .usage_display import UsageDisplayObserver
+from .web_search_display import WebSearchDisplayObserver
 
 if TYPE_CHECKING:
     from agent_framework import Agent
@@ -45,6 +46,7 @@ def build_default_observers() -> list[ConsoleObserver]:
     return [
         TextOutputObserver(),
         ToolCallDisplayObserver(),
+        WebSearchDisplayObserver(),
         ErrorDisplayObserver(),
         UsageDisplayObserver(),
         ReasoningDisplayObserver(),
@@ -95,6 +97,7 @@ def build_observers_with_planning(
 
     return [
         ToolCallDisplayObserver(),
+        WebSearchDisplayObserver(),
         ToolApprovalObserver(),
         ErrorDisplayObserver(),
         ReasoningDisplayObserver(),
@@ -117,6 +120,7 @@ __all__ = [
     "ToolApprovalObserver",
     "ToolCallDisplayObserver",
     "UsageDisplayObserver",
+    "WebSearchDisplayObserver",
     "build_default_observers",
     "build_observers_with_planning",
 ]

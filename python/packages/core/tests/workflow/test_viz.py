@@ -206,7 +206,9 @@ def test_workflow_viz_graphviz_binary_not_found():
         mock_source_class.return_value = mock_source
 
         # Import the ExecutableNotFound exception for the test
-        from graphviz.backend.execute import ExecutableNotFound  # type: ignore[import-not-found]
+        from graphviz.backend.execute import (  # type: ignore[import-not-found]  # pyrefly: ignore[missing-import]  # pyright: ignore[reportMissingImports]  # ty: ignore[unresolved-import]
+            ExecutableNotFound,
+        )
 
         mock_source.render.side_effect = ExecutableNotFound("failed to execute PosixPath('dot')")
 

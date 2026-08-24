@@ -3,8 +3,8 @@
 Monty-backed CodeAct integrations for the Microsoft Agent Framework.
 
 > [!NOTE]
-> **Alpha package.** Not part of `agent-framework[all]` yet. Install explicitly
-> with `pip install agent-framework-monty --pre`.
+> **Beta package.** Included in `agent-framework[all]` and available through
+> the lazy-loading namespace `agent_framework.monty`.
 
 ## Core Classes
 
@@ -19,7 +19,7 @@ Monty-backed CodeAct integrations for the Microsoft Agent Framework.
 ## Public API
 
 ```python
-from agent_framework_monty import (
+from agent_framework.monty import (
     FileMount,
     FileMountInput,
     MontyCodeActProvider,

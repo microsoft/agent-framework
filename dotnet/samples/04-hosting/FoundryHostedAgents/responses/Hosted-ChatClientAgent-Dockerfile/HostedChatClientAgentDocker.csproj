@@ -1,0 +1,46 @@
+﻿<Project>
+
+  <!--
+    Container deploy sample. Foundry builds the Dockerfile in this folder and runs the resulting
+    image, so unlike the source (ZIP) path there is no server-side `dotnet restore` on a bare
+    folder: the restore happens inside the container build.
+
+    ImportDirectoryPackagesProps has to be set before the SDK props are imported, hence the explicit
+    Sdk imports below instead of the usual Sdk attribute on the Project element. It stops MSBuild
+    from walking up to the repository's dotnet/Directory.Packages.props, which does two things this
+    sample must avoid: it turns on central package management, and it injects analyzer
+    PackageReference items whose versions it also supplies. Neither exists inside the container
+    build context, so without this the in-repo build would resolve differently from the image build.
+  -->
+
+  <PropertyGroup>
+    <ImportDirectoryPackagesProps>false</ImportDirectoryPackagesProps>
+  </PropertyGroup>
+
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk.Web" />
+
+  <PropertyGroup>
+    <!-- Single target: the Dockerfile publishes without -f, so the project must not multi-target.
+         The empty TargetFrameworks clears the value inherited from the repo's samples
+         Directory.Build.props for in-repo builds. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks></TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>HostedChatClientAgentDocker</RootNamespace>
+    <AssemblyName>HostedChatClientAgentDocker</AssemblyName>
+    <UserSecretsId>7b1c3f04-24a1-4f0e-9a5e-0d2f6b8c1e57</UserSecretsId>
+    <AgentFrameworkVersion>1.15.0-preview.260722.1</AgentFrameworkVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.AI.Foundry" Version="$(AgentFrameworkVersion)" />
+    <PackageReference Include="Microsoft.Agents.AI.Foundry.Hosting" Version="$(AgentFrameworkVersion)" />
+    <PackageReference Include="Azure.AI.Projects" Version="2.1.0-beta.4" />
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
+    <PackageReference Include="DotNetEnv" Version="3.1.1" />
+  </ItemGroup>
+
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.Web" />
+
+</Project>

@@ -7,13 +7,12 @@ using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using OpenAI.Chat;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-builder.Services.AddHttpClient().AddLogging();
-builder.Services.AddAGUI();
+builder.Services.AddAGUIServer();
 
 // WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
-// make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
+// make sure to also register an AgentIsolationKeyProvider to scope sessions by principal in multi-user
 // deployments, e.g.:
-// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+// builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 WebApplication app = builder.Build();
 
@@ -36,6 +35,6 @@ AIAgent agent = chatClient.AsAIAgent(
     instructions: "You are a helpful assistant.");
 
 // Map the AG-UI agent endpoint
-app.MapAGUI("/", agent);
+app.MapAGUIServer("/", agent);
 
 await app.RunAsync();

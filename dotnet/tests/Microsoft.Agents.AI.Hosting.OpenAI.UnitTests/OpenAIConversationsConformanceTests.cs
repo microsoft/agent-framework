@@ -108,7 +108,7 @@ public sealed class OpenAIConversationsConformanceTests : IAsyncDisposable
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
         this._app.MapOpenAIConversations();
-        this._app.MapOpenAIResponses(agent);
+        this._app.MapOpenAIResponses(agent, responsesPath: null, PermissiveMapOptions.Responses());
 
         await this._app.StartAsync();
 
@@ -137,7 +137,7 @@ public sealed class OpenAIConversationsConformanceTests : IAsyncDisposable
 
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
         this._app.MapOpenAIConversations();
-        this._app.MapOpenAIResponses(agent);
+        this._app.MapOpenAIResponses(agent, responsesPath: null, PermissiveMapOptions.Responses());
 
         await this._app.StartAsync();
 
@@ -166,7 +166,7 @@ public sealed class OpenAIConversationsConformanceTests : IAsyncDisposable
 
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
         this._app.MapOpenAIConversations();
-        this._app.MapOpenAIResponses(agent);
+        this._app.MapOpenAIResponses(agent, responsesPath: null, PermissiveMapOptions.Responses());
 
         await this._app.StartAsync();
 

@@ -10,7 +10,7 @@ from agent_framework._tools import FunctionTool
 from agent_framework._types import Message
 from loguru import logger
 from pydantic import BaseModel
-from tau2.data_model.message import (  # type: ignore[import-untyped]
+from tau2.data_model.message import (
     AssistantMessage,
     SystemMessage,
     ToolCall,
@@ -20,9 +20,9 @@ from tau2.data_model.message import (  # type: ignore[import-untyped]
 from tau2.data_model.message import (
     Message as Tau2Message,
 )
-from tau2.data_model.tasks import EnvFunctionCall, InitializationData  # type: ignore[import-untyped]
-from tau2.environment.environment import Environment  # type: ignore[import-untyped]
-from tau2.environment.tool import Tool  # type: ignore[import-untyped]
+from tau2.data_model.tasks import EnvFunctionCall, InitializationData
+from tau2.environment.environment import Environment
+from tau2.environment.tool import Tool
 
 _original_set_state = Environment.set_state
 

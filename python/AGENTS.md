@@ -6,6 +6,8 @@ Instructions for AI coding agents working in the Python codebase.
 - [DEV_SETUP.md](DEV_SETUP.md) - Development environment setup and available poe tasks
 - [CODING_STANDARD.md](CODING_STANDARD.md) - Coding standards, docstring format, and performance guidelines
 - [samples/SAMPLE_GUIDELINES.md](samples/SAMPLE_GUIDELINES.md) - Sample structure and guidelines
+- [Python function-calling loop specification](../docs/specs/004-python-function-calling-loop.md) - Required
+  behavior, scenario-to-test mapping, coverage gaps, and extra validation for function-loop changes
 
 **Agent Skills** (`.github/skills/`) — detailed, task-specific instructions loaded on demand:
 - `python-development` — coding standards, type annotations, docstrings, logging, performance
@@ -13,7 +15,8 @@ Instructions for AI coding agents working in the Python codebase.
 - `python-code-quality` — linting, formatting, type checking, prek hooks, CI workflow
 - `python-feature-lifecycle` — package vs feature lifecycle stages, decorators, enums, and promotion guidance
 - `python-package-management` — monorepo structure, lazy loading, versioning, new packages
-- `python-samples` — sample file structure, PEP 723, documentation guidelines
+- `pull-requests` — writing PR descriptions (template) and handling/resolving PR review comments
+- `agent-framework-py-release` — Python release PR workflow, CHANGELOG-driven package bumps, lifecycle version rules, and dependency-floor validation
 
 ## Maintaining Documentation
 
@@ -36,6 +39,13 @@ team norms from a single conversation without explicit confirmation.
   match the feature-lifecycle stages documented in the
   `python-feature-lifecycle` skill.
 
+## Changelog Ownership
+
+- Individual feature, fix, documentation, and dependency PRs must not update
+  `python/CHANGELOG.md`.
+- CHANGELOG entries and release sections are assembled centrally during the
+  Python release-preparation workflow.
+
 ## Pull Request Description Guidance
 
 When preparing a PR description:
@@ -46,6 +56,17 @@ When preparing a PR description:
 ## Quick Reference
 
 Run `uv run poe` from the `python/` directory to see available commands. See [DEV_SETUP.md](DEV_SETUP.md) for detailed usage.
+
+## Function-Calling Loop Changes
+
+Changes to the Python function-calling loop, approval resume behavior, function-call history, provider
+serialization, or transport result handling must follow
+[the function-calling loop specification](../docs/specs/004-python-function-calling-loop.md). This area requires
+extra validation because small changes can duplicate side effects, orphan call/result pairs, replay stale approval
+authority, or make streaming and non-streaming behavior diverge. Update the specification and its scenario-to-test
+mapping only when the documented contract, scenario inventory, or authoritative scenario-to-test mapping materially
+changes. Adding or modifying tests that preserve existing documented behavior does not require a specification update.
+External contributors must check with the Agent Framework core team before picking up issues in this area.
 
 ## Project Structure
 
@@ -68,6 +89,8 @@ python/
 
 - `agent-framework-core` contains core abstractions and OpenAI/Azure OpenAI built-in
 - Provider packages (`foundry`, `anthropic`, etc.) extend core with specific integrations
+- The root `agent_framework` public API is lazy-loaded from `packages/core/agent_framework/__init__.py` and
+  described for type checkers in `packages/core/agent_framework/__init__.pyi`; keep both plus `__all__` in sync.
 - Core uses lazy loading via `__getattr__` in provider folders (e.g., `agent_framework/azure/`)
 
 ## Package Documentation
@@ -79,7 +102,7 @@ python/
 - [anthropic](packages/anthropic/AGENTS.md) - Anthropic Claude API
 - [bedrock](packages/bedrock/AGENTS.md) - AWS Bedrock
 - [claude](packages/claude/AGENTS.md) - Claude Agent SDK
-- [foundry_local](packages/foundry_local/AGENTS.md) - Azure AI Foundry Local
+- [foundry_local](packages/foundry_local/AGENTS.md) - Microsoft Foundry Local
 - [ollama](packages/ollama/AGENTS.md) - Local Ollama inference
 
 ### Azure Integrations
@@ -87,10 +110,13 @@ python/
 - [azure-contentunderstanding](packages/azure-contentunderstanding/AGENTS.md) - Azure Content Understanding context provider
 - [azure-ai-search](packages/azure-ai-search/AGENTS.md) - Azure AI Search RAG
 - [azure-cosmos](packages/azure-cosmos/AGENTS.md) - Azure Cosmos DB-backed history provider
-- [azurefunctions](packages/azurefunctions/AGENTS.md) - Azure Functions hosting
+
+Durable Task and Azure Functions integrations are maintained in the [Durable Agent Framework extension](https://github.com/microsoft/agent-framework-durable-extension).
 
 ### Protocols & UI
 - [a2a](packages/a2a/AGENTS.md) - Agent-to-Agent protocol
+- [hosting-a2a](packages/hosting-a2a/AGENTS.md) - A2A hosting conversion helpers
+- [hosting-mcp](packages/hosting-mcp/AGENTS.md) - MCP hosting conversion helpers
 - [ag-ui](packages/ag-ui/AGENTS.md) - AG-UI protocol
 - [chatkit](packages/chatkit/AGENTS.md) - OpenAI ChatKit integration
 - [devui](packages/devui/AGENTS.md) - Developer UI for testing
@@ -102,7 +128,6 @@ python/
 ### Infrastructure
 - [copilotstudio](packages/copilotstudio/AGENTS.md) - Microsoft Copilot Studio
 - [declarative](packages/declarative/AGENTS.md) - YAML/JSON agent definitions
-- [durabletask](packages/durabletask/AGENTS.md) - Durable execution
 - [github_copilot](packages/github_copilot/AGENTS.md) - GitHub Copilot extensions
 - [purview](packages/purview/AGENTS.md) - Data governance
 

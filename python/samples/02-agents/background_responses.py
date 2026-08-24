@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+from typing import cast
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions, OpenAIContinuationToken
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -43,7 +44,7 @@ async def non_streaming_polling() -> None:
     response = await agent.run(
         messages="Briefly explain the theory of relativity in two sentences.",
         session=session,
-        options={"background": True},
+        options=OpenAIChatOptions(background=True),
     )
 
     print(f"Initial status: continuation_token={'set' if response.continuation_token else 'None'}")
@@ -55,7 +56,7 @@ async def non_streaming_polling() -> None:
         await asyncio.sleep(2)
         response = await agent.run(
             session=session,
-            options={"continuation_token": response.continuation_token},
+            options=OpenAIChatOptions(continuation_token=cast(OpenAIContinuationToken, response.continuation_token)),
         )
         print(f"  Poll {poll_count}: continuation_token={'set' if response.continuation_token else 'None'}")
 
@@ -75,7 +76,7 @@ async def streaming_with_resumption() -> None:
         messages="Briefly list three benefits of exercise.",
         stream=True,
         session=session,
-        options={"background": True},
+        options=OpenAIChatOptions(background=True),
     )
 
     # 3. Read some chunks, then simulate an interruption.
@@ -96,7 +97,7 @@ async def streaming_with_resumption() -> None:
         stream = agent.run(
             stream=True,
             session=session,
-            options={"continuation_token": last_token},
+            options=OpenAIChatOptions(continuation_token=cast(OpenAIContinuationToken, last_token)),
         )
         async for update in stream:
             if update.text:

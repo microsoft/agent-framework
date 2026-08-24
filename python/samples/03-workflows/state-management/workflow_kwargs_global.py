@@ -31,7 +31,7 @@ Key Concepts:
 - @tool functions receive kwargs via the **kwargs parameter
 
 Prerequisites:
-- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
 - Environment variables configured
 """
 

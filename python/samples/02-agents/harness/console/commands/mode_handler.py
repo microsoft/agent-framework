@@ -59,7 +59,12 @@ class ModeCommandHandler(CommandHandler):
             # Show current mode
             from agent_framework import get_agent_mode
 
-            current = get_agent_mode(session)
+            current = get_agent_mode(
+                session,
+                source_id=self._mode_provider.source_id,
+                default_mode=self._mode_provider.default_mode,
+                available_modes=self._mode_provider.available_modes,
+            )
             ux.append_info_line(f"Current mode: {current}")
             return True
 
@@ -68,7 +73,12 @@ class ModeCommandHandler(CommandHandler):
         try:
             from agent_framework import set_agent_mode
 
-            normalized = set_agent_mode(session, new_mode)
+            normalized = set_agent_mode(
+                session,
+                new_mode,
+                source_id=self._mode_provider.source_id,
+                available_modes=self._mode_provider.available_modes,
+            )
             color = self._mode_colors.get(normalized)
             ux.set_mode(normalized, color)
             ux.append_info_line(

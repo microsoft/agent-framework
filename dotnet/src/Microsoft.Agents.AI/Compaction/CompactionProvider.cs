@@ -31,6 +31,17 @@ namespace Microsoft.Agents.AI.Compaction;
 /// via <see cref="ChatClientAgentOptions.AIContextProviders"/> or via <c>UseAIContextProviders</c>
 /// on a <see cref="ChatClientBuilder"/> or <see cref="AIAgentBuilder"/>.
 /// </para>
+/// <para>
+/// <strong>Security consideration:</strong> Adding this provider, and choosing which
+/// <see cref="CompactionStrategy"/> it applies, is entirely opt-in and developer-configured. Most
+/// strategies (e.g. truncation, sliding-window) only remove or reorder existing messages and carry no
+/// additional risk. Strategies that generate or accept externally produced replacement content are the
+/// exception: <see cref="SummarizationCompactionStrategy"/> always calls out to an LLM to produce
+/// summary content, and <see cref="ChatReducerCompactionStrategy"/> rebuilds the conversation from
+/// whatever its supplied <see cref="IChatReducer"/> returns, which may itself be
+/// backed by an external or LLM-based service. In either case, a compromised service could inject unsafe
+/// instructions that persist in chat history — see each strategy's documentation for details.
+/// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class CompactionProvider : AIContextProvider
@@ -101,6 +112,10 @@ public sealed class CompactionProvider : AIContextProvider
     /// </returns>
     protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreCompactionProvider);
+#pragma warning restore MAAI001
+
         using Activity? activity = CompactionTelemetry.ActivitySource.StartActivity(CompactionTelemetry.ActivityNames.CompactionProviderInvoke);
 
         ILoggerFactory loggerFactory = this.GetLoggerFactory(context.Agent);
@@ -135,9 +150,9 @@ public sealed class CompactionProvider : AIContextProvider
             // Treat all messages already in the index as chat history.
             foreach (var message in messageIndex.Groups.SelectMany(x => x.Messages))
             {
-                message.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+                message.AdditionalProperties ??= [];
                 message.AdditionalProperties[AgentRequestMessageSourceAttribution.AdditionalPropertiesKey] =
-                    new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName!);
+                    new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName);
             }
 
             // Update existing index with any new messages appended since the last call.
@@ -177,9 +192,9 @@ public sealed class CompactionProvider : AIContextProvider
             // Only consider messages that aren't already marked as ChatHistory and messages that weren't passed into the provider.
             if (message.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory && !messageList.Any(x => x.ContentEquals(message)))
             {
-                message.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+                message.AdditionalProperties ??= [];
                 message.AdditionalProperties[AgentRequestMessageSourceAttribution.AdditionalPropertiesKey] =
-                    new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName!);
+                    new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName);
             }
         }
 

@@ -40,8 +40,20 @@ Set the following environment variables:
 
 ### Memory Scoping
 
-The Mem0 context provider supports scoping via identifiers:
+The Mem0 context provider keeps the **storage scope** and the **retrieval scope** separate.
+
+Storage scope — stamped onto every memory that is written:
 
 - **User scope** (`user_id`): Associate memories with a specific user, shared across all sessions
 - **Agent scope** (`agent_id`): Isolate memories per agent persona
-- **Application scope** (`application_id`): Associate memories with an application context
+- **Application scope** (`application_id`): Associate memories with an application context (Platform client only)
+
+Retrieval scope — used when searching for memories to inject into the context:
+
+- `search_user_id`, `search_agent_id`, `search_application_id`
+
+Retrieval scope values **never** inherit from the storage scope. If none of the `search_*`
+values are set, no memories are retrieved and a warning is logged. This is deliberate: a memory
+written under an `agent_id` shared by many users must not be read back for every user. Set
+`search_user_id` for per-user memory, and only set `search_agent_id` when the agent's memories
+are safe to share across all of its users.

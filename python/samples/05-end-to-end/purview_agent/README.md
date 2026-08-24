@@ -17,7 +17,7 @@ This getting-started sample shows how to attach Microsoft Purview policy evaluat
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint, for example `https://<resource>.services.ai.azure.com/api/projects/<project>` |
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Microsoft Foundry project endpoint, for example `https://<resource>.services.ai.azure.com/api/projects/<project>` |
 | `FOUNDRY_MODEL` | Optional | Model deployment name (defaults to `gpt-4o-mini`) |
 | `PURVIEW_CLIENT_APP_ID` | Yes* | Client (application) ID used for Purview authentication |
 | `PURVIEW_USE_CERT_AUTH` | Optional (`true`/`false`) | Switch between certificate and interactive auth |

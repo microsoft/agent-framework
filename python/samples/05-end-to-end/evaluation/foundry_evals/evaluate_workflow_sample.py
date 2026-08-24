@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Evaluate a multi-agent workflow using Azure AI Foundry evaluators.
+"""Evaluate a multi-agent workflow using Microsoft Foundry evaluators.
 
 This sample demonstrates three patterns:
 1. Post-hoc: Run the workflow, then evaluate the result you already have.
@@ -11,7 +11,7 @@ Patterns 1 & 2 return a list of results (one per provider), each with a per-agen
 breakdown in sub_results so you can identify which agent is underperforming.
 
 Prerequisites:
-- An Azure AI Foundry project with a deployed model
+- A Microsoft Foundry project with a deployed model
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
 """
 
@@ -186,7 +186,7 @@ if __name__ == "__main__":
 
 
 """
-Sample output (with actual Azure AI Foundry project):
+Sample output (with actual Microsoft Foundry project):
 
 ============================================================
 Pattern 1: Post-hoc workflow evaluation

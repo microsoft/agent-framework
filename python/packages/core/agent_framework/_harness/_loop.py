@@ -9,7 +9,8 @@ going. It serves two common patterns through a single configurable class:
 1. A user-supplied ``should_continue`` predicate - for example, keep looping while a response does
    not yet contain a completion marker, while a :class:`~agent_framework.TodoProvider` still has
    open items, or while a :class:`~agent_framework.BackgroundAgentsProvider` still has running
-   tasks (see the :func:`todos_remaining` and :func:`background_tasks_running` helpers). The loop
+   tasks (see the :func:`todos_remaining` and :func:`background_tasks_running` helpers, which resolve
+   their provider from the running agent). The loop
    can track a **feedback log** across iterations (``record_feedback``): each pass contributes an
    entry that is exposed to every callback via the ``progress`` keyword and (by default) injected
    into the next iteration's input. Set ``fresh_context=True`` to restart each pass from the
@@ -33,8 +34,10 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from pydantic import BaseModel, Field
 from typing_extensions import Self
 
+from .._agents import _LOOP_ITERATION_TOKEN_KEY  # pyright: ignore[reportPrivateUsage] -- shared loop-turn marker, see _agents.py
 from .._feature_stage import ExperimentalFeature, experimental
 from .._middleware import AgentContext, AgentMiddleware, MiddlewareTermination
+from .._sessions import SessionContext
 from .._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -53,7 +56,9 @@ __all__ = [
     "AgentLoopMiddleware",
     "JudgeVerdict",
     "background_tasks_running",
+    "background_tasks_running_message",
     "todos_remaining",
+    "todos_remaining_message",
 ]
 
 DEFAULT_NEXT_MESSAGE = "Continue working on the task. If it is complete, say so."
@@ -361,8 +366,22 @@ class AgentLoopMiddleware(AgentMiddleware):
         why its previous answer was judged incomplete. See :meth:`__init__` for the full meaning of
         each argument.
 
+        Security considerations:
+            Using a judge is an explicit opt-in — the caller must supply a ``judge_client`` — and
+            introduces a second external LLM boundary in addition to the agent's own model. On every
+            iteration the judge is sent the original request and the agent's latest response, both of
+            which may contain sensitive or untrusted content. A compromised or malicious judge
+            endpoint could exfiltrate that data, or return a manipulated :class:`JudgeVerdict` / gap
+            analysis that is fed back into the loop as feedback, potentially steering the agent via
+            indirect prompt injection. Only configure a ``judge_client`` that points at a service you
+            trust as much as the primary model.
+
         Args:
             judge_client: Chat client used to judge whether the original request was answered.
+                **Security:** this client is sent the original request and the agent's latest
+                response on every iteration, so only point it at a service you trust as much as the
+                primary model — see the security considerations above for the exfiltration and
+                prompt-injection risks of an untrusted judge.
 
         Keyword Args:
             criteria: Optional list of criteria the response must satisfy. When provided, they are
@@ -421,6 +440,25 @@ class AgentLoopMiddleware(AgentMiddleware):
             await self._process_non_streaming(context, call_next, original_messages, snapshot)
 
     @staticmethod
+    def _has_pending_approval_request(result: AgentResponse | None) -> bool:
+        """Return ``True`` if ``result`` carries a pending tool-approval request.
+
+        When the loop sits outermost (e.g. around a tool-approval middleware), an iteration may
+        return a response that asks the caller to approve a tool call rather than a completed turn.
+        In that case the loop must stop and hand the response back so a human can approve, instead
+        of continuing or injecting the next message. This mirrors the C# ``LoopAgent`` escape hatch
+        (``HasPendingApprovalRequests``). A pending request is any content whose ``type`` is
+        ``"function_approval_request"``.
+        """
+        if result is None:
+            return False
+        return any(
+            getattr(content, "type", None) == "function_approval_request"
+            for message in result.messages
+            for content in message.contents
+        )
+
+    @staticmethod
     def _restore_session(session: Any, snapshot: dict[str, Any]) -> None:
         """Restore a session in place to a previously captured ``to_dict()`` snapshot.
 
@@ -435,6 +473,35 @@ class AgentLoopMiddleware(AgentMiddleware):
         restored = AgentSession.from_dict(snapshot)
         session.service_session_id = restored.service_session_id
         session.state = restored.state
+
+    async def _fire_turn_scoped_after_providers(
+        self,
+        context: AgentContext,
+        response: AgentResponse | None,
+        input_messages: list[Message],
+    ) -> None:
+        """Fire deferred ``after_run`` for turn-scoped providers at the loop boundary.
+
+        Iterations suppress providers that set ``after_run_once_per_turn``; the
+        loop runs them here once, with the turn-level response.
+        """
+        agent = context.agent
+        run_after = getattr(agent, "_run_after_providers", None)
+        if response is None or run_after is None:
+            return
+        if not any(
+            getattr(provider, "after_run_once_per_turn", False)
+            for provider in getattr(agent, "context_providers", [])
+        ):
+            return
+        session_context = SessionContext(
+            session_id=context.session.session_id if context.session else None,
+            service_session_id=context.session.service_session_id if context.session else None,
+            input_messages=list(input_messages),
+            options=dict(context.options or {}),
+        )
+        session_context._response = response  # pyright: ignore[reportPrivateUsage] -- this loop owns the SessionContext it just built
+        await run_after(session=context.session, context=session_context, only_per_turn=True)
 
     async def _process_non_streaming(
         self,
@@ -451,48 +518,45 @@ class AgentLoopMiddleware(AgentMiddleware):
         aggregated: list[Message] = []
         aggregated_usage: UsageDetails | None = None
         final_result: AgentResponse | None = None
-        while True:
-            await call_next()
-            iteration += 1
+        stamped_options = dict(context.options) if context.options is not None else {}
+        stamped_options[_LOOP_ITERATION_TOKEN_KEY] = object()
+        context.options = stamped_options
+        try:
+            while True:
+                await call_next()
+                iteration += 1
 
-            result = context.result
-            if not isinstance(result, AgentResponse):
-                raise TypeError(
-                    "AgentLoopMiddleware expected an AgentResponse from a non-streaming run, "
-                    f"got {type(result).__name__}."
+                result = context.result
+                if not isinstance(result, AgentResponse):
+                    raise TypeError(
+                        "AgentLoopMiddleware expected an AgentResponse from a non-streaming run, "
+                        f"got {type(result).__name__}."
+                    )
+
+                final_result = result
+                aggregated.extend(result.messages)
+                if result.usage_details is not None:
+                    aggregated_usage = add_usage_details(aggregated_usage, result.usage_details)
+
+                # Escape hatch: if this iteration is asking for tool approval, stop and return the
+                # response so the caller can approve, instead of continuing or injecting next_message.
+                if self._has_pending_approval_request(result):
+                    break
+
+                messages_used = context.messages
+                loop_kwargs = self._build_loop_kwargs(
+                    context=context,
+                    iteration=iteration,
+                    last_result=result,
+                    messages_used=messages_used,
+                    original_messages=original_messages,
+                    progress=progress,
                 )
 
-            final_result = result
-            aggregated.extend(result.messages)
-            if result.usage_details is not None:
-                aggregated_usage = add_usage_details(aggregated_usage, result.usage_details)
-
-            messages_used = context.messages
-            loop_kwargs = self._build_loop_kwargs(
-                context=context,
-                iteration=iteration,
-                last_result=result,
-                messages_used=messages_used,
-                original_messages=original_messages,
-                progress=progress,
-            )
-
-            work_iterations += 1
-            # Decide whether to stop and capture any feedback from should_continue first, so the
-            # feedback is available to both the progress and next-message callables this iteration.
-            stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
-            loop_kwargs = self._build_loop_kwargs(
-                context=context,
-                iteration=iteration,
-                last_result=result,
-                messages_used=messages_used,
-                original_messages=original_messages,
-                progress=progress,
-                feedback=feedback,
-            )
-            # Capture this iteration's progress entry, then refresh loop_kwargs so the next-message
-            # resolution sees the latest entry.
-            if await self._record_progress(result, loop_kwargs, progress):
+                work_iterations += 1
+                # Decide whether to stop and capture any feedback from should_continue first, so the
+                # feedback is available to both the progress and next-message callables this iteration.
+                stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
                 loop_kwargs = self._build_loop_kwargs(
                     context=context,
                     iteration=iteration,
@@ -502,18 +566,37 @@ class AgentLoopMiddleware(AgentMiddleware):
                     progress=progress,
                     feedback=feedback,
                 )
-            if stop:
-                break
-            if snapshot is not None and context.session is not None:
-                # Reset the session to the pre-loop baseline so the next run starts fresh; only the
-                # progress log (injected by _resolve_next_message) carries continuity forward.
-                self._restore_session(context.session, snapshot)
-            next_messages = await self._resolve_next_message(loop_kwargs, messages_used, original_messages)
-            context.messages = next_messages
-            aggregated.extend(next_messages)
+                # Capture this iteration's progress entry, then refresh loop_kwargs so the next-message
+                # resolution sees the latest entry.
+                if await self._record_progress(result, loop_kwargs, progress):
+                    loop_kwargs = self._build_loop_kwargs(
+                        context=context,
+                        iteration=iteration,
+                        last_result=result,
+                        messages_used=messages_used,
+                        original_messages=original_messages,
+                        progress=progress,
+                        feedback=feedback,
+                    )
+                if stop:
+                    break
+                if snapshot is not None and context.session is not None:
+                    # Reset the session to the pre-loop baseline so the next run starts fresh; only the
+                    # progress log (injected by _resolve_next_message) carries continuity forward.
+                    self._restore_session(context.session, snapshot)
+                next_messages = await self._resolve_next_message(loop_kwargs, messages_used, original_messages)
+                context.messages = next_messages
+                aggregated.extend(next_messages)
+        finally:
+            context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
         if not self.return_final_only:
             context.result = self._aggregate_response(final_result, aggregated, aggregated_usage)
+        await self._fire_turn_scoped_after_providers(
+            context,
+            context.result if isinstance(context.result, AgentResponse) else final_result,
+            original_messages,
+        )
 
     def _process_streaming(
         self,
@@ -530,54 +613,52 @@ class AgentLoopMiddleware(AgentMiddleware):
             iteration = 0
             work_iterations = 0
             progress: list[str] = []
-            while True:
-                try:
-                    await call_next()
-                    inner = context.result
-                    if not isinstance(inner, ResponseStream):
-                        raise TypeError(
-                            "AgentLoopMiddleware expected a ResponseStream from a streaming run, "
-                            f"got {type(inner).__name__}."
-                        )
+            stamped_options = dict(context.options) if context.options is not None else {}
+            stamped_options[_LOOP_ITERATION_TOKEN_KEY] = object()
+            context.options = stamped_options
+            try:
+                while True:
+                    try:
+                        await call_next()
+                        inner = context.result
+                        if not isinstance(inner, ResponseStream):
+                            raise TypeError(
+                                "AgentLoopMiddleware expected a ResponseStream from a streaming run, "
+                                f"got {type(inner).__name__}."
+                            )
 
-                    async for update in inner:
-                        yield update
+                        async for update in inner:
+                            yield update
 
-                    holder["final"] = await inner.get_final_response()
-                except MiddlewareTermination:
-                    # The pipeline's MiddlewareTermination suppression is no longer active once
-                    # process() has returned (the stream is consumed lazily), so a termination
-                    # raised by a downstream middleware or during stream consumption surfaces here.
-                    # Stop cleanly and keep whatever final response we have from a prior iteration.
-                    return
+                        holder["final"] = await inner.get_final_response()
+                    except MiddlewareTermination:
+                        # The pipeline's MiddlewareTermination suppression is no longer active once
+                        # process() has returned (the stream is consumed lazily), so a termination
+                        # raised by a downstream middleware or during stream consumption surfaces here.
+                        # Stop cleanly and keep whatever final response we have from a prior iteration.
+                        return
 
-                iteration += 1
+                    iteration += 1
 
-                messages_used = context.messages
-                final = holder["final"]
-                loop_kwargs = self._build_loop_kwargs(
-                    context=context,
-                    iteration=iteration,
-                    last_result=final,
-                    messages_used=messages_used,
-                    original_messages=original_messages,
-                    progress=progress,
-                )
+                    messages_used = context.messages
+                    final = holder["final"]
+                    # Escape hatch: if this iteration is asking for tool approval, stop the loop and
+                    # let the caller approve, instead of continuing or injecting next_message.
+                    if self._has_pending_approval_request(final):
+                        return
+                    loop_kwargs = self._build_loop_kwargs(
+                        context=context,
+                        iteration=iteration,
+                        last_result=final,
+                        messages_used=messages_used,
+                        original_messages=original_messages,
+                        progress=progress,
+                    )
 
-                work_iterations += 1
-                # Decide whether to stop and capture any feedback from should_continue first, so the
-                # feedback is available to both the progress and next-message callables this iteration.
-                stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
-                loop_kwargs = self._build_loop_kwargs(
-                    context=context,
-                    iteration=iteration,
-                    last_result=final,
-                    messages_used=messages_used,
-                    original_messages=original_messages,
-                    progress=progress,
-                    feedback=feedback,
-                )
-                if await self._record_progress(final, loop_kwargs, progress):
+                    work_iterations += 1
+                    # Decide whether to stop and capture any feedback from should_continue first, so the
+                    # feedback is available to both the progress and next-message callables this iteration.
+                    stop, feedback = await self._evaluate_stop(loop_kwargs, work_iterations)
                     loop_kwargs = self._build_loop_kwargs(
                         context=context,
                         iteration=iteration,
@@ -587,20 +668,33 @@ class AgentLoopMiddleware(AgentMiddleware):
                         progress=progress,
                         feedback=feedback,
                     )
-                if stop:
-                    return
-                if snapshot is not None and context.session is not None:
-                    # Reset the session to the pre-loop baseline before the next run. The final
-                    # response was already awaited above, so the service-side conversation id has
-                    # been propagated and is safe to discard here.
-                    self._restore_session(context.session, snapshot)
-                next_messages = await self._resolve_next_message(loop_kwargs, messages_used, original_messages)
-                context.messages = next_messages
-                # Surface the injected "nudge" messages in the stream so consumers see the user
-                # turns that drive each subsequent iteration (the equivalent of the aggregated
-                # transcript that non-streaming runs return).
-                for message in next_messages:
-                    yield self._message_to_update(message)
+                    if await self._record_progress(final, loop_kwargs, progress):
+                        loop_kwargs = self._build_loop_kwargs(
+                            context=context,
+                            iteration=iteration,
+                            last_result=final,
+                            messages_used=messages_used,
+                            original_messages=original_messages,
+                            progress=progress,
+                            feedback=feedback,
+                        )
+                    if stop:
+                        return
+                    if snapshot is not None and context.session is not None:
+                        # Reset the session to the pre-loop baseline before the next run. The final
+                        # response was already awaited above, so the service-side conversation id has
+                        # been propagated and is safe to discard here.
+                        self._restore_session(context.session, snapshot)
+                    next_messages = await self._resolve_next_message(loop_kwargs, messages_used, original_messages)
+                    context.messages = next_messages
+                    # Surface the injected "nudge" messages in the stream so consumers see the user
+                    # turns that drive each subsequent iteration (the equivalent of the aggregated
+                    # transcript that non-streaming runs return).
+                    for message in next_messages:
+                        yield self._message_to_update(message)
+            finally:
+                context.options.pop(_LOOP_ITERATION_TOKEN_KEY, None)
+                await self._fire_turn_scoped_after_providers(context, holder["final"], original_messages)
 
         def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
             if holder["final"] is not None:
@@ -748,49 +842,180 @@ class AgentLoopMiddleware(AgentMiddleware):
         return list(next_msgs)
 
 
-def todos_remaining(provider: Any) -> ShouldContinueCallable:
-    """Build a ``should_continue`` predicate that loops while a ``TodoProvider`` has open items.
+def _running_background_tasks(session: Any, agent: Any) -> list[Any]:
+    """Return the still-running ``BackgroundTaskInfo`` entries for the agent's provider.
 
-    Args:
-        provider: A :class:`~agent_framework.TodoProvider` attached to the same session as the loop.
-
-    Returns:
-        A predicate suitable for :class:`AgentLoopMiddleware`'s ``should_continue`` argument.
+    Resolves the :class:`~agent_framework.BackgroundAgentsProvider` from the running agent
+    (``agent.context_providers``) and reads its persisted task state. Returns an empty list when the
+    session/agent/provider is unavailable or no task is currently running.
     """
+    from ._background_agents import BackgroundAgentsProvider, BackgroundTaskInfo, BackgroundTaskStatus
 
-    async def _should_continue(*, session: Any = None, **kwargs: Any) -> bool:
-        if session is None:
-            return False
-        items = await provider.store.load_items(session, source_id=provider.source_id)
-        return any(not item.is_complete for item in items)
+    if session is None or agent is None:
+        return []
+    provider = _resolve_context_provider(agent, BackgroundAgentsProvider)
+    if provider is None:
+        return []
+    state = session.state.get(provider.source_id)
+    if not state:
+        return []
+    tasks = [BackgroundTaskInfo.from_dict(task) for task in state.get("tasks", [])]
+    return [task for task in tasks if task.status == BackgroundTaskStatus.RUNNING]
 
-    return _should_continue
 
+def background_tasks_running() -> ShouldContinueCallable:
+    """Build a ``should_continue`` predicate that loops while the agent's background tasks are busy.
 
-def background_tasks_running(provider: Any) -> ShouldContinueCallable:
-    """Build a ``should_continue`` predicate that loops while a ``BackgroundAgentsProvider`` is busy.
+    This resolves the :class:`~agent_framework.BackgroundAgentsProvider` from the running agent
+    (``agent.context_providers``).
 
     The predicate inspects the provider's persisted task state and continues while any task is still
     marked as running. Pair it with ``max_iterations`` so the loop is guaranteed to stop even if a
     task's persisted status is never refreshed.
 
-    Args:
-        provider: A :class:`~agent_framework.BackgroundAgentsProvider` attached to the same session
-            as the loop.
-
     Returns:
-        A predicate suitable for :class:`AgentLoopMiddleware`'s ``should_continue`` argument.
+        A predicate suitable for :class:`AgentLoopMiddleware`'s ``should_continue`` argument (and for
+        ``create_harness_agent``'s ``loop_should_continue``).
     """
-    from ._background_agents import BackgroundTaskInfo, BackgroundTaskStatus
 
-    def _should_continue(*, session: Any = None, **kwargs: Any) -> bool:
-        if session is None:
-            return False
-        state = session.state.get(provider.source_id)
-        if not state:
-            return False
-        return any(
-            BackgroundTaskInfo.from_dict(task).status == BackgroundTaskStatus.RUNNING for task in state.get("tasks", [])
-        )
+    def _should_continue(*, session: Any = None, agent: Any = None, **kwargs: Any) -> bool:
+        return bool(_running_background_tasks(session, agent))
 
     return _should_continue
+
+
+def background_tasks_running_message(*, session: Any = None, agent: Any = None, **kwargs: Any) -> str | None:
+    """``next_message`` callable that reminds the agent which background tasks are still running.
+
+    Designed to pair with :func:`background_tasks_running` as a loop's ``next_message`` (e.g.
+    ``create_harness_agent``'s ``loop_next_message``): between iterations it resolves the
+    :class:`~agent_framework.BackgroundAgentsProvider` from the agent, lists the still-running tasks,
+    and instructs the agent to wait for them to finish (and retrieve their results) before finishing.
+
+    Returns ``None`` when the session/agent/provider is unavailable or no task is running. In that
+    case the loop's default ``next_message`` handling applies. In normal looping a ``None`` here is
+    rare, since "no running tasks" also makes :func:`background_tasks_running` stop the loop before
+    the next message is consulted.
+    """
+    running = _running_background_tasks(session, agent)
+    if not running:
+        return None
+    task_lines = "\n".join(f"- #{task.id} ({task.agent_name}): {task.description}" for task in running)
+    return (
+        f"You still have {len(running)} background task(s) running that must finish before you can "
+        f"complete the work:\n{task_lines}\n\n"
+        "Wait for these tasks to complete, retrieve their results, and incorporate them. Only stop "
+        "once every background task has finished."
+    )
+
+
+def _resolve_context_provider(agent: Any, provider_type: type) -> Any:
+    """Return the first ``provider_type`` instance on ``agent.context_providers`` (or ``None``).
+
+    The harness exposes its built-in context providers (``TodoProvider``, ``AgentModeProvider``,
+    ...) on ``agent.context_providers``, so loop callbacks can reuse the same instances that
+    :func:`~agent_framework.create_harness_agent` wired up instead of constructing their own.
+    """
+    return next(
+        (provider for provider in getattr(agent, "context_providers", []) if isinstance(provider, provider_type)),
+        None,
+    )
+
+
+def todos_remaining(*, looping_modes: Sequence[str] | None = None) -> ShouldContinueCallable:
+    """Build a ``should_continue`` predicate that loops while the Agent's ``TodoProvider`` has open items.
+
+    This resolves the :class:`~agent_framework.TodoProvider` from the running agent
+    (``agent.context_providers``) rather than taking it as an argument, so it can be used directly
+    with :func:`~agent_framework.create_harness_agent` (whose providers are built internally) as well
+    as with any agent that registers a ``TodoProvider`` via ``context_providers``. It is the Python
+    counterpart of the .NET ``TodoCompletionLoopEvaluator``.
+
+    Args:
+        looping_modes: When provided, the loop only continues while the agent's current operating
+            mode (read from its :class:`~agent_framework.AgentModeProvider`) is one of these modes;
+            in any other mode the predicate returns ``False`` so the agent stays interactive. Mode
+            matching is case-insensitive. When ``None`` (default), the loop applies in every mode. An
+            empty sequence is rejected (there would be no mode in which the loop could ever run).
+            Restricting looping to certain modes is useful when, for example, the agent has a planning
+            and execution mode, and you only want to loop on the execution mode until all todos are
+            complete.  Looping until completion in planning is usually undesirable since the agent is
+            still building the list of todos to complete.
+
+    Returns:
+        A predicate suitable for :class:`AgentLoopMiddleware`'s ``should_continue`` argument (and for
+        ``create_harness_agent``'s ``loop_should_continue``).
+
+    Raises:
+        ValueError: ``looping_modes`` is an empty sequence.
+    """
+    if looping_modes is not None:
+        allowed_modes: set[str] | None = {mode.strip().lower() for mode in looping_modes}
+        if not allowed_modes:
+            raise ValueError("looping_modes must be None or a non-empty sequence of mode names.")
+    else:
+        allowed_modes = None
+
+    async def _should_continue(*, session: Any = None, agent: Any = None, **kwargs: Any) -> bool:
+        from ._mode import AgentModeProvider, get_agent_mode
+        from ._todo import TodoProvider
+
+        if session is None or agent is None:
+            return False
+
+        if allowed_modes is not None:
+            mode_provider = _resolve_context_provider(agent, AgentModeProvider)
+            if mode_provider is not None:
+                current_mode = get_agent_mode(
+                    session,
+                    source_id=mode_provider.source_id,
+                    default_mode=mode_provider.default_mode,
+                    available_modes=mode_provider.available_modes,
+                )
+            else:
+                current_mode = get_agent_mode(session)
+            if current_mode.strip().lower() not in allowed_modes:
+                return False
+
+        todo_provider = _resolve_context_provider(agent, TodoProvider)
+        if todo_provider is None:
+            return False
+        items = await todo_provider.store.load_items(session, source_id=todo_provider.source_id)
+        return any(not item.is_complete for item in items)
+
+    return _should_continue
+
+
+async def todos_remaining_message(*, session: Any = None, agent: Any = None, **kwargs: Any) -> str | None:
+    """``next_message`` callable that reminds the agent which todos are still open.
+
+    Designed to pair with :func:`todos_remaining` as a loop's ``next_message`` (e.g.
+    ``create_harness_agent``'s ``loop_next_message``): between iterations it resolves the harness
+    :class:`~agent_framework.TodoProvider` from the agent, lists the still-open todo items, and
+    instructs the agent to complete them all before finishing.
+
+    Returns ``None`` when the session/agent/provider is unavailable or no todos are open. In that
+    case the loop's default ``next_message`` handling applies: with ``fresh_context=False`` (the
+    default, used by ``create_harness_agent``) it reuses the previous iteration's messages verbatim
+    (skipping progress injection); only with ``fresh_context=True`` does it fall back to
+    ``DEFAULT_NEXT_MESSAGE``. In normal looping a ``None`` here is rare, since "no open todos" also
+    makes :func:`todos_remaining` stop the loop before the next message is consulted.
+    """
+    from ._todo import TodoProvider
+
+    if session is None or agent is None:
+        return None
+    todo_provider = _resolve_context_provider(agent, TodoProvider)
+    if todo_provider is None:
+        return None
+    items = await todo_provider.store.load_items(session, source_id=todo_provider.source_id)
+    open_items = [item for item in items if not item.is_complete]
+    if not open_items:
+        return None
+    todo_lines = "\n".join(f"- {item.title}" for item in open_items)
+    return (
+        f"You still have {len(open_items)} open todo item(s) that must be addressed before you can "
+        f"finish:\n{todo_lines}\n\n"
+        "Continue working through them now. Mark each todo complete as you finish it, and only stop "
+        "once every todo item is complete."
+    )

@@ -168,7 +168,7 @@ def _prepare_prompt_agent_options(
         ToolChoiceAllowed,
         ToolChoiceFunction,
     )
-    from openai.lib._parsing._responses import (  # type: ignore[reportPrivateImportUsage]
+    from openai.lib._parsing._responses import (
         type_to_text_format_param,
     )
     from pydantic import BaseModel
@@ -320,4 +320,4 @@ def _validate_mapping_tool(tool_item: Mapping[str, Any]) -> Tool:
     # ``_deserialize`` is the SDK's discriminator-aware entry point. It is marked
     # protected by convention but is the standard way to rehydrate polymorphic
     # azure-sdk-for-python models from a raw mapping.
-    return cast("Tool", ProjectsTool._deserialize(dict(tool_item), []))  # type: ignore[no-untyped-call]  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType]
+    return cast("Tool", ProjectsTool._deserialize(dict(tool_item), []))  # type: ignore[no-untyped-call]
