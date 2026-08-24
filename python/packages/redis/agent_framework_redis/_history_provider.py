@@ -9,7 +9,6 @@ This module provides ``RedisHistoryProvider``, built on the new
 from __future__ import annotations
 
 from collections.abc import Sequence
-from contextlib import suppress
 from typing import Any, ClassVar
 
 import redis.asyncio as redis
@@ -116,7 +115,8 @@ class RedisHistoryProvider(HistoryProvider):
     # injective no matter which bytes the source/session ids carry; any fixed
     # separator can be smuggled inside an opaque id and collide two sessions.
     # Sessions written before source_id scoping live under
-    # "<key_prefix>:<session_id>" and migrate lazily on first read.
+    # "<key_prefix>:<session_id>"; reads merge that legacy list in place and
+    # writes only ever touch the scoped key, so upgrading never moves data.
 
     def _redis_key(self, session_id: str | None) -> str:
         """Get the Redis key for a given session's messages."""
@@ -147,16 +147,16 @@ class RedisHistoryProvider(HistoryProvider):
         mark_feature_used(FeatureIndex.REDIS)
         key = self._redis_key(session_id)
         redis_messages: list[str] = await self._redis_client.lrange(key, 0, -1)  # type: ignore[misc]
-        if not redis_messages:
-            # Lazy migration: a session last written with the pre-scoping key
-            # layout moves under its new key on first read. renamenx keeps this
-            # atomic and no-ops if a concurrent write already landed there; the
-            # legacy list then stays put and remains clearable via clear().
-            legacy_key = self._legacy_redis_key(session_id)
-            if legacy_key != key and await self._redis_client.exists(legacy_key):
-                with suppress(Exception):  # a legacy key that vanished mid-read is a no-op
-                    await self._redis_client.renamenx(legacy_key, key)
-                redis_messages = await self._redis_client.lrange(key, 0, -1)  # type: ignore[misc]
+        legacy_key = self._legacy_redis_key(session_id)
+        if legacy_key != key:
+            # Sessions last written before source_id scoping stay readable in
+            # place: the merged view is the legacy list followed by the scoped
+            # one, since new writes only ever land on the scoped key. The legacy
+            # key is never renamed or deleted on this path; an upgrade cannot
+            # fork history, and removing the old key is an explicit admin call.
+            legacy_messages: list[str] = await self._redis_client.lrange(legacy_key, 0, -1)  # type: ignore[misc]
+            if legacy_messages:
+                redis_messages = [*legacy_messages, *redis_messages]
         messages: list[Message] = []
         if redis_messages:
             for serialized in redis_messages:  # type: ignore[union-attr]
@@ -186,8 +186,7 @@ class RedisHistoryProvider(HistoryProvider):
         if self.max_messages == 0:
             # Retention is disabled. Trimming cannot express this - LTRIM key 0 -1 keeps
             # the whole list - so return before serializing: no payload reaches Redis, an
-            # AOF or a replica. Stored history is deliberately left alone. _redis_key omits
-            # source_id, so the list can belong to a co-located provider, and removing
+            # AOF, or a replica. Stored history is deliberately left alone; removing
             # stored history is what clear() is for.
             return
 
@@ -221,10 +220,14 @@ class RedisHistoryProvider(HistoryProvider):
     async def clear(self, session_id: str | None) -> None:
         """Clear all messages for a session.
 
+        Only the scoped key is deleted. A pre-scoping legacy list belongs to
+        whichever sources shared it, so it is left for an explicit admin
+        cleanup rather than being removed by one source's clear().
+
         Args:
             session_id: The session ID to clear messages for.
         """
-        await self._redis_client.delete(self._redis_key(session_id), self._legacy_redis_key(session_id))
+        await self._redis_client.delete(self._redis_key(session_id))
 
     async def aclose(self) -> None:
         """Close the Redis connection."""
