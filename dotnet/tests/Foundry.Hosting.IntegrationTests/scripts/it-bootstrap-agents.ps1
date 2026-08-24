@@ -53,6 +53,8 @@ $Scenarios = @(
     'session-files',
     'agent-skills',
     'user-identity',
+    'resilient-workflow',
+    'steerable-long-running',
     'unsupported-protocol'
 )
 
