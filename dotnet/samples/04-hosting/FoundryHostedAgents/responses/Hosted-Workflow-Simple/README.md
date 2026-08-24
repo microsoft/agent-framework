@@ -206,3 +206,9 @@ azd ai agent invoke --new-conversation "Hello!"
 ```
 
 For the full hosted-agent deployment guide, see the [official source-code deployment doc](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent-code).
+
+## Related samples
+
+- [Hosted-Workflow-Resilient](../Hosted-Workflow-Resilient/README.md): adds resilient background execution to a model-backed workflow.
+- [Hosted-Workflow-Resilient-Long-Running](../Hosted-Workflow-Resilient-Long-Running/README.md): deterministic countdown recovery with exact output validation.
+- [Hosted-Workflow-Handoff](../Hosted-Workflow-Handoff/README.md): routes work between multiple specialized agents.

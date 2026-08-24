@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-08-21
+
+### Added
+- **agent-framework-ag-ui**, **agent-framework-openai**: Add optional A2UI support for agent-generated interfaces and preserve streaming tool-call indices for A2UI consumers ([#7423](https://github.com/microsoft/agent-framework/pull/7423))
+- **agent-framework-core**: Add `MiddlewareFailure` as a first-class fatal signal for function middleware ([#7562](https://github.com/microsoft/agent-framework/pull/7562))
+- **agent-framework-core**, **agent-framework-azure-cosmos**: Add a process-wide workflow checkpoint type registry, register Cosmos checkpoint state types, and declare the compatibility dependency required by the supported Cosmos SDK floor ([#7636](https://github.com/microsoft/agent-framework/pull/7636))
+- **agent-framework-core**, **agent-framework-foundry-hosting**: Add steering, retry, and recovery support for resilient Foundry Hosted Agents, with long-running workflow samples ([#7670](https://github.com/microsoft/agent-framework/pull/7670))
+- **samples**: Add the production-ready installment of the build-your-own-claw harness sample ([#7698](https://github.com/microsoft/agent-framework/pull/7698))
+
+### Changed
+- **agent-framework-ag-ui**, **agent-framework-core**: [BREAKING] Consolidate OpenTelemetry GenAI semantic-convention support around stable and experimental modes with explicit message-event controls ([#7673](https://github.com/microsoft/agent-framework/pull/7673))
+- **agent-framework-ag-ui**: Align run continuity and avoid emitting unchanged predictive state snapshots ([#7662](https://github.com/microsoft/agent-framework/pull/7662), [#7766](https://github.com/microsoft/agent-framework/pull/7766))
+- **agent-framework-core**: Defer turn-scoped `after_run` context providers to the agent-loop boundary ([#7289](https://github.com/microsoft/agent-framework/pull/7289))
+- **agent-framework-ag-ui**, **agent-framework-core**, **agent-framework-declarative**: Persist approval state and distinguish absent values from falsey approval data ([#7631](https://github.com/microsoft/agent-framework/pull/7631))
+- **agent-framework-devui**: Forward `function_invocation_kwargs` through DevUI agent runs ([#7779](https://github.com/microsoft/agent-framework/pull/7779))
+- **agent-framework-core**, **samples**: Clarify skill script arguments and MCP tool argument-filtering behavior ([#7695](https://github.com/microsoft/agent-framework/pull/7695), [#7801](https://github.com/microsoft/agent-framework/pull/7801))
+- **tests**: Update uv, Ruff, mypy, ty, Flit, and the root build-system dependency range ([#7644](https://github.com/microsoft/agent-framework/pull/7644), [#7645](https://github.com/microsoft/agent-framework/pull/7645), [#7780](https://github.com/microsoft/agent-framework/pull/7780), [#7781](https://github.com/microsoft/agent-framework/pull/7781), [#7782](https://github.com/microsoft/agent-framework/pull/7782), [#7783](https://github.com/microsoft/agent-framework/pull/7783), [#7784](https://github.com/microsoft/agent-framework/pull/7784))
+- **docs**: Clarify PR review resolution and pin the Agent Lightning installation documentation link ([#7746](https://github.com/microsoft/agent-framework/pull/7746), [#7693](https://github.com/microsoft/agent-framework/pull/7693))
+
+### Fixed
+- **agent-framework-a2a**, **agent-framework-core**, **agent-framework-orchestrations**: Preserve and normalize A2A inputs when used through orchestrations ([#7761](https://github.com/microsoft/agent-framework/pull/7761))
+- **agent-framework-ag-ui**: Preserve tool-message IDs, URL-source attachments, and JSON workflow resume payloads ([#7510](https://github.com/microsoft/agent-framework/pull/7510), [#7655](https://github.com/microsoft/agent-framework/pull/7655), [#7684](https://github.com/microsoft/agent-framework/pull/7684))
+- **agent-framework-anthropic**, **agent-framework-core**: Preserve structured instructions when merging chat options ([#7730](https://github.com/microsoft/agent-framework/pull/7730))
+- **agent-framework-core**: Preserve all fan-in trace contexts and restrict workflow type deserialization ([#7557](https://github.com/microsoft/agent-framework/pull/7557), [#7500](https://github.com/microsoft/agent-framework/pull/7500))
+- **agent-framework-core**: Avoid remote MCP tool-name shadowing while retaining the documented argument allowlist ([#7799](https://github.com/microsoft/agent-framework/pull/7799))
+- **agent-framework-core**: Always emit an arguments field for zero-argument tool calls in Foundry evaluations ([#7734](https://github.com/microsoft/agent-framework/pull/7734))
+- **agent-framework-core**, **agent-framework-github-copilot**: Forward telemetry configuration to the GitHub Copilot client ([#7625](https://github.com/microsoft/agent-framework/pull/7625))
+- **agent-framework-core**, **agent-framework-redis**: Prevent superlinear history growth by deduplicating saved messages ([#7242](https://github.com/microsoft/agent-framework/pull/7242))
+- **agent-framework-devui**: Deduplicate streamed tool calls ([#7652](https://github.com/microsoft/agent-framework/pull/7652))
+- **agent-framework-foundry-hosting**: Surface A2A preview consent URLs and prevent duplicate streamed function calls ([#7606](https://github.com/microsoft/agent-framework/pull/7606), [#7486](https://github.com/microsoft/agent-framework/pull/7486))
+- **agent-framework-orchestrations**: Preserve agent `additional_properties` in handoff clones ([#7755](https://github.com/microsoft/agent-framework/pull/7755))
+
 ## [1.14.0] - 2026-08-13
 
 ### Added
@@ -1523,7 +1555,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.14.0...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.15.0...HEAD
+[1.15.0]: https://github.com/microsoft/agent-framework/compare/python-1.14.0...python-1.15.0
 [1.14.0]: https://github.com/microsoft/agent-framework/compare/python-1.13.0...python-1.14.0
 [1.13.0]: https://github.com/microsoft/agent-framework/compare/python-1.12.1...python-1.13.0
 [1.12.1]: https://github.com/microsoft/agent-framework/compare/python-1.12.0...python-1.12.1
