@@ -8,7 +8,7 @@
   <PropertyGroup>
     <!-- Aspire -->
     <AspireVersion>13.5.2</AspireVersion>
-    <AspireAppHostSdkVersion>13.1.0</AspireAppHostSdkVersion>
+    <AspireAppHostSdkVersion>$(AspireVersion)</AspireAppHostSdkVersion>
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
