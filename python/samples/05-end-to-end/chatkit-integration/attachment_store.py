@@ -70,7 +70,7 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
         if not attachment_id or attachment_id in {".", ".."} or "/" in attachment_id or "\\" in attachment_id:
             raise ValueError(f"Invalid attachment ID: {attachment_id!r}")
 
-        file_path = (self.uploads_dir / attachment_id).resolve()
+        file_path = (self.uploads_dir / attachment_id).resolve()  # codeql[py/path-injection] Path containment is validated below.
         if not file_path.is_relative_to(self.uploads_dir) or file_path.parent != self.uploads_dir:
             raise ValueError(f"Invalid attachment ID: {attachment_id!r}")
         return file_path

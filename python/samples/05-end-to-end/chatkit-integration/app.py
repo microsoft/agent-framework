@@ -600,7 +600,7 @@ async def upload_file(attachment_id: str, file: UploadFile = File(...)):  # noqa
         contents = await file.read()
 
         # Save to disk
-        file_path.write_bytes(contents)
+        file_path.write_bytes(contents)  # codeql[py/path-injection] Path is constrained by get_file_path.
 
         logger.info(f"Saved {len(contents)} bytes to {file_path}")
 
@@ -637,7 +637,7 @@ async def preview_image(attachment_id: str):
         return JSONResponse(status_code=400, content={"error": "Invalid attachment ID."})
 
     try:
-        if not file_path.exists():
+        if not file_path.exists():  # codeql[py/path-injection] Path is constrained by get_file_path.
             return JSONResponse(status_code=404, content={"error": "File not found"})
 
         # Determine media type from file extension or attachment metadata
@@ -649,7 +649,7 @@ async def preview_image(attachment_id: str):
             # Default to binary if we can't determine
             media_type = "application/octet-stream"
 
-        return FileResponse(file_path, media_type=media_type)
+        return FileResponse(file_path, media_type=media_type)  # codeql[py/path-injection] Path is constrained by get_file_path.
 
     except Exception as e:
         logger.error(f"Error serving preview for attachment {attachment_id}: {e}", exc_info=True)
