@@ -550,15 +550,18 @@ async def test_runner_capture_and_restore_checkpoint_object_roundtrip():
 
     # Mutate after capture; restoring must roll back to the captured snapshot.
     executor.count = 999
-    state.get("shared_key")["history"].append("mutated")
-    state.set("shared_key", state.get("shared_key"))
+    shared_state = state.get("shared_key")
+    shared_state["history"].append("mutated")
+    state.set("shared_key", shared_state)
     state.commit()
 
     await runner.restore_checkpoint(checkpoint)
 
     assert executor.count == 7
     assert state.get("shared_key") == {"history": ["shared_value"]}
-    state.get("shared_key")["history"].append("restored-mutation")
+    restored_state = state.get("shared_key")
+    restored_state["history"].append("restored-mutation")
+    state.set("shared_key", restored_state)
     assert checkpoint.state["shared_key"] == {"history": ["shared_value"]}
     assert runner._previous_checkpoint_id == checkpoint.checkpoint_id  # pyright: ignore[reportPrivateUsage]
 

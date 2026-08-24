@@ -32,7 +32,8 @@ class State:
         """Set a value in the pending state buffer.
 
         The value will be visible to subsequent `get()` calls but won't be
-        committed to the actual state until `commit()` is called.
+        committed to the actual state until `commit()` is called. A deep copy is
+        stored so later caller mutations do not change pending state.
 
         Note:
             When multiple executors run concurrently within the same superstep,
@@ -41,7 +42,7 @@ class State:
             the .NET behavior and the superstep execution model where all executors
             in a superstep see the same committed state at the start.
         """
-        self._pending[key] = value
+        self._pending[key] = copy.deepcopy(value)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value from state, checking pending first then committed.
@@ -51,14 +52,17 @@ class State:
             default: Value to return if key is not found. Defaults to None.
 
         Returns:
-            The value if found, otherwise the default value.
+            A deep copy of the value if found, otherwise the default value. Mutate
+            the returned value and pass it to :meth:`set` to update workflow state.
         """
         if key in self._pending:
             value = self._pending[key]
             if value is _DeleteSentinel:
                 return default
-            return value
-        return self._committed.get(key, default)
+            return copy.deepcopy(value)
+        if key in self._committed:
+            return copy.deepcopy(self._committed[key])
+        return default
 
     def has(self, key: str) -> bool:
         """Check if a key exists in pending or committed state."""
