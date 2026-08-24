@@ -600,7 +600,7 @@ async def upload_file(attachment_id: str, file: UploadFile = File(...)):  # noqa
     except NotFoundError:
         return JSONResponse(status_code=404, content={"error": "Attachment not found."})
 
-    if attachment.upload_url is None:
+    if attachment.upload_descriptor is None:
         return JSONResponse(status_code=409, content={"error": "Attachment upload is already complete."})
 
     try:
@@ -612,8 +612,8 @@ async def upload_file(attachment_id: str, file: UploadFile = File(...)):  # noqa
 
         logger.info(f"Saved {len(contents)} bytes to {file_path}")
 
-        # Clear the upload_url since upload is complete
-        attachment.upload_url = None
+        # Clear the upload descriptor since upload is complete
+        attachment.upload_descriptor = None
 
         # Save the updated attachment back to the store
         await data_store.save_attachment(attachment, {"user_id": DEFAULT_USER_ID})
