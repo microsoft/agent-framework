@@ -650,7 +650,7 @@ async def preview_image(attachment_id: str):
         if not file_path.exists():  # codeql[py/path-injection] Path is constrained by get_file_path.
             return JSONResponse(status_code=404, content={"error": "File not found"})
 
-        return FileResponse(file_path, media_type=attachment.mime_type)  # codeql[py/path-injection] Path is constrained by get_file_path.
+        return FileResponse(file_path, media_type=attachment.mime_type)  # codeql[py/path-injection] Path is constrained by get_file_path.  # fmt: skip
 
     except Exception as e:
         logger.error(f"Error serving preview for attachment {attachment_id}: {e}", exc_info=True)
