@@ -208,7 +208,7 @@ class InMemoryCheckpointStorage:
         self._checkpoints: dict[CheckpointID, WorkflowCheckpoint] = {}
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
-        """Save a checkpoint and return its ID."""
+        """Create a copy of the given checkpoint and store it, returning its ID."""
         self._checkpoints[checkpoint.checkpoint_id] = copy.deepcopy(checkpoint)
         logger.debug(f"Saved checkpoint {checkpoint.checkpoint_id} to memory")
         return checkpoint.checkpoint_id
