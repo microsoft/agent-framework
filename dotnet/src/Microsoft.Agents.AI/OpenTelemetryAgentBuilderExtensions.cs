@@ -15,8 +15,9 @@ public static class OpenTelemetryAgentBuilderExtensions
     /// </summary>
     /// <param name="builder">The <see cref="AIAgentBuilder"/> to which OpenTelemetry support will be added.</param>
     /// <param name="sourceName">
-    /// An optional source name that will be used to identify telemetry data from this agent.
-    /// If not specified, a default source name will be used.
+    /// An optional source name used to identify telemetry data from this agent.
+    /// When specified, register the same value with <c>TracerProviderBuilder.AddSource</c> so the tracing pipeline
+    /// subscribes to these spans. When omitted, <see cref="OpenTelemetryAgent.DefaultSourceName"/> is used.
     /// </param>
     /// <param name="configure">
     /// An optional callback that provides additional configuration of the <see cref="OpenTelemetryAgent"/> instance.
