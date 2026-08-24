@@ -17,6 +17,7 @@ This folder contains focused middleware samples for `Agent`, chat clients, tools
 | [`decorator_middleware.py`](./decorator_middleware.py) | Demonstrates middleware registration with decorators. |
 | [`exception_handling_with_middleware.py`](./exception_handling_with_middleware.py) | Shows how middleware can handle failures and recover cleanly. |
 | [`function_based_middleware.py`](./function_based_middleware.py) | Shows function-based agent and function middleware. |
+| [`hol_guard_middleware.py`](./hol_guard_middleware.py) | Demonstrates a `FunctionMiddleware` that gates tool calls behind a [HOL Guard](https://github.com/hashgraph-online/hol-guard) verdict, running the real engine locally via the `hol-guard` CLI (`pipx install hol-guard`) and raising `MiddlewareFailure` on deny, review, or Guard-unavailable so the tool never executes. |
 | [`middleware_termination.py`](./middleware_termination.py) | Demonstrates stopping a middleware pipeline early. |
 | [`message_injection_middleware.py`](./message_injection_middleware.py) | Demonstrates `MessageInjectionMiddleware` with a real Foundry chat client: enqueueing a follow-up message into the active session while a long-running async tool is awaiting. |
 | [`override_result_with_middleware.py`](./override_result_with_middleware.py) | Shows how middleware can replace regular and streaming results, then post-process the final response. |
@@ -50,3 +51,19 @@ agent's latest response to a second, external judge chat client on every iterati
 or malicious judge endpoint could exfiltrate that data, or return a manipulated verdict/gap
 analysis that gets fed back into the loop as feedback — a form of indirect prompt injection. Only
 configure a judge client that points at a service you trust as much as the primary model.
+
+
+
+
+## Running the HOL Guard sample
+
+Install the real engine for full protection:
+
+```bash
+pipx install hol-guard
+hol-guard init
+```
+
+Without it installed, the sample still runs using its built-in offline fallback
+(`offline_fallback=True`), but that fallback is a small demo deny-list only —
+it is **not** a substitute for the real HOL Guard engine.

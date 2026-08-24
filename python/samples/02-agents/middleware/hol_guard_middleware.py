@@ -2,12 +2,51 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "agent-framework-foundry",
+#     "azure-identity",
+#     "python-dotenv",
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
 #   uv run samples/02-agents/middleware/hol_guard_middleware.py
 
 # Copyright (c) Microsoft. All rights reserved.
+
+
+
+
+"""Official HOL Guard FunctionMiddleware example for protected tool calls (issue #7833).
+
+HOLGuardMiddleware evaluates the tool name and validated arguments in
+FunctionInvocationContext before call_next() and only proceeds on an explicit allow verdict
+from HOL Guard (https://github.com/hashgraph-online/hol-guard).
+
+Unlike ATRValidationMiddleware in this folder, which raises MiddlewareTermination on a match,
+this sample raises MiddlewareFailure on deny, review-required, AND Guard-unavailable/error.
+MiddlewareFailure is the framework's explicit fail-closed escape: it cancels the in-flight
+tool-call batch and propagates to the caller of Agent.run() rather than letting the loop
+continue -- matching the issue's "terminate before the wrapped tool executes" requirement for
+all three non-allow outcomes, not just an outright deny.
+
+The real HOL Guard engine is invoked locally through its CLI (`hol-guard command test <call>
+--json`). That command is a PREVIEW-ONLY pattern check: its JSON response reports
+`status` ("no_match" or "review") and explicitly marks `policy_evaluation: "not_run"`. So an
+ALLOW from this sample means "no known attack pattern matched", not "HOL Guard's full org
+policy approved this call" -- the two are different guarantees. hol-guard is intentionally NOT
+listed as an importable Python dependency here; it is only shelled out to. Install it with
+`pipx install hol-guard` for the real engine. Without it on PATH, or if the call errors, the
+middleware fails closed by default. Pass offline_fallback=True only for local demo/dev use
+without the real engine installed; it applies a small built-in deny-list far weaker than actual
+HOL Guard.
+
+OPEN QUESTION (track on #7833): confirm with the HOL Guard maintainers whether a command exists
+that runs full policy evaluation (not just the pattern-preview `command test`), and use that
+instead once available.
+
+Provider imports (FoundryChatClient, AzureCliCredential) are deferred to main() rather than
+imported at module level, so HOLGuardMiddleware and evaluate_with_hol_guard stay importable
+and unit-testable without the agent-framework-foundry/azure-identity extras present.
+"""
+
 
 import asyncio
 import json
@@ -27,41 +66,6 @@ from agent_framework import (
 )
 from pydantic import BaseModel, Field
 
-"""
-Official HOL Guard FunctionMiddleware example for protected tool calls (issue #7833).
-
-HOLGuardMiddleware evaluates the tool name and validated arguments in
-FunctionInvocationContext before call_next() and only proceeds on an explicit allow verdict
-from HOL Guard (https://github.com/hashgraph-online/hol-guard).
-
-Unlike ATRValidationMiddleware in this folder, which raises MiddlewareTermination on a match,
-this sample raises MiddlewareFailure on deny, review-required, AND Guard-unavailable/error.
-MiddlewareFailure is the framework's explicit fail-closed escape (see its docstring in
-agent_framework's middleware module): it cancels the in-flight tool-call batch and propagates
-to the caller of Agent.run() rather than letting the loop continue -- matching the issue's
-"terminate before the wrapped tool executes" requirement for all three non-allow outcomes,
-not just an outright deny.
-
-The real HOL Guard engine is invoked locally through its documented, side-effect-free CLI
-contract (`hol-guard command test <call> --json`; see "Inspect command protection without
-running it" in https://github.com/hashgraph-online/hol-guard). hol-guard is intentionally NOT
-listed in this file's PEP 723 dependencies -- it is not imported as a Python package here,
-only shelled out to. Install it separately with `pipx install hol-guard` for real protection.
-Without it on PATH, or if the call errors, the middleware fails closed by default. Pass
-offline_fallback=True only for local demo/dev use without the real engine installed; it applies
-a small built-in deny-list that is far weaker than actual HOL Guard.
-
-OPEN QUESTION (resolve before merging): hol-guard's `command test` contract is documented for
-shell-command-shaped strings, not typed (function_name, arguments) tool calls. This sample
-renders a call as a single command-like string as a best-effort mapping onto that contract.
-Confirm the intended integration surface for arbitrary FunctionMiddleware calls with the HOL
-Guard maintainers (see discussion on #7833) before treating this as final.
-
-Provider imports (FoundryChatClient, AzureCliCredential) are deferred to main() rather than
-imported at module level, so HOLGuardMiddleware and evaluate_with_hol_guard stay importable
-and unit-testable without the agent-framework-foundry/azure-identity extras present.
-"""
-
 logger = logging.getLogger(__name__)
 
 _CLI_NAME = "hol-guard"
@@ -69,6 +73,8 @@ _OFFLINE_DENY_SUBSTRINGS = ("drop table", "rm -rf", "delete_production", "sudo "
 
 
 class GuardDecision(str, Enum):
+    """Outcome of evaluating a tool call against HOL Guard."""
+
     ALLOW = "allow"
     DENY = "deny"
     REVIEW = "review"
@@ -98,9 +104,10 @@ async def evaluate_with_hol_guard(
     offline_fallback: bool = False,
     timeout_seconds: float = 5.0,
 ) -> tuple[GuardDecision, str]:
-    """Classify a tool call with the real, local hol-guard engine. Fails closed by default:
-    a missing CLI or an evaluation error returns UNAVAILABLE/ERROR, never ALLOW, unless
-    offline_fallback=True.
+    """Classify a tool call with the real, local hol-guard engine.
+
+    Fails closed by default: a missing CLI, a timeout, or any evaluation error returns
+    UNAVAILABLE/ERROR, never ALLOW, unless offline_fallback=True.
     """
     cli_path = shutil.which(_CLI_NAME)
     command_string = _call_to_command_string(function_name, arguments)
@@ -110,21 +117,41 @@ async def evaluate_with_hol_guard(
             return _offline_check(command_string)
         return GuardDecision.UNAVAILABLE, f"{_CLI_NAME} CLI not found on PATH"
 
+    proc = await asyncio.create_subprocess_exec(
+        cli_path,
+        "command",
+        "test",
+        command_string,
+        "--json",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
     try:
-        proc = await asyncio.create_subprocess_exec(
-            cli_path,
-            "command",
-            "test",
-            command_string,
-            "--json",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
+        except TimeoutError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.communicate()
+            raise
+
+        if not stdout.strip():
+            raise RuntimeError(stderr.decode(errors="replace").strip() or f"exit code {proc.returncode}, no output")
+
         payload = json.loads(stdout)
-        decision = GuardDecision(payload.get("decision", "deny"))
-        return decision, payload.get("reason", payload.get("summary", ""))
-    except Exception as exc:  # noqa: BLE001 - any failure here must fail closed
+        # `command test` is a preview-only pattern check (policy_evaluation is always "not_run"
+        # in its response): status="no_match" means no known attack pattern matched, and
+        # status="review" means it did. There is no third "definitely safe" state to trust
+        # here, so anything other than a clean no_match fails closed.
+        status = payload.get("status")
+        if status == "no_match":
+            return GuardDecision.ALLOW, "hol-guard: no attack pattern matched (preview check only)"
+        if status == "review":
+            return GuardDecision.REVIEW, payload.get("summary", "hol-guard flagged this call for review")
+        return GuardDecision.ERROR, f"hol-guard returned an unrecognized response: {payload!r}"
+    except Exception as exc:
         if offline_fallback:
             return _offline_check(command_string)
         return GuardDecision.ERROR, f"{_CLI_NAME} evaluation failed: {exc}"
@@ -134,6 +161,14 @@ class HOLGuardMiddleware(FunctionMiddleware):
     """Gates tool calls behind a HOL Guard verdict; fails closed on anything but allow."""
 
     def __init__(self, *, offline_fallback: bool = False, timeout_seconds: float = 5.0) -> None:
+        """Create the middleware.
+
+        Args:
+            offline_fallback: When True, fall back to a small built-in deny-list if the
+                hol-guard CLI is unavailable or errors, instead of failing closed. Demo/dev
+                use only -- much weaker than the real engine.
+            timeout_seconds: Timeout for the local hol-guard subprocess call.
+        """
         self._offline_fallback = offline_fallback
         self._timeout_seconds = timeout_seconds
         if shutil.which(_CLI_NAME) is None:
@@ -148,6 +183,7 @@ class HOLGuardMiddleware(FunctionMiddleware):
         context: FunctionInvocationContext,
         call_next: Callable[[], Awaitable[None]],
     ) -> None:
+        """Evaluate the tool call with HOL Guard and only proceed on an allow verdict."""
         decision, reason = await evaluate_with_hol_guard(
             context.function.name,
             context.arguments,
@@ -187,6 +223,7 @@ def delete_production_database(
 
 
 async def main() -> None:
+    """Run the benign and dangerous demo requests against an agent guarded by HOL Guard."""
     from agent_framework.foundry import FoundryChatClient
     from azure.identity.aio import AzureCliCredential
     from dotenv import load_dotenv
