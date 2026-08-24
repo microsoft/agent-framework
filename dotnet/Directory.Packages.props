@@ -7,20 +7,19 @@
   </PropertyGroup>
   <PropertyGroup>
     <!-- Aspire -->
-    <AspireVersion>13.5.2</AspireVersion>
-    <AspireAppHostSdkVersion>$(AspireVersion)</AspireAppHostSdkVersion>
+    <AspireAppHostSdkVersion>13.5.2</AspireAppHostSdkVersion>
   </PropertyGroup>
   <ItemGroup>
     <!-- Aspire.* -->
     <PackageVersion Include="Anthropic" Version="12.42.0" />
     <PackageVersion Include="Anthropic.Foundry" Version="0.7.1" />
-    <PackageVersion Include="Aspire.Hosting" Version="$(AspireVersion)" />
+    <PackageVersion Include="Aspire.Hosting" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="Aspire.Azure.AI.OpenAI" Version="13.0.0-preview.1.25560.3" />
     <PackageVersion Include="Aspire.Azure.AI.Inference" Version="13.1.0-preview.1.25616.3" />
     <PackageVersion Include="Aspire.Hosting.Azure.AIFoundry" Version="13.1.0-preview.1.25616.3" />
-    <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireVersion)" />
-    <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireVersion)" />
-    <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireVersion)" />
+    <PackageVersion Include="Aspire.Hosting.AppHost" Version="$(AspireAppHostSdkVersion)" />
+    <PackageVersion Include="Aspire.Hosting.Azure.CognitiveServices" Version="$(AspireAppHostSdkVersion)" />
+    <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
     <PackageVersion Include="MessagePack" Version="3.1.7" /> <!-- Transitive dependency of Aspire pinned to newer version due to vulnerability in 2.5.192 -->
     <!-- Azure.* -->
