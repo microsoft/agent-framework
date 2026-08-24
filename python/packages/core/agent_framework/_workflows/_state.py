@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from ._checkpoint_encoding import isolate_checkpoint_value
+
 
 class State:
     """Manages shared state across executors within a workflow.
@@ -108,14 +110,14 @@ class State:
 
         Note: Does not include pending changes.
         """
-        return dict(self._committed)
+        return isolate_checkpoint_value(dict(self._committed))
 
     def import_state(self, state: dict[str, Any]) -> None:
         """Import state from a serialized dictionary.
 
         Merges into committed state. Does not affect pending changes.
         """
-        self._committed.update(state)
+        self._committed.update(isolate_checkpoint_value(state))
 
 
 class _DeleteSentinelType:

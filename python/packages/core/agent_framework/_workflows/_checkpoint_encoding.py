@@ -51,14 +51,31 @@ import io
 import logging
 import pickle  # nosec  # ruff:ignore[suspicious-pickle-import]
 from enum import EnumMeta
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from ..exceptions import WorkflowCheckpointException
 
 logger = logging.getLogger("agent_framework")
 
+T = TypeVar("T")
+
 # Application-defined types registered for all restricted checkpoint decoders.
 _REGISTERED_CHECKPOINT_TYPE_KEYS: set[str] = set()
+
+
+def isolate_checkpoint_value(value: T) -> T:
+    """Return an independent copy of a checkpoint-safe value via pickle round-trip.
+
+    This matches the serialization boundary used by checkpoint persistence
+    backends and does not require ``__deepcopy__`` support.
+
+    Args:
+        value: A pickle-serializable value to isolate.
+
+    Returns:
+        An independent copy of the value.
+    """
+    return pickle.loads(pickle.dumps(value))  # nosec  # ruff:ignore[suspicious-pickle-usage]
 
 
 def register_checkpoint_type(cls: type[Any]) -> None:
