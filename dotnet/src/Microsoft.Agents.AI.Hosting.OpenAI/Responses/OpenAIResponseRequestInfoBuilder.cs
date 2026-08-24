@@ -9,6 +9,8 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 
 internal static class OpenAIResponseRequestInfoBuilder
 {
+    private static readonly JsonElement s_emptyJson = JsonElement.Parse("{}");
+
     public static OpenAIResponseRequestInfo ToRequestInfo(this CreateResponse request) => new()
     {
         Temperature = request.Temperature,
@@ -17,8 +19,86 @@ internal static class OpenAIResponseRequestInfoBuilder
         Instructions = request.Instructions,
         Model = request.Model,
         Tools = request.Tools is { Count: > 0 } tools ? new List<JsonElement>(tools) : null,
+        FunctionTools = request.Tools?.ToFunctionTools(),
         ToolChoice = request.ToolChoice?.ToChatToolMode(),
     };
+
+    private static List<AITool>? ToFunctionTools(this IReadOnlyList<JsonElement> tools)
+    {
+        List<AITool>? functionTools = null;
+
+        foreach (JsonElement tool in tools)
+        {
+            if (tool.ToFunctionTool() is { } functionTool)
+            {
+                (functionTools ??= []).Add(functionTool);
+            }
+        }
+
+        return functionTools;
+    }
+
+    private static AIFunctionDeclaration? ToFunctionTool(this JsonElement tool)
+    {
+        if (tool.ValueKind != JsonValueKind.Object ||
+            !tool.TryGetProperty("type", out JsonElement type) ||
+            type.ValueKind != JsonValueKind.String ||
+            type.GetString() != "function" ||
+            !tool.TryGetProperty("name", out JsonElement name) ||
+            name.ValueKind != JsonValueKind.String ||
+            name.GetString() is not { Length: > 0 } functionName)
+        {
+            return null;
+        }
+
+        JsonElement parameters = tool.TryGetProperty("parameters", out JsonElement requestParameters) &&
+            requestParameters.ValueKind == JsonValueKind.Object
+                ? requestParameters
+                : s_emptyJson;
+
+        string? description = tool.TryGetProperty("description", out JsonElement requestDescription) &&
+            requestDescription.ValueKind == JsonValueKind.String
+                ? requestDescription.GetString()
+                : null;
+
+        AIFunctionDeclaration function = AIFunctionFactory.CreateDeclaration(functionName, description, parameters);
+
+        if (tool.TryGetProperty("strict", out JsonElement strict) &&
+            strict.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            function = new ResponseAIFunctionDeclaration(function, strict.GetBoolean());
+        }
+
+        return function;
+    }
+
+    private sealed class ResponseAIFunctionDeclaration : AIFunctionDeclaration
+    {
+        private readonly AIFunctionDeclaration _innerFunction;
+
+        public ResponseAIFunctionDeclaration(AIFunctionDeclaration innerFunction, bool strict)
+        {
+            this._innerFunction = innerFunction;
+            var additionalProperties = new Dictionary<string, object?>();
+            foreach (KeyValuePair<string, object?> property in innerFunction.AdditionalProperties)
+            {
+                additionalProperties.Add(property.Key, property.Value);
+            }
+
+            additionalProperties["strict"] = strict;
+            this.AdditionalProperties = additionalProperties;
+        }
+
+        public override string Name => this._innerFunction.Name;
+
+        public override string Description => this._innerFunction.Description;
+
+        public override JsonElement JsonSchema => this._innerFunction.JsonSchema;
+
+        public override JsonElement? ReturnJsonSchema => this._innerFunction.ReturnJsonSchema;
+
+        public override IReadOnlyDictionary<string, object?> AdditionalProperties { get; }
+    }
 
     /// <summary>
     /// Maps an OpenAI Responses <c>tool_choice</c> value onto its <see cref="ChatToolMode"/> equivalent.

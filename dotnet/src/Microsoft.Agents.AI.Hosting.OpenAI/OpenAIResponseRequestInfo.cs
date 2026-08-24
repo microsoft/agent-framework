@@ -65,6 +65,17 @@ public sealed class OpenAIResponseRequestInfo
     public IReadOnlyList<JsonElement>? Tools { get; set; }
 
     /// <summary>
+    /// Gets or sets the request-supplied function tools represented as declaration-only
+    /// <see cref="AITool"/> instances, if any.
+    /// </summary>
+    /// <remarks>
+    /// These declarations contain the client-provided function metadata and JSON schema but cannot
+    /// execute code on the server. Responses tool types that have no <c>Microsoft.Extensions.AI</c>
+    /// equivalent remain available through <see cref="Tools"/> only.
+    /// </remarks>
+    public IReadOnlyList<AITool>? FunctionTools { get; set; }
+
+    /// <summary>
     /// Gets or sets the tool selection mode (<c>tool_choice</c>) supplied on the request, if any.
     /// </summary>
     /// <remarks>

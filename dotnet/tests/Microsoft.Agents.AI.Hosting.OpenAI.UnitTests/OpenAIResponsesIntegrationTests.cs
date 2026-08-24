@@ -941,6 +941,70 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         Assert.NotNull(response.Id);
     }
 
+    [Fact]
+    public async Task CreateResponse_WithRequestFunctionTool_ForwardsToolAndReturnsFunctionCallAsync()
+    {
+        // Arrange
+        const string AgentName = "request-function-tool-agent";
+        var chatClient = new TestHelpers.FunctionCallMockChatClient(
+            "get_weather",
+            """{"location":"Valencia, Spain","units":"celsius"}""");
+
+        this._httpClient = await this.CreateTestServerWithCustomClientAsync(
+            agentName: AgentName,
+            instructions: "You are a helpful assistant.",
+            chatClient,
+            PermissiveMapOptions.Responses());
+
+        using var content = new StringContent(
+            """
+            {
+              "input": "What's the current weather in Valencia?",
+              "tools": [
+                {
+                  "type": "function",
+                  "name": "get_weather",
+                  "description": "Retrieves current weather for the given location.",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "location": { "type": "string" },
+                      "units": { "type": "string", "enum": [ "celsius", "fahrenheit" ] }
+                    },
+                    "required": [ "location", "units" ],
+                    "additionalProperties": false
+                  },
+                  "strict": true
+                }
+              ],
+              "tool_choice": "required"
+            }
+            """,
+            Encoding.UTF8,
+            "application/json");
+
+        // Act
+        using HttpResponseMessage httpResponse = await this._httpClient.PostAsync(
+            new Uri($"/{AgentName}/v1/responses", UriKind.Relative),
+            content);
+
+        // Assert
+        Assert.True(httpResponse.IsSuccessStatusCode, $"Response status: {httpResponse.StatusCode}");
+        Assert.NotNull(chatClient.LastChatOptions);
+        Assert.Equal(ChatToolMode.RequireAny, chatClient.LastChatOptions.ToolMode);
+        AIFunctionDeclaration tool = Assert.IsAssignableFrom<AIFunctionDeclaration>(Assert.Single(chatClient.LastChatOptions.Tools!));
+        Assert.Equal("get_weather", tool.Name);
+        Assert.Equal("Retrieves current weather for the given location.", tool.Description);
+        Assert.True(tool.JsonSchema.GetProperty("properties").TryGetProperty("units", out _));
+        Assert.True(Assert.IsType<bool>(tool.AdditionalProperties["strict"]));
+
+        using System.Text.Json.JsonDocument document =
+            System.Text.Json.JsonDocument.Parse(await httpResponse.Content.ReadAsStringAsync());
+        System.Text.Json.JsonElement output = Assert.Single(document.RootElement.GetProperty("output").EnumerateArray());
+        Assert.Equal("function_call", output.GetProperty("type").GetString());
+        Assert.Equal("get_weather", output.GetProperty("name").GetString());
+    }
+
     /// <summary>
     /// Verifies that responses with function calls stream correctly.
     /// </summary>
@@ -1410,7 +1474,11 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         return testServer.CreateClient();
     }
 
-    private async Task<HttpClient> CreateTestServerWithCustomClientAsync(string agentName, string instructions, IChatClient chatClient)
+    private async Task<HttpClient> CreateTestServerWithCustomClientAsync(
+        string agentName,
+        string instructions,
+        IChatClient chatClient,
+        OpenAIResponsesMapOptions? mapOptions = null)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -1421,7 +1489,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
 
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
-        this._app.MapOpenAIResponses(agent);
+        this._app.MapOpenAIResponses(agent, responsesPath: null, mapOptions);
 
         await this._app.StartAsync();
 

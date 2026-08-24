@@ -92,6 +92,46 @@ public sealed class OpenAIResponseRequestInfoBuilderTests
         Assert.Null(info.ToolChoice);
     }
 
+    [Fact]
+    public void ToRequestInfo_MapsFunctionToolToDeclaration()
+    {
+        // Arrange
+        CreateResponse request = new()
+        {
+            Input = "hello",
+            Tools =
+            [
+                ParseElement(
+                    """
+                    {
+                      "type": "function",
+                      "name": "get_weather",
+                      "description": "Retrieves current weather.",
+                      "parameters": {
+                        "type": "object",
+                        "properties": {
+                          "location": { "type": "string" }
+                        },
+                        "required": [ "location" ]
+                      },
+                      "strict": true
+                    }
+                    """)
+            ]
+        };
+
+        // Act
+        OpenAIResponseRequestInfo info = request.ToRequestInfo();
+
+        // Assert
+        Assert.Single(info.Tools!);
+        AIFunctionDeclaration function = Assert.IsAssignableFrom<AIFunctionDeclaration>(Assert.Single(info.FunctionTools!));
+        Assert.Equal("get_weather", function.Name);
+        Assert.Equal("Retrieves current weather.", function.Description);
+        Assert.True(function.JsonSchema.GetProperty("properties").TryGetProperty("location", out _));
+        Assert.True(Assert.IsType<bool>(function.AdditionalProperties["strict"]));
+    }
+
     private static CreateResponse CreateRequestWithToolChoice(string toolChoiceJson)
     {
         using JsonDocument document = JsonDocument.Parse(toolChoiceJson);
@@ -100,5 +140,11 @@ public sealed class OpenAIResponseRequestInfoBuilderTests
             Input = "hello",
             ToolChoice = document.RootElement.Clone(),
         };
+    }
+
+    private static JsonElement ParseElement(string json)
+    {
+        using JsonDocument document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
     }
 }

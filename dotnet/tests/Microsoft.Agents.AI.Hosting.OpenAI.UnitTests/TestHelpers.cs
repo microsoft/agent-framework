@@ -361,6 +361,8 @@ internal static class TestHelpers
         private readonly string _functionName;
         private readonly Dictionary<string, object?> _arguments;
 
+        public ChatOptions? LastChatOptions { get; private set; }
+
         public FunctionCallMockChatClient(string functionName = "test_function", string arguments = "{\"param\":\"value\"}")
         {
             this._functionName = functionName;
@@ -374,6 +376,8 @@ internal static class TestHelpers
             ChatOptions? options = null,
             CancellationToken cancellationToken = default)
         {
+            this.LastChatOptions = options;
+
             ChatMessage message = new(ChatRole.Assistant, [
                 new FunctionCallContent("call_123", this._functionName)
                 {
@@ -399,6 +403,8 @@ internal static class TestHelpers
             ChatOptions? options = null,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
+            this.LastChatOptions = options;
+
             await Task.Delay(1, cancellationToken);
 
             yield return new ChatResponseUpdate
