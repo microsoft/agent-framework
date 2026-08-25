@@ -608,7 +608,7 @@ async def upload_file(attachment_id: str, file: UploadFile = File(...)):  # noqa
         contents = await file.read()
 
         # Save to disk
-        file_path.write_bytes(contents)  # codeql[py/path-injection] Path is constrained by get_file_path.
+        file_path.write_bytes(contents)  # CodeQL [SM01305] Path is constrained by get_file_path.
 
         logger.info(f"Saved {len(contents)} bytes to {file_path}")
 
@@ -647,10 +647,10 @@ async def preview_image(attachment_id: str):
         return JSONResponse(status_code=404, content={"error": "Attachment not found."})
 
     try:
-        if not file_path.exists():  # codeql[py/path-injection] Path is constrained by get_file_path.
+        if not file_path.exists():  # CodeQL [SM01305] Path is constrained by get_file_path.
             return JSONResponse(status_code=404, content={"error": "File not found"})
 
-        return FileResponse(file_path, media_type=attachment.mime_type)  # codeql[py/path-injection] Path is constrained by get_file_path.  # fmt: skip
+        return FileResponse(file_path, media_type=attachment.mime_type)  # CodeQL [SM01305] Path is constrained by get_file_path.  # fmt: skip
 
     except Exception as e:
         logger.error(f"Error serving preview for attachment {attachment_id}: {e}", exc_info=True)
