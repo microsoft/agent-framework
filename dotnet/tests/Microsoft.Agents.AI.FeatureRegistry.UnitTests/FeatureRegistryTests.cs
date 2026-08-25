@@ -431,5 +431,5 @@ public sealed class FeatureRegistryTests
 
     private sealed record RegistryEntry(int Index, string Id);
 
-    private sealed record FeatureDeclaration(string Owner, string MemberName, int Index, string FilePath);
+    private readonly record struct FeatureDeclaration(string Owner, string MemberName, int Index, string FilePath);
 }
