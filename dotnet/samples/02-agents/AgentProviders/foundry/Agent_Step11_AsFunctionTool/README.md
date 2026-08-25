@@ -2,6 +2,17 @@
 
 This sample demonstrates how to use one agent as a function tool for another agent.
 
+Function tools expose operations through structured inputs and outputs making them useful for many different integration scenarios. 
+
+Using `yourAIAgent.AsAIFunction()` exposes an agent as a function, enabling them to be used by other agents as tools allowing interesting agent composition scenarios.
+
+> [!NOTE]
+> Wrapping an AI Model driven agent exposed as an `AIFunction` doesn't make your agent deterministic, it will return the original agent output as the function result. The determinism of the result is completely dependent on how your agent is configured.
+
+> [!IMPORTANT]
+> Agents exposed through `.AsAIFunction()` are intended for background and non-interactive workflows, and are not suited for workflows that require human-in-the-loop approval. 
+> For interactive, human-in-the-loop workflows, use the [Microsoft.Agent.AI.Workflow](https://github.com/microsoft/agent-framework/tree/main/dotnet/samples/03-workflows) guidance.
+
 ## What this sample demonstrates
 
 - Creating a specialized agent (weather) with function tools
