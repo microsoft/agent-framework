@@ -8,6 +8,7 @@ using Microsoft.Agents.AI.Hosting;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using Microsoft.Extensions.AI;
 using OpenAI;
+using OpenAI.Responses;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient().AddLogging();
@@ -27,7 +28,7 @@ IChatClient chatClient = new OpenAIClient(
         new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
         new OpenAIClientOptions { Endpoint = new Uri(endpoint) })
     .GetResponsesClient()
-    .AsIChatClient(deploymentName);
+    .AsIChatClientWithStoredOutputDisabled(model: deploymentName);
 
 // WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
 // make sure to also register an AgentIsolationKeyProvider to scope sessions by principal in multi-user

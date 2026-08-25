@@ -33,7 +33,7 @@ public sealed class AgentHostingServiceCollectionExtensionsTests
                 Endpoint = new Uri("https://example.test/v1"),
                 Transport = new HttpClientPipelineTransport(httpClient)
             })
-            .AsIChatClient("test-model");
+            .AsIChatClientWithStoredOutputDisabled(model: "test-model");
 
         var services = new ServiceCollection();
         services
@@ -47,6 +47,10 @@ public sealed class AgentHostingServiceCollectionExtensionsTests
 
         // Assert
         using JsonDocument request = JsonDocument.Parse(Assert.IsType<string>(handler.RequestBody));
+        Assert.False(request.RootElement.GetProperty("store").GetBoolean());
+        Assert.Contains(
+            request.RootElement.GetProperty("include").EnumerateArray(),
+            property => property.GetString() == "reasoning.encrypted_content");
         Assert.False(request.RootElement.TryGetProperty("web_search_options", out _));
         JsonElement webSearchTool = Assert.Single(request.RootElement.GetProperty("tools").EnumerateArray());
         Assert.Equal("web_search", webSearchTool.GetProperty("type").GetString());

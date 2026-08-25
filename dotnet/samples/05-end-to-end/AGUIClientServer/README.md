@@ -29,7 +29,7 @@ $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
 > This sample calls Azure OpenAI inference directly through the resource endpoint. It does not require a Microsoft Foundry project. A project-scoped application would instead use a Foundry project endpoint with `Azure.AI.Projects` and the Agent Framework Foundry provider.
 
 > [!NOTE]
-> The server uses the Azure OpenAI Responses API because hosted web search is a Responses API tool. Web search uses Grounding with Bing and may incur additional charges; review the [web search documentation and data usage terms](https://learn.microsoft.com/azure/foundry/openai/how-to/web-search) before using it.
+> The server uses the Azure OpenAI Responses API because hosted web search is a Responses API tool. It sets `store` to `false` so Agent Framework persists chat history in the configured session store instead of depending on service-retained responses. Web search uses Grounding with Bing and may incur additional charges; review the [web search documentation and data usage terms](https://learn.microsoft.com/azure/foundry/openai/how-to/web-search) before using it.
 
 ## Running the Sample
 
@@ -128,7 +128,7 @@ IChatClient chatClient = new OpenAIClient(
         new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
         new OpenAIClientOptions { Endpoint = new Uri(endpoint) })
     .GetResponsesClient()
-    .AsIChatClient(deploymentName);
+    .AsIChatClientWithStoredOutputDisabled(model: deploymentName);
 
 builder
     .AddAIAgent("AGUIAssistant", "You are a helpful assistant.", chatClient)
