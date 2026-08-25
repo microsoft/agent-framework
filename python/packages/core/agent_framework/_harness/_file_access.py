@@ -1398,11 +1398,18 @@ def _numbers_are_trusted(store: AgentFileStore) -> bool:
     """Whether ``store``'s line numbers are known to be :meth:`AgentFileStore.split_lines` coordinates."""
     if store.reports_aligned_line_numbers:
         return True
+    # Both rules below read the class, so an instance attribute shadowing ``search`` would let
+    # the class-level identity vouch for a method that never runs.
+    instance_attributes = getattr(store, "__dict__", {})
+    if "search" in instance_attributes:
+        return False
     # The base ``search`` numbers whatever ``self.read`` returns, which is the text the editor
-    # indexes, so it stays aligned however a subclass overrides ``read``.
+    # indexes, so it stays aligned however ``read`` is replaced, on the class or the instance.
     if type(store).search is AgentFileStore.search:
         return True
-    return type(store) in _ALIGNED_STORE_TYPES
+    # The shipped stores scan their own storage instead of going through ``read``, so wrapping
+    # ``read`` on the instance leaves grep numbering text the editor never sees.
+    return type(store) in _ALIGNED_STORE_TYPES and "read" not in instance_attributes
 
 
 _MISALIGNED_SEARCH_MESSAGE = (
@@ -1431,7 +1438,9 @@ async def _verify_search_alignment(
 
     This is detection, not proof — a pattern that matches every line (``.``) passes
     even if the numbering is skewed — and it is deliberately whole-call: a single
-    skewed file means the store's coordinates cannot be trusted anywhere.
+    skewed file means the store's coordinates cannot be trusted anywhere. A matched
+    file that cannot be read fails the call for the same reason, since its numbers
+    go unchecked; the message names a mid-search change as one of its causes.
 
     Args:
         store: The store whose numbers are being checked.
@@ -1446,21 +1455,6 @@ async def _verify_search_alignment(
     """
     if not results or _numbers_are_trusted(store):
         return None
-
-    async def collect() -> list[tuple[FileSearchResult, str]]:
-        gathered: list[tuple[FileSearchResult, str]] = []
-        for result in results:
-            try:
-                content = await store.read(_combine_search_path(directory, result.file_name))
-            except (OSError, ValueError):
-                # Deleted, unreadable, or not UTF-8. ``search`` itself skips these, so the check
-                # must not report the same race as a store-correctness fault.
-                logger.warning("Skipping unverifiable file during search check: %s", result.file_name)
-                continue
-            if content is None:
-                continue
-            gathered.append((result, content))
-        return gathered
 
     regex = _compile_search_regex(regex_pattern)
 
@@ -1477,9 +1471,29 @@ async def _verify_search_alignment(
         return True
 
     async def verify() -> bool:
-        scanned = await collect()
-        # The model supplies this pattern, so it runs in a worker thread rather than on the loop.
-        return await asyncio.to_thread(check, scanned)
+        batch: list[tuple[FileSearchResult, str]] = []
+        batched_chars = 0
+        for result in results:
+            try:
+                content = await store.read(_combine_search_path(directory, result.file_name))
+            except (OSError, ValueError):
+                # Deleted, unreadable, or not UTF-8. Its numbers went unchecked, and the check
+                # is whole-call, so nothing here can be certified.
+                logger.warning("Unverifiable file during search check: %s", result.file_name)
+                return False
+            if content is None:
+                return False
+            batch.append((result, content))
+            batched_chars += len(content)
+            if batched_chars < _SCAN_BATCH_CHARS:
+                continue
+            # The model supplies this pattern, so it runs in a worker thread rather than on the
+            # loop. Discarding each batch bounds peak memory by the budget the scan already uses.
+            if not await asyncio.to_thread(check, batch):
+                return False
+            batch.clear()
+            batched_chars = 0
+        return not batch or await asyncio.to_thread(check, batch)
 
     try:
         # The bound covers the reads as well as the scan: on a remote store the reads dominate,

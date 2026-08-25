@@ -1663,23 +1663,131 @@ async def test_grep_accepts_an_override_that_uses_the_published_primitive(
 
 async def test_shipped_stores_are_trusted_and_not_re_read(
     chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Verification must be skipped for the stores shipped here, so grep stays one pass."""
     store = InMemoryAgentFileStore()
     await store.write("cfg.txt", "alpha\nkeep me\n")
     reads: list[str] = []
-    original_read = store.read
+    original_read = InMemoryAgentFileStore.read
 
-    async def counting_read(path: str) -> str | None:
+    async def counting_read(self: InMemoryAgentFileStore, path: str) -> str | None:
         reads.append(path)
-        return await original_read(path)
+        return await original_read(self, path)
 
-    store.read = counting_read  # pyright: ignore[reportAttributeAccessIssue]
+    # Counted on the class: an instance attribute shadowing ``read`` is untrusted in its own
+    # right, so instrumenting the instance would measure the override, not the shipped store.
+    monkeypatch.setattr(InMemoryAgentFileStore, "read", counting_read)
     tools = await _prepare_access_tools(chat_client_base, store=store)
     grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
     await grep.invoke(arguments={"regex_pattern": "keep me"})
 
     assert reads == []
+
+
+async def test_instance_level_read_override_is_not_trusted(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """A shipped store scans its own storage, so a wrapped instance ``read`` desynchronizes it."""
+    store = InMemoryAgentFileStore()
+    await store.write("cfg.txt", "alpha\nkeep me\n")
+    original_read = store.read
+
+    async def prefixed_read(path: str) -> str | None:
+        content = await original_read(path)
+        return None if content is None else f"banner\n{content}"
+
+    store.read = prefixed_read  # pyright: ignore[reportAttributeAccessIssue]
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+
+    assert "do not line up" in _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
+
+
+async def test_instance_level_search_override_is_not_trusted(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """The trust rules read the class, so an instance ``search`` would be vouched for unchecked."""
+    store = _ContentOnlyStore()
+    await store.write("cfg.txt", "alpha\nkeep me\n")
+
+    async def skewed_search(
+        directory: str,
+        regex_pattern: str,
+        glob_pattern: str | None = None,
+        *,
+        recursive: bool = False,
+    ) -> list[FileSearchResult]:
+        return [
+            FileSearchResult(
+                file_name="cfg.txt",
+                matching_lines=[FileSearchMatch(line_number=1, line="keep me")],
+            )
+        ]
+
+    store.search = skewed_search  # pyright: ignore[reportAttributeAccessIssue]
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+
+    assert "do not line up" in _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
+
+
+async def test_unreadable_matched_file_fails_the_whole_verification(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """An unchecked file must not ship its line numbers alongside checked ones."""
+
+    class _UnreadableSecondFile(_AlignedOverrideStore):
+        async def read(self, path: str) -> str | None:
+            if path.endswith("b.txt"):
+                raise OSError("vanished mid-search")
+            return await super().read(path)
+
+    store = _UnreadableSecondFile()
+    await store.write("a.txt", "keep me\n")
+    await store.write("b.txt", "keep me\n")
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+
+    assert "do not line up" in _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
+
+
+async def test_verification_batches_its_checks_without_changing_results(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Batch size must control how often the check is offloaded, and nothing else.
+
+    Verification reads, checks and discards a batch at a time, so its peak memory follows
+    ``_SCAN_BATCH_CHARS`` rather than the combined size of every matched file.
+    """
+    store = _AlignedOverrideStore()
+    for index in range(4):
+        await store.write(f"f{index}.txt", "keep me\n")
+
+    offloads: list[str] = []
+    original_to_thread = asyncio.to_thread
+
+    async def counting_to_thread(func, /, *args, **kwargs):  # type: ignore[no-untyped-def]
+        offloads.append(getattr(func, "__name__", repr(func)))
+        return await original_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", counting_to_thread)
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    grep = _tool_by_name(tools, FileAccessProvider.GREP_TOOL_NAME)
+
+    # The whole corpus is far below the default batch size, so one offload.
+    whole = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
+    whole_offloads = len(offloads)
+
+    # Force a batch per file and the results must not move.
+    offloads.clear()
+    monkeypatch.setattr(_file_access_module, "_SCAN_BATCH_CHARS", 1)
+    split = _text((await grep.invoke(arguments={"regex_pattern": "keep me"}))[0])
+
+    assert whole_offloads == 1
+    assert len(offloads) == 4
+    assert whole == split
 
 
 # endregion
