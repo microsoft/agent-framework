@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from chatkit.store import AttachmentStore
-from chatkit.types import Attachment, AttachmentCreateParams, FileAttachment, ImageAttachment
+from chatkit.types import (
+    Attachment,
+    AttachmentCreateParams,
+    AttachmentUploadDescriptor,
+    FileAttachment,
+    ImageAttachment,
+)
 from pydantic import AnyUrl
 
 if TYPE_CHECKING:
@@ -70,7 +76,7 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
         if not attachment_id or attachment_id in {".", ".."} or "/" in attachment_id or "\\" in attachment_id:
             raise ValueError(f"Invalid attachment ID: {attachment_id!r}")
 
-        file_path = (self.uploads_dir / attachment_id).resolve()
+        file_path = (self.uploads_dir / attachment_id).resolve()  # CodeQL [SM01305] Path containment is validated below.  # fmt: skip
         if not file_path.is_relative_to(self.uploads_dir) or file_path.parent != self.uploads_dir:
             raise ValueError(f"Invalid attachment ID: {attachment_id!r}")
         return file_path
@@ -90,8 +96,11 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
         # Generate unique ID for this attachment
         attachment_id = self.generate_attachment_id(input.mime_type, context)
 
-        # Generate upload URL that points to our FastAPI upload endpoint
-        upload_url = f"{self.base_url}/upload/{attachment_id}"
+        # Generate upload instructions that point to our FastAPI upload endpoint
+        upload_descriptor = AttachmentUploadDescriptor(
+            url=AnyUrl(f"{self.base_url}/upload/{attachment_id}"),
+            method="POST",
+        )
 
         # Create appropriate attachment type based on MIME type
         if input.mime_type.startswith("image/"):
@@ -103,7 +112,7 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
                 type="image",
                 mime_type=input.mime_type,
                 name=input.name,
-                upload_url=AnyUrl(upload_url),
+                upload_descriptor=upload_descriptor,
                 preview_url=AnyUrl(preview_url),
             )
         else:
@@ -113,7 +122,7 @@ class FileBasedAttachmentStore(AttachmentStore[dict[str, Any]]):
                 type="file",
                 mime_type=input.mime_type,
                 name=input.name,
-                upload_url=AnyUrl(upload_url),
+                upload_descriptor=upload_descriptor,
             )
 
         # Save attachment metadata to data store so it's available during upload
