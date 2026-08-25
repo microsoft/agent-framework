@@ -32,9 +32,9 @@ from agent_framework import (
     background_tasks_running,
     background_tasks_running_message,
     set_agent_mode,
-    tool,
     todos_remaining,
     todos_remaining_message,
+    tool,
 )
 from agent_framework._harness._loop import (
     DEFAULT_JUDGE_MAX_ITERATIONS,
@@ -1422,6 +1422,55 @@ class _RunScopedRecordingProvider(ContextProvider):
 
     async def after_run(self, *, agent: Any, session: Any, context: Any, state: dict[str, Any]) -> None:
         self.after_calls += 1
+
+
+class _StrictTransportChatClient(RecordingChatClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.received_provider_options: list[str] = []
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool = False,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+        self._strict_transport(**options)
+        return super()._inner_get_response(messages=messages, stream=stream, options=options, **kwargs)
+
+    def _strict_transport(self, *, tool_choice: Any, _provider_option: str) -> None:
+        self.received_provider_options.append(_provider_option)
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["non_streaming", "streaming"])
+async def test_loop_marker_is_not_forwarded_to_provider_transport(stream: bool) -> None:
+    client = _StrictTransportChatClient()
+    turn_scoped = _TurnScopedRecordingProvider()
+    agent = Agent(
+        client=client,
+        middleware=[AgentLoopMiddleware(always_continue, max_iterations=1)],
+        context_providers=[turn_scoped],
+    )
+    options = {"_provider_option": "kept"}
+
+    if stream:
+        response = agent.run(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+            "start",
+            stream=True,
+            options=options,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        )
+        _ = [update async for update in response]
+        await response.get_final_response()
+    else:
+        await agent.run(  # type: ignore[call-overload]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+            "start",
+            options=options,  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        )
+
+    assert client.received_provider_options == ["kept"]
+    assert turn_scoped.after_calls == 1
 
 
 async def test_turn_scoped_after_run_fires_once_per_loop() -> None:
