@@ -79,9 +79,9 @@ _SEARCH_SNIPPET_RADIUS = 50
 _MAX_SEARCH_PATTERN_LENGTH = 256
 _SEARCH_TIMEOUT_SECONDS = 10.0
 
-#: How much file content :meth:`AgentFileStore.search` accumulates before handing a batch
-#: to a worker thread. Sized so the per-hop cost is negligible against the scan itself while
-#: peak memory stays bounded no matter how many candidates a store returns.
+# How much file content :meth:`AgentFileStore.search` accumulates before handing a batch
+# to a worker thread. Sized so the per-hop cost is negligible against the scan itself while
+# peak memory stays bounded no matter how many candidates a store returns.
 _SCAN_BATCH_CHARS = 4_000_000
 
 # Errno raised by POSIX ``open`` when ``O_NOFOLLOW`` was requested and the
