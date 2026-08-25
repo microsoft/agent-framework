@@ -1,8 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to represent an A2A agent as a set of function tools, where each function tool
-// corresponds to a skill of the A2A agent, and register these function tools with another AI agent so
-// it can leverage the A2A agent's skills.
+// This sample shows how to expose each skill advertised by an A2A agent as a separate function tool.
 
 using System.Text.RegularExpressions;
 using A2A;
@@ -16,16 +14,12 @@ var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? th
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
 var a2aAgentHost = Environment.GetEnvironmentVariable("A2A_AGENT_HOST") ?? throw new InvalidOperationException("A2A_AGENT_HOST is not set.");
 
-// Initialize an A2ACardResolver to get an A2A agent card.
+// Resolve the remote A2A agent and its advertised skills.
 A2ACardResolver agentCardResolver = new(new Uri(a2aAgentHost));
-
-// Get the agent card
 AgentCard agentCard = await agentCardResolver.GetAgentCardAsync();
-
-// Create an instance of the AIAgent for an existing A2A agent specified by the agent card.
 AIAgent a2aAgent = agentCard.AsAIAgent();
 
-// Create the main agent, and provide the a2a agent skills as a function tools.
+// Create the main agent, and provide each A2A skill as a separate function tool.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
