@@ -430,6 +430,7 @@ public sealed class A2AAgent : AIAgent
         {
             AgentId = this.Id,
             ResponseId = task.Id,
+            CreatedAt = task.Status.Timestamp,
             FinishReason = MapTaskStateToFinishReason(task.Status.State),
             RawRepresentation = task,
             Messages = task.ToChatMessages() ?? [],
@@ -459,6 +460,7 @@ public sealed class A2AAgent : AIAgent
         {
             AgentId = this.Id,
             ResponseId = task.Id,
+            CreatedAt = task.Status.Timestamp,
             FinishReason = MapTaskStateToFinishReason(task.Status.State),
             RawRepresentation = task,
             Role = ChatRole.Assistant,
@@ -474,6 +476,7 @@ public sealed class A2AAgent : AIAgent
         {
             AgentId = this.Id,
             ResponseId = statusUpdateEvent.TaskId,
+            CreatedAt = statusUpdateEvent.Status.Timestamp,
             RawRepresentation = statusUpdateEvent,
             Role = ChatRole.Assistant,
             MessageId = statusUpdateEvent.Status.Message?.MessageId,

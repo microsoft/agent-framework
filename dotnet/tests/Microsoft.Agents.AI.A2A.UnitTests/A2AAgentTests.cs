@@ -531,6 +531,55 @@ public sealed class A2AAgentTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_WithTaskResponse_SetsCreatedAtFromTaskStatusTimestampAsync()
+    {
+        // Arrange - an explicit timestamp distinct from "now", so the assertion cannot pass
+        // by accident against AgentTaskStatus.Timestamp's DateTimeOffset.UtcNow default.
+        var statusTimestamp = new DateTimeOffset(2026, 1, 15, 10, 30, 0, TimeSpan.Zero);
+        this._handler.AgentTaskToReturn = new AgentTask
+        {
+            Id = "task-created-at",
+            ContextId = "context-created-at",
+            Status = new() { State = TaskState.Completed, Timestamp = statusTimestamp }
+        };
+
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("task-created-at") };
+
+        // Act
+        var response = await this._agent.RunAsync([], options: options);
+
+        // Assert
+        Assert.Equal(statusTimestamp, response.CreatedAt);
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_WithTaskResponse_SetsCreatedAtFromTaskStatusTimestampAsync()
+    {
+        // Arrange
+        var statusTimestamp = new DateTimeOffset(2026, 2, 20, 8, 15, 0, TimeSpan.Zero);
+        this._handler.StreamingErrorCodeToReturn = A2AErrorCode.UnsupportedOperation;
+        this._handler.AgentTaskToReturn = new AgentTask
+        {
+            Id = "streaming-created-at",
+            ContextId = "context-streaming-created-at",
+            Status = new() { State = TaskState.Completed, Timestamp = statusTimestamp }
+        };
+
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken("streaming-created-at") };
+
+        // Act
+        var updates = new List<AgentResponseUpdate>();
+        await foreach (var update in this._agent.RunStreamingAsync([], null, options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Single(updates);
+        Assert.Equal(statusTimestamp, updates[0].CreatedAt);
+    }
+
+    [Fact]
     public async Task RunAsync_WithTaskInSessionAndMessage_AddTaskAsReferencesToMessageAsync()
     {
         // Arrange
