@@ -139,6 +139,8 @@ class RunnerImpl:
                 iteration_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await iteration_task
+                # Discard pending state writes from the cancelled superstep
+                self._state.discard()
                 raise
 
             # Propagate errors from iteration, but first surface any pending events
@@ -149,6 +151,8 @@ class RunnerImpl:
                 if await self._ctx.has_events():
                     for event in await self._ctx.drain_events():
                         yield event
+                # Discard pending state writes from the failed superstep
+                self._state.discard()
                 raise
             self._iteration += 1
 

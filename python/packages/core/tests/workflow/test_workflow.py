@@ -609,6 +609,55 @@ async def test_workflow_multiple_runs_no_state_collision_after_rebuild():
         assert result2.get_outputs()[0] == ["run2:message2"]
 
 
+@dataclass
+class FlakyMessage:
+    """A message that can fail on demand for testing state discard behavior."""
+
+    fail: bool
+
+
+class FlakyStateExecutor(Executor):
+    """An executor that fails on demand to test state discard on failure."""
+
+    @handler
+    async def handle_message(
+        self,
+        message: FlakyMessage,
+        ctx: WorkflowContext[FlakyMessage, str],
+    ) -> None:
+        if message.fail:
+            ctx.set_state("secret", "leaked-from-failed-run")
+            raise RuntimeError("simulated transient failure")
+
+        await ctx.yield_output("ok")
+
+
+async def test_workflow_discards_pending_state_after_failed_superstep():
+    """Test that pending state from a failed superstep is discarded and not committed.
+
+    This is a regression test for GitHub issue #7859: pending state writes from
+    a failed superstep must not leak into a later successful run on the same
+    Workflow instance.
+    """
+    workflow = WorkflowBuilder(start_executor=FlakyStateExecutor(id="flaky")).build()
+
+    # First run: fails after staging a state write
+    with pytest.raises(RuntimeError, match="simulated transient failure"):
+        await workflow.run(FlakyMessage(fail=True))
+
+    # Verify the failed run did not leave the staged write pending
+    assert workflow._runner.state._pending == {}
+
+    # Second run: succeeds without touching "secret"
+    result = await workflow.run(FlakyMessage(fail=False))
+    assert result.get_final_state() == WorkflowRunState.IDLE
+    assert result.get_outputs() == ["ok"]
+
+    # Verify the leaked state from the failed run is NOT in committed state
+    committed_state = workflow._runner.state.export_state()
+    assert "secret" not in committed_state
+
+
 async def test_workflow_checkpoint_runtime_only_configuration(
     simple_executor: Executor,
 ):
