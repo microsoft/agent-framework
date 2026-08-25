@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -335,7 +334,7 @@ public sealed class FeatureRegistryTests
 
             foreach (EnumDeclarationSyntax featureIndex in enums)
             {
-                if (!featureIndex.Modifiers.Any(SyntaxKind.InternalKeyword))
+                if (!featureIndex.Modifiers.Any(static modifier => modifier.RawKind == (int)SyntaxKind.InternalKeyword))
                 {
                     errors.Add($"{filePath}: FeatureIndex must be internal.");
                 }
