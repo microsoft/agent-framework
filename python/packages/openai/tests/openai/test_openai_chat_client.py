@@ -791,6 +791,157 @@ async def test_served_model_header_propagated_to_streaming_updates() -> None:
         assert update.model == "gpt-4o-2024-08-06"
 
 
+class _UnparsedRawResponse:
+    """The still-unparsed raw response a telemetry wrapper captures.
+
+    Like ``LegacyAPIResponse``: it exposes ``parse()`` but is not an async iterator.
+    """
+
+    def __init__(self, parsed: object) -> None:
+        self._parsed = parsed
+
+    def parse(self) -> object:
+        return self._parsed
+
+
+class _BareEventStream:
+    """An object that is already the event stream: no ``parse``, nothing to unwrap."""
+
+    def __init__(self, items: Sequence[object]) -> None:
+        self._items = list(items)
+        self._iterator: Iterator[object] = iter(())
+
+    def __aiter__(self) -> "_BareEventStream":
+        self._iterator = iter(self._items)
+        return self
+
+    async def __anext__(self) -> object:
+        try:
+            return next(self._iterator)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+
+class _FakeTelemetryStreamWrapper:
+    """The wrapper a telemetry instrumentor substitutes for the raw-response wrapper.
+
+    Mirrors the ``AsyncStreamWrapper`` that ``azure-ai-projects`` installs when
+    ``AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING`` is enabled, as observed against
+    azure-ai-projects==2.3.0:
+
+    * it exposes neither ``parse`` nor ``headers``;
+    * it is the async iterator, and ``__anext__`` delegates to ``stream_async_iter``;
+    * because ``with_raw_response.create()`` routes through the instrumented
+      ``create``, ``stream_async_iter`` is the still-unparsed raw response
+      (a ``LegacyAPIResponse``), which is *not* itself an async iterator.
+
+    So iterating this wrapper as handed over raises ``AttributeError`` until the
+    inner raw response is parsed and handed back.
+    """
+
+    def __init__(self, stream_async_iter: Any) -> None:
+        self.stream_async_iter: Any = stream_async_iter
+
+    def __aiter__(self) -> "_FakeTelemetryStreamWrapper":
+        self.stream_async_iter = self.stream_async_iter.__aiter__()
+        return self
+
+    async def __anext__(self) -> object:
+        return await self.stream_async_iter.__anext__()
+
+
+async def test_streaming_survives_telemetry_wrapped_raw_response() -> None:
+    """Streaming should work when tracing replaces the raw-response wrapper.
+
+    Regression test for #7461. The client read ``.headers`` defensively but called
+    ``.parse()`` unconditionally, so enabling Azure GenAI tracing raised
+    ``AttributeError: 'AsyncStreamWrapper' object has no attribute 'parse'``.
+
+    The telemetry wrapper must stay in the iteration path so it still records
+    telemetry, while the raw response it wraps gets parsed into real events.
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    events = [
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=1,
+            logprobs=[],
+            delta="Hello",
+        ),
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=2,
+            logprobs=[],
+            delta=" world",
+        ),
+    ]
+
+    # The unparsed raw response the instrumentor captured: it has .parse() but is not
+    # an async iterator, exactly like LegacyAPIResponse.
+    unparsed_raw = _UnparsedRawResponse(_FakeAsyncEventStream(events))
+    assert not hasattr(unparsed_raw, "__anext__")
+
+    instrumented = _FakeTelemetryStreamWrapper(unparsed_raw)
+    assert not hasattr(instrumented, "parse")
+    assert not hasattr(instrumented, "headers")
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses.with_raw_response, "create", new=AsyncMock(return_value=instrumented)),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = _as_chat_response_stream(
+            client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        )
+        updates = [update async for update in stream]
+
+    assert "".join(update.text or "" for update in updates) == "Hello world"
+    # The telemetry wrapper stays in the iteration path rather than being bypassed.
+    assert isinstance(instrumented.stream_async_iter, _FakeAsyncEventStream)
+    # No served-model header is available on an instrumented stream, so updates keep
+    # the deployment alias rather than failing.
+    assert all(update.model == "test-model" for update in updates)
+
+
+async def test_streaming_accepts_raw_response_that_is_already_an_event_stream() -> None:
+    """An object with no ``parse`` and no wrapped raw response is iterated directly."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    events = [
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="text_item",
+            output_index=0,
+            sequence_number=1,
+            logprobs=[],
+            delta="Hello",
+        ),
+    ]
+
+    bare = _BareEventStream(events)
+    assert not hasattr(bare, "parse")
+
+    with (
+        patch.object(client, "_prepare_request", new=AsyncMock(return_value=(client.client, {}, {}))),
+        patch.object(client.client.responses.with_raw_response, "create", new=AsyncMock(return_value=bare)),
+        patch.object(client, "_get_metadata_from_response", return_value={}),
+    ):
+        stream = _as_chat_response_stream(
+            client._inner_get_response(messages=[Message(role="user", contents=["Hi"])], options={}, stream=True)
+        )
+        updates = [update async for update in stream]
+
+    assert "".join(update.text or "" for update in updates) == "Hello"
+
+
 async def test_served_model_header_aggregates_into_final_streaming_response() -> None:
     """Aggregating updates via to_chat_response() should preserve the served-model value."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
