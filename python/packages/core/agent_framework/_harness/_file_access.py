@@ -116,9 +116,8 @@ async def _run_search_with_timeout(
 ) -> list[FileSearchResult]:
     """Await ``work`` under a bounded wall-clock timeout.
 
-    Callers pass an awaitable rather than a callable so the same bound covers
-    both shapes of search: a whole scan offloaded with :func:`asyncio.to_thread`
-    (what the stores in this package do) and the base
+    The one bound covers both shapes of search: a whole scan offloaded with
+    :func:`asyncio.to_thread` (what the stores in this package do) and the base
     :meth:`AgentFileStore.search` pipeline, which keeps store I/O on the event
     loop and offloads only the per-file regex work. In both cases the
     model-supplied pattern executes in a worker thread, never on the loop.
@@ -684,17 +683,17 @@ class AgentFileStore(ABC):
             path: The relative path of the file to check.
         """
 
-    #: Set to ``True`` by a store that overrides :meth:`search` and guarantees its
-    #: ``line_number`` values are coordinates in :meth:`split_lines` — normally because
-    #: it reports through :meth:`scan_content`. Declaring this opts the store out of the
-    #: alignment check :class:`FileAccessProvider` otherwise runs on every ``grep``,
-    #: which costs one extra read per *matched* file. Stores that do not override
-    #: :meth:`search` need not set it: the base implementation is aligned by
-    #: construction and is never checked.
-    #:
-    #: This is a promise, not a hint. Declaring it while numbering lines differently
-    #: reinstates exactly the failure the check exists to catch — ``replace_lines``
-    #: silently editing the wrong line — so only set it if a test pins the alignment.
+    # Set to ``True`` by a store that overrides :meth:`search` and guarantees its
+    # ``line_number`` values are coordinates in :meth:`split_lines` — normally because
+    # it reports through :meth:`scan_content`. Declaring this opts the store out of the
+    # alignment check :class:`FileAccessProvider` otherwise runs on every ``grep``,
+    # which costs one extra read per *matched* file. Stores that do not override
+    # :meth:`search` need not set it: the base implementation is aligned by
+    # construction and is never checked.
+    #
+    # This is a promise, not a hint. Declaring it while numbering lines differently
+    # reinstates exactly the failure the check exists to catch — ``replace_lines``
+    # silently editing the wrong line — so only set it if a test pins the alignment.
     reports_aligned_line_numbers: ClassVar[bool] = False
 
     @staticmethod
@@ -1384,11 +1383,11 @@ class FileSystemAgentFileStore(AgentFileStore):
         await asyncio.to_thread(lambda: full_path.mkdir(parents=True, exist_ok=True))
 
 
-#: Store types whose ``search`` numbers lines with :meth:`AgentFileStore.split_lines`. Matched by
-#: exact type rather than ``isinstance``: both scan their own storage instead of going through
-#: ``read``, so a subclass overriding only ``read`` would have grep and the line editor looking at
-#: different text while inheriting the trust. (The .NET port declares a property instead, which is
-#: safe there only because both of its shipped stores are sealed.)
+# Store types whose ``search`` numbers lines with :meth:`AgentFileStore.split_lines`. Matched by
+# exact type rather than ``isinstance``: both scan their own storage instead of going through
+# ``read``, so a subclass overriding only ``read`` would have grep and the line editor looking at
+# different text while inheriting the trust. (The .NET port declares a property instead, which is
+# safe there only because both of its shipped stores are sealed.)
 _ALIGNED_STORE_TYPES: frozenset[type[AgentFileStore]] = frozenset({
     InMemoryAgentFileStore,
     FileSystemAgentFileStore,

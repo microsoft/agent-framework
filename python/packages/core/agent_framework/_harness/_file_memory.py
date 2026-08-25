@@ -74,8 +74,8 @@ DEFAULT_FILE_MEMORY_INSTRUCTIONS = (
     "compacted or truncated. This ensures important data remains accessible across long-running sessions."
 )
 
-#: The file-access wording names tools this provider does not register: there is no
-#: ``file_memory_read_lines``, so the model is pointed at ``file_memory_read`` instead.
+# The file-access wording names tools this provider does not register: there is no
+# ``file_memory_read_lines``, so the model is pointed at ``file_memory_read`` instead.
 _MISALIGNED_MEMORY_SEARCH_MESSAGE = (
     "Could not search memory files: this store's line numbers do not line up with the numbering "
     "used by file_memory_replace_lines, so editing by the reported numbers would change the wrong "
