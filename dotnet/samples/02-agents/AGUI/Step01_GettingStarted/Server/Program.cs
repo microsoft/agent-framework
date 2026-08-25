@@ -7,7 +7,6 @@ using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 using OpenAI.Chat;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-builder.Services.AddHttpClient().AddLogging();
 builder.Services.AddAGUIServer();
 
 // WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,

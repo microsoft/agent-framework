@@ -150,12 +150,7 @@ that too.
 > unattended.
 
 `azure.yaml` passes the model deployment to the container by reading it from the `azd` environment.
-Confirm it landed there, and set it yourself if it did not:
-
-```
-azd env get-values
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME <model-deployment>
-```
+Step 3 explicitly sets it inside the scaffolded project before provisioning.
 
 PowerShell:
 
@@ -184,6 +179,8 @@ before the commands below. Everyone else can ignore it.
 
 ```
 cd hosted-chat-client-agent
+azd env get-values
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME <model-deployment>
 azd provision
 azd deploy
 azd ai agent invoke "Hello!"
@@ -218,6 +215,16 @@ dotnet run -- --remote
 ```
 azd down
 ```
+
+> **`azd down` does not delete the hosted agent.** It reports success but leaves the deployed agent
+> in place. Delete it explicitly with a REST call:
+>
+> ```bash
+> az rest --method delete \
+>   --url "<project-endpoint>/agents/hosted-chat-client-agent" \
+>   --url-parameters api-version=v1 force=true \
+>   --resource https://ai.azure.com
+> ```
 
 Then delete the working directory.
 

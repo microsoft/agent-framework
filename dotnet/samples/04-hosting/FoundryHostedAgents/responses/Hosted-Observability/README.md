@@ -1,151 +1,208 @@
-﻿# Hosted-Observability
+# Hosted-Observability
 
-A hosted [Agent Framework](https://github.com/microsoft/agent-framework) agent that demonstrates how the Foundry hosting pipeline emits OpenTelemetry traces, metrics and logs with no extra wiring.
+A hosted agent that demonstrates the Foundry hosting pipeline emits OpenTelemetry traces, metrics and logs with no extra wiring. Two small tools are included so a request produces a span tree covering agent invocation, the chat call, and tool execution.
 
-The agent has two small tools, `GetCurrentLocation` and `GetWeather`, so an end-to-end run produces a span tree covering agent invocation, the underlying chat call, and tool execution.
-
-## How it works
-
-### Instrumentation is on by default
-
-Unlike the Python SDK, the .NET hosting library is instrumented by default. `AddFoundryResponses(agent)` automatically wraps the agent with `OpenTelemetryAgent` (see `Microsoft.Agents.AI.Foundry.Hosting.ServiceCollectionExtensions.ApplyOpenTelemetry`) and the OTLP exporter pipeline is registered by `Azure.AI.AgentServer.Core`'s `AddAgentHostTelemetry()`. There is no `ENABLE_INSTRUMENTATION` flag to set.
-
-### Sensitive content
-
-Prompt, completion and tool argument content are omitted from spans by default. Set the OpenTelemetry standard environment variable to capture them:
-
-```env
-OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
-```
-
-This is the .NET equivalent of the Python sample's `ENABLE_SENSITIVE_DATA`. It is read by `OpenTelemetryAgent.EnableSensitiveData`.
-
-### Where the telemetry goes
-
-Foundry injects `APPLICATIONINSIGHTS_CONNECTION_STRING` when the agent runs in the hosted environment, so traces, metrics and logs flow to Application Insights with no code change. To send telemetry from a local run, set the connection string yourself in `.env`.
+This sample deploys to Foundry **directly from source (code / ZIP upload)**: the platform builds and runs your code with no container image, so there is no Dockerfile to author or container registry to manage. Source deploy is the default for .NET.
 
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- A Foundry project with a deployed model (e.g., `gpt-4o`)
+- An **existing** Foundry project with an **existing** model deployment (for example `gpt-4o`).
+  This sample's `azure.yaml` declares no `deployments:` block, so `azd` connects to a project and
+  a deployment you already have rather than creating them. `azd ai agent init` prompts you to pick
+  the project, and takes the deployment name as the `-d` argument.
 - Azure CLI logged in (`az login`)
+- Azure Developer CLI (`azd`) with the AI agents extension: `azd extension install azure.ai.agents`
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `Program.cs` | The agent: defines two tools, hosts it with the Responses protocol; telemetry is emitted automatically by the hosting pipeline. |
+| `azure.yaml` | The unified `azd` project file. Declares the Foundry project and the hosted agent with `codeConfiguration` (source/ZIP deploy), and passes the listen port and the model deployment name to the container through env. |
+| `.agentignore` | Controls which files are excluded from the code-deploy ZIP upload (`.gitignore` syntax). |
+| `HostedObservability.csproj` | Self-contained project: single target framework and explicit package versions. It also opts out of the repository's central package management, which does not travel inside the ZIP. |
+| `.env.example` | Template for local configuration. |
+| `../../scripts/Add-LocalFrameworkFeed.ps1`, `../../scripts/add-local-framework-feed.sh` | Contributor-only helpers, see [Deploy your local framework changes](#deploy-your-local-framework-changes-contributors). |
 
 ## Configuration
+
+Copy the template and fill in your project endpoint:
+
+PowerShell:
+
+```powershell
+copy .env.example .env
+```
+
+Bash:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and set your Foundry project endpoint:
-
 ```env
 FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
 ASPNETCORE_URLS=http://+:8088
-ASPNETCORE_ENVIRONMENT=Development
-FOUNDRY_MODEL=gpt-4o
-OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
+AZURE_TOKEN_CREDENTIALS=dev
 ```
 
-> **Note:** `.env` is gitignored. The `.env.example` template is checked in as a reference.
+> `.env` is gitignored. The `.env.example` template is checked in as a reference.
 
-## Running directly (contributors)
+> `ASPNETCORE_URLS` pins the local run to the port the `Using-Samples` REPLs expect. Recent
+> `Microsoft.Agents.AI.Foundry.Hosting` versions bind that port themselves, so it only matters
+> while this project is pinned to an older published package.
 
-```bash
+> **Windows note:** write `.env` as UTF-8 **without** a byte order mark. `azd` reads the file
+> during `azd ai agent init` and fails with `unexpected character` when a mark is present.
+
+> **Local development on a machine without a managed identity:** set `AZURE_TOKEN_CREDENTIALS=dev`.
+> `Program.cs` authenticates with `DefaultAzureCredential`. On a developer machine with no
+> managed identity, `DefaultAzureCredential` probes the Azure Instance Metadata Service (IMDS,
+> `169.254.169.254`) and blocks for a long time before every model call. `AZURE_TOKEN_CREDENTIALS=dev`
+> restricts it to developer credentials (Azure CLI, Visual Studio, `azd`) and skips that probe.
+> Only for local runs; the deployed agent uses the platform-injected managed identity.
+
+## Run and test locally
+
+Local runs use two terminals: one hosts the agent, the other is a code-first client that talks to it,
+see the sibling [`Using-Samples`](../Using-Samples/) REPLs.
+
+**Terminal 1 — host the agent:**
+
+```
 cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Observability
-AGENT_NAME=hosted-observability dotnet run
+az login
+dotnet run
 ```
 
 The agent starts on `http://localhost:8088`.
 
-### Test it
+**Terminal 2 — chat with it (code-first REPL):**
 
-```bash
-azd ai agent invoke --local "What is the current weather where I am?"
+PowerShell:
+
+```powershell
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent
+$env:AZURE_AI_AGENT_NAME = "hosted-observability"
+dotnet run -- --local
 ```
 
-Or with curl:
+Bash:
 
 ```bash
-curl -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{"input": "What is the current weather where I am?", "model": "hosted-observability"}'
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent
+export AZURE_AI_AGENT_NAME="hosted-observability"
+dotnet run -- --local
 ```
 
-## Expected span tree
+Try: `What is the weather where I am?`
 
-A single request produces approximately the following spans:
+## Deploy to Foundry (source / ZIP)
 
-| Span | Source |
-|------|--------|
-| `invoke_agent` | Outer span emitted by the Azure AI AgentServer hosting SDK |
-| `agent_invoke <name>` | Emitted by `OpenTelemetryAgent` for each agent invocation |
-| `chat <model>` | Emitted by the underlying `IChatClient` for each model call |
-| `execute_tool <tool>` | Emitted for each invocation of `GetCurrentLocation` / `GetWeather` |
+`azd` scaffolds the project into a working folder, so every step below runs from an **empty
+directory outside the repository**, and `-m` points at this sample's `azure.yaml`.
 
-See the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) for the attributes captured on each span.
+### Step 1: create the working directory and enter it
 
-## Running with Docker
+PowerShell:
 
-This project uses `ProjectReference` to the local Agent Framework source, so use `Dockerfile.contributor` with a pre-published output:
-
-```bash
-dotnet publish -c Debug -f net10.0 -r linux-musl-x64 --self-contained false -o out
-docker build -f Dockerfile.contributor -t hosted-observability .
-
-export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-docker run --rm -p 8088:8088 \
-  -e AGENT_NAME=hosted-observability \
-  -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN \
-  --env-file .env \
-  hosted-observability
+```powershell
+$work = Join-Path $env:TEMP "hosted-observability-work"
+mkdir $work
+cd $work
 ```
 
-## Deploying to Foundry and viewing traces
+### Step 2: scaffold the project
 
-Once deployed, telemetry flows to the Application Insights instance attached to your Foundry project. In the Foundry UI, the **Traces** tab next to **Playground** lists conversations and lets you drill into the span tree for any request.
+`azd ai agent init` copies the sample into a subfolder named `hosted-observability` (the top-level `name:`
+in `azure.yaml`) and writes the adopted `azure.yaml` and the `azd` environment there. It prompts
+you to pick the Foundry project; `-d` is the name of an existing model deployment in that project.
 
-## Deploying to Foundry (azd spec)
+PowerShell:
 
-This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent spec (`agent.yaml`) for deployment to Foundry.
+```powershell
+$sample = "<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Observability/azure.yaml"
 
-Initialize an `azd` project from this sample's manifest:
-
-```bash
-mkdir hosted-observability && cd hosted-observability
-azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Observability/agent.manifest.yaml
+azd auth login
+azd ai agent init -m $sample -d <model-deployment>
 ```
 
-Then deploy:
+### Step 3: provision and deploy
 
-```bash
+Contributors changing the Agent Framework source: do the extra step in
+[Deploy your local framework changes](#deploy-your-local-framework-changes-contributors) now,
+before the commands below. Everyone else can ignore it.
+
+```
+cd hosted-observability
+azd env get-values
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME <model-deployment>
+azd provision
 azd deploy
+azd ai agent invoke "What is the weather where I am?"
 ```
 
-If you need to override defaults, set deployment-time environment variables in the `azd` environment before deploying:
+`azd` packages the source into a ZIP (honoring `.agentignore`), uploads it, and Foundry runs
+`dotnet restore` + `dotnet publish` on it during provisioning (`dependencyResolution: remote_build`
+in `azure.yaml`). No Dockerfile, no container registry.
+
+### Step 4: clean up
+
+```
+azd down
+```
+
+> **`azd down` does not delete the hosted agent.** It reports success but leaves the deployed agent
+> in place. Delete it explicitly with a REST call:
+>
+> ```bash
+> az rest --method delete \
+>   --url "<project-endpoint>/agents/hosted-observability" \
+>   --url-parameters api-version=v1 force=true \
+>   --resource https://ai.azure.com
+> ```
+
+Then delete the working directory.
+
+## Deploy your local framework changes (contributors)
+
+**Skip this section unless you are changing the Agent Framework itself.** The project restores the
+**published** Agent Framework packages, and Foundry restores from nuget.org when it builds the
+upload, so editing framework source in this repository changes nothing about the deployed agent.
+
+The helper script packs your local framework source into NuGet packages and puts them **inside the
+upload**, together with a `nuget.config` that points the restore at them. Run it in the flow above,
+**between step 2 and step 3**:
+
+PowerShell:
+
+```powershell
+cd $work
+<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/scripts/Add-LocalFrameworkFeed.ps1 -Path ./hosted-observability
+```
+
+Bash:
 
 ```bash
-azd env set AGENT_NAME hosted-observability
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4o
+cd "$WORK"
+<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/scripts/add-local-framework-feed.sh ./hosted-observability
 ```
 
-For end-to-end hosted agent deployment guidance, see the [official deployment guide](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
-
----
-
-## NuGet package users
-
-If consuming the Agent Framework as a NuGet package, use the standard `Dockerfile` instead of `Dockerfile.contributor`. See the commented section in `HostedObservability.csproj` for the `PackageReference` alternative.
+See the
+[`Hosted-ChatClientAgent`](../Hosted-ChatClientAgent/README.md#deploy-your-local-framework-changes-contributors)
+README for the full explanation of what the script changes and why.
 
 ## Troubleshooting
 
 **`azd ai agent invoke` fails with `404 not_found: Conversation '<id>' not found`**
 
-`azd` saves the session and conversation per agent and reuses them on the next invoke. Once the
-agent is redeployed, deleted, or restarted, that saved conversation no longer exists on the server,
-so every following invoke fails even though the agent itself is healthy. Start a fresh one:
+`azd` reuses the saved session and conversation per agent. Once the agent is redeployed or deleted,
+that conversation no longer exists on the server. Start a fresh one:
 
 ```
 azd ai agent invoke --new-conversation "Hello!"
 ```
 
-Add `--new-session` as well if the failure persists.
+For the full hosted-agent deployment guide, see the [official source-code deployment doc](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent-code).

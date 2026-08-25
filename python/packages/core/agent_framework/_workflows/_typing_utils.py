@@ -3,8 +3,9 @@
 import sys
 import typing
 from collections.abc import Mapping
+from dataclasses import InitVar, is_dataclass
 from types import ModuleType, UnionType
-from typing import Any, TypeGuard, Union, cast, get_args, get_origin
+from typing import Any, Literal, TypeGuard, Union, cast, get_args, get_origin, get_type_hints
 
 import typing_extensions
 
@@ -225,6 +226,23 @@ def is_instance_of(data: Any, target_type: type | UnionType | Any) -> bool:
     return isinstance(data, target_type)
 
 
+def _matches_annotation(data: Any, annotation: Any) -> bool:
+    """Check an annotation that may not be runtime-checkable, treating unchecked ones as a match."""
+    if get_origin(annotation) is Literal:
+        return any(data == member and type(data) is type(member) for member in get_args(annotation))
+    try:
+        return is_instance_of(data, annotation)
+    except TypeError:
+        # Annotated, NewType and friends cannot reach isinstance; rejecting them would break
+        # payloads that were accepted before field-level validation existed.
+        return True
+
+
+def _coerced_or_original(coerced: Any, original: Any, target_type: Any) -> Any:
+    """Keep a coercion only when it satisfies the annotation, so failures return the input."""
+    return coerced if _matches_annotation(coerced, target_type) else original
+
+
 def try_coerce_to_type(data: Any, target_type: type | UnionType | Any) -> Any:
     """Try to coerce data to the target type.
 
@@ -244,37 +262,120 @@ def try_coerce_to_type(data: Any, target_type: type | UnionType | Any) -> Any:
     original_data = data
 
     # If already the right type, return as-is
-    if is_instance_of(data, target_type):
+    if _matches_annotation(data, target_type):
         return data
 
-    # Can't coerce to non-concrete targets (Union, generic, etc.)
+    origin = get_origin(target_type)
+
+    if origin in (UnionType, Union):
+        for member_type in get_args(target_type):
+            coerced_member = try_coerce_to_type(data, member_type)
+            if _matches_annotation(coerced_member, member_type):
+                return coerced_member
+        return original_data
+
+    if origin is list and isinstance(data, list):
+        item_types = get_args(target_type) or (Any,)
+        coerced_list = [try_coerce_to_type(item, item_types[0]) for item in cast(list[Any], data)]
+        return _coerced_or_original(coerced_list, original_data, target_type)
+
+    if origin is dict and isinstance(data, dict):
+        key_type, value_type = get_args(target_type) or (Any, Any)
+        coerced_mapping = {
+            try_coerce_to_type(key, key_type): try_coerce_to_type(value, value_type)
+            for key, value in cast(dict[Any, Any], data).items()
+        }
+        return _coerced_or_original(coerced_mapping, original_data, target_type)
+
+    # JSON has no tuples or sets, so sequence payloads have to be rebuilt into them.
+    if origin in (set, frozenset) and isinstance(data, list):
+        item_types = get_args(target_type)
+        item_type = item_types[0] if item_types else Any
+        coerced_items = [try_coerce_to_type(item, item_type) for item in cast(list[Any], data)]
+        if not all(_matches_annotation(item, item_type) for item in coerced_items):
+            return original_data
+        try:
+            coerced_set = frozenset(coerced_items) if origin is frozenset else set(coerced_items)
+        except TypeError:
+            # An item that stayed unhashable never belonged in this set.
+            return original_data
+        return _coerced_or_original(coerced_set, original_data, target_type)
+
+    if origin is tuple and isinstance(data, list):
+        items = cast(list[Any], data)
+        item_types = get_args(target_type)
+        if len(item_types) == 2 and item_types[1] is Ellipsis:
+            item_types = (item_types[0],) * len(items)
+        if len(item_types) != len(items):
+            return original_data
+        coerced_tuple = tuple(
+            try_coerce_to_type(item, item_type) for item, item_type in zip(items, item_types, strict=True)
+        )
+        return _coerced_or_original(coerced_tuple, original_data, target_type)
+
+    # Can't coerce to non-concrete targets (generic aliases, etc.)
     if not isinstance(target_type, type):
         return original_data
 
     target_cls: type[Any] = target_type
 
     # int -> float (JSON integers for float fields)
-    if isinstance(data, int) and target_cls is float:
+    if isinstance(data, int) and not isinstance(data, bool) and target_cls is float:
         return float(data)
 
-    # dict -> dataclass or pydantic model
+    # dict -> dataclass, pydantic model, or SerializationMixin type
     if isinstance(data, dict):
-        from dataclasses import is_dataclass
+        payload = cast(dict[str, Any], data)
 
         if is_dataclass(target_cls):
-            try:
-                return target_cls(**data)
-            except (TypeError, ValueError):
-                return original_data
+            return _coerce_dict_to_dataclass(payload, target_cls)
 
         model_validate = getattr(target_cls, "model_validate", None)
         if callable(model_validate):
             try:
-                return model_validate(data)
+                return model_validate(payload)
+            except Exception:
+                return original_data
+
+        from_dict = getattr(target_cls, "from_dict", None)
+        if callable(from_dict):
+            try:
+                return from_dict(payload)
             except Exception:
                 return original_data
 
     return original_data
+
+
+def _coerce_dict_to_dataclass(data: dict[str, Any], target_cls: type[Any]) -> Any:
+    """Build a dataclass from a JSON-like dict, coercing each field to its annotation."""
+    try:
+        field_types = get_type_hints(target_cls)
+    except Exception:
+        field_types = {}
+
+    # __dataclass_fields__ keeps InitVar pseudo-fields that fields() drops, and the constructor takes them.
+    init_field_names = {name for name, field in target_cls.__dataclass_fields__.items() if field.init}
+
+    coerced_fields: dict[str, Any] = {}
+    for name, value in data.items():
+        if name not in init_field_names:
+            return data
+        annotation = field_types.get(name, Any)
+        if type(annotation) is InitVar:
+            annotation = cast(Any, annotation).type
+        coerced_value = try_coerce_to_type(value, annotation)
+        # Callers validate the outer type only, so a mismatched field has to fail the whole build.
+        if not _matches_annotation(coerced_value, annotation):
+            return data
+        coerced_fields[name] = coerced_value
+
+    try:
+        return target_cls(**coerced_fields)
+    except Exception:
+        # Constructor validation of any kind fails the build; it must not escape to callers
+        # that have no coercion error path.
+        return data
 
 
 def serialize_type(t: type) -> str:

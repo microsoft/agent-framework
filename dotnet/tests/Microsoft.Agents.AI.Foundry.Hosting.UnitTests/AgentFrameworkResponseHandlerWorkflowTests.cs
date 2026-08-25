@@ -11,6 +11,7 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -161,7 +162,10 @@ public class AgentFrameworkResponseHandlerWorkflowTests
     }
 
     private static (AgentFrameworkResponseHandler handler, CreateResponse request, ResponseContext context)
-        CreateHandlerWithAgent(AIAgent agent, string userMessage)
+        CreateHandlerWithAgent(
+            AIAgent agent,
+            string userMessage,
+            bool resilient = false)
     {
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
@@ -170,8 +174,20 @@ public class AgentFrameworkResponseHandlerWorkflowTests
         services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-        var request = new CreateResponse { Model = "test" };
+        var handler = new AgentFrameworkResponseHandler(
+            sp,
+            NullLogger<AgentFrameworkResponseHandler>.Instance,
+            Options.Create(
+                new FoundryResponsesOptions
+                {
+                    ResilientBackground = resilient,
+                }));
+        var request = new CreateResponse
+        {
+            Model = "test",
+            Background = resilient,
+            Store = resilient,
+        };
         request.Input = CreateUserInput(userMessage);
         var mockContext = CreateMockContext();
 

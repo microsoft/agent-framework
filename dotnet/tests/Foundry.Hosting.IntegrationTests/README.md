@@ -46,6 +46,19 @@ The container scenario injects `USER-ID:<platform-user-key>` via
 `x-agent-user-id`). The caller credential must be allowed to delegate via
 `x-ms-user-identity` or those tests fail with HTTP 403.
 
+### Resilience and steering scenarios
+
+- `ResilientWorkflowHostedAgentTests` uses `IT_SCENARIO=resilient-workflow` to verify that a
+  background MAF workflow continues without client traffic and that a different process resumes it
+  after `Environment.Exit(70)`. Its countdown test receives `20` through `11`, ends the container
+  process, reconnects with the sequence-aware MAF continuation token, and verifies the recovered
+  accumulator contains exactly `20` through `1`. A third call uses the same agent and session with
+  the same response ID but no sequence cursor, and verifies the complete 20-item replay.
+- `SteerableLongRunningHostedAgentTests` uses `IT_SCENARIO=steerable-long-running` to start a
+  background MAF turn, wait for its first streamed update, submit a second input on the same
+  conversation, assert `queued`, and verify that the persisted `AgentSession` advances to turn 2
+  without concurrent MAF executions.
+
 ## Required environment variables
 
 | Variable | Source | Purpose |
@@ -61,7 +74,7 @@ The container scenario injects `USER-ID:<platform-user-key>` via
 Hosted agent invocation requires the agent's own managed identity to hold the
 `Azure AI User` role on the project scope. Because each agent's MI is created when the
 agent is first provisioned (and recycled on agent delete), the bootstrap creates the
-eleven stable scenario agents once and grants the role to each MI. The fixture then only
+stable scenario agents once and grants the role to each MI. The fixture then only
 manages versions under those existing agents, so the role grants survive across runs.
 
 ```powershell
@@ -233,6 +246,7 @@ human-only operation; CI only adds and deletes versions under existing agents.
 | `AzureSearchRagHostedAgentFixture` | `azure-search-rag` | `it-azure-search-rag` | RAG against a real Azure AI Search index seeded with Contoso Outdoors documents; verifies the model cites the retrieved sources. |
 | `SessionFilesHostedAgentFixture` | `session-files` | `it-session-files` | End-to-end: upload via `AgentSessionFiles` (alpha) into a pinned `agent_session_id`, invoke the agent, assert it reads the file via the container's `ReadFile` tool. |
 | `AgentSkillsHostedAgentFixture` | `agent-skills` | `it-agent-skills` | Agent skills via `AgentSkillsProvider`: advertises two Contoso Outdoors skills (support-style, escalation-policy) in the system prompt, loads them on demand via `load_skill`, verifies canary tokens prove the skill was loaded. |
+| `ResilientWorkflowHostedAgentFixture` | `resilient-workflow` | `it-resilient-workflow` | Stored background workflow remains active without client traffic, completes after an intentional container process crash, and replays a complete 20-item countdown without a sequence cursor. |
 
 The scenarios marked (placeholder) are already wired into the test container `Program.cs`,
 but their assertions stay skipped pending live validation and stabilization of the relevant

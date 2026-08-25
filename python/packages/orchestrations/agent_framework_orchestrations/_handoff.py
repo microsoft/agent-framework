@@ -300,6 +300,7 @@ class HandoffAgentExecutor(AgentExecutor):
             middleware=agent.middleware,
             require_per_service_call_history_persistence=agent.require_per_service_call_history_persistence,
             default_options=cloned_options,  # type: ignore[assignment]
+            additional_properties=deepcopy(agent.additional_properties),
         )
 
     def _apply_auto_tools(self, agent: Agent, targets: Sequence[HandoffConfiguration]) -> None:

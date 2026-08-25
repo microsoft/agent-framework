@@ -154,6 +154,10 @@ public sealed class TodoProvider : AIContextProvider, IDisposable
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreTodoProvider);
+#pragma warning restore MAAI001
+
         var aiContext = new AIContext
         {
             Instructions = this._instructions,

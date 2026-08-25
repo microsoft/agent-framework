@@ -20,16 +20,15 @@ using HttpClient httpClient = new()
 
 AGUIChatClient chatClient = new(new(httpClient, serverUrl));
 
-AIAgent baseAgent = chatClient.AsAIAgent(
+AIAgent agent = chatClient.AsAIAgent(
     name: "recipe-client",
     description: "AG-UI Recipe Client Agent");
 
-// Wrap the base agent with state management
-JsonSerializerOptions jsonOptions = new(JsonSerializerDefaults.Web)
-{
-    TypeInfoResolver = RecipeSerializerContext.Default
-};
-StatefulAgent<AgentState> agent = new(baseAgent, jsonOptions, new AgentState());
+JsonSerializerOptions jsonOptions = RecipeSerializerContext.Default.Options;
+
+// The recipe lives on the client. It is sent to the server on every turn (so the agent edits the
+// existing recipe) and refreshed from each STATE_SNAPSHOT the server streams back.
+Recipe currentRecipe = new();
 
 AgentSession session = await agent.CreateSessionAsync();
 List<ChatMessage> messages =
@@ -42,7 +41,7 @@ try
     while (true)
     {
         // Get user input
-        Console.Write("\nUser (:q to quit, :state to show state): ");
+        Console.Write("\nUser (:q to quit, :state to show recipe): ");
         string? message = Console.ReadLine();
 
         if (string.IsNullOrWhiteSpace(message))
@@ -58,36 +57,51 @@ try
 
         if (message.Equals(":state", StringComparison.OrdinalIgnoreCase))
         {
-            DisplayState(agent.State.Recipe);
+            DisplayRecipe(currentRecipe);
             continue;
         }
 
         messages.Add(new ChatMessage(ChatRole.User, message));
 
+        // Send the client's current recipe on the AG-UI RunAgentInput.State so the agent builds on it.
+        JsonElement stateJson = JsonSerializer.SerializeToElement(
+            new RecipeResponse { Recipe = currentRecipe }, jsonOptions);
+        ChatClientAgentRunOptions runOptions = new()
+        {
+            ChatOptions = new ChatOptions
+            {
+                RawRepresentationFactory = _ => new RunAgentInput { State = stateJson }
+            }
+        };
+
         // Stream the response
         bool isFirstUpdate = true;
-        string? threadId = null;
-        bool stateReceived = false;
-
         Console.WriteLine();
 
-        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session))
+        await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session, runOptions))
         {
             ChatResponseUpdate chatUpdate = update.AsChatResponseUpdate();
 
             // First update indicates run started
             if (isFirstUpdate)
             {
-                // AGUIChatClient is stateless and never surfaces a ConversationId; the thread
-                // id is carried on the AG-UI RUN_STARTED event's raw representation.
-                threadId = (chatUpdate.RawRepresentation as RunStartedEvent)?.ThreadId;
                 Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[Run Started - Thread: {threadId}, Run: {chatUpdate.ResponseId}]");
+                Console.WriteLine($"[Run Started - Run: {chatUpdate.ResponseId}]");
                 Console.ResetColor();
                 isFirstUpdate = false;
             }
 
-            // Display streaming content
+            // A STATE_SNAPSHOT arrives as a StateSnapshotEvent on the update's raw representation.
+            if (chatUpdate.RawRepresentation is StateSnapshotEvent snapshot &&
+                snapshot.Snapshot.Deserialize<RecipeResponse>(jsonOptions) is { } response)
+            {
+                currentRecipe = response.Recipe;
+                Console.ForegroundColor = ConsoleColor.Blue;
+                Console.WriteLine("\n[State Snapshot Received]");
+                Console.ResetColor();
+            }
+
+            // Display streaming text content
             foreach (AIContent content in update.Contents)
             {
                 switch (content)
@@ -95,14 +109,6 @@ try
                     case TextContent textContent:
                         Console.ForegroundColor = ConsoleColor.Cyan;
                         Console.Write(textContent.Text);
-                        Console.ResetColor();
-                        break;
-
-                    case DataContent dataContent when dataContent.MediaType == "application/json":
-                        // This is a state snapshot - the StatefulAgent has already updated the state
-                        stateReceived = true;
-                        Console.ForegroundColor = ConsoleColor.Blue;
-                        Console.WriteLine("\n[State Snapshot Received]");
                         Console.ResetColor();
                         break;
 
@@ -115,15 +121,14 @@ try
             }
         }
 
+        // The session owns prior history, so the next run sends only the new user message.
+        messages.Clear();
+
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"\n[Run Finished - Thread: {threadId}]");
+        Console.WriteLine("\n[Run Finished]");
         Console.ResetColor();
 
-        // Display final state if received
-        if (stateReceived)
-        {
-            DisplayState(agent.State.Recipe);
-        }
+        DisplayRecipe(currentRecipe);
     }
 }
 catch (Exception ex)
@@ -131,61 +136,53 @@ catch (Exception ex)
     Console.WriteLine($"\nAn error occurred: {ex.Message}");
 }
 
-static void DisplayState(RecipeState? state)
+static void DisplayRecipe(Recipe recipe)
 {
-    if (state == null)
-    {
-        Console.ForegroundColor = ConsoleColor.Gray;
-        Console.WriteLine("\n[No state available]");
-        Console.ResetColor();
-        return;
-    }
-
     Console.ForegroundColor = ConsoleColor.Blue;
     Console.WriteLine("\n" + new string('=', 60));
-    Console.WriteLine("CURRENT STATE");
+    Console.WriteLine("CURRENT RECIPE");
     Console.WriteLine(new string('=', 60));
     Console.ResetColor();
 
-    if (!string.IsNullOrEmpty(state.Title))
+    if (string.IsNullOrEmpty(recipe.Title))
     {
-        Console.WriteLine("\nRecipe:");
-        Console.WriteLine($"  Title: {state.Title}");
-        if (!string.IsNullOrEmpty(state.Cuisine))
+        Console.ForegroundColor = ConsoleColor.Gray;
+        Console.WriteLine("\n[No recipe yet]");
+        Console.ResetColor();
+    }
+    else
+    {
+        Console.WriteLine($"\n  Title: {recipe.Title}");
+        if (!string.IsNullOrEmpty(recipe.SkillLevel))
         {
-            Console.WriteLine($"  Cuisine: {state.Cuisine}");
+            Console.WriteLine($"  Skill Level: {recipe.SkillLevel}");
         }
 
-        if (!string.IsNullOrEmpty(state.SkillLevel))
+        if (!string.IsNullOrEmpty(recipe.CookingTime))
         {
-            Console.WriteLine($"  Skill Level: {state.SkillLevel}");
+            Console.WriteLine($"  Cooking Time: {recipe.CookingTime}");
         }
 
-        if (state.PrepTimeMinutes > 0)
+        if (recipe.SpecialPreferences.Count > 0)
         {
-            Console.WriteLine($"  Prep Time: {state.PrepTimeMinutes} minutes");
+            Console.WriteLine($"  Preferences: {string.Join(", ", recipe.SpecialPreferences)}");
         }
 
-        if (state.CookTimeMinutes > 0)
-        {
-            Console.WriteLine($"  Cook Time: {state.CookTimeMinutes} minutes");
-        }
-
-        if (state.Ingredients.Count > 0)
+        if (recipe.Ingredients.Count > 0)
         {
             Console.WriteLine("\n  Ingredients:");
-            foreach (var ingredient in state.Ingredients)
+            foreach (Ingredient ingredient in recipe.Ingredients)
             {
-                Console.WriteLine($"    - {ingredient}");
+                Console.WriteLine($"    {ingredient.Icon} {ingredient.Name} - {ingredient.Amount}");
             }
         }
 
-        if (state.Steps.Count > 0)
+        if (recipe.Instructions.Count > 0)
         {
-            Console.WriteLine("\n  Steps:");
-            for (int i = 0; i < state.Steps.Count; i++)
+            Console.WriteLine("\n  Instructions:");
+            for (int i = 0; i < recipe.Instructions.Count; i++)
             {
-                Console.WriteLine($"    {i + 1}. {state.Steps[i]}");
+                Console.WriteLine($"    {i + 1}. {recipe.Instructions[i]}");
             }
         }
     }
@@ -195,40 +192,53 @@ static void DisplayState(RecipeState? state)
     Console.ResetColor();
 }
 
-// State wrapper
-internal sealed class AgentState
+namespace RecipeClient
 {
-    [JsonPropertyName("recipe")]
-    public RecipeState Recipe { get; set; } = new();
+    // State response wrapper. Its shape mirrors what the server returns and renders as state.
+    internal sealed class RecipeResponse
+    {
+        [JsonPropertyName("recipe")]
+        public Recipe Recipe { get; set; } = new();
+    }
+
+    // Recipe state model.
+    internal sealed class Recipe
+    {
+        [JsonPropertyName("title")]
+        public string Title { get; set; } = string.Empty;
+
+        [JsonPropertyName("skill_level")]
+        public string SkillLevel { get; set; } = string.Empty;
+
+        [JsonPropertyName("cooking_time")]
+        public string CookingTime { get; set; } = string.Empty;
+
+        [JsonPropertyName("special_preferences")]
+        public List<string> SpecialPreferences { get; set; } = [];
+
+        [JsonPropertyName("ingredients")]
+        public List<Ingredient> Ingredients { get; set; } = [];
+
+        [JsonPropertyName("instructions")]
+        public List<string> Instructions { get; set; } = [];
+    }
+
+    // A single ingredient.
+    internal sealed class Ingredient
+    {
+        [JsonPropertyName("icon")]
+        public string Icon { get; set; } = string.Empty;
+
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
+
+        [JsonPropertyName("amount")]
+        public string Amount { get; set; } = string.Empty;
+    }
+
+    // JSON serialization context.
+    [JsonSerializable(typeof(RecipeResponse))]
+    [JsonSerializable(typeof(Recipe))]
+    [JsonSerializable(typeof(Ingredient))]
+    internal sealed partial class RecipeSerializerContext : JsonSerializerContext;
 }
-
-// Recipe state model
-internal sealed class RecipeState
-{
-    [JsonPropertyName("title")]
-    public string Title { get; set; } = string.Empty;
-
-    [JsonPropertyName("cuisine")]
-    public string Cuisine { get; set; } = string.Empty;
-
-    [JsonPropertyName("ingredients")]
-    public List<string> Ingredients { get; set; } = [];
-
-    [JsonPropertyName("steps")]
-    public List<string> Steps { get; set; } = [];
-
-    [JsonPropertyName("prep_time_minutes")]
-    public int PrepTimeMinutes { get; set; }
-
-    [JsonPropertyName("cook_time_minutes")]
-    public int CookTimeMinutes { get; set; }
-
-    [JsonPropertyName("skill_level")]
-    public string SkillLevel { get; set; } = string.Empty;
-}
-
-// JSON serialization context
-[JsonSerializable(typeof(AgentState))]
-[JsonSerializable(typeof(RecipeState))]
-[JsonSerializable(typeof(JsonElement))]
-internal sealed partial class RecipeSerializerContext : JsonSerializerContext;

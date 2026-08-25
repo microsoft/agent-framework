@@ -2117,7 +2117,7 @@ async def test_integration_options(
 @pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
 async def test_integration_web_search() -> None:
-    client = OpenAIChatCompletionClient(model="gpt-4o-search-preview")
+    client = OpenAIChatCompletionClient(model="gpt-5-search-api")
 
     for streaming in [False, True]:
         # Use static method for web search tool

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
 import sys
 import warnings
@@ -52,7 +53,12 @@ else:
     from typing_extensions import TypeVar  # pragma: no cover
 
 try:
-    from copilot import CopilotClient, CopilotSession, RuntimeConnection
+    from copilot import (
+        CopilotClient,
+        CopilotSession,
+        RuntimeConnection,
+        TelemetryConfig,
+    )
     from copilot.generated.rpc import (
         PermissionDecisionApproveForSession,
         PermissionDecisionApproveForSessionApproval,
@@ -338,6 +344,26 @@ def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> Asy
     return normalized_handler
 
 
+def _parse_telemetry_config(raw: str) -> TelemetryConfig | None:
+    # GITHUB_COPILOT_TELEMETRY and matching .env values are read as plain strings while the
+    # Copilot SDK expects a mapping, so parse here before the value reaches CopilotClient.
+    # Malformed values are logged and ignored so a bad telemetry setting cannot prevent the
+    # agent from starting.
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning(
+            "Ignoring malformed GITHUB_COPILOT_TELEMETRY value; expected a JSON object with TelemetryConfig keys."
+        )
+        return None
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "Ignoring invalid GITHUB_COPILOT_TELEMETRY value; expected a JSON object with TelemetryConfig keys."
+        )
+        return None
+    return cast(TelemetryConfig, parsed)
+
+
 class GitHubCopilotSettings(TypedDict, total=False):
     """GitHub Copilot model settings.
 
@@ -359,6 +385,10 @@ class GitHubCopilotSettings(TypedDict, total=False):
             GITHUB_COPILOT_BASE_DIRECTORY. Defaults to ~/.copilot when not set.
             Only applicable when the SDK spawns the CLI process (ignored when
             connecting to an external server via a pre-configured client).
+        telemetry: OpenTelemetry configuration for the Copilot CLI process. This is
+            passed to the SDK client when it is created by the agent. Values coming
+            from GITHUB_COPILOT_TELEMETRY or a .env file arrive as a JSON string and
+            are parsed into a mapping before they reach the SDK.
     """
 
     cli_path: str | None
@@ -366,6 +396,7 @@ class GitHubCopilotSettings(TypedDict, total=False):
     timeout: float | None
     log_level: str | None
     base_directory: str | None
+    telemetry: dict[str, Any] | str | None
 
 
 class GitHubCopilotOptions(TypedDict, total=False):
@@ -436,6 +467,9 @@ class GitHubCopilotOptions(TypedDict, total=False):
 
     base_directory: str
     """Directory where the CLI stores session state, configuration, and other persistent data."""
+
+    telemetry: TelemetryConfig
+    """OpenTelemetry configuration for the Copilot CLI process."""
 
     on_pre_tool_use: PreToolUseHandler
     """Pre-tool-use hook handler for the Copilot SDK.
@@ -574,6 +608,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         on_pre_tool_use: PreToolUseHandler | None = opts.pop("on_pre_tool_use", None)
         on_function_approval: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
         base_directory = opts.pop("base_directory", None)
+        telemetry = opts.pop("telemetry", None)
 
         if on_function_approval is not None and on_pre_tool_use is not None:
             raise ValueError(
@@ -600,6 +635,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             timeout=timeout,
             log_level=log_level,
             base_directory=base_directory,
+            telemetry=telemetry,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
@@ -640,6 +676,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             cli_path = self._settings.get("cli_path") or None
             log_level = self._settings.get("log_level") or None
             base_directory = self._settings.get("base_directory") or None
+            telemetry = self._settings.get("telemetry") or None
+            if isinstance(telemetry, str):
+                telemetry = _parse_telemetry_config(telemetry)
 
             client_kwargs: dict[str, Any] = {}
             if cli_path:
@@ -648,6 +687,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 client_kwargs["log_level"] = log_level
             if base_directory:
                 client_kwargs["base_directory"] = base_directory
+            if telemetry:
+                client_kwargs["telemetry"] = telemetry
             self._client = CopilotClient(**client_kwargs)
 
         try:
@@ -1434,7 +1475,15 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # Strip agent-internal and client-level keys that are consumed here or in the
         # run methods (and settings) but are NOT valid create_session parameters, so
         # they don't leak through the passthrough layer and raise TypeError.
-        for key in ("on_pre_tool_use", "on_function_approval", "timeout", "cli_path", "log_level", "base_directory"):
+        for key in (
+            "on_pre_tool_use",
+            "on_function_approval",
+            "timeout",
+            "cli_path",
+            "log_level",
+            "base_directory",
+            "telemetry",
+        ):
             kwargs.pop(key, None)
 
         return kwargs

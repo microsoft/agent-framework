@@ -270,6 +270,7 @@ AgentFrameworkException                          # Base for all AF exceptions
 │   └── ToolExecutionException                   # Failure during tool execution
 │
 ├── MiddlewareException                          # Middleware failures
+│   ├── MiddlewareFailure                        # Control-flow: fatal fail-closed abort of the run
 │   └── MiddlewareTermination                    # Control-flow: early middleware termination
 │
 └── SettingNotFoundError                         # Required setting not resolved from any source

@@ -2,14 +2,16 @@
 
 import importlib
 import sys
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass, make_dataclass
+from dataclasses import field as dataclass_field
 from types import ModuleType
-from typing import Any, Generic, Optional, TypeVar, Union
+from typing import Annotated, Any, Generic, Literal, NewType, Optional, TypeVar, Union
 from unittest.mock import Mock
 
 import pytest
+from pydantic import BaseModel
 
-from agent_framework import WorkflowEvent
+from agent_framework import Message, WorkflowEvent
 from agent_framework._workflows._typing_utils import (
     deserialize_type,
     is_instance_of,
@@ -531,6 +533,239 @@ def test_coerce_unrelated_types_returns_original() -> None:
     assert try_coerce_to_type("hello", int) == "hello"
     assert try_coerce_to_type(3.14, str) == 3.14
     assert try_coerce_to_type([1, 2], dict) == [1, 2]
+
+
+def test_coerce_dict_to_dataclass_coerces_nested_fields() -> None:
+    """Dataclass fields should be coerced to their annotations, not left as raw JSON."""
+
+    @dataclass
+    class Point:
+        x: int
+        y: int
+
+    @dataclass
+    class Path:
+        points: list[Point]
+        label: str | None
+
+    result = try_coerce_to_type({"points": [{"x": 1, "y": 2}], "label": None}, Path)
+    assert isinstance(result, Path)
+    assert result.points == [Point(x=1, y=2)]
+    assert result.label is None
+
+
+def test_coerce_dict_to_dataclass_rejects_bad_field_values() -> None:
+    """Field values that do not match their annotation must not build a half-typed object."""
+
+    @dataclass
+    class Point:
+        x: int
+        y: int
+
+    for payload in ({"x": 1, "y": "two"}, {"x": None, "y": 2}):
+        assert try_coerce_to_type(payload, Point) is payload
+
+
+def test_coerce_dict_to_dataclass_respects_post_init_validation() -> None:
+    """Constructor-side validation must fail the build instead of escaping to the caller."""
+
+    @dataclass
+    class Decision:
+        scores: list[int]
+
+        def __post_init__(self) -> None:
+            if self.scores and min(self.scores) < 0:
+                raise ValueError("scores must be non-negative")
+
+    assert try_coerce_to_type({"scores": [1, 2]}, Decision) == Decision(scores=[1, 2])
+
+    for payload in ({"scores": [-1]}, {"scores": ["high"]}):
+        assert try_coerce_to_type(payload, Decision) is payload
+
+
+def test_coerce_dict_to_dataclass_survives_arbitrary_constructor_errors() -> None:
+    """Constructors raising anything at all must fail the build, not the caller."""
+
+    class DomainError(Exception): ...
+
+    @dataclass
+    class Strict:
+        value: int
+
+        def __post_init__(self) -> None:
+            raise DomainError("never valid")
+
+    payload = {"value": 1}
+    assert try_coerce_to_type(payload, Strict) is payload
+
+
+def test_coerce_tuple_target_rejects_length_mismatch() -> None:
+    """A list that cannot fill a fixed-length tuple must come back untouched."""
+    assert try_coerce_to_type([1, 2, 3], tuple[int, str]) == [1, 2, 3]
+    assert try_coerce_to_type([1, "a"], tuple[int, str]) == (1, "a")
+
+
+def test_coerce_dict_to_dataclass_allows_annotations_isinstance_cannot_check() -> None:
+    """NewType and Annotated fields cannot reach isinstance, so they must not be rejected."""
+    UserId = NewType("UserId", int)
+
+    @dataclass
+    class Owner:
+        user_id: UserId
+        label: Annotated[str, "display"]
+
+    assert try_coerce_to_type({"user_id": 7, "label": "root"}, Owner) == Owner(user_id=UserId(7), label="root")
+
+
+def test_coerce_dict_to_dataclass_falls_back_when_hints_do_not_resolve() -> None:
+    """Unresolvable annotations degrade to no field coercion rather than failing the build."""
+
+    mystery = make_dataclass("Mystery", [("value", "DoesNotExist")])
+
+    coerced = try_coerce_to_type({"value": 1}, mystery)
+    assert type(coerced) is mystery
+    assert vars(coerced) == {"value": 1}
+
+
+def test_coerce_variadic_tuple_target() -> None:
+    """A variadic tuple annotation coerces every item to the single declared type."""
+    assert try_coerce_to_type([1, 2, 3], tuple[float, ...]) == (1.0, 2.0, 3.0)
+    assert try_coerce_to_type([], tuple[int, ...]) == ()
+
+    items = [1, "x"]
+    assert try_coerce_to_type(items, tuple[int, ...]) is items
+
+
+def test_coerce_dict_to_pydantic_model() -> None:
+    """Pydantic response types are built through their own validation."""
+
+    class Point(BaseModel):
+        x: int
+
+    assert try_coerce_to_type({"x": 1}, Point) == Point(x=1)
+
+    payload = {"x": "not-a-number"}
+    assert try_coerce_to_type(payload, Point) is payload
+
+
+def test_coerce_container_targets_return_input_on_item_mismatch() -> None:
+    """A container whose items cannot match must come back as the very same object."""
+    items = [1, "x"]
+    assert try_coerce_to_type(items, list[int]) is items
+
+    mapping = {"a": "x"}
+    assert try_coerce_to_type(mapping, dict[str, int]) is mapping
+
+
+def test_coerce_dict_to_dataclass_accepts_init_only_variables() -> None:
+    """InitVar parameters are constructor arguments, so their payload keys must be accepted."""
+
+    @dataclass
+    class Scaled:
+        value: int
+        scale: InitVar[int] = 1
+        tag: str = dataclass_field(init=False, default="fixed")
+
+        def __post_init__(self, scale: int) -> None:
+            self.value *= scale
+
+    assert try_coerce_to_type({"value": 2, "scale": 3}, Scaled) == Scaled(value=6)
+
+    for payload in ({"value": 2, "scale": "big"}, {"value": 2, "tag": "injected"}):
+        assert try_coerce_to_type(payload, Scaled) is payload
+
+
+def test_coerce_frozenset_target_checks_item_type() -> None:
+    """frozenset members are not checked by is_instance_of, so the branch validates them itself."""
+    payload = ["x"]
+    assert try_coerce_to_type(payload, frozenset[int]) is payload
+    assert try_coerce_to_type([1, 2], frozenset[int]) == frozenset({1, 2})
+
+
+def test_coerce_set_target_rejects_unhashable_items() -> None:
+    """Items that stay unhashable must fail the coercion instead of raising."""
+    payload: list[Any] = [{}]
+    assert try_coerce_to_type(payload, set[int]) is payload
+    assert try_coerce_to_type([1, 2], set[int]) == {1, 2}
+
+
+def test_coerce_dict_to_dataclass_rejects_non_init_fields() -> None:
+    """Payload keys that are not constructor parameters must be rejected, not silently dropped."""
+
+    @dataclass
+    class Tagged:
+        value: int
+        tag: str = dataclass_field(init=False, default="unset")
+
+    payload = {"value": 1, "tag": "injected"}
+    assert try_coerce_to_type(payload, Tagged) is payload
+
+
+def test_coerce_dict_to_dataclass_checks_literal_fields() -> None:
+    """Literal fields cannot reach isinstance, but their allowed values still have to hold."""
+
+    @dataclass
+    class Verdict:
+        decision: Literal["approve", "revise"]
+
+    assert try_coerce_to_type({"decision": "approve"}, Verdict) == Verdict(decision="approve")
+
+    payload = {"decision": "delete-everything"}
+    assert try_coerce_to_type(payload, Verdict) is payload
+
+
+def test_coerce_dict_to_dataclass_coerces_container_fields() -> None:
+    """Mapping, set and tuple fields arrive as JSON objects/arrays and must be rebuilt."""
+
+    @dataclass
+    class Config:
+        weights: dict[str, float]
+        tags: set[str]
+        bounds: tuple[int, str]
+
+    result = try_coerce_to_type({"weights": {"x": 1}, "tags": ["a"], "bounds": [1, "high"]}, Config)
+    assert isinstance(result, Config)
+    assert result.weights == {"x": 1.0}
+    assert result.tags == {"a"}
+    assert result.bounds == (1, "high")
+
+
+def test_coerce_bool_is_not_treated_as_float() -> None:
+    """JSON booleans must not slip into float fields as 1.0/0.0."""
+    assert try_coerce_to_type(True, float) is True
+
+
+def test_coerce_dict_to_serialization_mixin_type() -> None:
+    """Types exposing from_dict (Message, Content) should be built from JSON objects."""
+    result = try_coerce_to_type({"role": "user", "contents": [{"type": "text", "text": "hi"}]}, Message)
+    assert isinstance(result, Message)
+    assert result.text == "hi"
+
+    payload = {"contents": 5}
+    assert try_coerce_to_type(payload, Message) is payload
+
+
+def test_coerce_union_target_picks_matching_member() -> None:
+    """Union targets should coerce into the first member that accepts the value."""
+
+    @dataclass
+    class Point:
+        x: int
+        y: int
+
+    result = try_coerce_to_type({"x": 1, "y": 2}, Point | None)
+    assert result == Point(x=1, y=2)
+
+
+def test_coerce_list_target_coerces_items() -> None:
+    """Typed list targets should coerce their items."""
+
+    @dataclass
+    class Point:
+        x: int
+        y: int
+
+    assert try_coerce_to_type([{"x": 1, "y": 2}], list[Point]) == [Point(x=1, y=2)]
 
 
 def test_coerce_any_returns_original() -> None:
