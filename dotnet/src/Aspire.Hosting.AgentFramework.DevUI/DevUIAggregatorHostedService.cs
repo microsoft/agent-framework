@@ -725,8 +725,8 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             ? HttpCompletionOption.ResponseHeadersRead
             : HttpCompletionOption.ResponseContentRead;
 
-        using var response = await client.SendAsync( // CodeQL [SM03781] False positive: ValidateProxyTarget confirms the target host, scheme, and port match the configured backend, so the user-supplied path and query cannot change the destination.
-            request, completionOption, context.RequestAborted).ConfigureAwait(false);
+        // CodeQL [SM03781] False positive: ValidateProxyTarget confirms the target host, scheme, and port match the configured backend, so the user-supplied path and query cannot change the destination.
+        using var response = await client.SendAsync(request, completionOption, context.RequestAborted).ConfigureAwait(false);
 
         if (streaming && response.Content.Headers.ContentType?.MediaType == "text/event-stream")
         {
