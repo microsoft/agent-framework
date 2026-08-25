@@ -31,8 +31,16 @@ from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE, normalize_tools
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidAuthException,
+    ChatClientInvalidRequestException,
+)
 from agent_framework.observability import ChatTelemetryLayer
+from anthropic import APIError as AnthropicAPIError
 from anthropic import AsyncAnthropic, AsyncAnthropicFoundry
+from anthropic import AuthenticationError as AnthropicAuthenticationError
+from anthropic import BadRequestError as AnthropicBadRequestError
 from anthropic.lib.bedrock import AsyncAnthropicBedrock
 from anthropic.lib.vertex import AsyncAnthropicVertex
 from anthropic.types.beta import (
@@ -553,17 +561,37 @@ class RawAnthropicClient(
                 # accumulator to _process_stream_event to emit increments instead.
                 emitted_usage: dict[str, int] = {}
                 mark_feature_used(FeatureIndex.ANTHROPIC)
-                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
-                    parsed_chunk = self._process_stream_event(chunk, emitted_usage)
-                    if parsed_chunk:
-                        yield parsed_chunk
+                try:
+                    async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
+                        parsed_chunk = self._process_stream_event(chunk, emitted_usage)
+                        if parsed_chunk:
+                            yield parsed_chunk
+                except AnthropicAuthenticationError as ex:
+                    raise ChatClientInvalidAuthException(
+                        f"Anthropic authentication failed: {ex}", inner_exception=ex
+                    ) from ex
+                except AnthropicBadRequestError as ex:
+                    raise ChatClientInvalidRequestException(
+                        f"Invalid Anthropic request: {ex}", inner_exception=ex
+                    ) from ex
+                except AnthropicAPIError as ex:
+                    raise ChatClientException(f"Anthropic chat request failed: {ex}", inner_exception=ex) from ex
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
             mark_feature_used(FeatureIndex.ANTHROPIC)
-            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
+            try:
+                message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
+            except AnthropicAuthenticationError as ex:
+                raise ChatClientInvalidAuthException(
+                    f"Anthropic authentication failed: {ex}", inner_exception=ex
+                ) from ex
+            except AnthropicBadRequestError as ex:
+                raise ChatClientInvalidRequestException(f"Invalid Anthropic request: {ex}", inner_exception=ex) from ex
+            except AnthropicAPIError as ex:
+                raise ChatClientException(f"Anthropic chat request failed: {ex}", inner_exception=ex) from ex
             return self._process_message(message, options)
 
         return _get_response()

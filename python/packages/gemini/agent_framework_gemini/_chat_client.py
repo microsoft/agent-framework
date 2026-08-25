@@ -32,11 +32,18 @@ from agent_framework import (
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework._types import _get_data_bytes  # type: ignore[reportPrivateUsage]
-from agent_framework.exceptions import ContentError
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidAuthException,
+    ChatClientInvalidRequestException,
+    ContentError,
+)
 from agent_framework.observability import ChatTelemetryLayer
 from google import genai
 from google.auth.credentials import Credentials
 from google.genai import types
+from google.genai.errors import APIError as GenAIAPIError
+from google.genai.errors import ClientError as GenAIClientError
 from pydantic import BaseModel
 
 from ._feature_usage import FeatureIndex
@@ -558,12 +565,21 @@ class RawGeminiChatClient(
                     Callable[..., Awaitable[AsyncIterable[types.GenerateContentResponse]]],
                     cast(Any, self._genai_client.aio.models).generate_content_stream,
                 )
-                async for chunk in await generate_content_stream(
-                    model=model,
-                    contents=contents,
-                    config=config,
-                ):
-                    yield self._process_chunk(chunk)
+                try:
+                    async for chunk in await generate_content_stream(
+                        model=model,
+                        contents=contents,
+                        config=config,
+                    ):
+                        yield self._process_chunk(chunk)
+                except GenAIClientError as ex:
+                    if ex.code == 401:
+                        raise ChatClientInvalidAuthException(
+                            f"Gemini authentication failed: {ex}", inner_exception=ex
+                        ) from ex
+                    raise ChatClientInvalidRequestException(f"Invalid Gemini request: {ex}", inner_exception=ex) from ex
+                except GenAIAPIError as ex:
+                    raise ChatClientException(f"Gemini chat request failed: {ex}", inner_exception=ex) from ex
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
@@ -571,7 +587,20 @@ class RawGeminiChatClient(
             validated = await self._validate_options(options)
             model, contents, config = self._prepare_request(messages, validated)
             mark_feature_used(FeatureIndex.GEMINI)
-            raw = await self._genai_client.aio.models.generate_content(model=model, contents=contents, config=config)  # type: ignore[arg-type]
+            try:
+                raw = await self._genai_client.aio.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config,  # type: ignore[arg-type]
+                )
+            except GenAIClientError as ex:
+                if ex.code == 401:
+                    raise ChatClientInvalidAuthException(
+                        f"Gemini authentication failed: {ex}", inner_exception=ex
+                    ) from ex
+                raise ChatClientInvalidRequestException(f"Invalid Gemini request: {ex}", inner_exception=ex) from ex
+            except GenAIAPIError as ex:
+                raise ChatClientException(f"Gemini chat request failed: {ex}", inner_exception=ex) from ex
             return self._process_generate_response(raw, response_format=validated.get("response_format"))
 
         return _get_response()

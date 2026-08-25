@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Annotated, Any, cast
 from unittest.mock import MagicMock, patch
 
+import anthropic as anthropic_sdk
+import httpx
 import pytest
 from agent_framework import (
     Agent,
@@ -23,7 +25,15 @@ from agent_framework import (
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidAuthException,
+    ChatClientInvalidRequestException,
+)
 from agent_framework.observability import ChatTelemetryLayer
+from agent_framework_anthropic import AnthropicChatOptions, AnthropicClient, RawAnthropicClient
+from agent_framework_anthropic._chat_client import AnthropicSettings
+from agent_framework_anthropic._feature_usage import FeatureIndex
 from anthropic.types.beta import (
     BetaMessage,
     BetaMessageDeltaUsage,
@@ -32,10 +42,6 @@ from anthropic.types.beta import (
     BetaUsage,
 )
 from pydantic import BaseModel, Field
-
-from agent_framework_anthropic import AnthropicChatOptions, AnthropicClient, RawAnthropicClient
-from agent_framework_anthropic._chat_client import AnthropicSettings
-from agent_framework_anthropic._feature_usage import FeatureIndex
 
 # Test constants
 VALID_PNG_BASE64 = b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
@@ -1800,6 +1806,73 @@ async def test_inner_get_response_ignores_options_stream_streaming(
 
     assert mock_anthropic_client.beta.messages.create.call_count == 1
     assert mock_anthropic_client.beta.messages.create.call_args.kwargs["stream"] is True
+
+
+def _anthropic_status_error(
+    error_cls: type[anthropic_sdk.APIStatusError], status_code: int, message: str
+) -> anthropic_sdk.APIStatusError:
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx.Response(status_code, request=request, json={"error": {"message": message}})
+    return error_cls(message, response=response, body={"error": {"message": message}})
+
+
+@pytest.mark.parametrize(
+    ("sdk_exception", "status_code", "expected_exception"),
+    [
+        (
+            anthropic_sdk.AuthenticationError,
+            401,
+            ChatClientInvalidAuthException,
+        ),
+        (
+            anthropic_sdk.BadRequestError,
+            400,
+            ChatClientInvalidRequestException,
+        ),
+        (
+            anthropic_sdk.InternalServerError,
+            500,
+            ChatClientException,
+        ),
+    ],
+)
+async def test_inner_get_response_wraps_sdk_errors(
+    mock_anthropic_client: MagicMock,
+    sdk_exception: type[anthropic_sdk.APIStatusError],
+    status_code: int,
+    expected_exception: type[Exception],
+) -> None:
+    """Non-streaming _inner_get_response must translate raw Anthropic SDK errors into
+    the framework's ChatClientException hierarchy, matching every other provider
+    (OpenAI, Mistral, Ollama, Bedrock)."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.side_effect = _anthropic_status_error(sdk_exception, status_code, "boom")
+
+    messages = [Message(role="user", contents=["Hi"])]
+    chat_options = ChatOptions(max_tokens=10)
+
+    with pytest.raises(expected_exception, match="Anthropic"):
+        await client._inner_get_response(  # type: ignore[attr-defined]
+            messages=messages, options=chat_options
+        )
+
+
+async def test_inner_get_response_streaming_wraps_sdk_errors(mock_anthropic_client: MagicMock) -> None:
+    """Streaming _inner_get_response must translate raw Anthropic SDK errors into
+    the framework's ChatClientException hierarchy too, not just the non-streaming path."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    mock_anthropic_client.beta.messages.create.side_effect = _anthropic_status_error(
+        anthropic_sdk.AuthenticationError, 401, "invalid api key"
+    )
+
+    messages = [Message(role="user", contents=["Hi"])]
+    chat_options = ChatOptions(max_tokens=10)
+
+    with pytest.raises(ChatClientInvalidAuthException, match="Anthropic"):
+        async for _ in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+            messages=messages, options=chat_options, stream=True
+        ):
+            pass
 
 
 def test_process_stream_event_message_start_sets_assistant_role(mock_anthropic_client: MagicMock) -> None:

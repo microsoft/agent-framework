@@ -12,12 +12,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidAuthException,
+    ChatClientInvalidRequestException,
+)
+from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
+from agent_framework_gemini._feature_usage import FeatureIndex
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
-
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
-from agent_framework_gemini._feature_usage import FeatureIndex
 
 
 def _has_gemini_integration_credentials() -> bool:
@@ -376,6 +381,44 @@ async def test_get_response_returns_text() -> None:
 
     mark_feature_used.assert_called_once_with(FeatureIndex.GEMINI)
     assert response.messages[0].text == "Hello!"
+
+
+@pytest.mark.parametrize(
+    ("sdk_exception", "expected_exception"),
+    [
+        (genai_errors.ClientError(401, {"error": {"message": "invalid api key"}}), ChatClientInvalidAuthException),
+        (genai_errors.ClientError(400, {"error": {"message": "bad request"}}), ChatClientInvalidRequestException),
+        (genai_errors.ServerError(500, {"error": {"message": "server error"}}), ChatClientException),
+    ],
+)
+async def test_get_response_wraps_sdk_errors(
+    sdk_exception: genai_errors.APIError, expected_exception: type[Exception]
+) -> None:
+    """Non-streaming get_response must translate raw google-genai SDK errors into the
+    framework's ChatClientException hierarchy, matching every other provider
+    (OpenAI, Anthropic, Mistral, Ollama, Bedrock)."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(side_effect=sdk_exception)
+
+    with pytest.raises(expected_exception, match="Gemini"):
+        await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+
+async def test_get_response_streaming_wraps_sdk_errors() -> None:
+    """Streaming get_response must translate raw google-genai SDK errors into the
+    framework's ChatClientException hierarchy too, not just the non-streaming path."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content_stream = AsyncMock(
+        side_effect=genai_errors.ClientError(401, {"error": {"message": "invalid api key"}})
+    )
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+    with pytest.raises(ChatClientInvalidAuthException, match="Gemini"):
+        async for _ in stream:
+            pass
 
 
 async def test_get_response_model_from_response() -> None:
