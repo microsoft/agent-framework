@@ -167,6 +167,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             }
 
             context.Response.StatusCode = StatusCodes.Status301MovedPermanently;
+            // CodeQL [SM04598] False positive: The Location is always /devui/?<query>. Since it is relative, the client re-requests the same host; the query cannot change the destination.
             context.Response.Headers.Location = redirect;
             return;
         }
