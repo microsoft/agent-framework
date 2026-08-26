@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -467,6 +468,34 @@ public class AspireDashboardTracingTests
     }
 
     [Fact]
+    public async Task Aggregator_CancelledStreamingResponse_DoesNotRegisterTraceMappingAsync()
+    {
+        // Arrange
+        await using var context = await TracingProxyTestContext.StartAsync(pauseStreamingResponseAfterCreated: true);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var request = CreateAgentRequest("resp_cancelled");
+        using var response = await context.Client.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellation.Token);
+        using var responseStream = await response.Content.ReadAsStreamAsync(cancellation.Token);
+        using var reader = new StreamReader(responseStream);
+        var createdEvent = await reader.ReadLineAsync(cancellation.Token);
+        Assert.Contains("resp_cancelled", createdEvent, StringComparison.Ordinal);
+
+        // Act
+        cancellation.Cancel();
+        response.Dispose();
+        await context.WaitForStreamingRequestCancellationAsync();
+        using var tracesResponse = await context.Client.GetAsync(
+            new Uri("/v1/responses/resp_cancelled/traces", UriKind.Relative));
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, tracesResponse.StatusCode);
+        Assert.Null(context.DashboardTraceId);
+    }
+
+    [Fact]
     public async Task Aggregator_ConcurrentResponses_DoNotCrossWireTraceIdsAsync()
     {
         // Arrange
@@ -526,6 +555,8 @@ public class AspireDashboardTracingTests
         private readonly WebApplication _agentBackend;
         private readonly WebApplication _dashboard;
         private readonly DevUIAggregatorHostedService _aggregator;
+        private readonly TaskCompletionSource<bool> _streamingRequestCancelled =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _dashboardResourceProbeCount;
         private volatile bool _failDashboardResourceProbe;
 
@@ -555,9 +586,13 @@ public class AspireDashboardTracingTests
 
         public void FailDashboardResourceProbe() => this._failDashboardResourceProbe = true;
 
+        public Task<bool> WaitForStreamingRequestCancellationAsync()
+            => this._streamingRequestCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         public static async Task<TracingProxyTestContext> StartAsync(
             bool dashboardUnavailable = false,
-            bool dashboardTraceTimeout = false)
+            bool dashboardTraceTimeout = false,
+            bool pauseStreamingResponseAfterCreated = false)
         {
             var agentBackend = CreateWebApplication();
             var dashboard = CreateWebApplication();
@@ -587,6 +622,21 @@ public class AspireDashboardTracingTests
                 await context.Response.WriteAsync(
                     $"data: {{\"type\":\"response.created\",\"response\":{{\"id\":\"{responseId}\"}}}}\n\n",
                     context.RequestAborted);
+
+                if (pauseStreamingResponseAfterCreated)
+                {
+                    await context.Response.Body.FlushAsync(context.RequestAborted);
+                    try
+                    {
+                        await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted);
+                    }
+                    catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+                    {
+                        testContext._streamingRequestCancelled.TrySetResult(true);
+                        throw;
+                    }
+                }
+
                 await context.Response.WriteAsync("data: [DONE]\n\n", context.RequestAborted);
             });
 

@@ -1477,6 +1477,9 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
   const subTab = useDevUIStore((state) => state.debugTraceSubTab);
   const setSubTab = useDevUIStore((state) => state.setDebugTraceSubTab);
   const runtime = useDevUIStore((state) => state.runtime);
+  const traceRetrievalEnabled = useDevUIStore(
+    (state) => state.serverCapabilities.trace_retrieval
+  );
 
   // ONLY show actual trace events
   const traceEvents = events.filter(
@@ -1542,8 +1545,10 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
               <BarChart3 className="h-8 w-8 text-muted-foreground mb-3" />
               <div className="text-sm font-medium mb-1">No Data</div>
               <div className="text-xs text-muted-foreground max-w-[200px]">
-                {runtime === "dotnet" ? (
+                {traceRetrievalEnabled ? (
                   "Start a conversation to view OpenTelemetry spans from the Aspire Dashboard."
+                ) : runtime === "dotnet" ? (
+                  "Trace retrieval is not available for this server."
                 ) : (
                   <>
                     Run{" "}

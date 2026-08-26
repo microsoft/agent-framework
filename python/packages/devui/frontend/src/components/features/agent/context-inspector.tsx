@@ -669,6 +669,9 @@ function StatCard({
 // Main component
 export function ContextInspector({ events }: ContextInspectorProps) {
   const runtime = useDevUIStore((state) => state.runtime);
+  const traceRetrievalEnabled = useDevUIStore(
+    (state) => state.serverCapabilities.trace_retrieval
+  );
   // Use persisted store state instead of local useState
   const viewMode = useDevUIStore((state) => state.contextInspectorViewMode);
   const setViewMode = useDevUIStore((state) => state.setContextInspectorViewMode);
@@ -745,8 +748,10 @@ export function ContextInspector({ events }: ContextInspectorProps) {
         <BarChart3 className="h-8 w-8 text-muted-foreground mb-3" />
         <div className="text-sm font-medium mb-1">No Data</div>
         <div className="text-xs text-muted-foreground max-w-[200px]">
-          {runtime === "dotnet" ? (
+          {traceRetrievalEnabled ? (
             "Start a conversation to inspect OpenTelemetry context from the Aspire Dashboard."
+          ) : runtime === "dotnet" ? (
+            "Trace retrieval is not available for this server."
           ) : (
             <>
               Run{" "}
