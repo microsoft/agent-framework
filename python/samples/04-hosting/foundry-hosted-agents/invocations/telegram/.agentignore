@@ -9,6 +9,7 @@
 README.md
 azure.yaml
 deploy.sh
+remove.sh
 eval.yaml
 infra/
 tests/

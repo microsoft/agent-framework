@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -107,3 +108,15 @@ def test_default_model_is_gpt_5_6_luna() -> None:
     assert 'MODEL_NAME="${MODEL_NAME:-gpt-5.6-luna}"' in deploy_script
     assert 'MODEL_VERSION="${MODEL_VERSION:-2026-07-09}"' in deploy_script
     assert 'MODEL_SKU_NAME="${MODEL_SKU_NAME:-DataZoneStandard}"' in deploy_script
+
+
+def test_remove_script_unregisters_webhook_before_deleting_resource_group() -> None:
+    remove_path = SAMPLE_ROOT / "remove.sh"
+    remove_script = remove_path.read_text()
+
+    assert remove_path.stat().st_mode & stat.S_IXUSR
+    assert ': "${TELEGRAM_BOT_TOKEN:?Set TELEGRAM_BOT_TOKEN before running this script.}"' in remove_script
+    assert remove_script.index("/deleteWebhook") < remove_script.index("az group delete")
+    assert 'if [[ "$(jq -r \'.ok\' <<<"$webhook_deletion")" != "true" ]]' in remove_script
+    assert 'RESOURCE_GROUP_NAME="${RESOURCE_GROUP_NAME:-rg-${NAME_PREFIX}}"' in remove_script
+    assert '--subscription "$SUBSCRIPTION_ID"' in remove_script

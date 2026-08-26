@@ -177,13 +177,19 @@ asynchronously, implement bounded retries and `429` handling, and apply the requ
 
 ## Cleanup
 
-Delete the registered Telegram webhook first, then remove the azd environment and resource group:
+Set the same configuration used for deployment, then run:
 
 ```bash
-curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook"
-az group delete --name "${RESOURCE_GROUP_NAME:-rg-${NAME_PREFIX:-telegramagent}}" --yes
-azd env delete "${AZD_ENV_NAME:-${NAME_PREFIX:-telegramagent}-telegram}" --force
+export TELEGRAM_BOT_TOKEN="<bot-token>"
+./remove.sh
 ```
 
-The delete-webhook request uses the token only from the current shell. Do not paste command output containing
-credentials into logs or issues.
+The script verifies that Telegram removed the webhook before deleting the resource group. It uses the same
+`NAME_PREFIX`, `RESOURCE_GROUP_NAME`, and `AZURE_SUBSCRIPTION_ID` defaults and overrides as `deploy.sh`. The bot token
+is read only from the current shell, and the script does not print the token or Telegram response.
+
+To also remove the local azd environment after the resource group is gone:
+
+```bash
+azd env delete "${AZD_ENV_NAME:-${NAME_PREFIX:-telegramagent}-telegram}" --force
+```
