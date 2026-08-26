@@ -169,7 +169,7 @@ Each language has its own dev setup guide, coding standards, and build scripts:
 
 #### Microsoft Internal Feed Proxy for Copilot CLI (.NET)
 
-Microsoft contributors can route Copilot CLI npm downloads through the internal proxy without passing extra `dotnet` arguments:
+Microsoft contributors can route GitHub Copilot SDK npm downloads through the internal proxy without passing extra `dotnet` arguments:
 
 1. Create `dotnet/Directory.Build.rsp` with:
 
