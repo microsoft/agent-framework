@@ -15,6 +15,8 @@ It includes:
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import json
 import logging
@@ -71,6 +73,8 @@ logger = logging.getLogger(__name__)
 _BRACKETED_VAR_REF_RE = re.compile(r"^\[\s*(var_[0-9a-fA-F]+)\s*\]$")
 _FIDES_TURN_NUMBER_KEY = "_fides_turn_number"
 _FIDES_CALL_INDEX_KEY = "_fides_call_index"
+_FIDES_VARIABLE_VALUE_TYPE_KEY = "__fides_variable_value_type__"
+_FIDES_VARIABLE_VALUE_KEY = "value"
 
 # Tools that consume variable IDs literally (as opaque references) and therefore
 # must NOT have ``var_xxx`` arguments expanded to stored content before execution.
@@ -338,6 +342,52 @@ def check_confidentiality_allowed(
     return conf_hierarchy[context_label.confidentiality] <= conf_hierarchy[max_allowed]
 
 
+def _serialize_variable_content(value: Any) -> Any:
+    """Convert variable content to a durable JSON-compatible representation."""
+    if value is None or type(value) in (str, int, float, bool):
+        return value
+    if isinstance(value, bytes):
+        return {
+            _FIDES_VARIABLE_VALUE_TYPE_KEY: "bytes",
+            _FIDES_VARIABLE_VALUE_KEY: base64.b64encode(value).decode("ascii"),
+        }
+    if isinstance(value, bytearray):
+        return {
+            _FIDES_VARIABLE_VALUE_TYPE_KEY: "bytearray",
+            _FIDES_VARIABLE_VALUE_KEY: base64.b64encode(bytes(value)).decode("ascii"),
+        }
+    if isinstance(value, dict):
+        return {str(key): _serialize_variable_content(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_serialize_variable_content(item) for item in value]
+
+    # Preserve the established best-effort behavior for arbitrary values while
+    # making nested results JSON-compatible for durable session storage.
+    safe_value = make_json_safe(value)
+    if safe_value is value:
+        return safe_value
+    return _serialize_variable_content(safe_value)
+
+
+def _deserialize_variable_content(value: Any) -> Any:
+    """Restore reversible binary values from durable variable content."""
+    if isinstance(value, dict):
+        if set(value) == {_FIDES_VARIABLE_VALUE_TYPE_KEY, _FIDES_VARIABLE_VALUE_KEY}:
+            encoded = value.get(_FIDES_VARIABLE_VALUE_KEY)
+            value_type = value.get(_FIDES_VARIABLE_VALUE_TYPE_KEY)
+            if isinstance(encoded, str) and value_type in ("bytes", "bytearray"):
+                try:
+                    decoded = base64.b64decode(encoded, validate=True)
+                except (binascii.Error, TypeError, ValueError):
+                    pass
+                else:
+                    return bytearray(decoded) if value_type == "bytearray" else decoded
+        return {key: _deserialize_variable_content(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_deserialize_variable_content(item) for item in value]
+    return value
+
+
 @experimental(feature_id=ExperimentalFeature.FIDES)
 class ContentVariableStore:
     """Client-side storage for untrusted content using variable indirection.
@@ -361,9 +411,10 @@ class ContentVariableStore:
             print(content)  # "potentially malicious content"
     """
 
-    def __init__(self, *, _storage: dict[str, Any] | None = None) -> None:
+    def __init__(self, *, _storage: dict[str, Any] | None = None, _durable: bool = False) -> None:
         """Initialize an empty ContentVariableStore."""
         self._storage = _storage if _storage is not None else {}
+        self._durable = _durable
 
     def store(self, content: Any, label: ContentLabel) -> str:
         """Store content and return a variable ID.
@@ -376,7 +427,8 @@ class ContentVariableStore:
             A unique variable ID string.
         """
         var_id = f"var_{uuid.uuid4().hex[:16]}"
-        self._storage[var_id] = {"content": content, "label": label.to_dict()}
+        stored_content = _serialize_variable_content(content) if self._durable else content
+        self._storage[var_id] = {"content": stored_content, "label": label.to_dict()}
         logger.info(f"Stored content in variable {var_id} with label {label}")
         return var_id
 
@@ -403,7 +455,7 @@ class ContentVariableStore:
             label_data: Any = legacy_record[1]
         elif isinstance(record, dict):
             record_map = cast(dict[str, Any], record)
-            content = record_map["content"]
+            content = _deserialize_variable_content(record_map["content"])
             label_data = record_map["label"]
         else:
             raise TypeError(f"Variable {var_id} has an invalid stored representation")
@@ -883,7 +935,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         if session is None:
             return self._variable_store
         storage = cast(dict[str, Any], _fides_session_state(session)["variables"])
-        return ContentVariableStore(_storage=storage)
+        return ContentVariableStore(_storage=storage, _durable=True)
 
     def _resolve_metadata(self, session: Any = None) -> dict[str, dict[str, Any]]:
         """Resolve variable metadata for a session, with a no-session fallback."""
@@ -1262,7 +1314,13 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             text = str(cast(object, result))
         return [Content.from_text(text)]
 
-    def _should_hide(self, label: ContentLabel, function_name: str | None = None) -> bool:
+    def _should_hide(
+        self,
+        label: ContentLabel,
+        function_name: str | None = None,
+        *,
+        session: Any = None,
+    ) -> bool:
         """Decide whether a Content item with *label* should be hidden.
 
         An item is hidden when **all four** conditions hold:
@@ -1276,7 +1334,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         return (
             self.auto_hide_untrusted
             and label.integrity == self.hide_threshold
-            and self._get_context_label(self._resolve_public_session()).integrity == IntegrityLabel.TRUSTED
+            and self._get_context_label(self._resolve_public_session(session)).integrity == IntegrityLabel.TRUSTED
             and function_name != "inspect_variable"
         )
 
@@ -1446,6 +1504,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             original_items,
             function_name,
             fallback_label=fallback_label,
+            session=context.session,
         )
 
         context.result = processed
@@ -1518,6 +1577,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         items: list[Content],
         function_name: str,
         fallback_label: ContentLabel,
+        session: Any = None,
     ) -> tuple[list[Content], ContentLabel, ContentLabel | None]:
         """Process Content items, respecting per-item embedded labels.
 
@@ -1538,6 +1598,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 ``_ensure_content_list``).
             function_name: Name of the function that produced the result.
             fallback_label: Label to use when an item has no embedded label.
+            session: Optional session owning the invocation and its variable store.
 
         Returns:
             Tuple of (processed_content_list, combined_label, visible_combined_label).
@@ -1555,8 +1616,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             item_label = self._extract_content_label(item, fallback_label)
             item_labels.append(item_label)
 
-            if self._should_hide(item_label, function_name):
-                hidden = self._hide_item(item, item_label, function_name)
+            if self._should_hide(item_label, function_name, session=session):
+                hidden = self._hide_item(item, item_label, function_name, session=session)
                 processed.append(hidden)
             else:
                 # Attach this item's own label (preserves per-item granularity)
@@ -1604,6 +1665,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         item: Content,
         label: ContentLabel,
         function_name: str,
+        *,
+        session: Any = None,
     ) -> Content:
         """Replace an untrusted Content item with a variable-reference placeholder.
 
@@ -1615,6 +1678,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             item: The original Content item to hide.
             label: The security label for the item.
             function_name: Name of the function that produced the item.
+            session: Optional session owning the invocation and its variable store.
 
         Returns:
             A Content item containing the variable reference.
@@ -1624,7 +1688,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         # Store the actual content (serialize Content to its text representation)
         stored_value: Any = item.text if item.type == "text" and item.text is not None else item.to_dict()
 
-        session = self._resolve_public_session()
+        session = self._resolve_public_session(session)
         store = self._resolve_store(session)
         metadata = self._resolve_metadata(session)
         var_id = store.store(stored_value, label)
@@ -2194,7 +2258,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         if len(violations) > 1:
             result["violations"] = violation_types
         context.result = result
-        raise MiddlewareTermination("Policy violation blocked tool execution")
+        raise MiddlewareTermination("Policy violation blocked tool execution", blocked_policy=True)
 
     async def process(
         self,

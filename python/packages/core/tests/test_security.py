@@ -22,6 +22,7 @@ from agent_framework import (
     SessionContext,
 )
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
+from agent_framework._sessions import FileSessionStore
 from agent_framework._tools import (
     FunctionInvocationConfiguration,
     FunctionTool,
@@ -2071,6 +2072,33 @@ class TestAutomaticHiding:
         assert len(variables) == 5
 
 
+@pytest.mark.asyncio
+async def test_nested_hidden_results_use_their_invocation_session() -> None:
+    """Nested calls must not store an outer result in the inner session."""
+    tracker = LabelTrackingFunctionMiddleware()
+    tool = FunctionTool(name="nested_tool", description="test", fn=lambda: "unused")
+    outer_session = AgentSession(session_id="nested-outer")
+    inner_session = AgentSession(session_id="nested-inner")
+    outer_context = _context(outer_session, tool, TRUSTED)
+    inner_context = _context(inner_session, tool, TRUSTED)
+
+    async def inner_next() -> None:
+        inner_context.result = [Content.from_text("inner secret")]
+
+    async def outer_next() -> None:
+        outer_context.result = [Content.from_text("outer secret")]
+        await tracker.process(inner_context, inner_next)
+
+    await tracker.process(outer_context, outer_next)
+
+    outer_variables = tracker.list_variables(outer_session)
+    inner_variables = tracker.list_variables(inner_session)
+    assert len(outer_variables) == 1
+    assert len(inner_variables) == 1
+    assert tracker.get_variable_store(outer_session).retrieve(outer_variables[0])[0] == "outer secret"
+    assert tracker.get_variable_store(inner_session).retrieve(inner_variables[0])[0] == "inner secret"
+
+
 class TestSecureAgentConfig:
     """Tests for SecureAgentConfig helper class."""
 
@@ -2107,6 +2135,22 @@ class TestSecureAgentConfig:
         assert restored_label.integrity == IntegrityLabel.UNTRUSTED
         assert restored_label.confidentiality == ConfidentialityLabel.PRIVATE
         assert tracker.get_variable_metadata(variable_id, restored) == {"function_name": "load_secret"}
+
+    @pytest.mark.asyncio
+    async def test_variable_store_round_trips_binary_content_through_file_store(self, tmp_path) -> None:
+        tracker = LabelTrackingFunctionMiddleware()
+        session = AgentSession(session_id="durable-binary-variables")
+        payload = b"private-bytes"
+        variable_id = tracker.get_variable_store(session).store(payload, UNTRUSTED)
+        file_store = FileSessionStore(tmp_path)
+
+        await file_store.set(session.session_id, session)
+        restored = await file_store.get(session.session_id)
+
+        assert restored is not None
+        content, label = tracker.get_variable_store(restored).retrieve(variable_id)
+        assert content == payload
+        assert label.to_dict() == UNTRUSTED.to_dict()
 
     def test_variable_store_is_shared_with_a_propagated_child_session(self) -> None:
         tracker = LabelTrackingFunctionMiddleware()

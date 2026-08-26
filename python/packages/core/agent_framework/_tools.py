@@ -1707,7 +1707,7 @@ async def _execute_single_function_call(
             # A blocked FIDES call is a normal tool result: the model must receive
             # the refusal and get a chance to explain or choose another action.
             # Approval requests remain terminal and pause for user input.
-            is_blocked_policy = (exc.result.additional_properties or {}).get("blocked_violation") is True
+            is_blocked_policy = exc.blocked_policy
             return [exc.result], not is_blocked_policy
         source_function_call = _underlying_function_call(function_call)
         return [

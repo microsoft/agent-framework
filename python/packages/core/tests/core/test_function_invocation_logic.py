@@ -4974,7 +4974,7 @@ class BlockedPolicyMiddleware(FunctionMiddleware):
             "blocked_violation": True,
             "policy_violation": True,
         }
-        raise MiddlewareTermination("Policy violation blocked tool execution")
+        raise MiddlewareTermination("Policy violation blocked tool execution", blocked_policy=True)
 
 
 @pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
@@ -5031,6 +5031,41 @@ async def test_blocked_policy_result_continues_function_loop(
     assert function_results[0].exception == "Policy violation: tool execution blocked"
     assert function_results[0].additional_properties["blocked_violation"] is True
     assert response.text == final_text
+
+
+async def test_middleware_termination_does_not_trust_blocked_metadata(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Generic termination must remain terminal even if call metadata says blocked."""
+    executions = 0
+
+    @tool(name="terminated_tool", approval_mode="never_require")
+    def terminated_tool() -> str:
+        nonlocal executions
+        executions += 1
+        return "should not execute"
+
+    function_call = Content.from_function_call(
+        call_id="terminated-call",
+        name="terminated_tool",
+        arguments="{}",
+        additional_properties={"blocked_violation": True},
+    )
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(messages=Message(role="assistant", contents=[function_call])),
+        ChatResponse(messages=Message(role="assistant", contents=["must remain queued"])),
+    ]
+
+    response = await chat_client_base.get_response(  # type: ignore[call-overload, var-annotated]  # pyrefly: ignore[no-matching-overload]  # ty: ignore[no-matching-overload]
+        "run the tool",
+        options={"tool_choice": "auto", "tools": [terminated_tool]},
+        client_kwargs={"middleware": [TerminateLoopMiddleware()]},
+    )
+
+    assert executions == 0
+    assert chat_client_base.call_count == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert len(chat_client_base.run_responses) == 1  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert response.messages[-1].contents[0].result == "terminated by middleware"
 
 
 @pytest.mark.parametrize("approved", [True, False], ids=["approved", "rejected"])

@@ -76,10 +76,18 @@ class MiddlewareTermination(MiddlewareException):
     """Control-flow exception to terminate middleware execution early."""
 
     result: Any = None  # Optional result to return when terminating
+    blocked_policy: bool = False  # Whether this termination represents a FIDES policy block
 
-    def __init__(self, message: str = "Middleware terminated execution.", *, result: Any = None) -> None:
+    def __init__(
+        self,
+        message: str = "Middleware terminated execution.",
+        *,
+        result: Any = None,
+        blocked_policy: bool = False,
+    ) -> None:
         super().__init__(message, log_level=None)
         self.result = result
+        self.blocked_policy = blocked_policy
 
 
 class MiddlewareFailure(MiddlewareException):
