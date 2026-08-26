@@ -4818,9 +4818,13 @@ class TestWorkflowAgentHosting:
         text_done = [e for e in events if e["event"] == "response.output_text.done"]
         assert any(e["data"]["text"] == "hello stream" for e in text_done)
 
-    async def test_mid_run_consent_emits_oauth_item_and_incomplete(self) -> None:
-        """A workflow that surfaces a consent request must emit the output item and end
-        ``incomplete``, after its checkpoint finalization, just like the regular agent path.
+    async def test_mid_run_consent_fails_the_workflow_response_as_not_resumable(self) -> None:
+        """A workflow that surfaces a consent request must emit the output item, then fail.
+
+        Unlike the regular agent path, a consent-blocked workflow turn cannot be continued:
+        the ``AgentExecutor`` records a pending request that no input can answer, because
+        OAuth consent has no response content type. Reporting ``incomplete`` would promise a
+        continuation the workflow cannot honor, so the link is surfaced and the turn fails.
         """
         workflow_agent = _build_contents_workflow_agent([
             Content.from_oauth_consent_request(
@@ -4835,7 +4839,9 @@ class TestWorkflowAgentHosting:
         events = _parse_sse_events(resp.text)
         types = _sse_event_types(events)
 
-        assert types[-1] == "response.incomplete"
+        assert types[-1] == "response.failed"
+        assert "response.incomplete" not in types
+        assert "response.completed" not in types
 
         added = [e for e in events if e["event"] == "response.output_item.added"]
         oauth_added = [e for e in added if e["data"]["item"]["type"] == "oauth_consent_request"]
@@ -4848,9 +4854,41 @@ class TestWorkflowAgentHosting:
 
         # A WorkflowAgent replays the inner agent's content as workflow output, so the same
         # consent request reaches the host twice and must not produce two consent prompts.
-        incomplete = [e for e in events if e["event"] == "response.incomplete"]
-        assert len(incomplete) == 1
-        assert "1 tool(s)" in json.dumps(incomplete[0]["data"])
+        failed = [e for e in events if e["event"] == "response.failed"]
+        assert len(failed) == 1
+        message = failed[0]["data"]["response"]["error"]["message"]
+        assert "1 tool(s)" in message
+        assert "cannot be resumed" in message
+
+    async def test_second_turn_after_consent_reports_a_clear_failure(self) -> None:
+        """A conversation parked on consent must fail legibly on every later turn.
+
+        The consent request is checkpointed as a pending ``request_info`` that no input can
+        answer, so restoring it and sending ordinary text would otherwise surface an internal
+        ``Unexpected content type while awaiting request info responses`` error. The restored
+        consent links are detected up front so the block is reported directly instead.
+        """
+        workflow_agent = _build_contents_workflow_agent([
+            Content.from_oauth_consent_request(
+                consent_link="https://consent.example.com/obo",
+                additional_properties={"server_label": "obo-mcp"},
+            )
+        ])
+        server = _make_server(workflow_agent)
+        conversation_id = "conv-consent-resume"
+
+        first = await _post(server, input_text="hi", stream=True, conversation_id=conversation_id)
+        assert _sse_event_types(_parse_sse_events(first.text))[-1] == "response.failed"
+
+        second = await _post(server, input_text="thanks, granted", stream=True, conversation_id=conversation_id)
+        events = _parse_sse_events(second.text)
+        types = _sse_event_types(events)
+
+        assert types[-1] == "response.failed"
+        assert "response.completed" not in types
+        message = [e for e in events if e["event"] == "response.failed"][0]["data"]["response"]["error"]["message"]
+        assert "cannot be resumed" in message
+        assert "Unexpected content type" not in message
 
     async def test_mid_run_unusable_consent_link_fails_the_workflow_response(self) -> None:
         workflow_agent = _build_contents_workflow_agent([

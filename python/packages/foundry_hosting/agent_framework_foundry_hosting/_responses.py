@@ -26,6 +26,7 @@ from agent_framework import (
     SupportsAgentRun,
     UsageDetails,
     WorkflowAgent,
+    WorkflowCheckpoint,
     add_usage_details,
 )
 from agent_framework._oauth import validate_oauth_consent_link
@@ -375,6 +376,40 @@ def _consent_unusable_link_error(count: int) -> RuntimeError:
     )
 
 
+def _consent_not_resumable_error(count: int) -> RuntimeError:
+    """Return the error reported when a workflow turn is blocked on consent it cannot resume from.
+
+    OAuth consent has no response content type, so a caller cannot answer the pending request
+    an ``AgentExecutor`` records for it. Reporting ``incomplete`` would promise a continuation
+    that the workflow cannot honor, so the turn fails with the consent link already surfaced
+    and the user is directed to a new conversation.
+    """
+    return RuntimeError(
+        f"OAuth consent is required for {count} tool(s). The consent link has been provided, but this "
+        "workflow turn cannot be resumed after consent is granted because OAuth consent has no response "
+        "type. Grant consent using the link above, then start a new conversation."
+    )
+
+
+def _pending_consent_links(checkpoint: WorkflowCheckpoint | None) -> set[str]:
+    """Return the consent links a *checkpoint* is parked on, if any.
+
+    A workflow that stops on an OAuth consent request records it as a pending
+    ``request_info`` event. Consent has no response content type, so nothing a later turn
+    sends can satisfy that request and the workflow can never be resumed from it. Reading
+    the pending events off the checkpoint lets the host report the block itself; the
+    restore-only run does not replay these requests as updates.
+    """
+    if checkpoint is None:
+        return set()
+    links: set[str] = set()
+    for event in checkpoint.pending_request_info_events.values():
+        data = getattr(event, "data", None)
+        if isinstance(data, Content) and data.type == "oauth_consent_request":
+            links.add(data.consent_link or "")
+    return links
+
+
 @dataclass
 class _ConsentTracker:
     """Tracks the OAuth consent requests seen while converting content for one response.
@@ -646,7 +681,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             for event in tracker.close():
                 yield event
 
-            for event in self._finish_consent_response(response_event_stream, tracker):
+            for event in self._finish_consent_response(
+                response_event_stream, tracker, resumable=not self._is_workflow_agent
+            ):
                 yield event
         except Exception as ex:
             logger.error("Failed to produce response for agent", exc_info=(type(ex), ex, ex.__traceback__))
@@ -906,6 +943,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                         if cancellation_signal.is_set():
                             return
 
+                # OAuth consent is the exception to the pending-request handling above: it has
+                # no response content type, so a pending consent request can never be fulfilled
+                # by anything this turn carries. Those requests are read straight off the
+                # checkpoint, because the restore-only call does not replay them as updates, and
+                # reported directly instead of letting the run below fail with an internal
+                # "unexpected content type" error. Raising lets the caller emit the single
+                # terminal failure event, the same way an unresumable previous_response_id does.
+                pending_consent_links = _pending_consent_links(latest_checkpoint)
+                if pending_consent_links:
+                    raise _consent_not_resumable_error(len(pending_consent_links))
+
                 # A cancel signal that fired after the restore-only replay finished (or was never
                 # entered) must still preempt starting a brand new workflow run below.
                 if cancellation_signal.is_set():
@@ -993,6 +1041,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cls,
         response_event_stream: ResponseEventStream,
         tracker: _OutputItemTracker,
+        *,
+        resumable: bool,
     ) -> Generator[ResponseStreamEvent]:
         """Yield the terminal event for a turn that may have requested OAuth consent.
 
@@ -1000,14 +1050,30 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         same consent state. Callers must apply any higher-precedence failure (a request
         or session-persistence error) before delegating here.
 
-        The precedence is: a surfaced consent link ends the turn as ``incomplete``,
-        because it cannot finish until the user completes consent; a consent request whose
-        link was unusable ends it as ``failed``, because there is nothing for the user to
-        act on and ``completed`` would hide the block; otherwise the turn ``completed``.
+        The precedence is: a surfaced consent link ends the turn as ``incomplete`` when the
+        turn can be continued, and as ``failed`` when it cannot, so the status never promises
+        a continuation the caller will not get; a consent request whose link was unusable ends
+        the turn as ``failed``, because there is nothing for the user to act on and
+        ``completed`` would hide the block; otherwise the turn ``completed``.
+
+        Args:
+            response_event_stream: The stream the terminal event is emitted on.
+            tracker: The active output item tracker, drained before a failure event, and the
+                owner of the consent requests seen while converting this response.
+
+        Keyword Args:
+            resumable: Whether the turn can continue once consent is granted. True for a
+                plain agent, which re-runs and picks up the newly granted access. False for
+                a workflow, where the blocked turn is recorded as a pending request that has
+                no matching response type and therefore cannot be answered.
         """
         consent_tracker = tracker.consent
         if consent_tracker.emitted:
-            yield response_event_stream.emit_incomplete(reason=_consent_incomplete_reason(len(consent_tracker.emitted)))
+            count = len(consent_tracker.emitted)
+            if resumable:
+                yield response_event_stream.emit_incomplete(reason=_consent_incomplete_reason(count))
+            else:
+                yield from cls._emit_failure(response_event_stream, tracker, _consent_not_resumable_error(count))
         elif consent_tracker.dropped:
             yield from cls._emit_failure(
                 response_event_stream, tracker, _consent_unusable_link_error(len(consent_tracker.dropped))
