@@ -596,6 +596,107 @@ async def test_executor_handles_streaming_agent():
     assert "Processed: hello" in text_events[0].delta
 
 
+# Regression test for #7344 — function_invocation_kwargs must reach agent.run().
+
+
+@pytest.mark.parametrize("channel", ["extra_body", "top_level", "none"])
+@pytest.mark.asyncio
+async def test_executor_forwards_function_invocation_kwargs_to_run(channel: str):
+    """Regression for #7344: function_invocation_kwargs must reach agent.run().
+
+    Accepted on both channels already in use on the request payload:
+    - extra_body.function_invocation_kwargs
+    - top-level extra field (AgentFrameworkRequest has extra="allow")
+    Absent => not forwarded at all.
+    """
+    from agent_framework import AgentResponse, AgentResponseUpdate, AgentSession, Content, Message
+
+    from agent_framework_devui._discovery import EntityDiscovery
+    from agent_framework_devui._executor import AgentFrameworkExecutor
+    from agent_framework_devui._mapper import MessageMapper
+    from agent_framework_devui.models import AgentFrameworkRequest
+
+    recorded: list[dict] = []
+
+    class RecordingAgent:
+        """Agent that captures the kwargs agent.run() is called with."""
+
+        id = "recording_test"
+        name = "Recording Agent"
+        description = "Captures run() kwargs"
+
+        def run(self, messages=None, *, stream=False, session=None, **kwargs):
+            recorded.append({"stream": stream, "session_present": session is not None, "kwargs": dict(kwargs)})
+            if stream:
+                # Return an async generator for streaming (same shape the real Agent.run(stream=True) yields)
+                return self._stream_impl(messages)
+            return self._run_impl(messages)
+
+        async def _run_impl(self, messages):
+            return AgentResponse(
+                messages=[Message(role="assistant", contents=[Content.from_text(text=f"Processed: {messages}")])],
+                response_id="test_123",
+            )
+
+        async def _stream_impl(self, messages):
+            yield AgentResponseUpdate(
+                contents=[Content.from_text(text=f"Processed: {messages}")],
+                role="assistant",
+            )
+
+        def create_session(self, **kwargs):
+            return AgentSession()
+
+    discovery = EntityDiscovery(None)
+    mapper = MessageMapper()
+    executor = AgentFrameworkExecutor(discovery, mapper)
+    agent = RecordingAgent()
+    entity_info = await discovery.create_entity_info_from_object(agent, source="test")
+    discovery.register_entity(entity_info.id, entity_info, agent)
+
+    payload: dict = {
+        "metadata": {"entity_id": entity_info.id},
+        "input": "Call echo_ctx",
+        "stream": True,
+    }
+    if channel == "extra_body":
+        payload["extra_body"] = {"function_invocation_kwargs": {"tenantId": "abc123"}}
+    elif channel == "top_level":
+        payload["function_invocation_kwargs"] = {"tenantId": "abc123"}
+
+    async def _drain_and_get_final(stream):
+        updates = [u async for u in stream]
+        await stream.get_final_response()
+        return updates
+
+    events = []
+    async for event in executor.execute_streaming(AgentFrameworkRequest(**payload)):
+        events.append(event)
+
+    assert recorded, "agent.run() was never invoked"
+    if channel == "none":
+        assert "function_invocation_kwargs" not in recorded[0]["kwargs"]
+    else:
+        assert recorded[0]["kwargs"].get("function_invocation_kwargs") == {"tenantId": "abc123"}
+
+    # Execute streaming agent (use metadata.entity_id for routing)
+    request = AgentFrameworkRequest(
+        metadata={"entity_id": entity_info.id},
+        input="hello",
+        stream=True,  # DevUI always streams
+    )
+
+    events = []
+    async for event in executor.execute_streaming(request):
+        events.append(event)
+
+    # Should get events from streaming agent
+    assert len(events) > 0
+    text_events = [e for e in events if hasattr(e, "type") and e.type == "response.output_text.delta"]
+    assert len(text_events) > 0
+    assert "Processed: hello" in text_events[0].delta
+
+
 # =============================================================================
 # Full Pipeline Tests for SequentialBuilder
 # =============================================================================

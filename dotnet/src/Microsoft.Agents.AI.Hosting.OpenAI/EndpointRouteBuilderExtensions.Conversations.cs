@@ -68,6 +68,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
             .WithName("DeleteItem")
             .WithSummary("Delete a specific item");
 
+        MarkFeatureUsed();
         return group;
     }
 }

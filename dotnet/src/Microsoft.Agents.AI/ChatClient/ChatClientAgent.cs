@@ -208,6 +208,10 @@ public sealed partial class ChatClientAgent : AIAgent
     {
         var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
 
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreAgent);
+#pragma warning restore MAAI001
+
         (ChatClientAgentSession safeSession,
          ChatOptions? chatOptions,
          List<ChatMessage> inputMessagesForChatClient,
@@ -293,6 +297,10 @@ public sealed partial class ChatClientAgent : AIAgent
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var inputMessages = Throw.IfNull(messages) as IReadOnlyCollection<ChatMessage> ?? messages.ToList();
+
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreAgent);
+#pragma warning restore MAAI001
 
         (ChatClientAgentSession safeSession,
          ChatOptions? chatOptions,
@@ -675,7 +683,7 @@ public sealed partial class ChatClientAgent : AIAgent
             if (agentRunOptions?.AdditionalProperties is { Count: > 0 })
             {
                 chatOptions ??= new ChatOptions();
-                chatOptions.AdditionalProperties ??= new();
+                chatOptions.AdditionalProperties ??= [];
                 foreach (var kvp in agentRunOptions.AdditionalProperties)
                 {
                     chatOptions.AdditionalProperties[kvp.Key] = kvp.Value;

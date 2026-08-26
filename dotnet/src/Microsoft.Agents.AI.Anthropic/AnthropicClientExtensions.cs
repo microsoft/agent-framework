@@ -68,6 +68,7 @@ public static class AnthropicClientExtensions
             chatClient = clientFactory(chatClient);
         }
 
+        chatClient = new Microsoft.Agents.AI.Anthropic.FeatureUsageChatClient(chatClient);
         return new ChatClientAgent(chatClient, options, loggerFactory, services);
     }
 
@@ -98,6 +99,7 @@ public static class AnthropicClientExtensions
             chatClient = clientFactory(chatClient);
         }
 
+        chatClient = new Microsoft.Agents.AI.Anthropic.FeatureUsageChatClient(chatClient);
         return new ChatClientAgent(chatClient, options, loggerFactory, services);
     }
 }

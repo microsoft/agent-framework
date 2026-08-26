@@ -35,8 +35,11 @@ from agent_framework.observability import (
     ChatTelemetryLayer,
     MessageListTimestampFilter,
     OtelAttr,
-    _capture_messages,
+    _capture_message_events_v1_36,
+    _capture_message_span_attributes_latest_experimental,
     _get_instructions_from_options,
+    _to_otel_choice_v1_36,
+    _to_otel_input_events_v1_36,
     get_function_span,
 )
 
@@ -366,6 +369,26 @@ async def test_chat_client_observability_with_instructions(
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_baseline_semconv_omits_system_instructions(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that baseline v1.36.0 telemetry omits the post-v1.36.0 system instructions attribute."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    client = mock_chat_client()
+
+    await client.get_response(
+        messages=[Message(role="user", contents=["Test message"])],
+        options={"model": "Test", "instructions": "You are a helpful assistant."},
+    )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert OtelAttr.SYSTEM_INSTRUCTIONS not in spans[0].attributes  # type: ignore[operator]  # pyrefly: ignore[not-iterable]  # ty: ignore[unsupported-operator]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
 async def test_chat_client_streaming_observability_with_instructions(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
@@ -474,6 +497,97 @@ async def test_chat_client_streaming_sync_setup_span_is_parented_to_chat_span(
         "subclass setup span is not parented to the chat span "
         f"(parent={setup_span.parent.span_id:x}, chat={chat_span.context.span_id:x}); "
         "this is the streaming sync-setup parenting gap"
+    )
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_streaming_input_events_correlated_to_chat_span(
+    mock_chat_client,
+    span_exporter: InMemorySpanExporter,
+    log_record_exporter,
+    enable_sensitive_data,
+) -> None:
+    """Regression guard: streaming input events must carry the chat span's trace/span id.
+
+    ``_capture_message_events_v1_36`` emits the baseline v1.36.0 GenAI message events via the
+    native OTel event logger, which derives trace/span correlation from whatever span is
+    current in the ambient context at emit time. In the streaming path the chat span is
+    started with ``_start_streaming_span`` (not attached as current), so those events must be
+    emitted while the chat span is explicitly activated -- otherwise they get correlated with
+    the caller's (parent) span instead of this chat operation.
+    """
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test"])]
+
+    stream = client.get_response(stream=True, messages=messages, options={"model": "Test"})
+    async for _update in stream:
+        pass
+    await stream.get_final_response()
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    chat_span = spans[0]
+    assert chat_span.context is not None
+
+    user_message_records = [
+        record.log_record
+        for record in log_record_exporter.get_finished_logs()
+        if record.log_record.event_name == OtelAttr.USER_MESSAGE.value
+    ]
+    assert len(user_message_records) == 1
+    user_message_record = user_message_records[0]
+
+    assert user_message_record.trace_id == chat_span.context.trace_id, (
+        "input event was not correlated with the chat span's trace"
+    )
+    assert user_message_record.span_id == chat_span.context.span_id, (
+        "input event was not correlated with the chat span; it must be emitted while the "
+        "chat span is activated as current"
+    )
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_streaming_output_events_correlated_to_chat_span(
+    mock_chat_client,
+    span_exporter: InMemorySpanExporter,
+    log_record_exporter,
+    enable_sensitive_data,
+) -> None:
+    """Regression guard: streaming output (choice) events must carry the chat span's trace/span id.
+
+    ``_finalize_stream`` runs as a cleanup hook after the final iterator pull has already exited
+    its ``_activate_span(span)`` context, so the chat span is no longer current by the time output
+    events are emitted there. They must therefore be emitted inside an explicit
+    ``_activate_span(span)`` block, otherwise they get correlated with whatever span happens to be
+    current in the consuming context instead of this chat operation.
+    """
+    client = mock_chat_client()
+    messages = [Message(role="user", contents=["Test"])]
+
+    stream = client.get_response(stream=True, messages=messages, options={"model": "Test"})
+    async for _update in stream:
+        pass
+    await stream.get_final_response()
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    chat_span = spans[0]
+    assert chat_span.context is not None
+
+    choice_records = [
+        record.log_record
+        for record in log_record_exporter.get_finished_logs()
+        if record.log_record.event_name == OtelAttr.CHOICE.value
+    ]
+    assert len(choice_records) == 1
+    choice_record = choice_records[0]
+
+    assert choice_record.trace_id == chat_span.context.trace_id, (
+        "output event was not correlated with the chat span's trace"
+    )
+    assert choice_record.span_id == chat_span.context.span_id, (
+        "output event was not correlated with the chat span; it must be emitted while the "
+        "chat span is activated as current during stream finalization"
     )
 
 
@@ -1139,6 +1253,225 @@ def test_get_exporters_from_env_grpc_base_endpoint_unchanged(monkeypatch):
     assert kwargs["logs_endpoint"] == "http://localhost:4317"
 
 
+def test_get_exporters_from_env_params_override_env(monkeypatch):
+    """endpoint/protocol/headers/timeout/compression params should override the base env vars."""
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://env-endpoint:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "from-env=1")
+    for key in (
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env(
+            endpoint="http://param-endpoint:4317",
+            protocol="http/protobuf",
+            headers={"from-param": "2"},
+            timeout=5.0,
+            compression="gzip",
+        )
+
+    kwargs = create.call_args.kwargs
+    # Param endpoint/protocol win over env, with HTTP path-append applied to the param endpoint
+    assert kwargs["protocol"] == "http/protobuf"
+    assert kwargs["traces_endpoint"] == "http://param-endpoint:4317/v1/traces"
+    # Param headers win over (replace) base env headers
+    assert kwargs["traces_headers"] == {"from-param": "2"}
+    # timeout/compression forwarded as-is
+    assert kwargs["timeout"] == 5.0
+    assert kwargs["compression"] == "gzip"
+
+
+def test_get_exporters_from_env_signal_specific_env_wins_over_param(monkeypatch):
+    """Signal-specific env vars still take precedence over a programmatic base endpoint override."""
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://traces-env:4317")
+    for key in (
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env(endpoint="http://param-endpoint:4317")
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["traces_endpoint"] == "http://traces-env:4317"
+    assert kwargs["metrics_endpoint"] == "http://param-endpoint:4317"
+
+
+def test_configure_otel_providers_otlp_params(monkeypatch):
+    """configure_otel_providers(otlp_endpoint=..., otlp_headers=..., ...) should be forwarded."""
+    from unittest.mock import patch
+
+    from agent_framework import observability
+    from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
+
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    OBSERVABILITY_SETTINGS._executed_setup = False
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        configure_otel_providers(
+            otlp_endpoint="http://custom:4317",
+            otlp_protocol="grpc",
+            otlp_headers={"Authorization": "Bearer token"},
+            otlp_timeout=7.5,
+            otlp_compression="deflate",
+        )
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["traces_endpoint"] == "http://custom:4317"
+    assert kwargs["traces_headers"] == {"Authorization": "Bearer token"}
+    assert kwargs["timeout"] == 7.5
+    assert kwargs["compression"] == "deflate"
+
+
+def test_get_exporters_from_env_passes_empty_headers_through_not_none(monkeypatch):
+    """An explicit empty otlp_headers={} override must be forwarded as {}, not collapsed to None.
+
+    Regression test for a PR review comment: collapsing an authoritatively-resolved-but-empty
+    headers dict to None before calling `_create_otlp_exporters()` let the OTLP exporter
+    constructors fall back to reading OTEL_EXPORTER_OTLP_HEADERS themselves, silently
+    reattaching an environment-configured credential the caller explicitly tried to suppress.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer env-secret")
+    for key in (
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+        "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+        "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env(endpoint="http://collector:4317", headers={})
+
+    kwargs = create.call_args.kwargs
+    # Explicitly empty, not None -- must not be collapsed, or the exporter would re-read
+    # OTEL_EXPORTER_OTLP_HEADERS itself and resurrect "Authorization: Bearer env-secret".
+    assert kwargs["traces_headers"] == {}
+    assert kwargs["metrics_headers"] == {}
+    assert kwargs["logs_headers"] == {}
+
+
+def test_construct_otlp_exporter_shields_headers_env_for_resolved_headers(monkeypatch):
+    """When headers were authoritatively resolved (even to {}), construction must not let the
+    exporter class see OTEL_EXPORTER_OTLP_HEADERS -- an empty dict is just as falsy to the SDK's
+    own `headers or environ.get(...)` fallback as None, so the env var must be hidden instead.
+    """
+    import os
+
+    from agent_framework.observability import _construct_otlp_exporter
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer env-secret")
+    seen: dict[str, str | None] = {}
+
+    class FakeExporter:
+        def __init__(self, endpoint: str, headers: dict | None, timeout: float | None, compression: object) -> None:
+            seen["header_env_during_construction"] = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
+            self.endpoint = endpoint
+            self.headers = headers
+
+    exporter = _construct_otlp_exporter(
+        FakeExporter, "http://collector:4317", {}, None, None, "OTEL_EXPORTER_OTLP_HEADERS"
+    )
+
+    assert exporter.headers == {}
+    # The env var was hidden from the exporter class during __init__...
+    assert seen["header_env_during_construction"] is None
+    # ...and restored immediately afterward.
+    assert os.environ.get("OTEL_EXPORTER_OTLP_HEADERS") == "Authorization=Bearer env-secret"
+
+
+def test_construct_otlp_exporter_does_not_shield_when_no_headers_resolved(monkeypatch):
+    """When the caller has no opinion on headers (headers=None), the exporter must be left free
+    to read OTEL_EXPORTER_OTLP_HEADERS itself, preserving prior behavior for callers (like the
+    vs_code_extension_port path) that never pass headers to `_create_otlp_exporters()` at all.
+    """
+    import os
+
+    from agent_framework.observability import _construct_otlp_exporter
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer env-secret")
+    seen: dict[str, str | None] = {}
+
+    class FakeExporter:
+        def __init__(self, endpoint: str, headers: dict | None, timeout: float | None, compression: object) -> None:
+            seen["header_env_during_construction"] = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
+
+    _construct_otlp_exporter(FakeExporter, "http://collector:4317", None, None, None, "OTEL_EXPORTER_OTLP_HEADERS")
+
+    assert seen["header_env_during_construction"] == "Authorization=Bearer env-secret"
+
+
+def test_get_exporters_from_env_withholds_programmatic_headers_on_origin_mismatch(monkeypatch):
+    """Programmatic otlp_headers must not follow a signal to a different-origin endpoint.
+
+    Regression test for a PR review comment: if OTEL_EXPORTER_OTLP_TRACES_ENDPOINT happens to
+    point at a different host than the programmatic otlp_endpoint, the programmatic headers
+    (e.g. an Authorization credential) must not be sent to that other host.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://other-host:4317")
+    for key in ("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env(
+            endpoint="http://my-collector:4317",
+            headers={"Authorization": "Bearer secret"},
+        )
+
+    kwargs = create.call_args.kwargs
+    # traces uses a different origin (other-host) -- the programmatic credential is withheld.
+    assert kwargs["traces_headers"] == {}
+    # metrics/logs still use the programmatic base endpoint's origin -- credential is attached.
+    assert kwargs["metrics_headers"] == {"Authorization": "Bearer secret"}
+    assert kwargs["logs_headers"] == {"Authorization": "Bearer secret"}
+
+
+def test_get_exporters_from_env_env_only_headers_unaffected_by_origin_guard(monkeypatch):
+    """The origin-mismatch guard only applies to the new programmatic otlp_endpoint/otlp_headers
+    parameters; pure env-var-driven configuration keeps its existing, spec-conformant behavior of
+    applying OTEL_EXPORTER_OTLP_HEADERS to every signal regardless of which endpoint it uses.
+    """
+    from unittest.mock import patch
+
+    from agent_framework import observability
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://my-collector:4317")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer env-secret")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://other-host:4317")
+    for key in ("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"):
+        monkeypatch.delenv(key, raising=False)
+
+    with patch.object(observability, "_create_otlp_exporters", return_value=[]) as create:
+        observability._get_exporters_from_env()
+
+    kwargs = create.call_args.kwargs
+    assert kwargs["traces_headers"] == {"Authorization": "Bearer env-secret"}
+
+
 # region Test create_resource
 
 
@@ -1180,6 +1513,94 @@ def test_create_resource_with_custom_attributes(monkeypatch):
 
     assert resource.attributes["custom_attr"] == "custom_value"
     assert resource.attributes["another_attr"] == 123
+
+
+def test_create_resource_explicit_values_win_over_resource_attributes_env(monkeypatch):
+    """OTEL_RESOURCE_ATTRIBUTES must not silently override explicit service_name/service_version/attributes.
+
+    Regression test for a PR review comment: applying OTEL_RESOURCE_ATTRIBUTES *after* the
+    explicit values let the env var overwrite a caller-supplied service.name (or any other
+    caller-supplied attribute) if it happened to redefine that key, contradicting the documented
+    "explicit parameters take precedence" behavior.
+    """
+    from agent_framework.observability import create_resource
+
+    monkeypatch.setenv(
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "service.name=env-service,service.version=0.0.1,deployment.environment=staging",
+    )
+
+    resource = create_resource(
+        service_name="checkout",
+        service_version="2.0.0",
+        attributes={"deployment.environment": "production"},
+    )
+
+    assert resource.attributes["service.name"] == "checkout"
+    assert resource.attributes["service.version"] == "2.0.0"
+    assert resource.attributes["deployment.environment"] == "production"
+
+
+def test_create_resource_env_attributes_still_apply_when_not_overridden(monkeypatch):
+    """OTEL_RESOURCE_ATTRIBUTES entries with no explicit override should still come through."""
+    from agent_framework.observability import create_resource
+
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "host.name=server1")
+
+    resource = create_resource(service_name="checkout")
+
+    assert resource.attributes["service.name"] == "checkout"
+    assert resource.attributes["host.name"] == "server1"
+
+
+def test_create_resource_attributes_param_avoids_keyword_collision(monkeypatch):
+    """The `attributes=` dict param must accept keys that collide with create_resource's own
+    parameter names (e.g. "service_name"), which is not possible via **kwargs.
+
+    Regression test for a PR review comment: `_configure_providers()` used to call
+    `create_resource(service_name=..., **resource_attributes)`, which raised `TypeError:
+    got multiple values for argument 'service_name'` if a caller's `resource_attributes` dict
+    happened to contain a key like "service_name" or "env_file_path".
+    """
+    from agent_framework.observability import create_resource
+
+    # Would raise TypeError if passed as **kwargs alongside the explicit service_name= below.
+    colliding_attributes = {"service_name": "from-dict", "env_file_path": "from-dict"}
+
+    resource = create_resource(service_name="checkout", attributes=colliding_attributes)
+
+    # The explicit service_name= parameter wins over the same-named dict entry.
+    assert resource.attributes["service.name"] == "checkout"
+    # The non-colliding key still makes it into the resource, under its literal name.
+    assert resource.attributes["env_file_path"] == "from-dict"
+
+
+def test_create_resource_attributes_param_backward_compatible_non_mapping():
+    """create_resource(attributes=<non-mapping>) must keep its pre-existing meaning.
+
+    Regression test for a PR review comment: before `attributes` was a dedicated parameter, it
+    was only reachable through **kwargs, so `create_resource(attributes="some_value")` set a
+    literal resource attribute named "attributes" with that string value. Now that `attributes`
+    is a named parameter documented to accept a mapping, a non-mapping value must not be handed
+    to `dict.update()` (which would raise `ValueError: dictionary update sequence element #0 has
+    length 1; 2 is required` for a string) -- the old call shape must keep working unchanged.
+    """
+    from agent_framework.observability import create_resource
+
+    resource = create_resource(attributes="some_value")
+
+    assert resource.attributes["attributes"] == "some_value"
+
+
+def test_create_resource_attributes_param_mapping_form():
+    """create_resource(attributes={...}) merges the mapping's entries as resource attributes."""
+    from agent_framework.observability import create_resource
+
+    resource = create_resource(attributes={"deployment_environment": "production", "team": "platform"})
+
+    assert resource.attributes["deployment_environment"] == "production"
+    assert resource.attributes["team"] == "platform"
+    assert "attributes" not in resource.attributes
 
 
 # region Test _create_otlp_exporters
@@ -1832,6 +2253,152 @@ def test_enable_instrumentation_reads_env_sensitive_data(monkeypatch):
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
 
 
+# region Test GenAI semconv stability opt-in
+
+
+def test_semconv_defaults_to_latest_experimental_when_unset(monkeypatch):
+    """OTEL_SEMCONV_STABILITY_OPT_IN unset → MAF defaults to the latest conventions."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.delenv("OTEL_SEMCONV_STABILITY_OPT_IN", raising=False)
+    settings = ObservabilitySettings()
+
+    assert settings.otel_semconv_stability_opt_in is None
+    assert settings.use_latest_experimental_gen_ai_semconv is True
+
+
+def test_semconv_explicit_empty_opts_into_baseline(monkeypatch):
+    """Explicitly setting OTEL_SEMCONV_STABILITY_OPT_IN='' opts into the baseline v1.36.0 conventions."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "")
+    settings = ObservabilitySettings()
+
+    assert settings.use_latest_experimental_gen_ai_semconv is False
+
+
+def test_semconv_explicit_token_opts_into_latest_experimental(monkeypatch):
+    """Explicitly including 'gen_ai_latest_experimental' opts into the latest conventions."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "gen_ai_latest_experimental")
+    settings = ObservabilitySettings()
+
+    assert settings.use_latest_experimental_gen_ai_semconv is True
+
+
+def test_semconv_multi_value_list_checks_for_gen_ai_token(monkeypatch):
+    """OTEL_SEMCONV_STABILITY_OPT_IN supports the standard comma-separated multi-value list format."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "database, gen_ai_latest_experimental")
+    settings = ObservabilitySettings()
+    assert settings.use_latest_experimental_gen_ai_semconv is True
+
+    monkeypatch.setenv("OTEL_SEMCONV_STABILITY_OPT_IN", "database,messaging")
+    settings = ObservabilitySettings()
+    assert settings.use_latest_experimental_gen_ai_semconv is False
+
+
+def test_baseline_semconv_skips_current_agent_system_instruction_checks(span_exporter: InMemorySpanExporter):
+    """Baseline v1.36.0 returns before inspecting spans for the unsupported system instructions attribute."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    agent_span = Mock()
+
+    observability._capture_current_agent_system_instructions_latest_experimental(  # pyright: ignore[reportPrivateUsage]
+        agent_span,
+        Mock(),
+        "You are a helpful assistant.",
+    )
+
+    agent_span.is_recording.assert_not_called()
+
+
+def test_enable_message_events_defaults_true(monkeypatch):
+    """ENABLE_MESSAGE_EVENTS unset → defaults to True (backward-compatible with pre-versioning behavior)."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.delenv("ENABLE_MESSAGE_EVENTS", raising=False)
+    settings = ObservabilitySettings()
+
+    assert settings.enable_message_events is True
+
+
+def test_enable_message_events_can_be_disabled(monkeypatch):
+    """ENABLE_MESSAGE_EVENTS=false disables the baseline v1.36.0 message events."""
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("ENABLE_MESSAGE_EVENTS", "false")
+    settings = ObservabilitySettings()
+
+    assert settings.enable_message_events is False
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+def test_get_span_attributes_uses_provider_name_under_latest_semconv(span_exporter: InMemorySpanExporter):
+    """Under the default (latest) semconv, the provider attribute is gen_ai.provider.name."""
+    from agent_framework.observability import _get_span_attributes  # pyright: ignore[reportPrivateUsage]
+
+    attributes = _get_span_attributes(provider_name="test_provider")
+
+    assert attributes[OtelAttr.PROVIDER_NAME] == "test_provider"
+    assert OtelAttr.SYSTEM not in attributes
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+def test_get_span_attributes_uses_system_under_baseline_semconv(span_exporter: InMemorySpanExporter):
+    """Under the baseline v1.36.0 semconv, the provider attribute reverts to gen_ai.system."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    attributes = observability._get_span_attributes(provider_name="test_provider")  # pyright: ignore[reportPrivateUsage]
+
+    assert attributes[OtelAttr.SYSTEM] == "test_provider"
+    assert OtelAttr.PROVIDER_NAME not in attributes
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+def test_get_span_attributes_omits_post_v1_36_attributes_under_baseline_semconv(
+    span_exporter: InMemorySpanExporter,
+):
+    """Baseline v1.36.0 omits attributes introduced by later GenAI conventions."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    attributes = observability._get_span_attributes(  # pyright: ignore[reportPrivateUsage]
+        provider_name="test_provider",
+        tools=[{"type": "web_search", "name": "web_search"}],
+    )
+
+    assert attributes == {
+        OtelAttr.CHOICE_COUNT: 1,
+        OtelAttr.SYSTEM: "test_provider",
+    }
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_observability_provider_name_under_baseline_semconv(
+    mock_chat_client, span_exporter: InMemorySpanExporter
+):
+    """Chat spans report gen_ai.system (not gen_ai.provider.name) under the baseline v1.36.0 semconv."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    client = mock_chat_client()
+
+    messages = [Message(role="user", contents=["Test message"])]
+    span_exporter.clear()
+    await client.get_response(messages=messages, options={"model": "Test"})
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    attributes = spans[0].attributes or {}
+    assert OtelAttr.SYSTEM in attributes
+    assert OtelAttr.PROVIDER_NAME not in attributes
+
+
 # region Test disable_instrumentation sticky behavior
 
 
@@ -1988,10 +2555,10 @@ def test_disable_instrumentation_in_all(monkeypatch):
 def test_to_otel_part_text():
     """Test _to_otel_part with text content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_latest_experimental
 
     content = Content(type="text", text="Hello world")
-    result = _to_otel_part(content)
+    result = _to_otel_part_latest_experimental(content)
 
     assert result == {"type": "text", "content": "Hello world"}
 
@@ -1999,10 +2566,10 @@ def test_to_otel_part_text():
 def test_to_otel_part_text_reasoning():
     """Test _to_otel_part with text_reasoning content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_latest_experimental
 
     content = Content(type="text_reasoning", text="Thinking about this...")
-    result = _to_otel_part(content)
+    result = _to_otel_part_latest_experimental(content)
 
     assert result == {"type": "reasoning", "content": "Thinking about this..."}
 
@@ -2010,10 +2577,10 @@ def test_to_otel_part_text_reasoning():
 def test_to_otel_part_uri():
     """Test _to_otel_part with uri content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_latest_experimental
 
     content = Content(type="uri", uri="https://example.com/image.png", media_type="image/png")
-    result = _to_otel_part(content)
+    result = _to_otel_part_latest_experimental(content)
 
     assert result == {
         "type": "uri",
@@ -2026,10 +2593,10 @@ def test_to_otel_part_uri():
 def test_to_otel_part_uri_no_media_type():
     """Test _to_otel_part with uri content without media_type."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_latest_experimental
 
     content = Content(type="uri", uri="https://example.com/file")
-    result = _to_otel_part(content)
+    result = _to_otel_part_latest_experimental(content)
 
     assert result == {
         "type": "uri",
@@ -2042,11 +2609,11 @@ def test_to_otel_part_uri_no_media_type():
 def test_to_otel_part_data():
     """Test _to_otel_part with data content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_latest_experimental
 
     data = b"binary data"
     content = Content.from_data(data=data, media_type="application/octet-stream")
-    result = _to_otel_part(content)
+    result = _to_otel_part_latest_experimental(content)
 
     assert result["type"] == "blob"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert result["mime_type"] == "application/octet-stream"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
@@ -2056,10 +2623,10 @@ def test_to_otel_part_data():
 def test_to_otel_part_function_call():
     """Test _to_otel_part with function_call content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_latest_experimental
 
     content = Content(type="function_call", call_id="call_123", name="test_function", arguments='{"arg1": "value1"}')
-    result = _to_otel_part(content)
+    result = _to_otel_part_latest_experimental(content)
 
     assert result == {
         "type": "tool_call",
@@ -2072,11 +2639,11 @@ def test_to_otel_part_function_call():
 def test_to_otel_part_function_call_reuses_prepared_arguments():
     """Test _to_otel_part does not re-serialize function-call arguments in the observability hot path."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_latest_experimental
 
     arguments = {"payload": object()}
     content = Content(type="function_call", call_id="call_789", name="handoff", arguments=arguments)
-    result = _to_otel_part(content)
+    result = _to_otel_part_latest_experimental(content)
 
     assert result is not None
     assert result["arguments"] is arguments
@@ -2131,13 +2698,88 @@ def test_make_json_safe_dict_with_non_string_keys():
 def test_to_otel_part_function_result():
     """Test _to_otel_part with function_result content."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_latest_experimental
 
     content = Content(type="function_result", call_id="call_123", result="Success")
-    result = _to_otel_part(content)
+    result = _to_otel_part_latest_experimental(content)
 
     assert result["type"] == "tool_call_response"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
     assert result["id"] == "call_123"  # type: ignore[index]  # pyrefly: ignore[unsupported-operation]  # ty: ignore[not-subscriptable]
+
+
+# region Test baseline v1.36.0 event conversion
+
+
+def test_to_otel_v1_36_user_message_body():
+    """Baseline user events use content rather than the experimental parts shape."""
+    events = _to_otel_input_events_v1_36(Message(role="user", contents=["Hello", "world"]))
+
+    assert events == [(OtelAttr.USER_MESSAGE, {"content": "Hello world"})]
+
+
+def test_to_otel_v1_36_assistant_tool_call_body():
+    """Baseline assistant events use the v1.36 function-call nesting."""
+    message = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="call_123", name="get_weather", arguments='{"city":"Paris"}')],
+    )
+
+    events = _to_otel_input_events_v1_36(message)
+
+    assert events == [
+        (
+            OtelAttr.ASSISTANT_MESSAGE,
+            {
+                "tool_calls": [
+                    {
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": '{"city":"Paris"}'},
+                    }
+                ]
+            },
+        )
+    ]
+
+
+def test_to_otel_v1_36_tool_results_emit_one_event_per_call():
+    """Each baseline tool event has the one required tool-call id."""
+    message = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(call_id="call_1", result="first"),
+            Content.from_function_result(call_id="call_2", result={"value": 2}),
+        ],
+    )
+
+    events = _to_otel_input_events_v1_36(message)
+
+    assert events == [
+        (OtelAttr.TOOL_MESSAGE, {"id": "call_1", "content": "first"}),
+        (OtelAttr.TOOL_MESSAGE, {"id": "call_2", "content": '{"value": 2}'}),
+    ]
+
+
+def test_to_otel_v1_36_tool_message_without_call_id_is_skipped():
+    """A baseline tool event is not emitted when its required call id is unavailable."""
+    events = _to_otel_input_events_v1_36(Message(role="tool", contents=["Uncorrelated result"]))
+
+    assert events == []
+
+
+def test_to_otel_v1_36_choice_body():
+    """Baseline choices contain index, finish reason, and a nested message."""
+    body = _to_otel_choice_v1_36(
+        Message(role="assistant", contents=["Done"]),
+        index=1,
+        finish_reason="tool_calls",
+    )
+
+    assert body == {
+        "index": 1,
+        "finish_reason": "tool_calls",
+        "message": {"content": "Done"},
+    }
 
 
 # region Test workflow observability functions
@@ -2490,6 +3132,35 @@ def test_get_response_attributes_with_additional_usage():
     assert result[OtelAttr.REASONING_OUTPUT_TOKENS] == 30
 
 
+def test_get_response_attributes_omits_post_v1_36_usage_under_baseline_semconv(monkeypatch: pytest.MonkeyPatch):
+    """Baseline v1.36.0 keeps total usage while omitting newer token breakdowns."""
+    from unittest.mock import Mock
+
+    import agent_framework.observability as observability
+
+    monkeypatch.setattr(observability.OBSERVABILITY_SETTINGS, "otel_semconv_stability_opt_in", "")
+    response = Mock(
+        response_id=None,
+        finish_reason=None,
+        raw_representation=None,
+        model=None,
+        usage_details={
+            "input_token_count": 100,
+            "output_token_count": 50,
+            "cache_creation_input_token_count": 10,
+            "cache_read_input_token_count": 20,
+            "reasoning_output_token_count": 30,
+        },
+    )
+
+    result = observability._get_response_attributes({}, response)  # pyright: ignore[reportPrivateUsage]
+
+    assert result == {
+        OtelAttr.INPUT_TOKENS: 100,
+        OtelAttr.OUTPUT_TOKENS: 50,
+    }
+
+
 def test_get_response_attributes_maps_legacy_usage_keys():
     """Test _get_response_attributes maps legacy provider usage keys to standard OTel attributes."""
     from unittest.mock import Mock
@@ -2641,17 +3312,60 @@ def test_observability_settings_configure_already_setup(monkeypatch):
     assert settings.is_setup is True
 
 
+def test_observability_settings_service_name_overrides_env(monkeypatch):
+    """ObservabilitySettings(service_name=...) should be forwarded to create_resource, not just env vars."""
+    from agent_framework import observability
+    from agent_framework.observability import ObservabilitySettings
+
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "env-service")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+
+    settings = ObservabilitySettings(
+        service_name="param-service",
+        service_version="3.2.1",
+        resource_attributes={"deployment_environment": "test"},
+        enable_console_exporters=True,
+    )
+    with patch.object(observability, "create_resource", wraps=observability.create_resource) as create_resource:
+        settings._configure()
+
+    assert create_resource.call_args.kwargs["service_name"] == "param-service"
+    assert create_resource.call_args.kwargs["service_version"] == "3.2.1"
+    assert create_resource.call_args.kwargs["attributes"] == {"deployment_environment": "test"}
+
+
+def test_configure_otel_providers_service_name_param(monkeypatch):
+    """configure_otel_providers(service_name=...) should be forwarded to create_resource."""
+    from agent_framework import observability
+    from agent_framework.observability import OBSERVABILITY_SETTINGS, configure_otel_providers
+
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    OBSERVABILITY_SETTINGS._executed_setup = False
+
+    with patch.object(observability, "create_resource", wraps=observability.create_resource) as create_resource:
+        configure_otel_providers(
+            service_name="my-service",
+            service_version="1.2.3",
+            resource_attributes={"deployment_environment": "prod"},
+            enable_console_exporters=True,
+        )
+
+    assert create_resource.call_args.kwargs["service_name"] == "my-service"
+    assert create_resource.call_args.kwargs["service_version"] == "1.2.3"
+    assert create_resource.call_args.kwargs["attributes"] == {"deployment_environment": "prod"}
+
+
 # region Test _to_otel_part edge cases
 
 
 def test_to_otel_part_generic():
     """Test _to_otel_part with unknown content type uses to_dict fallback."""
     from agent_framework import Content
-    from agent_framework.observability import _to_otel_part
+    from agent_framework.observability import _to_otel_part_latest_experimental
 
     # Create a content with type that falls to default case
     content = Content(type="annotations", text="some text")  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
-    result = _to_otel_part(content)
+    result = _to_otel_part_latest_experimental(content)
 
     # Should return result from to_dict
     assert result is not None
@@ -2680,6 +3394,104 @@ def test_get_response_attributes_finish_reason_from_raw():
     result = _get_response_attributes(attrs, response)
 
     assert OtelAttr.FINISH_REASONS in result
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_choice_event_uses_raw_representation_finish_reason(
+    span_exporter: InMemorySpanExporter,
+    log_record_exporter,
+    enable_sensitive_data,
+) -> None:
+    """Regression guard: choice events must use the raw_representation finish_reason fallback.
+
+    Some providers only populate ``finish_reason`` on ``raw_representation`` rather than the
+    normalized ``ChatResponse.finish_reason`` field. ``_capture_message_events_v1_36`` skips
+    emitting choice events entirely when no finish_reason is available, so callers must resolve
+    the same fallback as ``_get_response_attributes`` before deciding whether to emit.
+    """
+    from unittest.mock import Mock
+
+    class RawFinishReasonChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> Awaitable[ChatResponse]:
+            async def _get() -> ChatResponse:
+                raw_rep = Mock()
+                raw_rep.finish_reason = "stop"
+                return ChatResponse(
+                    messages=[Message("assistant", ["Hello"])],
+                    finish_reason=None,
+                    raw_representation=raw_rep,
+                )
+
+            return _get()
+
+    client = RawFinishReasonChatClient()
+    await client.get_response(messages=[Message(role="user", contents=["Test"])], options={"model": "Test"})
+
+    choice_records = [
+        record.log_record
+        for record in log_record_exporter.get_finished_logs()
+        if record.log_record.event_name == OtelAttr.CHOICE.value
+    ]
+    assert len(choice_records) == 1
+    assert choice_records[0].body["finish_reason"] == "stop"  # type: ignore
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_chat_client_ignores_non_string_raw_representation_finish_reason(
+    span_exporter: InMemorySpanExporter,
+    log_record_exporter,
+    enable_sensitive_data,
+) -> None:
+    """Regression guard: an unconfigured raw_representation attribute must not crash telemetry.
+
+    ``raw_representation`` is frequently a test double (e.g. ``unittest.mock.Mock()``) whose
+    unset ``finish_reason`` attribute auto-vivifies to a ``Mock`` rather than raising
+    ``AttributeError``. The raw_representation finish_reason fallback must reject non-string
+    values so this never leaks a non-JSON-serializable object into `json.dumps` calls.
+    """
+    from unittest.mock import Mock
+
+    class UnconfiguredRawChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(  # pyrefly: ignore[bad-override]
+            self,
+            *,
+            messages: Sequence[Message],
+            stream: bool,
+            options: Mapping[str, Any],
+            **kwargs: Any,
+        ) -> Awaitable[ChatResponse]:
+            async def _get() -> ChatResponse:
+                return ChatResponse(
+                    messages=[Message("assistant", ["Hello"])],
+                    finish_reason=None,
+                    raw_representation=Mock(),
+                )
+
+            return _get()
+
+    client = UnconfiguredRawChatClient()
+    response = await client.get_response(messages=[Message(role="user", contents=["Test"])], options={"model": "Test"})
+
+    assert response.text == "Hello"
+    choice_records = [
+        record.log_record
+        for record in log_record_exporter.get_finished_logs()
+        if record.log_record.event_name == OtelAttr.CHOICE.value
+    ]
+    assert choice_records == []
 
 
 # region Test agent instrumentation
@@ -2746,11 +3558,13 @@ async def test_agent_observability(span_exporter: InMemorySpanExporter, enable_s
     agent = MockAgent()
 
     span_exporter.clear()
-    response = await agent.run(messages="Hello")
+    with patch("agent_framework.observability.otel_event_logger.emit") as mock_emit:
+        response = await agent.run(messages="Hello")
 
     assert response is not None
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
+    assert mock_emit.call_count == 0
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -2942,6 +3756,209 @@ async def test_capture_messages_with_finish_reason(mock_chat_client, span_export
     # Check output messages include finish_reason
     output_messages = json.loads(span.attributes[OtelAttr.OUTPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert output_messages[-1].get("finish_reason") == "stop"
+
+
+# region Test _capture_messages GenAI semconv versioning
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_baseline_semconv_emits_events_only(span_exporter: InMemorySpanExporter):
+    """Baseline v1.36.0 conventions (opt-in list without the experimental token): events only, no span attribute."""
+    from opentelemetry import trace
+
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+        tracer.start_as_current_span("test_span"),
+    ):
+        observability._capture_message_events_v1_36(  # type: ignore[reportPrivateUsage]
+            provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    attributes = spans[0].attributes or {}
+    assert OtelAttr.INPUT_MESSAGES not in attributes
+    mock_emit.assert_called_once()
+    assert mock_emit.call_args.kwargs["event_name"] == "gen_ai.user.message"
+    assert mock_emit.call_args.kwargs["body"] == {"content": "Test"}
+    assert mock_emit.call_args.kwargs["attributes"] == {"gen_ai.system": "test_provider"}
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_latest_experimental_emits_span_attribute_only_when_events_disabled(
+    span_exporter: InMemorySpanExporter,
+):
+    """Latest experimental conventions with ENABLE_MESSAGE_EVENTS=false: span attribute only, no events."""
+    import json
+
+    from opentelemetry import trace
+
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = "gen_ai_latest_experimental"
+    observability.OBSERVABILITY_SETTINGS.enable_message_events = False
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+        tracer.start_as_current_span("test_span") as span,
+    ):
+        observability._capture_message_span_attributes_latest_experimental(  # type: ignore[reportPrivateUsage]
+            span=span,
+            messages=[Message(role="user", contents=["Test"])],
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    attributes = spans[0].attributes or {}
+    input_messages = json.loads(cast(str, attributes[OtelAttr.INPUT_MESSAGES]))
+    assert [msg.get("role") for msg in input_messages] == ["user"]
+    assert mock_emit.call_count == 0
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_defaults_emit_both_events_and_span_attribute(span_exporter: InMemorySpanExporter):
+    """Default settings (nothing configured) preserve pre-versioning behavior: both events and span attribute."""
+    import json
+
+    from opentelemetry import trace
+
+    import agent_framework.observability as observability
+
+    tracer = trace.get_tracer("test")
+    span_exporter.clear()
+
+    with (
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+        tracer.start_as_current_span("test_span") as span,
+    ):
+        observability._capture_message_events_v1_36(  # type: ignore[reportPrivateUsage]
+            provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+        )
+        observability._capture_message_span_attributes_latest_experimental(  # type: ignore[reportPrivateUsage]
+            span=span,
+            messages=[Message(role="user", contents=["Test"])],
+        )
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    attributes = spans[0].attributes or {}
+    input_messages = json.loads(cast(str, attributes[OtelAttr.INPUT_MESSAGES]))
+    assert [msg.get("role") for msg in input_messages] == ["user"]
+    mock_emit.assert_called_once()
+    assert mock_emit.call_args.kwargs["event_name"] == "gen_ai.user.message"
+    assert mock_emit.call_args.kwargs["body"] == {"content": "Test"}
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_baseline_semconv_emits_one_event_per_choice(span_exporter: InMemorySpanExporter):
+    """Baseline v1.36 emits each model choice with its required index and finish reason."""
+    from opentelemetry import trace
+
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    tracer = trace.get_tracer("test")
+
+    with (
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+        tracer.start_as_current_span("test_span"),
+    ):
+        observability._capture_message_events_v1_36(  # type: ignore[reportPrivateUsage]
+            provider_name="test_provider",
+            messages=[
+                Message(role="assistant", contents=["First"]),
+                Message(role="assistant", contents=["Second"]),
+            ],
+            output=True,
+            finish_reason=cast(Any, "tool_calls"),
+        )
+
+    assert [call.kwargs["event_name"] for call in mock_emit.call_args_list] == ["gen_ai.choice", "gen_ai.choice"]
+    assert [call.kwargs["body"] for call in mock_emit.call_args_list] == [
+        {"index": 0, "finish_reason": "tool_calls", "message": {"content": "First"}},
+        {"index": 1, "finish_reason": "tool_calls", "message": {"content": "Second"}},
+    ]
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_preserves_custom_finish_reason(span_exporter: InMemorySpanExporter):
+    """Custom finish reasons remain available to baseline events and experimental attributes."""
+    import json
+
+    from opentelemetry import trace
+
+    import agent_framework.observability as observability
+
+    tracer = trace.get_tracer("test")
+    with (
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+        tracer.start_as_current_span("test_span") as span,
+    ):
+        observability._capture_message_events_v1_36(  # type: ignore[reportPrivateUsage]
+            provider_name="test_provider",
+            messages=[Message(role="assistant", contents=["Done"])],
+            output=True,
+            finish_reason=cast(Any, "guardrail"),
+        )
+        observability._capture_message_span_attributes_latest_experimental(  # type: ignore[reportPrivateUsage]
+            span=span,
+            messages=[Message(role="assistant", contents=["Done"])],
+            output=True,
+            finish_reason=cast(Any, "guardrail"),
+        )
+
+    assert mock_emit.call_args.kwargs["body"]["finish_reason"] == "guardrail"
+    spans = span_exporter.get_finished_spans()
+    attributes = spans[0].attributes or {}
+    output_messages = json.loads(cast(str, attributes[OtelAttr.OUTPUT_MESSAGES]))
+    assert output_messages[-1]["finish_reason"] == "guardrail"
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+def test_capture_messages_exports_native_otel_event(span_exporter: InMemorySpanExporter, monkeypatch):
+    """The SDK receives a native body, dedicated event name, and current span context."""
+    from opentelemetry import trace
+    from opentelemetry._logs import get_logger
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
+
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+    exporter = InMemoryLogRecordExporter()
+    logger_provider = LoggerProvider(shutdown_on_exit=False)
+    logger_provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
+    monkeypatch.setattr(
+        observability,
+        "otel_event_logger",
+        get_logger("agent_framework.test", logger_provider=logger_provider),
+    )
+    tracer = trace.get_tracer("test")
+
+    with tracer.start_as_current_span("test_span") as span:
+        observability._capture_message_events_v1_36(  # type: ignore[reportPrivateUsage]
+            provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+        )
+        span_context = span.get_span_context()
+
+    (readable_record,) = exporter.get_finished_logs()
+    record = readable_record.log_record
+    assert record.event_name == "gen_ai.user.message"
+    assert record.body == {"content": "Test"}
+    assert dict(record.attributes or {}) == {"gen_ai.system": "test_provider"}
+    assert record.trace_id == span_context.trace_id
+    assert record.span_id == span_context.span_id
 
 
 # region Test agent streaming exception
@@ -3969,9 +4986,8 @@ async def test_system_instructions_preserves_non_ascii_characters(span_exporter:
     span_exporter.clear()
 
     with tracer.start_as_current_span("test_span") as span:
-        _capture_messages(
+        _capture_message_span_attributes_latest_experimental(
             span=span,
-            provider_name="test_provider",
             messages=[Message(role="user", contents=["Test"])],
             system_instructions=chinese_text,
         )
@@ -4025,7 +5041,7 @@ def test_capture_messages_with_prepared_request_info_function_call_arguments(spa
     span_exporter.clear()
     tracer = trace.get_tracer("test")
     with tracer.start_as_current_span("test_span") as span:
-        _capture_messages(span=span, provider_name="test_provider", messages=[msg])
+        _capture_message_span_attributes_latest_experimental(span=span, messages=[msg])
 
     spans = span_exporter.get_finished_spans()
     span = spans[0]  # type: ignore[assignment]
@@ -4035,10 +5051,10 @@ def test_capture_messages_with_prepared_request_info_function_call_arguments(spa
     assert tool_part["arguments"]["data"] == {"target_agent": "helper", "reason": "overflow"}
 
 
-def test_capture_messages_keeps_framework_instructions_out_of_logs_and_span_messages(
+def test_capture_messages_emits_framework_instructions_separately_from_history(
     span_exporter: InMemorySpanExporter,
 ):
-    """Test separate framework instructions do not appear in chat-history logs or span messages."""
+    """Test separate framework instructions use their own baseline event and experimental span attribute."""
     import json
 
     from opentelemetry import trace
@@ -4047,12 +5063,16 @@ def test_capture_messages_keeps_framework_instructions_out_of_logs_and_span_mess
     span_exporter.clear()
 
     with (
-        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
         tracer.start_as_current_span("test_span") as span,
     ):
-        _capture_messages(
-            span=span,
+        _capture_message_events_v1_36(
             provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+            system_instructions="Framework system instruction",
+        )
+        _capture_message_span_attributes_latest_experimental(
+            span=span,
             messages=[Message(role="user", contents=["Test"])],
             system_instructions="Framework system instruction",
         )
@@ -4062,18 +5082,20 @@ def test_capture_messages_keeps_framework_instructions_out_of_logs_and_span_mess
     input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["user"]
 
-    assert mock_logger_info.call_count == 1, f"Expected 1 log call, got {mock_logger_info.call_count}"
-    (first_call,) = mock_logger_info.call_args_list
-    assert first_call.args
-    logged_message = first_call.args[0]
-    assert logged_message["role"] == "user"
-    assert logged_message["parts"][0]["content"] == "Test"
+    assert [call.kwargs["event_name"] for call in mock_emit.call_args_list] == [
+        "gen_ai.system.message",
+        "gen_ai.user.message",
+    ]
+    assert [call.kwargs["body"] for call in mock_emit.call_args_list] == [
+        {"content": "Framework system instruction"},
+        {"content": "Test"},
+    ]
 
 
-def test_capture_messages_logs_only_chat_history_when_framework_instructions_are_separate(
+def test_capture_messages_preserves_framework_instructions_and_system_history(
     span_exporter: InMemorySpanExporter,
 ):
-    """Test chat-history logging preserves original system messages without prepending framework instructions."""
+    """Test baseline events preserve separate instructions and original system history."""
     import json
 
     from opentelemetry import trace
@@ -4082,12 +5104,19 @@ def test_capture_messages_logs_only_chat_history_when_framework_instructions_are
     span_exporter.clear()
 
     with (
-        patch("agent_framework.observability.logger.info") as mock_logger_info,
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
         tracer.start_as_current_span("test_span") as span,
     ):
-        _capture_messages(
-            span=span,
+        _capture_message_events_v1_36(
             provider_name="test_provider",
+            messages=[
+                Message(role="system", contents=["Original system message"]),
+                Message(role="user", contents=["Test"]),
+            ],
+            system_instructions="Framework system instruction",
+        )
+        _capture_message_span_attributes_latest_experimental(
+            span=span,
             messages=[
                 Message(role="system", contents=["Original system message"]),
                 Message(role="user", contents=["Test"]),
@@ -4100,11 +5129,58 @@ def test_capture_messages_logs_only_chat_history_when_framework_instructions_are
     input_messages = json.loads(spans[0].attributes[OtelAttr.INPUT_MESSAGES])  # type: ignore[arg-type, index]  # pyrefly: ignore[bad-argument-type, unsupported-operation]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert [msg.get("role") for msg in input_messages] == ["system", "user"]
 
-    assert mock_logger_info.call_count == 2, f"Expected 2 log calls, got {mock_logger_info.call_count}"
-    logged_messages = [call.args[0] for call in mock_logger_info.call_args_list]
-    assert [msg["role"] for msg in logged_messages] == ["system", "user"]
-    assert logged_messages[0]["parts"][0]["content"] == "Original system message"
-    assert logged_messages[1]["parts"][0]["content"] == "Test"
+    assert [call.kwargs["event_name"] for call in mock_emit.call_args_list] == [
+        "gen_ai.system.message",
+        "gen_ai.system.message",
+        "gen_ai.user.message",
+    ]
+    assert [call.kwargs["body"] for call in mock_emit.call_args_list] == [
+        {"content": "Framework system instruction"},
+        {"content": "Original system message"},
+        {"content": "Test"},
+    ]
+
+
+def test_capture_messages_reads_time_once_then_steps_per_event():
+    """Test the timestamp is read once, then stepped by a fixed amount for each subsequent event."""
+    from agent_framework.observability import MESSAGE_EVENT_TIMESTAMP_STEP_NS
+
+    with (
+        patch("agent_framework.observability.time_ns", return_value=1_000) as mock_time_ns,
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+    ):
+        _capture_message_events_v1_36(
+            provider_name="test_provider",
+            messages=[Message(role="user", contents=["Test"])],
+            system_instructions="Framework system instruction",
+        )
+
+    mock_time_ns.assert_called_once()
+    assert [call.kwargs["timestamp"] for call in mock_emit.call_args_list] == [
+        1_000,
+        1_000 + MESSAGE_EVENT_TIMESTAMP_STEP_NS,
+    ]
+
+
+def test_capture_messages_stepped_timestamps_preserve_order_when_clock_collapses():
+    """Test the stepped timestamps stay strictly increasing even when the clock reads a single value."""
+    with (
+        patch("agent_framework.observability.time_ns", return_value=1_000),
+        patch("agent_framework.observability.otel_event_logger.emit") as mock_emit,
+    ):
+        _capture_message_events_v1_36(
+            provider_name="test_provider",
+            messages=[
+                Message(role="user", contents=["First"]),
+                Message(role="user", contents=["Second"]),
+                Message(role="user", contents=["Third"]),
+            ],
+            system_instructions="Framework system instruction",
+        )
+
+    timestamps = [call.kwargs["timestamp"] for call in mock_emit.call_args_list]
+    assert timestamps == sorted(set(timestamps))
+    assert len(timestamps) == 4
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
@@ -5911,7 +6987,7 @@ async def test_agent_streaming_contextvars_safe_when_consumed_in_different_conte
 # When ``ENABLE_INSTRUMENTATION`` is on (the default) but no OpenTelemetry
 # tracer provider has been configured, the global provider is the
 # ``ProxyTracerProvider`` which returns non-recording spans. The telemetry
-# layers gate sensitive-data serialization (``_capture_messages``) on
+# layers gate sensitive-data serialization on
 # ``span.is_recording()`` so that we don't pay the JSON-serialization cost
 # when the span is going to be dropped anyway. The tests below verify that
 # behavior by patching ``get_tracer`` to return a ``NoOpTracer``.
@@ -5930,14 +7006,18 @@ async def test_chat_capture_messages_skipped_when_span_not_recording(
 
     with (
         patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
-        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_message_events_v1_36") as mock_capture_v1_36,
+        patch(
+            "agent_framework.observability._capture_message_span_attributes_latest_experimental"
+        ) as mock_capture_experimental,
         patch("agent_framework.observability._capture_response") as mock_capture_response,
     ):
         response = await client.get_response(messages=messages, options={"model": "Test"})
 
     assert response is not None
     # Sensitive-data serialization must be skipped because span.is_recording() is False.
-    assert mock_capture_messages.call_count == 0
+    assert mock_capture_v1_36.call_count == 0
+    assert mock_capture_experimental.call_count == 0
     # _capture_response still runs so that metric histograms continue to record.
     assert mock_capture_response.call_count == 1
 
@@ -5955,7 +7035,10 @@ async def test_chat_streaming_capture_messages_skipped_when_span_not_recording(
 
     with (
         patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
-        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_message_events_v1_36") as mock_capture_v1_36,
+        patch(
+            "agent_framework.observability._capture_message_span_attributes_latest_experimental"
+        ) as mock_capture_experimental,
         patch("agent_framework.observability._capture_response") as mock_capture_response,
     ):
         updates: list[ChatResponseUpdate] = []
@@ -5965,7 +7048,8 @@ async def test_chat_streaming_capture_messages_skipped_when_span_not_recording(
         await stream.get_final_response()
 
     assert len(updates) == 2
-    assert mock_capture_messages.call_count == 0
+    assert mock_capture_v1_36.call_count == 0
+    assert mock_capture_experimental.call_count == 0
     assert mock_capture_response.call_count == 1
 
 
@@ -5981,13 +7065,13 @@ async def test_agent_capture_messages_skipped_when_span_not_recording(
 
     with (
         patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
-        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_message_span_attributes_latest_experimental") as mock_capture,
         patch("agent_framework.observability._capture_response") as mock_capture_response,
     ):
         response = await agent.run("Test message")
 
     assert response is not None
-    assert mock_capture_messages.call_count == 0
+    assert mock_capture.call_count == 0
     assert mock_capture_response.call_count == 1
 
 
@@ -6003,7 +7087,7 @@ async def test_agent_streaming_capture_messages_skipped_when_span_not_recording(
 
     with (
         patch("agent_framework.observability.get_tracer", return_value=NoOpTracer()),
-        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_message_span_attributes_latest_experimental") as mock_capture,
         patch("agent_framework.observability._capture_response") as mock_capture_response,
     ):
         updates: list[Any] = []
@@ -6013,7 +7097,7 @@ async def test_agent_streaming_capture_messages_skipped_when_span_not_recording(
         await stream.get_final_response()
 
     assert len(updates) == 2
-    assert mock_capture_messages.call_count == 0
+    assert mock_capture.call_count == 0
     assert mock_capture_response.call_count == 1
 
 
@@ -6027,12 +7111,16 @@ async def test_chat_capture_messages_called_when_span_recording(
     span_exporter.clear()
 
     with (
-        patch("agent_framework.observability._capture_messages") as mock_capture_messages,
+        patch("agent_framework.observability._capture_message_events_v1_36") as mock_capture_v1_36,
+        patch(
+            "agent_framework.observability._capture_message_span_attributes_latest_experimental"
+        ) as mock_capture_experimental,
         patch("agent_framework.observability._capture_response") as mock_capture_response,
     ):
         response = await client.get_response(messages=messages, options={"model": "Test"})
 
     assert response is not None
-    # Two _capture_messages calls: one for input, one for output messages.
-    assert mock_capture_messages.call_count == 2
+    # Each representation is captured once for input and once for output messages.
+    assert mock_capture_v1_36.call_count == 2
+    assert mock_capture_experimental.call_count == 2
     assert mock_capture_response.call_count == 1

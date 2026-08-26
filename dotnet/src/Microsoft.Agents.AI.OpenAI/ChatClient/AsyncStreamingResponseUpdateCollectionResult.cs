@@ -24,8 +24,9 @@ internal sealed class AsyncStreamingResponseUpdateCollectionResult : AsyncCollec
         yield return ClientResult.FromValue(this._updates, new StreamingUpdatePipelineResponse(this._updates));
     }
 
-    protected async override IAsyncEnumerable<StreamingResponseUpdate> GetValuesFromPageAsync(ClientResult page)
+    protected override async IAsyncEnumerable<StreamingResponseUpdate> GetValuesFromPageAsync(ClientResult page)
     {
+        FeatureUsageMarker.MarkUsed();
         var updates = ((ClientResult<IAsyncEnumerable<AgentResponseUpdate>>)page).Value;
 
         await foreach (var update in updates.ConfigureAwait(false))
