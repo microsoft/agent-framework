@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="CommunityToolkit.VectorData.CosmosNoSql" />
+    <PackageReference Include="CommunityToolkit.VectorData.AzureCosmosDB" />
     <PackageReference Include="Microsoft.Azure.Cosmos" />
     <PackageReference Include="Newtonsoft.Json" />
   </ItemGroup>
