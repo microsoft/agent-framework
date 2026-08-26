@@ -1512,6 +1512,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # _merge_options strips unset (None) options, so e.g. an unset `store` is not forwarded
         # and the service decides its own default.
         co = _merge_options(chat_options, run_opts)
+        # The loop marker must remain on SessionContext.options for after_run provider
+        # scoping, but it is framework-private metadata and must not reach the client.
+        co.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
         # Build session_messages from session context: context messages + input messages
         session_messages: list[Message] = session_context.get_messages(include_input=True)

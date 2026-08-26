@@ -18,11 +18,18 @@ The demonstration has two components:
 Configure the required Azure OpenAI environment variables:
 
 ```powershell
-$env:AZURE_OPENAI_ENDPOINT="<<your-model-endpoint>>"
+$env:AZURE_OPENAI_ENDPOINT="https://<your-resource>.openai.azure.com/openai/v1/"
 $env:AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
-> **Note:** This sample uses `DefaultAzureCredential` for authentication. Make sure you're authenticated with Azure (e.g., via `az login`, Visual Studio, or environment variables).
+> [!NOTE]
+> Include `/openai/v1/` in the endpoint. The OpenAI SDK uses `DefaultAzureCredential` to obtain a bearer token. Make sure you're authenticated with Azure, for example through `az login`, Visual Studio, or environment variables.
+
+> [!NOTE]
+> This sample calls Azure OpenAI inference directly through the resource endpoint. It does not require a Microsoft Foundry project. A project-scoped application would instead use a Foundry project endpoint with `Azure.AI.Projects` and the Agent Framework Foundry provider.
+
+> [!NOTE]
+> The server uses the Azure OpenAI Responses API because hosted web search is a Responses API tool. It sets `store` to `false` so Agent Framework persists chat history in the configured session store instead of depending on service-retained responses. Web search uses Grounding with Bing and may incur additional charges; review the [web search documentation and data usage terms](https://learn.microsoft.com/azure/foundry/openai/how-to/web-search) before using it.
 
 ## Running the Sample
 
@@ -117,13 +124,18 @@ User (:q or quit to exit): :q
 The `AGUIServer` uses the `MapAGUIServer` extension method to expose an agent through the AG-UI protocol:
 
 ```csharp
-AIAgent agent = new OpenAIClient(apiKey)
-    .GetChatClient(model)
-    .AsAIAgent(
-        instructions: "You are a helpful assistant.",
-        name: "AGUIAssistant");
+IChatClient chatClient = new OpenAIClient(
+        new BearerTokenPolicy(new DefaultAzureCredential(), "https://ai.azure.com/.default"),
+        new OpenAIClientOptions { Endpoint = new Uri(endpoint) })
+    .GetResponsesClient()
+    .AsIChatClientWithStoredOutputDisabled(model: deploymentName);
 
-app.MapAGUIServer("/", agent);
+builder
+    .AddAIAgent("AGUIAssistant", "You are a helpful assistant.", chatClient)
+    .WithAITool(new HostedWebSearchTool())
+    .WithInMemorySessionStore();
+
+app.MapAGUIServer("AGUIAssistant", "/");
 ```
 
 This automatically handles:
