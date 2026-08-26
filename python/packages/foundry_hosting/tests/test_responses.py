@@ -56,6 +56,7 @@ from azure.ai.agentserver.responses import (
     InMemoryResponseProvider,
     ResponseContext,
     ResponseExitForRecovery,
+    ResponseObject,
     ResponsesServerOptions,
 )
 from azure.ai.agentserver.responses.aio import ResponseEventStream
@@ -1365,28 +1366,34 @@ class TestAgentSessionPersistence:
     async def test_omit_failed_conversation_input_provider_drops_terminal_failed_input(self) -> None:
         inner = InMemoryResponseProvider()
         store = _OmitFailedConversationInputProvider(inner, set())
-        poison_item: dict[str, Any] = {
-            "id": "item_poison",
-            "type": "function_call_output",
-            "call_id": "call_12345abc",
-            "output": "example function call output",
-            "status": "completed",
-        }
-        ok_item: dict[str, Any] = {
-            "id": "item_ok",
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": "Hello, how are you?"}],
-            "status": "completed",
-        }
+        poison_item = cast(
+            OutputItem,
+            {
+                "id": "item_poison",
+                "type": "function_call_output",
+                "call_id": "call_12345abc",
+                "output": "example function call output",
+                "status": "completed",
+            },
+        )
+        ok_item = cast(
+            OutputItem,
+            {
+                "id": "item_ok",
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Hello, how are you?"}],
+                "status": "completed",
+            },
+        )
 
         await store.create_response(
-            {"id": "resp_failed", "status": "failed", "conversation": "conv-1", "output": []},
+            cast(ResponseObject, {"id": "resp_failed", "status": "failed", "conversation": "conv-1", "output": []}),
             [poison_item],
             None,
         )
         await store.create_response(
-            {"id": "resp_ok", "status": "completed", "conversation": "conv-1", "output": []},
+            cast(ResponseObject, {"id": "resp_ok", "status": "completed", "conversation": "conv-1", "output": []}),
             [ok_item],
             None,
         )
@@ -1394,28 +1401,34 @@ class TestAgentSessionPersistence:
         history_ids = await store.get_history_item_ids(None, "conv-1", 100)
         assert "item_poison" not in history_ids
         assert "item_ok" in history_ids
-        assert _is_failed_stored_response({"status": "failed", "conversation": "conv-1"})
-        assert not _is_failed_stored_response({"status": "completed", "conversation": "conv-1"})
+        assert _is_failed_stored_response(cast(ResponseObject, {"id": "resp_failed", "status": "failed"}))
+        assert not _is_failed_stored_response(cast(ResponseObject, {"id": "resp_ok", "status": "completed"}))
 
     async def test_omit_failed_conversation_input_provider_updates_existing_response_in_place(self) -> None:
         inner = InMemoryResponseProvider()
         store = _OmitFailedConversationInputProvider(inner, set())
-        poison_item: dict[str, Any] = {
-            "id": "item_poison",
-            "type": "function_call_output",
-            "call_id": "call_12345abc",
-            "output": "example function call output",
-            "status": "completed",
-        }
-        in_progress: dict[str, Any] = {
-            "id": "resp_stream_fail",
-            "status": "in_progress",
-            "conversation": "conv-1",
-            "output": [],
-        }
+        poison_item = cast(
+            OutputItem,
+            {
+                "id": "item_poison",
+                "type": "function_call_output",
+                "call_id": "call_12345abc",
+                "output": "example function call output",
+                "status": "completed",
+            },
+        )
+        in_progress = cast(
+            ResponseObject,
+            {
+                "id": "resp_stream_fail",
+                "status": "in_progress",
+                "conversation": "conv-1",
+                "output": [],
+            },
+        )
 
         await store.create_response(in_progress, [poison_item], None)
-        await store.update_response({**in_progress, "status": "failed"})
+        await store.update_response(cast(ResponseObject, {**in_progress, "status": "failed"}))
 
         persisted = await inner.get_response("resp_stream_fail")
         input_items = await inner.get_input_items("resp_stream_fail", ascending=True)
@@ -1426,16 +1439,22 @@ class TestAgentSessionPersistence:
         inner = InMemoryResponseProvider()
         failed_response_ids = {"resp_failed"}
         store = _OmitFailedConversationInputProvider(inner, failed_response_ids)
-        poison_item: dict[str, Any] = {
-            "id": "item_poison",
-            "type": "function_call_output",
-            "call_id": "call_12345abc",
-            "output": "example function call output",
-            "status": "completed",
-        }
+        poison_item = cast(
+            OutputItem,
+            {
+                "id": "item_poison",
+                "type": "function_call_output",
+                "call_id": "call_12345abc",
+                "output": "example function call output",
+                "status": "completed",
+            },
+        )
 
         await store.create_response(
-            {"id": "resp_failed", "status": "in_progress", "conversation": "conv-1", "output": []},
+            cast(
+                ResponseObject,
+                {"id": "resp_failed", "status": "in_progress", "conversation": "conv-1", "output": []},
+            ),
             [poison_item],
             None,
         )

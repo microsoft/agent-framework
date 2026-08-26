@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import re
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Generic, Literal, TypeGuard, TypeVar, cast
@@ -35,7 +35,9 @@ from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
+    PlatformContext,
     ResponseContext,
+    ResponseObject,
     ResponseProviderProtocol,
     ResponsesServerOptions,
 )
@@ -372,16 +374,9 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
 # endregion Foundry Toolbox Auth integration
 
 
-def _response_field(response: Any, name: str) -> Any:
-    """Read a field from a mapping or attribute-bearing response envelope."""
-    if isinstance(response, Mapping):
-        return cast(Mapping[str, Any], response).get(name)
-    return getattr(response, name, None)
-
-
-def _is_failed_stored_response(response: Any) -> bool:
+def _is_failed_stored_response(response: ResponseObject) -> bool:
     """Return whether a persisted response envelope is a failed turn."""
-    return _response_field(response, "status") == "failed"
+    return response.get("status") == "failed"
 
 
 class _OmitFailedConversationInputProvider:
@@ -389,8 +384,7 @@ class _OmitFailedConversationInputProvider:
 
     The agentserver orchestrator persists input items for every stored response,
     including ``status=failed``. Conversation history then replays those items on
-    the next turn, which is the #7630 failure mode. Azure OpenAI does not keep
-    failed input on the conversation.
+    the next turn. Azure OpenAI does not keep failed input on the conversation.
 
     For synchronous requests, the host knows the terminal status before the
     provider sees the initial create. Failed responses therefore omit their
@@ -407,22 +401,27 @@ class _OmitFailedConversationInputProvider:
 
     async def create_response(
         self,
-        response: Any,
-        input_items: Any,
-        history_item_ids: Any,
+        response: ResponseObject,
+        input_items: Iterable[OutputItem] | None,
+        history_item_ids: Iterable[str] | None,
         *,
-        context: Any = None,
+        context: PlatformContext | None = None,
     ) -> None:
         """Persist ``response``, dropping input items when the turn failed."""
-        response_id = _response_field(response, "id")
-        known_failed = response_id is not None and str(response_id) in self._failed_response_ids
+        response_id = response["id"]
+        known_failed = response_id in self._failed_response_ids
         if _is_failed_stored_response(response) or known_failed:
             input_items = None
         await self._inner.create_response(response, input_items, history_item_ids, context=context)
         if known_failed:
-            self._failed_response_ids.discard(str(response_id))
+            self._failed_response_ids.discard(response_id)
 
-    async def update_response(self, response: Any, *, context: Any = None) -> None:
+    async def update_response(
+        self,
+        response: ResponseObject,
+        *,
+        context: PlatformContext | None = None,
+    ) -> None:
         """Update ``response`` without replacing the existing store entry."""
         await self._inner.update_response(response, context=context)
 
@@ -691,7 +690,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         except Exception as ex:
             handler_error = ex
         failed = handler_error is not None or any(
-            _response_field(event, "type") == "response.failed" for event in buffered
+            isinstance(event, Mapping) and cast(Mapping[str, object], event).get("type") == "response.failed"
+            for event in buffered
         )
         if store and failed:
             self._failed_sync_response_ids.add(response_id)
