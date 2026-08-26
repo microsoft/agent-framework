@@ -1559,6 +1559,7 @@ async def test_foundry_agent_ag_ui_service_session_continues_without_history_rep
         runner = AgentFrameworkAgent(
             agent=foundry_agent,
             use_service_session=True,
+            service_session_id_from_thread_id=continuation_mode == "conversation",
             snapshot_store=store,
         )
         first_events = [

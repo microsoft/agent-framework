@@ -376,6 +376,7 @@ async def test_agui_service_storage_conversation_mode_sends_only_incremental_pro
     runner = AgentFrameworkAgent(
         agent=hosted_agent_client,
         use_service_session=True,
+        service_session_id_from_thread_id=True,
         snapshot_store=store,
     )
     thread_id = "conv_agui_service_storage"

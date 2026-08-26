@@ -2532,18 +2532,11 @@ async def run_agent_stream(
 
     # Create session (with service session support)
     if config.use_service_session:
-        service_session_id = supplied_thread_id
-        native_agui_thread = False
-        if snapshot_session.enabled and supplied_thread_id is not None:
-            try:
-                uuid.UUID(supplied_thread_id)
-            except ValueError:
-                pass
-            else:
-                # Native AG-UI clients use UUID thread ids. They identify the UI
-                # thread, not a provider conversation or response.
-                service_session_id = None
-                native_agui_thread = True
+        if not config.service_session_id_from_thread_id and not snapshot_session.enabled:
+            raise ValueError(
+                "use_service_session=True requires snapshot persistence unless service_session_id_from_thread_id=True."
+            )
+        service_session_id = supplied_thread_id if config.service_session_id_from_thread_id else None
         session = AgentSession(session_id=thread_id, service_session_id=service_session_id)
         stored_service_session_id = (
             stored_snapshot.session_state.get(_PROVIDER_SERVICE_SESSION_ID_STATE_KEY)
@@ -2551,7 +2544,11 @@ async def run_agent_stream(
             else None
         )
         create_conversation = getattr(agent, "create_conversation", None)
-        if native_agui_thread and stored_service_session_id is None and callable(create_conversation):
+        if (
+            not config.service_session_id_from_thread_id
+            and stored_service_session_id is None
+            and callable(create_conversation)
+        ):
             created_session = create_conversation(session_id=thread_id)
             if isinstance(created_session, Awaitable):
                 created_session = await created_session
