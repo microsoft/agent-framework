@@ -1476,6 +1476,7 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
   // Use persisted store state instead of local useState
   const subTab = useDevUIStore((state) => state.debugTraceSubTab);
   const setSubTab = useDevUIStore((state) => state.setDebugTraceSubTab);
+  const runtime = useDevUIStore((state) => state.runtime);
 
   // ONLY show actual trace events
   const traceEvents = events.filter(
@@ -1541,11 +1542,17 @@ function TracesTab({ events }: { events: ExtendedResponseStreamEvent[] }) {
               <BarChart3 className="h-8 w-8 text-muted-foreground mb-3" />
               <div className="text-sm font-medium mb-1">No Data</div>
               <div className="text-xs text-muted-foreground max-w-[200px]">
-                Run{" "}
-                <span className="font-mono bg-accent/10 px-1 rounded">
-                  devui --instrumentation
-                </span>{" "}
-                and start a conversation.
+                {runtime === "dotnet" ? (
+                  "Start a conversation to view OpenTelemetry spans from the Aspire Dashboard."
+                ) : (
+                  <>
+                    Run{" "}
+                    <span className="font-mono bg-accent/10 px-1 rounded">
+                      devui --instrumentation
+                    </span>{" "}
+                    and start a conversation.
+                  </>
+                )}
               </div>
             </div>
           ) : (

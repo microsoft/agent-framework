@@ -108,10 +108,18 @@ export default function App() {
           }
         }
 
+        const instrumentationEnabled = meta.capabilities.instrumentation ?? meta.capabilities.tracing ?? false;
+        const capabilities = {
+          instrumentation: instrumentationEnabled,
+          openai_proxy: meta.capabilities.openai_proxy,
+          deployment: meta.capabilities.deployment,
+        };
+
+        apiClient.setTracingEnabled(meta.capabilities.trace_retrieval ?? false);
         useDevUIStore.getState().setServerMeta({
           uiMode: meta.ui_mode,
           runtime: meta.runtime,
-          capabilities: meta.capabilities,
+          capabilities,
           authRequired: meta.auth_required,
           version: meta.version,
         });

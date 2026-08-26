@@ -668,6 +668,7 @@ function StatCard({
 
 // Main component
 export function ContextInspector({ events }: ContextInspectorProps) {
+  const runtime = useDevUIStore((state) => state.runtime);
   // Use persisted store state instead of local useState
   const viewMode = useDevUIStore((state) => state.contextInspectorViewMode);
   const setViewMode = useDevUIStore((state) => state.setContextInspectorViewMode);
@@ -744,11 +745,17 @@ export function ContextInspector({ events }: ContextInspectorProps) {
         <BarChart3 className="h-8 w-8 text-muted-foreground mb-3" />
         <div className="text-sm font-medium mb-1">No Data</div>
         <div className="text-xs text-muted-foreground max-w-[200px]">
-          Run{" "}
-          <span className="font-mono bg-accent/10 px-1 rounded">
-            devui --instrumentation
-          </span>{" "}
-          and start a conversation.
+          {runtime === "dotnet" ? (
+            "Start a conversation to inspect OpenTelemetry context from the Aspire Dashboard."
+          ) : (
+            <>
+              Run{" "}
+              <span className="font-mono bg-accent/10 px-1 rounded">
+                devui --instrumentation
+              </span>{" "}
+              and start a conversation.
+            </>
+          )}
         </div>
       </div>
     );
