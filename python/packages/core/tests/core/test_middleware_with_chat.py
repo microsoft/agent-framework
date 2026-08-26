@@ -27,6 +27,7 @@ from agent_framework import (
     function_middleware,
     tool,
 )
+from agent_framework._sessions import LOCAL_HISTORY_CONVERSATION_ID
 from agent_framework.exceptions import ChatClientInvalidRequestException
 
 from .conftest import MockBaseChatClient
@@ -623,6 +624,276 @@ class TestChatMiddleware:
 
         assert [update.text for update in updates] == ["", "done"]
         assert captured_messages == [["user message"], ["queued while streaming hosted tool"]]
+
+    async def test_message_injection_middleware_streaming_preserves_inner_continuation_state(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Regression for #7591: result-hook state on the inner response survives the outer rebuild.
+
+        ``PerServiceCallHistoryPersistingMiddleware`` marks the local-history sentinel on the inner
+        final response through a result hook, so it is never emitted on an update. Rebuilding the
+        outer response from updates dropped it, and the function loop then resent the whole turn.
+        """
+        session = AgentSession()
+        injection = MessageInjectionMiddleware()
+        observed: list[ChatResponse] = []
+
+        class _ObservingMiddleware(ChatMiddleware):
+            """Capture the response the function-invocation loop sees for each model call."""
+
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                stream = cast(ResponseStream[ChatResponseUpdate, ChatResponse], context.result)
+
+                def record(response: ChatResponse) -> ChatResponse:
+                    observed.append(response)
+                    return response
+
+                context.result = stream.with_result_hook(record)
+
+        class _SentinelMiddleware(ChatMiddleware):
+            """Stand-in for the per-service-call history middleware's result hook."""
+
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                stream = cast(ResponseStream[ChatResponseUpdate, ChatResponse], context.result)
+
+                def mark(response: ChatResponse) -> ChatResponse:
+                    response.conversation_id = LOCAL_HISTORY_CONVERSATION_ID
+                    response.mark_internal_conversation_id()
+                    return response
+
+                context.result = stream.with_result_hook(mark)
+
+        stream = chat_client_base.get_response(
+            [Message(role="user", contents=["user message"])],
+            stream=True,
+            client_kwargs={
+                "middleware": [_ObservingMiddleware(), injection, _SentinelMiddleware()],
+                "session": session,
+            },
+        )
+        async for _update in stream:
+            pass
+        await stream.get_final_response()
+
+        assert [response.conversation_id for response in observed] == [LOCAL_HISTORY_CONVERSATION_ID]
+        assert observed[0].has_internal_conversation_id()
+
+    async def test_message_injection_middleware_streaming_keeps_service_conversation_id_external(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that a real service conversation id is preserved and not marked internal."""
+        session = AgentSession()
+        injection = MessageInjectionMiddleware()
+        observed: list[ChatResponse] = []
+
+        class _ObservingMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                stream = cast(ResponseStream[ChatResponseUpdate, ChatResponse], context.result)
+
+                def record(response: ChatResponse) -> ChatResponse:
+                    observed.append(response)
+                    return response
+
+                context.result = stream.with_result_hook(record)
+
+        def fake_streaming_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            async def stream() -> AsyncIterable[ChatResponseUpdate]:
+                yield ChatResponseUpdate(
+                    contents=[Content.from_text("done")],
+                    role="assistant",
+                    conversation_id="service-conversation",
+                )
+
+            return ResponseStream(stream(), finalizer=ChatResponse.from_updates)
+
+        with patch.object(chat_client_base, "_get_streaming_response", side_effect=fake_streaming_response):
+            stream = chat_client_base.get_response(
+                [Message(role="user", contents=["user message"])],
+                stream=True,
+                client_kwargs={
+                    "middleware": [_ObservingMiddleware(), injection],
+                    "session": session,
+                },
+            )
+            async for _update in stream:
+                pass
+            await stream.get_final_response()
+
+        assert [response.conversation_id for response in observed] == ["service-conversation"]
+        assert not observed[0].has_internal_conversation_id()
+
+    async def test_message_injection_middleware_streaming_clears_conversation_id_when_final_call_has_none(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """The rebuilt response must not keep a conversation id from an earlier injected service call.
+
+        ``ChatResponse.from_updates`` keeps the last non-``None`` conversation id and never clears
+        one, and the outer stream spans every injected service call. Without an unconditional
+        mirror, an id emitted on the first call survives onto the rebuilt response even though the
+        final inner response has none, so the function loop would persist a stale service
+        conversation that the non-streaming path never produces.
+        """
+        session = AgentSession()
+        injection = MessageInjectionMiddleware()
+        observed: list[ChatResponse] = []
+
+        class _ObservingMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                stream = cast(ResponseStream[ChatResponseUpdate, ChatResponse], context.result)
+
+                def record(response: ChatResponse) -> ChatResponse:
+                    observed.append(response)
+                    return response
+
+                context.result = stream.with_result_hook(record)
+
+        call_count = 0
+
+        def fake_streaming_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            nonlocal call_count
+            call_count += 1
+            first_call = call_count == 1
+
+            async def stream() -> AsyncIterable[ChatResponseUpdate]:
+                if first_call:
+                    # The service returns an id for this call only, then stops returning one.
+                    yield ChatResponseUpdate(
+                        contents=[Content.from_text("first")],
+                        role="assistant",
+                        conversation_id="service-conversation",
+                    )
+                    enqueue_messages(session, "queued while streaming")
+                    return
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+
+            return ResponseStream(stream(), finalizer=ChatResponse.from_updates)
+
+        with patch.object(chat_client_base, "_get_streaming_response", side_effect=fake_streaming_response):
+            stream = chat_client_base.get_response(
+                [Message(role="user", contents=["user message"])],
+                stream=True,
+                client_kwargs={
+                    "middleware": [_ObservingMiddleware(), injection],
+                    "session": session,
+                },
+            )
+            async for _update in stream:
+                pass
+            await stream.get_final_response()
+
+        assert call_count == 2
+        assert [response.conversation_id for response in observed] == [None]
+        assert session.service_session_id is None
+
+    async def _injected_conversation_id(
+        self, chat_client_base: "MockBaseChatClient", *, stream_mode: bool
+    ) -> str | None:
+        """Run two injected service calls and return the final conversation id.
+
+        The first call reports a conversation id and queues a message, the second call reports
+        none. Defined as a helper rather than a loop body so the closures below do not capture a
+        loop variable.
+        """
+        session = AgentSession()
+        injection = MessageInjectionMiddleware()
+        observed: list[ChatResponse] = []
+        call_count = 0
+
+        class _ObservingMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                if not isinstance(context.result, ResponseStream):
+                    observed.append(cast(ChatResponse, context.result))
+                    return
+                stream = cast(ResponseStream[ChatResponseUpdate, ChatResponse], context.result)
+
+                def record(response: ChatResponse) -> ChatResponse:
+                    observed.append(response)
+                    return response
+
+                context.result = stream.with_result_hook(record)
+
+        def fake_streaming_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            nonlocal call_count
+            call_count += 1
+            first_call = call_count == 1
+
+            async def updates() -> AsyncIterable[ChatResponseUpdate]:
+                if first_call:
+                    yield ChatResponseUpdate(
+                        contents=[Content.from_text("first")],
+                        role="assistant",
+                        conversation_id="service-conversation",
+                    )
+                    enqueue_messages(session, "queued after first call")
+                    return
+                yield ChatResponseUpdate(contents=[Content.from_text("second")], role="assistant")
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        async def fake_response(
+            *,
+            messages: Sequence[Message],
+            options: dict[str, Any],
+            **kwargs: Any,
+        ) -> ChatResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                enqueue_messages(session, "queued after first call")
+                return ChatResponse(
+                    messages=[Message(role="assistant", contents=["first"])],
+                    conversation_id="service-conversation",
+                )
+            return ChatResponse(messages=[Message(role="assistant", contents=["second"])])
+
+        messages = [Message(role="user", contents=["user message"])]
+        client_kwargs: dict[str, Any] = {
+            "middleware": [_ObservingMiddleware(), injection],
+            "session": session,
+        }
+        with (
+            patch.object(chat_client_base, "_get_streaming_response", side_effect=fake_streaming_response),
+            patch.object(chat_client_base, "_get_non_streaming_response", side_effect=fake_response),
+        ):
+            if stream_mode:
+                stream = chat_client_base.get_response(messages, stream=True, client_kwargs=client_kwargs)
+                async for _update in stream:
+                    pass
+                await stream.get_final_response()
+            else:
+                await chat_client_base.get_response(messages, stream=False, client_kwargs=client_kwargs)
+
+        assert call_count == 2
+        return observed[-1].conversation_id
+
+    async def test_message_injection_middleware_conversation_id_matches_across_streaming_modes(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Streaming and non-streaming injection must agree on the final conversation id."""
+        streaming = await self._injected_conversation_id(chat_client_base, stream_mode=True)
+        non_streaming = await self._injected_conversation_id(chat_client_base, stream_mode=False)
+
+        assert streaming == non_streaming
 
     def test_enqueue_messages_uses_session_state_queue(self) -> None:
         """Test that standalone message injection enqueueing stores messages in session state."""

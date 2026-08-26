@@ -9,7 +9,6 @@ from starlette.responses import Response, StreamingResponse
 from typing_extensions import Any, AsyncGenerator
 
 from ._feature_usage import FeatureIndex
-from ._request_context import validate_foundry_request_context
 
 
 class InvocationsHostServer(InvocationAgentServerHost):
@@ -55,7 +54,6 @@ class InvocationsHostServer(InvocationAgentServerHost):
             RuntimeError: If the context doesn't contain the expected IDs.
         """
         context = get_request_context()
-        validate_foundry_request_context(context, is_hosted=self.config.is_hosted)
 
         if self.config.is_hosted:
             if not context.session_id or not context.user_id:

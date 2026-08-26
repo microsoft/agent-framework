@@ -20,6 +20,7 @@ from agent_framework import (
     WorkflowBuilder,
     WorkflowContext,
     handler,
+    register_checkpoint_type,
     response_handler,
 )
 from agent_framework.foundry import FoundryChatClient
@@ -27,9 +28,9 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 if sys.version_info >= (3, 12):
-    from typing import override  # type: ignore # pragma: no cover
+    from typing import override  # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore[import] # pragma: no cover
+    from typing_extensions import override  # pragma: no cover
 
 # Load environment variables from .env file
 load_dotenv()
@@ -42,8 +43,9 @@ This getting-started sample keeps the moving pieces to a minimum:
 1. A brief is turned into a consistent prompt for an AI copywriter.
 2. The copywriter (an `AgentExecutor`) drafts release notes.
 3. A reviewer gateway sends a request for approval for every draft.
-4. The workflow records checkpoints between each superstep so you can stop the
-   program, restart later, and optionally pre-supply human answers on resume.
+4. An output executor emits the approved draft as the terminal workflow output.
+5. The workflow records checkpoints between each superstep so you can stop the
+    program and restart later.
 
 Key concepts demonstrated
 -------------------------
@@ -55,10 +57,8 @@ Typical pause/resume flow
 1. Run the workflow until a human approval request is emitted.
 2. If the human is offline, exit the program. A checkpoint with
    ``status=awaiting human response`` now exists.
-3. Later, restart the script, select that checkpoint, and provide the stored
-   human decision when prompted to pre-supply responses.
-   Doing so applies the answer immediately on resume, so the system does **not**
-   re-emit the same ``.
+3. Later, restart the script and select that checkpoint. The workflow restores
+    and re-emits the pending request so the human can answer it.
 """
 
 # Directory used for the sample's temporary checkpoint files. We isolate the
@@ -107,8 +107,7 @@ class HumanApprovalRequest:
     """Request sent to the human reviewer."""
 
     # These fields are intentionally simple because they are serialised into
-    # checkpoints. Keeping them primitive types guarantees the new
-    # `pending_requests_from_checkpoint` helper can reconstruct them on resume.
+    # checkpoints and reconstructed when the workflow resumes.
     prompt: str = ""
     draft: str = ""
     iteration: int = 0
@@ -193,7 +192,12 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
     prepare_brief = BriefPreparer(id="prepare_brief", agent_id="writer")
 
     workflow_builder = (
-        WorkflowBuilder(max_iterations=6, start_executor=prepare_brief, checkpoint_storage=checkpoint_storage)
+        WorkflowBuilder(
+            max_iterations=6,
+            start_executor=prepare_brief,
+            checkpoint_storage=checkpoint_storage,
+            output_from=[review_gateway],
+        )
         .add_edge(prepare_brief, writer)
         .add_edge(writer, review_gateway)
         .add_edge(review_gateway, writer)  # revisions loop
@@ -277,6 +281,11 @@ async def main() -> None:
         # deterministic even if the directory had stale checkpoints.
         file.unlink()
 
+    # Register the application-defined request type so file storage can reconstruct it when loading checkpoints.
+    # Alternatively, scope permission to this storage instance:
+    # allowed_types = [f"{HumanApprovalRequest.__module__}:{HumanApprovalRequest.__qualname__}"]
+    # storage = FileCheckpointStorage(storage_path=TEMP_DIR, allowed_checkpoint_types=allowed_types)
+    register_checkpoint_type(HumanApprovalRequest)
     storage = FileCheckpointStorage(storage_path=TEMP_DIR)
     workflow = create_workflow(checkpoint_storage=storage)
 

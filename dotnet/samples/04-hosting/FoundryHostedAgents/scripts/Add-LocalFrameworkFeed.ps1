@@ -8,7 +8,7 @@
   on it in the cloud. That restore pulls the Agent Framework from nuget.org, so a contributor's
   local framework changes are never exercised.
 
-  Run this after `azd ai agent init` and before `azd provision`. It changes two things in the
+  Run this after `azd ai agent init` and before `azd provision`. It changes three things in the
   folder that `init` scaffolded:
 
     local-feed/    New. The Agent Framework packed from the local source tree, stamped with a
@@ -55,6 +55,9 @@ $frameworkProjects = @(
     'Microsoft.Agents.AI.Abstractions'
     'Microsoft.Agents.AI'
     'Microsoft.Agents.AI.Workflows'
+    'Microsoft.Agents.AI.Hosting'
+    'Microsoft.Agents.AI.LocalCodeAct'
+    'Microsoft.Agents.AI.Mcp'
     'Microsoft.Agents.AI.Foundry'
     'Microsoft.Agents.AI.Foundry.Hosting'
 )
@@ -146,6 +149,7 @@ $nugetConfig = @'
 # matches whatever version is currently there.
 $projectXml = [System.IO.File]::ReadAllText($projectFile.FullName)
 $projectXml = $projectXml -replace '(?<open><AgentFrameworkVersion>)[^<]*(?<close></AgentFrameworkVersion>)', "`${open}$version`${close}"
+$projectXml = $projectXml -replace '(?<open><PackageReference Include="Microsoft\.Agents\.AI[^"]*" Version=")[^"]*(?<close>" />)', "`${open}$version`${close}"
 [System.IO.File]::WriteAllText($projectFile.FullName, $projectXml, [System.Text.UTF8Encoding]::new($true))
 
 Write-Host ''

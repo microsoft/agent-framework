@@ -4,7 +4,7 @@ description = "Copilot Studio integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260730"
+version = "1.0.0b260813"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,6 +24,8 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.13.0,<2",
+    "aiohttp>=3.9,<4",
+    "msal>=1.31,<2",
     "microsoft-agents-copilotstudio-client>=1.2.0,<2",
 ]
 

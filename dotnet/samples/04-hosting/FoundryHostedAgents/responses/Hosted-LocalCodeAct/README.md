@@ -1,173 +1,208 @@
 # Hosted-LocalCodeAct
 
-A hosted agent that uses [`Microsoft.Agents.AI.LocalCodeAct`](../../../../../src/Microsoft.Agents.AI.LocalCodeAct/README.md)
-to give the model a single `execute_code` tool. Two sandbox-only host tools,
-`compute` and `fetch_data`, are registered on `LocalCodeActProvider` and are
-reachable from inside generated Python via `await call_tool(...)` — never as
-direct LLM tool calls.
+A hosted CodeAct agent using the Responses protocol. The model sees a single execute_code tool and reaches sandbox-only compute and fetch_data host tools from generated Python via call_tool(...). SECURITY: LocalCodeAct executes LLM-generated Python in the agent process, so only deploy it to an externally sandboxed environment such as a Foundry hosted-agent container.
 
-This mirrors the Python
-[`foundry_hosted_agent.py`](https://github.com/microsoft/agent-framework/blob/main/python/packages/local_codeact/samples/foundry_hosted_agent.py)
-sample for the `agent-framework-local-codeact` package.
-
-> **⚠️ Security:** LocalCodeAct executes LLM-generated Python in the agent
-> process. The package is not a sandbox — it relies on the Foundry hosted-agent
-> container (or another externally sandboxed environment) for process,
-> filesystem, and network isolation. Do not run this outside of a sandbox.
+This sample deploys to Foundry **directly from source (code / ZIP upload)**: the platform builds and runs your code with no container image, so there is no Dockerfile to author or container registry to manage. Source deploy is the default for .NET.
 
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- Python 3 available on `PATH` (used by `LocalCodeActProvider` to execute the
-  embedded runner and validator). Override with the `LOCAL_CODEACT_PYTHON`
-  environment variable if you need a specific interpreter path.
-- A Foundry project with a deployed model (e.g., `gpt-4o`)
+- An **existing** Foundry project with an **existing** model deployment (for example `gpt-4o`).
+  This sample's `azure.yaml` declares no `deployments:` block, so `azd` connects to a project and
+  a deployment you already have rather than creating them. `azd ai agent init` prompts you to pick
+  the project, and takes the deployment name as the `-d` argument.
 - Azure CLI logged in (`az login`)
+- Azure Developer CLI (`azd`) with the AI agents extension: `azd extension install azure.ai.agents`
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `Program.cs` | The agent: registers sandbox-only compute/fetch_data tools with a LocalCodeActProvider, exposes a single execute_code tool, hosts it with the Responses protocol. |
+| `azure.yaml` | The unified `azd` project file. Declares the Foundry project and the hosted agent with `codeConfiguration` (source/ZIP deploy), and passes the listen port and the model deployment name to the container through env. |
+| `.agentignore` | Controls which files are excluded from the code-deploy ZIP upload (`.gitignore` syntax). |
+| `HostedLocalCodeAct.csproj` | Self-contained project: single target framework and explicit package versions. It also opts out of the repository's central package management, which does not travel inside the ZIP. |
+| `.env.example` | Template for local configuration. |
+| `../../scripts/Add-LocalFrameworkFeed.ps1`, `../../scripts/add-local-framework-feed.sh` | Contributor-only helpers, see [Deploy your local framework changes](#deploy-your-local-framework-changes-contributors). |
 
 ## Configuration
 
 Copy the template and fill in your project endpoint:
 
+PowerShell:
+
+```powershell
+copy .env.example .env
+```
+
+Bash:
+
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and set your Foundry project endpoint:
-
 ```env
 FOUNDRY_PROJECT_ENDPOINT=https://<your-account>.services.ai.azure.com/api/projects/<your-project>
+AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
 ASPNETCORE_URLS=http://+:8088
-ASPNETCORE_ENVIRONMENT=Development
-FOUNDRY_MODEL=gpt-4o
-LOCAL_CODEACT_PYTHON=python3
+AZURE_TOKEN_CREDENTIALS=dev
 ```
 
-> **Note:** `.env` is gitignored. The `.env.example` template is checked in as a reference.
+> `.env` is gitignored. The `.env.example` template is checked in as a reference.
 
-## Running directly (contributors)
+> `ASPNETCORE_URLS` pins the local run to the port the `Using-Samples` REPLs expect. Recent
+> `Microsoft.Agents.AI.Foundry.Hosting` versions bind that port themselves, so it only matters
+> while this project is pinned to an older published package.
 
-This project uses `ProjectReference` to build against the local Agent Framework
-source, including the `Microsoft.Agents.AI.LocalCodeAct` package.
+> **Windows note:** write `.env` as UTF-8 **without** a byte order mark. `azd` reads the file
+> during `azd ai agent init` and fails with `unexpected character` when a mark is present.
 
-```bash
+> **Local development on a machine without a managed identity:** set `AZURE_TOKEN_CREDENTIALS=dev`.
+> `Program.cs` authenticates with `DefaultAzureCredential`. On a developer machine with no
+> managed identity, `DefaultAzureCredential` probes the Azure Instance Metadata Service (IMDS,
+> `169.254.169.254`) and blocks for a long time before every model call. `AZURE_TOKEN_CREDENTIALS=dev`
+> restricts it to developer credentials (Azure CLI, Visual Studio, `azd`) and skips that probe.
+> Only for local runs; the deployed agent uses the platform-injected managed identity.
+
+## Run and test locally
+
+Local runs use two terminals: one hosts the agent, the other is a code-first client that talks to it,
+see the sibling [`Using-Samples`](../Using-Samples/) REPLs.
+
+**Terminal 1 — host the agent:**
+
+```
 cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalCodeAct
-AGENT_NAME=hosted-local-codeact dotnet run
+az login
+dotnet run
 ```
 
-The agent will start on `http://localhost:8088`.
+The agent starts on `http://localhost:8088`.
 
-### Test it
+**Terminal 2 — chat with it (code-first REPL):**
 
-Using the Azure Developer CLI:
+PowerShell:
 
-```bash
-azd ai agent invoke --local "Fetch all users, find the admins, multiply 7 by 6, and print the users, admins, and the multiplication result. Use execute_code with await call_tool(...)."
+```powershell
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent
+$env:AZURE_AI_AGENT_NAME = "hosted-local-codeact"
+dotnet run -- --local
 ```
 
-Or with curl:
+Bash:
 
 ```bash
-curl -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{"input": "Fetch all users, find the admins, multiply 7 by 6, and print the users, admins, and the multiplication result. Use execute_code with await call_tool(...).", "model": "hosted-local-codeact"}'
+cd dotnet/samples/04-hosting/FoundryHostedAgents/responses/Using-Samples/SimpleAgent
+export AZURE_AI_AGENT_NAME="hosted-local-codeact"
+dotnet run -- --local
 ```
 
-## Running with Docker
+Try: `Use compute to add 21 and 21, then tell me the result.`
 
-Since this project uses `ProjectReference`, use `Dockerfile.contributor` which
-takes a pre-published output. The image installs Python 3 so the embedded
-runner and validator scripts can execute.
+## Deploy to Foundry (source / ZIP)
 
-### 1. Publish for the container runtime (Linux Alpine)
+`azd` scaffolds the project into a working folder, so every step below runs from an **empty
+directory outside the repository**, and `-m` points at this sample's `azure.yaml`.
 
-```bash
-dotnet publish -c Debug -f net10.0 -r linux-musl-x64 --self-contained false -o out
+### Step 1: create the working directory and enter it
+
+PowerShell:
+
+```powershell
+$work = Join-Path $env:TEMP "hosted-local-codeact-work"
+mkdir $work
+cd $work
 ```
 
-### 2. Build the Docker image
+### Step 2: scaffold the project
 
-```bash
-docker build -f Dockerfile.contributor -t hosted-local-codeact .
+`azd ai agent init` copies the sample into a subfolder named `hosted-local-codeact` (the top-level `name:`
+in `azure.yaml`) and writes the adopted `azure.yaml` and the `azd` environment there. It prompts
+you to pick the Foundry project; `-d` is the name of an existing model deployment in that project.
+
+PowerShell:
+
+```powershell
+$sample = "<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalCodeAct/azure.yaml"
+
+azd auth login
+azd ai agent init -m $sample -d <model-deployment>
 ```
 
-### 3. Run the container
+### Step 3: provision and deploy
 
-Generate a bearer token on your host and pass it to the container:
+Contributors changing the Agent Framework source: do the extra step in
+[Deploy your local framework changes](#deploy-your-local-framework-changes-contributors) now,
+before the commands below. Everyone else can ignore it.
 
-```bash
-# Generate token (expires in ~1 hour)
-export AZURE_BEARER_TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-
-# Run with token
-docker run --rm -p 8088:8088 \
-  -e AGENT_NAME=hosted-local-codeact \
-  -e AZURE_BEARER_TOKEN=$AZURE_BEARER_TOKEN \
-  --env-file .env \
-  hosted-local-codeact
 ```
-
-### 4. Test it
-
-```bash
-azd ai agent invoke --local "Fetch all users and print the admins."
-```
-
-## How CodeAct works here
-
-`LocalCodeActProvider` is registered as an `AIContextProvider`. On every run it
-injects:
-
-- A single `execute_code` tool that the model can call with a Python snippet.
-- CodeAct instructions that teach the model to use `await call_tool(...)` for
-  the provider-owned host tools, rather than asking for direct tool calls.
-
-The provider-owned host tools in this sample:
-
-| Tool | Description |
-|------|-------------|
-| `compute(operation, a, b)` | Math operation: `add`, `subtract`, `multiply`, `divide`. |
-| `fetch_data(table)` | Returns rows from a simulated `users` or `products` table. |
-
-`execute_code` runs the generated Python in a separate Python process governed
-by `ProcessExecutionLimits` (5 second timeout in this sample) and the
-default-on AST allow-list validator that rejects disallowed imports, builtins,
-and dynamic-eval constructs before execution.
-
-## Deploying to Foundry (azd spec)
-
-This sample includes an `azd` manifest (`agent.manifest.yaml`) and hosted agent
-spec (`agent.yaml`) for deployment to Foundry.
-
-Initialize an `azd` project from this sample's manifest:
-
-```bash
-mkdir hosted-local-codeact && cd hosted-local-codeact
-azd ai agent init -m https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-LocalCodeAct/agent.manifest.yaml
-```
-
-Then deploy:
-
-```bash
+cd hosted-local-codeact
+azd env get-values
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME <model-deployment>
+azd provision
 azd deploy
+azd ai agent invoke "Use compute to add 21 and 21, then tell me the result."
 ```
 
-## NuGet package users
+`azd` packages the source into a ZIP (honoring `.agentignore`), uploads it, and Foundry runs
+`dotnet restore` + `dotnet publish` on it during provisioning (`dependencyResolution: remote_build`
+in `azure.yaml`). No Dockerfile, no container registry.
 
-If you are consuming the Agent Framework as a NuGet package (not building from
-source), use the standard `Dockerfile` instead of `Dockerfile.contributor`. See
-the commented section in `HostedLocalCodeAct.csproj` for the `PackageReference`
-alternative.
+### Step 4: clean up
+
+```
+azd down
+```
+
+> **`azd down` does not delete the hosted agent.** It reports success but leaves the deployed agent
+> in place. Delete it explicitly with a REST call:
+>
+> ```bash
+> az rest --method delete \
+>   --url "<project-endpoint>/agents/hosted-local-codeact" \
+>   --url-parameters api-version=v1 force=true \
+>   --resource https://ai.azure.com
+> ```
+
+Then delete the working directory.
+
+## Deploy your local framework changes (contributors)
+
+**Skip this section unless you are changing the Agent Framework itself.** The project restores the
+**published** Agent Framework packages, and Foundry restores from nuget.org when it builds the
+upload, so editing framework source in this repository changes nothing about the deployed agent.
+
+The helper script packs your local framework source into NuGet packages and puts them **inside the
+upload**, together with a `nuget.config` that points the restore at them. Run it in the flow above,
+**between step 2 and step 3**:
+
+PowerShell:
+
+```powershell
+cd $work
+<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/scripts/Add-LocalFrameworkFeed.ps1 -Path ./hosted-local-codeact
+```
+
+Bash:
+
+```bash
+cd "$WORK"
+<repo>/dotnet/samples/04-hosting/FoundryHostedAgents/scripts/add-local-framework-feed.sh ./hosted-local-codeact
+```
+
+See the
+[`Hosted-ChatClientAgent`](../Hosted-ChatClientAgent/README.md#deploy-your-local-framework-changes-contributors)
+README for the full explanation of what the script changes and why.
 
 ## Troubleshooting
 
 **`azd ai agent invoke` fails with `404 not_found: Conversation '<id>' not found`**
 
-`azd` saves the session and conversation per agent and reuses them on the next invoke. Once the
-agent is redeployed, deleted, or restarted, that saved conversation no longer exists on the server,
-so every following invoke fails even though the agent itself is healthy. Start a fresh one:
+`azd` reuses the saved session and conversation per agent. Once the agent is redeployed or deleted,
+that conversation no longer exists on the server. Start a fresh one:
 
 ```
 azd ai agent invoke --new-conversation "Hello!"
 ```
 
-Add `--new-session` as well if the failure persists.
+For the full hosted-agent deployment guide, see the [official source-code deployment doc](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent-code).

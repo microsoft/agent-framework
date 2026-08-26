@@ -45,6 +45,9 @@ AIAgent agent = scenario switch
     "azure-search-rag" => CreateAzureSearchRagAgent(projectClient, deployment),
     "session-files" => CreateSessionFilesAgent(projectClient, deployment),
     "agent-skills" => CreateAgentSkillsAgent(projectClient, deployment),
+    "user-identity" => CreateUserIdentityAgent(projectClient, deployment),
+    "resilient-workflow" => ResilientWorkflowAgent.Create(),
+    "steerable-long-running" => new SteerableLongRunningAgent(),
     _ => throw new InvalidOperationException($"Unknown IT_SCENARIO '{scenario}'.")
 };
 
@@ -56,7 +59,12 @@ if (!string.IsNullOrEmpty(port))
     builder.WebHost.UseUrls($"http://+:{port}");
 }
 
-builder.Services.AddFoundryResponses(agent);
+builder.Services.AddFoundryResponses(agent, configure: options =>
+{
+    options.ResilientBackground =
+        scenario is "resilient-workflow" or "steerable-long-running";
+    options.SteerableConversations = scenario == "steerable-long-running";
+});
 
 // toolbox-oauth-consent scenario: pre-register a Foundry toolbox whose tool source is fronted by a
 // per-user OAuth connection. IT_TOOLBOX_NAME names that toolbox (the fixture sets it). With the
@@ -210,6 +218,12 @@ static Func<string, CancellationToken, Task<IEnumerable<TextSearchProvider.TextS
 
         return results;
     };
+// user-identity scenario: returns USER-ID:<platform-user-key> without calling a model so the
+// assertion works even when the subscription has no OpenAI chat deployment. The hosting layer
+// writes HostedSessionContext from x-agent-user-id before RunCoreAsync.
+static AIAgent CreateUserIdentityAgent(AIProjectClient _, string __) =>
+    new UserIdentityEchoAgent();
+
 // session-files scenario: agent reads files from $HOME inside the per-session sandbox volume.
 // Mirrors the dotnet/samples/04-hosting/FoundryHostedAgents/responses/Hosted-Files sample.
 static AIAgent CreateSessionFilesAgent(AIProjectClient client, string deployment) =>

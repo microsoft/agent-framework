@@ -11,6 +11,7 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -160,8 +161,45 @@ public class AgentFrameworkResponseHandlerWorkflowTests
         Assert.True(events.Count >= 3, $"Expected at least 3 events, got {events.Count}");
     }
 
+    [Fact]
+    public async Task CreateAsync_WorkflowCancellationDuringExecution_CancelsInnerAgentWithoutCompletionAsync()
+    {
+        // Arrange
+        var innerAgent = new CancellationCheckingWorkflowAgent("blocking-agent");
+        var workflow = AgentWorkflowBuilder.BuildSequential("cancellation-workflow", innerAgent);
+        var workflowAgent = workflow.AsAIAgent(
+            id: "workflow-agent",
+            name: "Cancellation Workflow",
+            executionEnvironment: InProcessExecution.OffThread);
+        var (handler, request, context) = CreateHandlerWithAgent(workflowAgent, "Hello");
+        using var cts = new CancellationTokenSource();
+        var events = new List<ResponseStreamEvent>();
+
+        async Task ExecuteAsync()
+        {
+            await foreach (var evt in handler.CreateAsync(request, context, cts.Token))
+            {
+                events.Add(evt);
+            }
+        }
+
+        // Act
+        var execution = ExecuteAsync();
+        await innerAgent.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cts.Cancel();
+
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await execution.WaitAsync(TimeSpan.FromSeconds(5)));
+        await innerAgent.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.DoesNotContain(events, evt => evt is ResponseCompletedEvent);
+    }
+
     private static (AgentFrameworkResponseHandler handler, CreateResponse request, ResponseContext context)
-        CreateHandlerWithAgent(AIAgent agent, string userMessage)
+        CreateHandlerWithAgent(
+            AIAgent agent,
+            string userMessage,
+            bool resilient = false)
     {
         var services = new ServiceCollection();
         services.AddSingleton<AgentSessionStore>(new InMemoryAgentSessionStore());
@@ -170,8 +208,20 @@ public class AgentFrameworkResponseHandlerWorkflowTests
         services.AddSingleton<HostedSessionIsolationKeyProvider>(new FakeHostedSessionIsolationKeyProvider());
         var sp = services.BuildServiceProvider();
 
-        var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
-        var request = new CreateResponse { Model = "test" };
+        var handler = new AgentFrameworkResponseHandler(
+            sp,
+            NullLogger<AgentFrameworkResponseHandler>.Instance,
+            Options.Create(
+                new FoundryResponsesOptions
+                {
+                    ResilientBackground = resilient,
+                }));
+        var request = new CreateResponse
+        {
+            Model = "test",
+            Background = resilient,
+            Store = resilient,
+        };
         request.Input = CreateUserInput(userMessage);
         var mockContext = CreateMockContext();
 

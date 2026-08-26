@@ -59,7 +59,7 @@ runs:
       id: azure-login
       if: ${{ (inputs.mode || 'app-with-fallback') != 'pat' }}
       continue-on-error: true
-      uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+      uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
       with:
         client-id: ${{ inputs.azure-client-id }}
         tenant-id: ${{ inputs.azure-tenant-id }}

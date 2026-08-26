@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- ResponsibleAI.AgentHooks (and its bundled native library) targets net8.0+, so net472 is excluded. -->
+    <TargetFrameworks>net10.0</TargetFrameworks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.AgentHooks\Microsoft.Agents.AI.AgentHooks.csproj" />
+  </ItemGroup>
+
+</Project>

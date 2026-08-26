@@ -49,8 +49,9 @@ public abstract class PromptAgentFactory
     {
         Throw.IfNull(promptAgent);
 
-        var agent = await this.TryCreateAsync(promptAgent, cancellationToken).ConfigureAwait(false);
-        return agent ?? throw new NotSupportedException($"Agent type {promptAgent.Kind} is not supported.");
+        var agent = await this.TryCreateAsync(promptAgent, cancellationToken).ConfigureAwait(false) ?? throw new NotSupportedException($"Agent type {promptAgent.Kind} is not supported.");
+        Declarative.FeatureUsageMarker.MarkUsed();
+        return agent;
     }
 
     /// <summary>

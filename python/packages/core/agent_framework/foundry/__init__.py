@@ -23,6 +23,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "DocumentStatus": ("agent_framework_azure_contentunderstanding", "agent-framework-azure-contentunderstanding"),
     "FileSearchBackend": ("agent_framework_azure_contentunderstanding", "agent-framework-azure-contentunderstanding"),
     "FileSearchConfig": ("agent_framework_azure_contentunderstanding", "agent-framework-azure-contentunderstanding"),
+    "FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryAgent": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryAgentOptions": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),

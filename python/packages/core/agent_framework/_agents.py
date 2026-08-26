@@ -56,6 +56,7 @@ from ._types import (
     ChatResponseUpdate,
     Message,
     ResponseStream,
+    _append_instructions,  # pyright: ignore[reportPrivateUsage]
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
     map_chat_to_agent_update,
     normalize_messages,
@@ -83,6 +84,15 @@ if TYPE_CHECKING:
     from ._types import ChatOptions
 
 logger = logging.getLogger("agent_framework")
+
+# AgentLoopMiddleware stamps this key into the run options while a loop
+# iteration is running, so providers scoped to the whole user turn
+# (``after_run_once_per_turn``) skip their per-iteration ``after_run`` and only
+# fire once at the loop boundary. It rides the run's options rather than a
+# context variable: options reach only the runs the loop itself drives, so a
+# nested ``agent.run()`` (fresh options, its own session) keeps its own turn,
+# and nothing leaks into the caller's context while a stream is paused.
+_LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"  # nosec B105 - a context-options key, not a credential  # ruff: ignore[hardcoded-password-string]
 
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -159,8 +169,8 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
             # Merge metadata dicts
             result["metadata"] = {**result["metadata"], **value}
         elif key == "instructions" and result.get("instructions"):
-            # Concatenate instructions
-            result["instructions"] = f"{result['instructions']}\n{value}"
+            # Concatenate instructions, preserving provider-native structured values
+            result["instructions"] = _append_instructions(result["instructions"], value)
         else:
             result[key] = value
     return {key: value for key, value in result.items() if value is not None}
@@ -545,6 +555,7 @@ class BaseAgent(SerializationMixin):
         *,
         session: AgentSession | None,
         context: SessionContext,
+        only_per_turn: bool = False,
     ) -> None:
         """Run after_run on all context providers in reverse order.
 
@@ -557,6 +568,10 @@ class BaseAgent(SerializationMixin):
         Keyword Args:
             session: The conversation session.
             context: The invocation context with response populated.
+            only_per_turn: When True, run only providers that opted into
+                once-per-turn semantics (``after_run_once_per_turn``); used by
+                AgentLoopMiddleware when a loop ends. When False, those
+                providers are skipped while a loop iteration is in progress.
         """
         if _defer_run_persistence(partial(self._run_after_providers, session=session, context=context)):
             return
@@ -570,8 +585,16 @@ class BaseAgent(SerializationMixin):
         per_service_call_history_required = self.require_per_service_call_history_persistence and any(
             isinstance(provider, HistoryProvider) for provider in self.context_providers
         )
+        # The loop stamps the runs it drives via their options; anything else
+        # (nested run, caller-side run while a stream is paused) is its own turn.
+        in_loop_iteration = context.options.get(_LOOP_ITERATION_TOKEN_KEY) is not None
         for provider in reversed(self.context_providers):
             if per_service_call_history_required and isinstance(provider, HistoryProvider):
+                continue
+            once_per_turn = getattr(provider, "after_run_once_per_turn", False)
+            if only_per_turn and not once_per_turn:
+                continue
+            if in_loop_iteration and once_per_turn:
                 continue
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
@@ -1160,6 +1183,38 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             client_kwargs=context["client_kwargs"],
         )
 
+    def _update_session_from_chat_response(
+        self,
+        session: AgentSession | None,
+        response: ChatResponse[Any],
+    ) -> None:
+        """Update session continuation state from a chat response."""
+        if (
+            session
+            and response.conversation_id
+            and not is_local_history_conversation_id(response.conversation_id)
+            and session.service_session_id != response.conversation_id
+        ):
+            session.service_session_id = response.conversation_id
+
+    def _update_session_from_chat_response_update(
+        self,
+        session: AgentSession | None,
+        update: AgentResponseUpdate,
+    ) -> None:
+        """Update session continuation state from a streaming agent update."""
+        if session is None:
+            return
+        raw = update.raw_representation
+        conversation_id = getattr(raw, "conversation_id", None) if raw else None
+        if (
+            isinstance(conversation_id, str)
+            and conversation_id
+            and not is_local_history_conversation_id(conversation_id)
+            and session.service_session_id != conversation_id
+        ):
+            session.service_session_id = conversation_id
+
     async def _parse_non_streaming_response(
         self,
         context: _RunContext,
@@ -1174,13 +1229,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 message.author_name = context["agent_name"]
 
         session = context["session"]
-        if (
-            session
-            and response.conversation_id
-            and not is_local_history_conversation_id(response.conversation_id)
-            and session.service_session_id != response.conversation_id
-        ):
-            session.service_session_id = response.conversation_id
+        self._update_session_from_chat_response(session, response)
 
         agent_response = _build_agent_response_from_chat_response(
             response,
@@ -1232,18 +1281,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         def _propagate_conversation_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
             """Eagerly propagate conversation_id to session as updates arrive."""
-            session = context["session"]
-            if session is None:
-                return update
-            raw = update.raw_representation
-            conversation_id = getattr(raw, "conversation_id", None) if raw else None
-            if (
-                isinstance(conversation_id, str)
-                and conversation_id
-                and not is_local_history_conversation_id(conversation_id)
-                and session.service_session_id != conversation_id
-            ):
-                session.service_session_id = conversation_id
+            self._update_session_from_chat_response_update(context["session"], update)
             return update
 
         def _suppress_response_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
@@ -1474,6 +1512,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # _merge_options strips unset (None) options, so e.g. an unset `store` is not forwarded
         # and the service decides its own default.
         co = _merge_options(chat_options, run_opts)
+        # The loop marker must remain on SessionContext.options for after_run provider
+        # scoping, but it is framework-private metadata and must not reach the client.
+        co.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
         # Build session_messages from session context: context messages + input messages
         session_messages: list[Message] = session_context.get_messages(include_input=True)
@@ -1608,10 +1649,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Merge provider-contributed instructions into chat_options
         if session_context.instructions:
             combined_instructions = "\n".join(session_context.instructions)
-            if "instructions" in chat_options:
-                chat_options["instructions"] = f"{chat_options['instructions']}\n{combined_instructions}"
-            else:
-                chat_options["instructions"] = combined_instructions
+            chat_options["instructions"] = _append_instructions(chat_options.get("instructions"), combined_instructions)
 
         return session_context, chat_options
 

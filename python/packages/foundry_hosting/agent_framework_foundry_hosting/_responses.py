@@ -6,12 +6,14 @@ import asyncio
 import base64
 import json
 import logging
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
+import os
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Literal, cast
+from typing import Generic, Literal, TypeVar, cast
 
 from agent_framework import (
+    AgentResponseUpdate,
     ChatOptions,
     CheckpointStorage,
     Content,
@@ -22,7 +24,9 @@ from agent_framework import (
     RawAgent,
     SessionStore,
     SupportsAgentRun,
+    UsageDetails,
     WorkflowAgent,
+    add_usage_details,
 )
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentFrameworkException
@@ -49,6 +53,9 @@ from azure.ai.agentserver.responses.models import (
     OutputItemReasoningItem,
     OutputMessageContent,
     ResponseStreamEvent,
+    ResponseUsage,
+    ResponseUsageInputTokensDetails,
+    ResponseUsageOutputTokensDetails,
 )
 from azure.ai.agentserver.responses.streaming._builders import (
     OutputItemBuilder,
@@ -58,14 +65,11 @@ from azure.ai.agentserver.responses.streaming._builders import (
     ReasoningSummaryPartBuilder,
     TextContentBuilder,
 )
+from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from typing_extensions import Any
 
 from ._feature_usage import FeatureIndex
-from ._request_context import (
-    validate_foundry_request_context,
-    validate_path_segment,
-)
 from ._state_store import (
     AgentSessionStoreProvider,
     CheckpointStoreProvider,
@@ -80,6 +84,20 @@ logger = logging.getLogger(__name__)
 _HOSTED_RESPONSES_HISTORY_SOURCE_ID = "_foundry_responses_history"
 
 
+def _validate_checkpoint_context_id(context_id: str) -> None:
+    """Validate that a checkpoint context ID is a single safe path component in case file-based storage is used."""
+    if (
+        not context_id
+        or "/" in context_id
+        or "\\" in context_id
+        or "\x00" in context_id
+        or context_id.strip(".") == ""
+        or os.path.isabs(context_id)
+        or os.path.splitdrive(context_id)[0]
+    ):
+        raise RuntimeError(f"Invalid context id: {context_id!r}")
+
+
 def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
     """Return whether ``provider`` is the host's transient history buffer."""
     return (
@@ -90,6 +108,143 @@ def _is_hosted_responses_history_sentinel(provider: ContextProvider) -> bool:
         and not provider.store_context_messages
         and provider.store_outputs
     )
+
+
+def _create_response_event_stream(context: ResponseContext) -> ResponseEventStream:
+    """Create a response stream seeded from recovery state when available."""
+    if context.is_recovery:
+        persisted_response = context.persisted_response
+        if persisted_response is not None:
+            return ResponseEventStream(response=persisted_response, response_id=context.response_id)
+    return ResponseEventStream(response_id=context.response_id)
+
+
+_T = TypeVar("_T")
+
+# Sentinel put on the internal queue by _SignalledIterator's driver task to signal that the
+# wrapped iterator is exhausted (distinct from `None`, which is a valid item value).
+_STOP_SENTINEL: Any = object()
+
+
+class _SignalledIterator(Generic[_T]):
+    """Wraps an async iterator, stopping early as soon as any of ``events`` fires.
+
+    Plain ``async for update in agent.run(...): if event.is_set(): break`` only observes ``event``
+    once ``run()`` actually yields an item -- if it's suspended on a single slow model or tool call
+    with no intermediate item, the signal is invisible until that call resolves. This drives the
+    wrapped iterator from a single persistent background task and races each produced item against
+    ``events`` via ``asyncio.wait`` instead, so a signal is observed immediately.
+
+    The background task (``_drive``) is required (rather than spawning a fresh task per step)
+    because some cleanup run by the wrapped iterator (e.g. observability span teardown) resets a
+    contextvar token set on an earlier call and requires every call against it to share the same
+    async context.
+
+    If an event and a new item becomes ready at the same time, the event takes priority and the item
+    is discarded. Cancelling the background task while it's mid-call is also what actually interrupts
+    a suspended model/tool call, since ``ResponseStream`` (what ``SupportsAgentRun.run(stream=True)``
+    returns) has no ``aclose()`` of its own.
+
+    Callers MUST drive this through ``contextlib.aclosing`` (or an equivalent try/finally calling
+    ``aclose()``): ``__anext__`` only cancels the driver task on its own signalled/exhausted paths, so
+    if the consumer of ``async for`` raises instead (e.g. while processing a yielded item), the driver
+    task -- and the real agent/workflow run it's pumping -- would otherwise be silently abandoned.
+    """
+
+    def __init__(self, iterator: AsyncIterator[_T], *events: asyncio.Event) -> None:
+        """Wrap an async iterator, stopping early if any of ``events`` fires.
+
+        Args:
+            iterator: The async iterator to wrap.
+            events: One or more asyncio.Event objects to watch for. If any of them is set, iteration stops early.
+        """
+        self._iterator = iterator
+        self._events = events
+        self._signalled = False
+        # The queue is used to communicate items from the background driver task to the main iteration loop.
+        self._queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=1)
+        # The background task that drives the wrapped iterator.
+        self._driver: asyncio.Task[None] | None = None
+
+    @property
+    def signalled(self) -> bool:
+        """Whether iteration stopped early due to an event being set.
+
+        ``signalled`` is only set when iteration stopped early because of an event -- never on ordinary
+        exhaustion -- so callers can tell "the agent/workflow finished" apart from "we gave up waiting".
+        """
+        return self._signalled
+
+    def __aiter__(self) -> _SignalledIterator[_T]:
+        return self
+
+    async def _drive(self) -> None:
+        """Pull items from the wrapped iterator into ``self._queue`` for the object's lifetime."""
+        while True:
+            try:
+                item: Any = await self._iterator.__anext__()
+            except StopAsyncIteration:
+                await self._queue.put(_STOP_SENTINEL)
+                return
+            except Exception as exc:
+                await self._queue.put(exc)
+                return
+            await self._queue.put(item)
+
+    async def __anext__(self) -> _T:
+        if self._driver is None:
+            self._driver = asyncio.ensure_future(self._drive())
+
+        # Create the background tasks for monitoring the events and the queue.
+        waiters = [asyncio.ensure_future(event.wait()) for event in self._events]
+        get_task = asyncio.ensure_future(self._queue.get())
+        try:
+            # Waits until at least one of the tasks is completed.
+            await asyncio.wait([get_task, *waiters], return_when=asyncio.FIRST_COMPLETED)
+            if any(waiter.done() for waiter in waiters):
+                self._signalled = True
+                self._driver.cancel()
+                with suppress(BaseException):
+                    await self._driver
+                get_task.cancel()
+                with suppress(BaseException):
+                    await get_task
+                raise StopAsyncIteration
+            item = get_task.result()
+        finally:
+            for waiter in waiters:
+                if not waiter.done():
+                    waiter.cancel()
+            for waiter in waiters:
+                with suppress(BaseException):
+                    await waiter
+        if item is _STOP_SENTINEL:
+            raise StopAsyncIteration
+        if isinstance(item, Exception):
+            raise item
+        return cast(_T, item)
+
+    async def aclose(self) -> None:
+        """Cancel the background driver task, if any, and wait for it to finish.
+
+        Safe to call unconditionally: a no-op if the driver was never started, and cancelling an
+        already-finished task (normal exhaustion or a prior signalled stop) is also a no-op.
+        """
+        if self._driver is None:
+            return
+        self._driver.cancel()
+        with suppress(BaseException):
+            await self._driver
+
+
+# Reserved response metadata key pinning the workflow checkpoint that was current at the moment of
+# the last successfully persisted response-stream checkpoint. Recovery MUST resume from this specific
+# checkpoint if it exists, not simply the latest one in checkpoint_storage: the workflow may have
+# saved further checkpoints after it but before a crash, without their output ever being durably
+# recorded in response.output. If this key is missing, the workflow will resume from the latest
+# checkpoint in storage (if any), or replay the original input if none exists as no output was ever
+# durably persisted.
+_LATEST_CHECKPOINT_ID_KEY = "_last_checkpoint_id"
 
 
 # Foundry Toolbox Auth integration
@@ -123,7 +278,7 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
         #   "errors" : [
         #       {
         #           "name": "Name of the MCP tool that requires consent",
-        #           "type" : "mcp",
+        #           "type" : "mcp" | "a2a_preview",
         #           "error": {
         #               "code": "CONSENT_REQUIRED",
         #               "message": consent_url,
@@ -146,7 +301,7 @@ def consent_url_from_error(exc: BaseException) -> list[ConsentError] | None:
             for error in consent_details["errors"]:
                 if (
                     isinstance(error, dict)
-                    and error.get("type") == "mcp"  # type: ignore
+                    and error.get("type") in ("mcp", "a2a_preview")  # type: ignore
                     and "error" in error
                     and isinstance(error["error"], dict)
                     and error["error"].get("code") == "CONSENT_REQUIRED"  # type: ignore
@@ -204,6 +359,23 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             2. The agent must not have any context providers that maintain context
                in memory, because the hosting environment may get deactivated between
                requests, and any in-memory context would be lost.
+            3. Resiliency (resilient_background=True) is ONLY supported for workflows; constructing this
+               server with a non-workflow agent and `resilient_background=True` raises `RuntimeError`.
+               When resiliency is enabled, and the server crashes mid-response:
+               - Background responses are automatically re-invoked on server restart (client won't see the crash).
+               - Stream events are preserved for client reconnection.
+               - State is maintained across crashes.
+            4. Steering (steerable_conversations=True) is ONLY supported for non-workflow agents; constructing
+               this server with a workflow agent and `steerable_conversations=True` raises `RuntimeError`.
+               Steering a workflow is conceptually undefined -- a workflow's graph may have loops or parallel
+               branches with no single well-defined "current point" to cancel and resume from, unlike an
+               agent's strictly linear execution. It's also not currently practical to implement: a workflow
+               instance cannot start a new run until its previous (steered-past) run has been garbage
+               collected, and that isn't guaranteed to have happened in time.
+
+        Raises:
+            RuntimeError: If `resilient_background=True` is requested for a non-workflow agent, or if
+                `steerable_conversations=True` is requested for a workflow agent.
         """
         super().__init__(prefix=prefix, options=options, store=store, **kwargs)
 
@@ -215,12 +387,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                     "There shouldn't be a history provider with `load_messages=True` already present. "
                     "History is managed by the hosting infrastructure."
                 )
-            provider = cast(ContextProvider, provider)
-            logger.warning(
-                "Context provider %s is present. If it maintains context in memory, "
-                "the context may be lost between requests. Use with caution.",
-                provider.source_id,
-            )
 
         self._is_workflow_agent = False
         if isinstance(agent, WorkflowAgent):
@@ -263,6 +429,21 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if function_approval_store_provider is None
             else function_approval_store_provider
         )
+
+        # Resiliency check: fail loud rather than silently downgrading to a non-recoverable row.
+        self._resilient_background = bool(options and options.resilient_background)
+        if self._resilient_background and not self._is_workflow_agent:
+            raise RuntimeError(
+                "resilient_background=True is only supported for workflow agents. "
+                "Crash recovery cannot be provided for non-workflow agents."
+            )
+
+        # Steering check: steering a workflow is conceptually undefined and also impractical today.
+        if options and options.steerable_conversations and self._is_workflow_agent:
+            raise RuntimeError(
+                "steerable_conversations=True is only supported for non-workflow agents. "
+                "Steering cannot be provided reliably for workflow agents."
+            )
 
         # Lazy agent lifecycle: the agent (and any MCP tools it owns) is entered on
         # the first request rather than at server startup, so that authentication
@@ -309,30 +490,18 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         request: CreateResponse,
         context: ResponseContext,
         cancellation_signal: asyncio.Event,
-    ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
+    ) -> AsyncIterable[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response."""
-        request_context = get_request_context()
-        validate_foundry_request_context(request_context, is_hosted=self.config.is_hosted)
+        # Common per-request setup shared by the workflow and non-workflow paths:
+        # create the response stream and the streaming output-item tracker, emit
+        # the opening lifecycle events, and convert any exception raised while
+        # producing the response into a terminal ``response.failed`` event (which
+        # also drains the tracker so the SSE stream stays well-formed).
+        response_event_stream = _create_response_event_stream(context)
 
-        if self._is_workflow_agent:
-            # Workflow agents are handled differently because they require checkpoint restoration
-            return self._handle_inner_workflow(request, context)
-        return self._handle_inner_agent(request, context)
+        if context.is_steered_turn:
+            logger.debug("Serving steered turn (pending_input_count=%d)", context.pending_input_count)
 
-    async def _handle_inner_agent(
-        self,
-        request: CreateResponse,
-        context: ResponseContext,
-    ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
-        """Handle a regular agent with Responses-managed MAF session continuity.
-
-        Conversation mode reads and writes one MAF session snapshot under
-        ``conversation_id``. Response chaining reads the snapshot under
-        ``previous_response_id`` and writes the updated session under the current
-        ``response_id``, allowing branches without changing the MAF session's own
-        identifier. Hosted storage uses the request user as its isolation boundary.
-        """
-        response_event_stream = ResponseEventStream(response_id=context.response_id)
         yield response_event_stream.emit_created()
         yield response_event_stream.emit_in_progress()
 
@@ -369,40 +538,78 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             )
             return
 
+        tracker = _OutputItemTracker(response_event_stream)
         try:
-            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
-            session_storage = self._session_storage_provider.get_store(config=self.config)
-            # Agent sessions are either tied to the conversation_id (for multi-turn conversation mode)
-            # or the previous_response_id (for response chaining). If neither is present, a new session
-            # is created for this request and stored under the current response_id. The current response_id
-            # will become the previous_response_id for the next request in a response chain, allowing the
-            # session to be retrieved.
-            if (previous_response_id := request.get("previous_response_id")) is not None:
-                session = await session_storage.get(previous_response_id)
-                if session is None:
-                    raise RuntimeError(
-                        f"Cannot find an existing agent session for previous_response_id={previous_response_id}. "
-                        "Ensure that the previous response was created successfully and that the ID is correct."
-                    )
-            elif (conversation_id := context.conversation_id) is not None:
-                session = await session_storage.get(conversation_id)
-                if session is None:
-                    # Note that we cannot determine if the session was deleted or never existed,
-                    # so we log a warning and create a new session.
-                    logger.info(
-                        "Cannot find an existing agent session for id=%s. Creating a new session.",
-                        conversation_id,
-                    )
-                    session = self._agent.create_session()
+            if self._is_workflow_agent:
+                inner = self._handle_inner_workflow(
+                    request, context, response_event_stream, tracker, cancellation_signal
+                )
             else:
+                inner = self._handle_inner_agent(request, context, response_event_stream, tracker, cancellation_signal)
+
+            try:
+                async for event in inner:
+                    yield event
+            except BaseException:
+                await inner.aclose()
+                raise
+
+            for event in tracker.close():
+                yield event
+
+            yield response_event_stream.emit_completed(usage=tracker.usage)
+        except Exception as ex:
+            logger.error("Failed to produce response for agent", exc_info=(type(ex), ex, ex.__traceback__))
+            for event in tracker.close():
+                yield event
+
+            for event in self._emit_failure(response_event_stream, tracker, ex):
+                yield event
+
+    async def _handle_inner_agent(
+        self,
+        request: CreateResponse,
+        context: ResponseContext,
+        response_event_stream: ResponseEventStream,
+        tracker: _OutputItemTracker,
+        cancellation_signal: asyncio.Event,
+    ) -> AsyncGenerator[ResponseStreamEvent]:
+        """Handle a regular (non-workflow) agent.
+
+        The response stream, tracker, and opening lifecycle events are produced
+        by :meth:`_handle_response`, which also converts any raised exception
+        into a terminal ``response.failed`` event (draining the tracker so the
+        SSE stream stays well-formed).
+        """
+        if context.is_recovery:
+            logger.warning(
+                "Recovery mode is not supported for non-workflow agents. "
+                "The agent will restart from the original input."
+            )
+
+        try:
+            request_context = get_request_context()
+            approval_storage = self._function_approval_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
+            session_storage = self._session_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
+
+            previous_response_id = request.get("previous_response_id")
+            session_load_id = context.conversation_id or previous_response_id
+            session = await session_storage.get(session_load_id) if session_load_id is not None else None
+            if session is None:
+                if previous_response_id is not None and context.conversation_id is None:
+                    raise RuntimeError(
+                        f"Cannot find an existing agent session for previous_response_id={previous_response_id}."
+                    )
                 session = self._agent.create_session()
+            session_save_id = context.conversation_id or context.response_id
         except Exception as ex:
             logger.error("Failed to prepare state storage: %s", ex, exc_info=(type(ex), ex, ex.__traceback__))
-            for event in self._emit_failure(response_event_stream, None, ex):
-                yield event
-            return
+            raise
 
-        tracker = _OutputItemTracker(response_event_stream)
         request_failure: Exception | None = None
         save_failure: Exception | None = None
         request_interrupted = False
@@ -429,20 +636,20 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             else:
                 run_kwargs["options"] = chat_options
 
-            async for update in self._agent.run(stream=True, **run_kwargs):  # type: ignore[reportUnknownMemberType]
-                for content in update.contents:
-                    for event in tracker.handle(content):
-                        yield event
-                    if tracker.needs_async:
-                        async for item in _to_outputs(
-                            response_event_stream,
-                            content,
-                            approval_storage=approval_storage,
+            # Non-workflow agents can't be resilient, so there is no exit_for_recovery path here:
+            # both shutdown and steering/cancel just wind the turn down once observed.
+            agent_stream = _SignalledIterator(
+                self._agent.run(stream=True, **run_kwargs),  # type: ignore[reportUnknownMemberType]
+                context.shutdown,
+                cancellation_signal,
+            )
+            async with aclosing(agent_stream):
+                async for update in agent_stream:
+                    for content in update.contents:
+                        async for event in tracker.handle(
+                            content, message_id=update.message_id, approval_storage=approval_storage
                         ):
-                            yield item
-                        tracker.needs_async = False
-            for event in tracker.close():
-                yield event
+                            yield event
         except (asyncio.CancelledError, GeneratorExit):
             request_interrupted = True
             raise
@@ -456,7 +663,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if self._uses_hosted_responses_history:
                 session.state.pop(_HOSTED_RESPONSES_HISTORY_SOURCE_ID, None)
             try:
-                await session_storage.set(context.conversation_id or context.response_id, session)
+                await session_storage.set(session_save_id, session)
             except Exception as save_error:
                 save_failure = save_error
                 if request_interrupted:
@@ -468,37 +675,32 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 logger.error(message, exc_info=(type(save_error), save_error, save_error.__traceback__))
 
         if request_failure is not None and save_failure is not None:
-            failure = RuntimeError(
+            raise RuntimeError(
                 f"Agent request failed: {str(request_failure) or type(request_failure).__name__}; "
                 f"session persistence also failed: {str(save_failure) or type(save_failure).__name__}"
             )
-            for event in self._emit_failure(response_event_stream, tracker, failure):
-                yield event
         elif request_failure is not None:
-            for event in self._emit_failure(response_event_stream, tracker, request_failure):
-                yield event
+            raise request_failure
         elif save_failure is not None:
-            for event in self._emit_failure(response_event_stream, tracker, save_failure):
-                yield event
-        else:
-            yield response_event_stream.emit_completed()
+            raise save_failure
 
     async def _handle_inner_workflow(
         self,
         request: CreateResponse,
         context: ResponseContext,
-    ) -> AsyncIterable[ResponseStreamEvent | dict[str, Any]]:
+        response_event_stream: ResponseEventStream,
+        tracker: _OutputItemTracker,
+        cancellation_signal: asyncio.Event,
+    ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle the creation of a response for a workflow agent."""
-        response_event_stream = ResponseEventStream(response_id=context.response_id)
-        yield response_event_stream.emit_created()
-        yield response_event_stream.emit_in_progress()
-
-        # Track the current active output item builder for streaming;
-        # lazily created on matching content, closed when a different type arrives.
-        tracker: _OutputItemTracker | None = None
+        if not isinstance(self._agent, WorkflowAgent):
+            raise RuntimeError("Agent is not a workflow agent.")
 
         try:
-            approval_storage = self._function_approval_storage_provider.get_store(config=self.config)
+            request_context = get_request_context()
+            approval_storage = self._function_approval_storage_provider.get_store(
+                config=self.config, platform_context=request_context
+            )
             input_items = await context.get_input_items()
             input_messages = await _items_to_messages(input_items, approval_storage=approval_storage)
 
@@ -506,120 +708,195 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if are_options_set:
                 logger.warning("Workflow agent doesn't support runtime options. They will be ignored.")
 
-            if request.get("previous_response_id") is not None and context.conversation_id is not None:
-                raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
-            context_id = request.get("previous_response_id") or context.conversation_id
-
-            if not isinstance(self._agent, WorkflowAgent):
-                raise RuntimeError("Agent is not a workflow agent.")
-
-            # Workflow agents are not async context managers in any built-in path,
-            # but call _ensure_agent_ready for symmetry with the regular path so
-            # any future async resources owned by the workflow are entered here.
-            await self._ensure_agent_ready()
-
-            # Determine the latest checkpoint (if any) so we can resume the
-            # workflow's prior state for this turn. The directory is keyed by
-            # the inbound context id (conversation_id when set, otherwise
-            # previous_response_id). Multi-turn declarative workflows need the
-            # workflow's internal state (e.g. Conversation.messages,
-            # intermediate Local.* variables) to survive across user turns;
-            # the only place that state lives is the workflow checkpoint, so
-            # on every turn we restore the latest checkpoint and feed the new
-            # input back into the start executor as a continuation rather than
-            # a fresh run.
-            latest_checkpoint_id: str | None = None
-            restore_storage: CheckpointStorage | None = None
-            if context_id is not None:
-                validate_path_segment(context_id, kind="context id")
-                restore_storage = self._checkpoint_storage_provider.get_store(
-                    config=self.config,
-                    context_id=context_id,
-                )
-                latest_checkpoint = await restore_storage.get_latest(workflow_name=self._agent.workflow.name)
-                if latest_checkpoint is not None:
-                    latest_checkpoint_id = latest_checkpoint.checkpoint_id
-
-            # Storage that will receive checkpoints written during this turn.
-            # When the caller chains with previous_response_id, the next turn
-            # will reference the current response_id as its previous_response_id,
-            # so new checkpoints must land under the current response_id (or the
-            # conversation_id when set). When conversation_id is set, this
-            # matches restore_storage; when only previous_response_id was
-            # supplied, restore_storage points at the *prior* response's
-            # directory and write_storage points at the *current* response's.
-            write_context_id = context.conversation_id or context.response_id
-            validate_path_segment(write_context_id, kind="context id")
-            write_storage = self._checkpoint_storage_provider.get_store(
+            # Determine the checkpoint storage for this request. The checkpoint
+            # storage is keyed by the conversation ID (if present) or the response
+            # ID (if no conversation ID is present). On a subsequent turn, the same
+            # conversation ID or a `previous_response_id` can be used to resume the
+            # workflow from the last checkpoint.
+            checkpoint_save_id = context.conversation_id or context.response_id
+            _validate_checkpoint_context_id(checkpoint_save_id)
+            checkpoint_storage = self._checkpoint_storage_provider.get_store(
                 config=self.config,
-                context_id=write_context_id,
+                context_id=checkpoint_save_id,
+                platform_context=request_context,
             )
 
-            # Multi-turn pattern: when we have a prior checkpoint, restore it
-            # first (drive the workflow back to idle with prior state intact),
-            # then make a separate call that delivers the new user input. This
-            # depends on Workflow.run preserving shared state across calls. The
-            # restore-only call may yield events from any pending in-flight
-            # work in the checkpoint; we consume those internally here so they
-            # don't surface to the response stream as duplicates.
-            #
-            # If the restored checkpoint had pending request_info events, the
-            # restore-only call replays them through
-            # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
-            # and populates ``self._agent.pending_requests``. That is the correct
-            # state: those requests are genuinely outstanding, and the next
-            # ``run(input_messages, ...)`` call may contain ``function_call_output``
-            # items (carried as FunctionResult/FunctionApprovalResponse content)
-            # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
-            if latest_checkpoint_id is not None:
-                async for _ in self._agent.run(
+            if context.is_recovery:
+                if not self._resilient_background:
+                    raise RuntimeError("Recovery mode is only supported when resilient_background=True.")
+                # Resume from the workflow checkpoint durably paired with the last persisted response
+                # snapshot (recorded in that snapshot's own metadata) -- NOT simply the latest workflow
+                # checkpoint in storage, which may be ahead of what response.output actually reflects if
+                # the crash happened between two response-stream checkpoint() calls.
+                checkpoint_id = response_event_stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY)
+                if checkpoint_id is not None:
+                    logger.debug("Serving recovery request from workflow checkpoint %s", checkpoint_id)
+                    run_stream = self._resume_workflow_from_checkpoint(
+                        checkpoint_id, checkpoint_storage, context.response_id
+                    )
+                else:
+                    latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+                    if latest_checkpoint is not None:
+                        logger.debug(
+                            "Found a workflow checkpoint %s but no prior response snapshot was durably persisted; "
+                            "resuming from the latest checkpoint",
+                            latest_checkpoint.checkpoint_id,
+                        )
+                        run_stream = self._resume_workflow_from_checkpoint(
+                            latest_checkpoint.checkpoint_id, checkpoint_storage, context.response_id
+                        )
+                    else:
+                        # No checkpoint was ever paired with a persisted response snapshot (e.g. the crash
+                        # happened before the very first response checkpoint() call); replay the original
+                        # input as a fresh entry, per the recovered-input parity guarantee
+                        # (context.get_input_items() is unchanged from fresh entry).
+                        logger.debug(
+                            "Serving recovery request with no prior workflow checkpoint; replaying original input"
+                        )
+                        run_stream = self._agent.run(
+                            input_messages,
+                            stream=True,
+                            checkpoint_storage=checkpoint_storage,
+                        )
+            else:
+                # Determine the latest checkpoint (if any) so we can resume the
+                # workflow's prior state for this turn. The directory is keyed by
+                # the conversation id or the previous response id.
+                previous_response_id = request.get("previous_response_id")
+                if previous_response_id is not None and context.conversation_id is not None:
+                    raise RuntimeError("Previous response ID cannot be used in conjunction with conversation ID.")
+                checkpoint_load_id = context.conversation_id or previous_response_id
+                restore_checkpoint_storage = checkpoint_storage
+                if checkpoint_load_id is not None:
+                    _validate_checkpoint_context_id(checkpoint_load_id)
+                    if checkpoint_load_id != checkpoint_save_id:
+                        restore_checkpoint_storage = self._checkpoint_storage_provider.get_store(
+                            config=self.config,
+                            context_id=checkpoint_load_id,
+                            platform_context=request_context,
+                        )
+                latest_checkpoint = await restore_checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+
+                if latest_checkpoint is None and previous_response_id is not None:
+                    # A previous_response_id must have a prior workflow checkpoint to resume from
+                    raise RuntimeError(
+                        f"Cannot find an existing workflow checkpoint for previous_response_id={previous_response_id}."
+                    )
+
+                if latest_checkpoint is not None:
+                    # If we have a prior checkpoint, restore it first (drive the workflow
+                    # back to idle with prior state intact), then make a separate call that
+                    # delivers the new user input. The restore-only call may yield events
+                    # from any pending in-flight work in the checkpoint; we consume those
+                    # internally here so they don't surface to the response stream as duplicates.
+                    #
+                    # If the restored checkpoint had pending request_info events, the
+                    # restore-only call replays them through
+                    # ``WorkflowAgent._convert_workflow_event_to_agent_response_updates``
+                    # and populates ``self._agent.pending_requests``. That is the correct
+                    # state: those requests are genuinely outstanding, and the next
+                    # ``run(input_messages, ...)`` call may contain ``function_call_output``
+                    # items (carried as FunctionResult/FunctionApprovalResponse content)
+                    # that fulfill them via :meth:`WorkflowAgent._process_pending_requests`.
+                    restore_iter = _SignalledIterator(
+                        self._agent.run(
+                            stream=True,
+                            checkpoint_id=latest_checkpoint.checkpoint_id,
+                            checkpoint_storage=restore_checkpoint_storage,
+                        ),
+                        context.shutdown,
+                        cancellation_signal,
+                    )
+                    async with aclosing(restore_iter):
+                        async for _ in restore_iter:
+                            pass
+                    if restore_iter.signalled:
+                        if context.shutdown.is_set():
+                            await context.exit_for_recovery()
+                        if cancellation_signal.is_set():
+                            return
+
+                # A cancel signal that fired after the restore-only replay finished (or was never
+                # entered) must still preempt starting a brand new workflow run below.
+                if cancellation_signal.is_set():
+                    return
+
+                run_stream = self._agent.run(
+                    input_messages,
                     stream=True,
-                    checkpoint_id=latest_checkpoint_id,
-                    checkpoint_storage=restore_storage,
-                ):
-                    pass
+                    checkpoint_storage=checkpoint_storage,
+                )
 
-            tracker = _OutputItemTracker(response_event_stream)
-
-            # Run the workflow agent in streaming mode with the new user input.
-            async for update in self._agent.run(
-                input_messages,
-                stream=True,
-                checkpoint_storage=write_storage,
-            ):
-                for content in update.contents:
-                    for event in tracker.handle(content):
-                        yield event
-                    if tracker.needs_async:
-                        async for item in _to_outputs(
-                            response_event_stream, content, approval_storage=approval_storage
+            main_iter = _SignalledIterator(run_stream, context.shutdown, cancellation_signal)
+            async with aclosing(main_iter):
+                async for update in main_iter:
+                    if self._resilient_background:
+                        latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=self._agent.workflow.name)
+                        if (
+                            latest_checkpoint is not None
+                            and latest_checkpoint.checkpoint_id
+                            != response_event_stream.internal_metadata.get(_LATEST_CHECKPOINT_ID_KEY)
                         ):
-                            yield item
-                        tracker.needs_async = False
+                            # A new checkpoint is created when we pull the next item from the stream
+                            # (see RunnerImpl.run_until_convergence). We only take a snapshot of the
+                            # response (response_event_stream.checkpoint()) once the checkpoint is
+                            # durably persisted. This means all items from the previous superstep
+                            # has been pulled thus we can safely close the tracker. The latest checkpoint
+                            # now reflects the state of the workflow that matches the response output.
+                            # Note that if a workflow crashes before any update is created, no response
+                            # snapshot is taken. However, upon recovery the workflow will still be resumed
+                            # from the latest checkpoint.
+                            for event in tracker.close():
+                                yield event
+                            response_event_stream.internal_metadata[_LATEST_CHECKPOINT_ID_KEY] = (
+                                latest_checkpoint.checkpoint_id
+                            )
+                            yield response_event_stream.checkpoint()
 
-            # Close any remaining active builder
-            for event in tracker.close():
-                yield event
-
-            await self._delete_not_latest_checkpoints(write_storage, self._agent.workflow.name)
-            yield response_event_stream.emit_completed()
-        except Exception as ex:
+                    for content in update.contents:
+                        async for event in tracker.handle(
+                            content, message_id=update.message_id, approval_storage=approval_storage
+                        ):
+                            yield event
+            # Cancellation needs no extra action here (the loop above already stopped); shutdown
+            # does, but only if it's what actually stopped the loop, not a natural completion.
+            if main_iter.signalled and context.shutdown.is_set():
+                await context.exit_for_recovery()
+        except Exception:
             logger.exception("Failed to produce response for workflow agent")
-            for event in self._emit_failure(response_event_stream, tracker, ex):
-                yield event
+            raise
 
-    @staticmethod
-    async def _delete_not_latest_checkpoints(checkpoint_storage: CheckpointStorage, workflow_name: str) -> None:
-        """Delete all checkpoints except the latest one.
+    async def _resume_workflow_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        checkpoint_storage: CheckpointStorage,
+        response_id: str,
+    ) -> AsyncGenerator[AgentResponseUpdate]:
+        """Resume a crashed background workflow run, forwarding every event it produces.
 
-        We only need the last checkpoint for each invocation.
+        ``WorkflowAgent.run(checkpoint_id=..., messages=None)`` treats a message-less resume as
+        "restore only": it drives the workflow with the checkpoint's own already-queued internal
+        messages, but silently discards every event produced while doing so, on the assumption
+        that the workflow merely settles back to idle awaiting the next turn's input. That
+        assumption doesn't hold for crash recovery: the countdown (and any other self-driving
+        workflow) genuinely continues -- and may run to completion -- from its own queued
+        messages, and that output must not be lost. Drive the underlying ``Workflow`` directly so
+        none of it is discarded, converting each event the same way ``WorkflowAgent.run`` does.
+
+        TODO(@taochen): #7677
         """
-        latest_checkpoint = await checkpoint_storage.get_latest(workflow_name=workflow_name)
-        if latest_checkpoint is not None:
-            all_checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow_name)
-            for checkpoint in all_checkpoints:
-                if checkpoint.checkpoint_id != latest_checkpoint.checkpoint_id:
-                    await checkpoint_storage.delete(checkpoint.checkpoint_id)
+        if not isinstance(self._agent, WorkflowAgent):
+            raise RuntimeError("Agent is not a workflow agent.")
+        agent = self._agent
+        async for event in agent.workflow.run(
+            stream=True,
+            checkpoint_id=checkpoint_id,
+            checkpoint_storage=checkpoint_storage,
+        ):
+            for update in agent._convert_workflow_event_to_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
+                response_id, event
+            ):
+                yield update
 
     @staticmethod
     def _emit_failure(
@@ -642,7 +919,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             except Exception:
                 logger.exception("Error while closing streaming tracker after failure")
         message = str(ex) or type(ex).__name__
-        yield response_event_stream.emit_failed(message=message)
+        yield response_event_stream.emit_failed(message=message, usage=tracker.usage if tracker is not None else None)
 
 
 # endregion ResponsesHostServer
@@ -651,18 +928,24 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
 
 class _OutputItemTracker:
-    """Tracks the current active output item builder during streaming.
+    """Converts a stream of agent ``Content`` into ``ResponseStreamEvent``s for one response.
 
-    Handles lazy creation, delta emission, and closing of streaming builders
-    for text messages, reasoning, function calls, and MCP calls.
+    For content types that arrive as a series of deltas (text, reasoning, function calls, MCP
+    calls) it tracks the single currently-open output item builder, merging consecutive same-item
+    deltas and closing the builder (emitting its `*_done` events) as soon as a different item
+    starts. All other content types (function results, image generation, shell calls/results,
+    approval requests, etc.) are emitted in one shot, closing any still-open streaming item first.
     """
-
-    _DELTA_TYPES = frozenset({"text", "text_reasoning", "function_call", "mcp_server_tool_call"})
 
     def __init__(self, stream: ResponseEventStream) -> None:
         self._stream = stream
+        self._usage_details: UsageDetails | None = None
         self._active_type: str | None = None
         self._active_id: str | None = None
+        # message_id of the update that opened the active text item, used to detect a new
+        # logical message (e.g. a fresh workflow yield_output call) even when the content
+        # type doesn't change, so it isn't silently merged into the still-open item.
+        self._active_message_id: str | None = None
         # Accumulated delta text for the current active builder
         self._accumulated: list[str] = []
         # Builder state — only one is active at a time
@@ -673,26 +956,66 @@ class _OutputItemTracker:
         self._reasoning_encrypted_content: str | None = None
         self._fc_builder: OutputItemFunctionCallBuilder | None = None
         self._mcp_builder: OutputItemMcpCallBuilder | None = None
-        self.needs_async = False
+        self._outstanding_function_calls: dict[str, str | None] = {}
 
-    def handle(self, content: Content) -> Generator[ResponseStreamEvent]:
-        """Process a content item, yielding sync events.
+    @property
+    def usage(self) -> ResponseUsage | None:
+        """Return accumulated usage in the Responses API schema."""
+        if self._usage_details is None:
+            return None
 
-        Sets ``needs_async = True`` if the caller must also drain an
-        async ``_to_outputs`` call for this content.
+        input_tokens = int(self._usage_details.get("input_token_count") or 0)
+        output_tokens = int(self._usage_details.get("output_token_count") or 0)
+        total_tokens = self._usage_details.get("total_token_count")
+        return ResponseUsage(
+            input_tokens=input_tokens,
+            input_tokens_details=ResponseUsageInputTokensDetails(
+                cached_tokens=int(self._usage_details.get("cache_read_input_token_count") or 0)
+            ),
+            output_tokens=output_tokens,
+            output_tokens_details=ResponseUsageOutputTokensDetails(
+                reasoning_tokens=int(self._usage_details.get("reasoning_output_token_count") or 0)
+            ),
+            total_tokens=int(total_tokens) if total_tokens is not None else input_tokens + output_tokens,
+        )
+
+    async def handle(
+        self,
+        content: Content,
+        message_id: str | None = None,
+        *,
+        approval_storage: FunctionApprovalStore | None = None,
+    ) -> AsyncGenerator[ResponseStreamEvent]:
+        """Process a content item, yielding its events.
+
+        Args:
+            content: The content item to process.
+            message_id: The ``message_id`` of the update ``content`` came from, if any. A
+                change in ``message_id`` across otherwise same-typed text content marks a new
+                logical message and forces the previous output item closed, rather than being
+                merged into it.
+            approval_storage: Used for content types that fall back to one-shot emission
+                (anything not recognized as a streaming delta type) to save/load approval requests.
         """
         if content.type == "text" and content.text is not None:
-            if self._active_type != "text":
-                yield from self._close()
-                yield from self._open_message()
+            if self._active_type != "text" or (
+                message_id is not None and self._active_message_id is not None and message_id != self._active_message_id
+            ):
+                for event in self._close():
+                    yield event
+                for event in self._open_message():
+                    yield event
+            self._active_message_id = message_id
             self._accumulated.append(content.text)
             if self._text_content is not None:
                 yield self._text_content.emit_delta(content.text)
 
         elif content.type == "text_reasoning":
             if self._active_type != "text_reasoning" or (content.id is not None and content.id != self._active_id):
-                yield from self._close()
-                yield from self._open_reasoning(content)
+                for event in self._close():
+                    yield event
+                for event in self._open_reasoning(content):
+                    yield event
             if encrypted_content := _reasoning_encrypted_content(content):
                 self._reasoning_encrypted_content = encrypted_content
             if content.text:
@@ -701,19 +1024,43 @@ class _OutputItemTracker:
                     yield self._summary_part.emit_text_delta(content.text)
 
         elif content.type == "function_call" and content.call_id is not None:
+            # Declaration-only calls replay request metadata after the streamed call. Scope suppression to the
+            # outstanding occurrence because a call_id may be reused after its terminal result.
+            if (
+                content.user_input_request
+                and content.arguments is None
+                and content.call_id in self._outstanding_function_calls
+                and self._outstanding_function_calls[content.call_id] == content.name
+            ):
+                return
             if self._active_type != "function_call" or self._active_id != content.call_id:
-                yield from self._close()
-                yield from self._open_function_call(content)
+                for event in self._close():
+                    yield event
+                for event in self._open_function_call(content):
+                    yield event
             args_str = _arguments_to_str(content.arguments)
             self._accumulated.append(args_str)
             if self._fc_builder is not None:
                 yield self._fc_builder.emit_arguments_delta(args_str)
 
+        elif content.type == "function_result":
+            for event in self._close():
+                yield event
+            async for event in self._stream.output_item_function_call_output(
+                content.call_id,  # type: ignore[arg-type]
+                str(content.result or ""),
+            ):
+                yield event
+            if content.call_id is not None:
+                self._outstanding_function_calls.pop(content.call_id, None)
+
         elif content.type == "mcp_server_tool_call" and content.tool_name:
             key = content.call_id or f"{content.server_name or 'default'}::{content.tool_name}"
             if self._active_type != "mcp_server_tool_call" or self._active_id != key:
-                yield from self._close()
-                yield from self._open_mcp_call(content)
+                for event in self._close():
+                    yield event
+                for event in self._open_mcp_call(content):
+                    yield event
             args_str = _arguments_to_str(content.arguments)
             self._accumulated.append(args_str)
             if self._mcp_builder is not None:
@@ -734,12 +1081,130 @@ class _OutputItemTracker:
             self._active_type = None
             self._active_id = None
             self._accumulated.clear()
-            self.needs_async = False
             return
 
+        elif content.type == "function_result":
+            for event in self._close():
+                yield event
+            async for event in self._stream.output_item_function_call_output(
+                content.call_id,  # type: ignore[arg-type]
+                str(content.result or ""),
+            ):
+                yield event
+
+        elif content.type == "image_generation_tool_result" and content.outputs is not None:
+            for event in self._close():
+                yield event
+            async for event in self._stream.output_item_image_gen_call(str(content.outputs)):
+                yield event
+
+        elif content.type == "mcp_server_tool_call":
+            # Reached only when `content.tool_name` is falsy (the streaming branch above didn't match).
+            for event in self._close():
+                yield event
+            mcp_call = self._stream.add_output_item_mcp_call(
+                server_label=content.server_name or "default",
+                name=content.tool_name or "",
+                item_id=content.call_id,
+            )
+            yield mcp_call.emit_added()
+            async for event in mcp_call.arguments(_arguments_to_str(content.arguments)):
+                yield event
+            yield mcp_call.emit_completed()
+            yield mcp_call.emit_done()
+
+        elif content.type == "mcp_server_tool_result":
+            # Reached when there's no correlated in-progress mcp_server_tool_call to close against.
+            for event in self._close():
+                yield event
+            output = (
+                content.output
+                if isinstance(content.output, str)
+                else str(content.output)
+                if content.output is not None
+                else ""
+            )
+            async for event in self._stream.output_item_custom_tool_call_output(content.call_id or "", output):
+                yield event
+
+        elif content.type == "shell_tool_call":
+            for event in self._close():
+                yield event
+            action = FunctionShellAction(commands=content.commands or [], timeout_ms=0, max_output_length=0)
+            async for event in self._stream.output_item_function_shell_call(
+                content.call_id or "",
+                action,
+                LocalEnvironmentResource(type="local"),
+                status=content.status or "completed",
+            ):
+                yield event
+
+        elif content.type == "shell_tool_result":
+            for event in self._close():
+                yield event
+            output_items: list[FunctionShellCallOutputContent] = []
+            if content.outputs:
+                for out in content.outputs:
+                    exit_code = getattr(out, "exit_code", None)
+                    output_items.append(
+                        FunctionShellCallOutputContent(
+                            stdout=getattr(out, "stdout", "") or "",
+                            stderr=getattr(out, "stderr", "") or "",
+                            outcome=FunctionShellCallOutputExitOutcome(
+                                type="exit",
+                                exit_code=exit_code if exit_code is not None else 0,
+                            ),
+                        )
+                    )
+            async for event in self._stream.output_item_function_shell_call_output(
+                content.call_id or "",
+                output_items,
+                status=content.status or "completed",
+                max_output_length=content.max_output_length,
+            ):
+                yield event
+
+        elif content.type == "function_approval_request":
+            for event in self._close():
+                yield event
+            function_call: Content = content.function_call  # type: ignore
+            server_label = function_call.additional_properties.get("server_label", "agent_framework")
+            request_saved = False
+            async for event in self._stream.output_item_mcp_approval_request(
+                server_label,
+                function_call.name,  # type: ignore
+                _arguments_to_str(function_call.arguments),
+            ):
+                if approval_storage is not None and not request_saved:
+                    # Extract the approval request ID generated by the infrastructure when the
+                    # approval request item is added to the stream, and save it to approval
+                    # storage so it can be retrieved later for round trips.
+                    item = event.get("item") if isinstance(event, Mapping) else getattr(event, "item", None)
+                    approval_request_id = (
+                        cast(Mapping[str, Any], item).get("id")
+                        if isinstance(item, Mapping)
+                        else getattr(item, "id", None)
+                    )
+                    if isinstance(approval_request_id, str):
+                        await approval_storage.save_approval_request(approval_request_id, content)
+                        request_saved = True
+                yield event
+            if approval_storage is not None and not request_saved:
+                logger.warning(
+                    "Approval request was not saved to approval storage because the approval request ID "
+                    "could not be extracted from the stream event."
+                )
+
+        elif content.type == "usage":
+            self._usage_details = add_usage_details(self._usage_details, content.usage_details)
+
         else:
-            yield from self._close()
-            self.needs_async = True
+            for event in self._close():
+                yield event
+            # Defensive: covers content types not recognized above (e.g. "text"/"text_reasoning"/
+            # "function_call" with missing required fields), logged instead of raised so the
+            # response stream isn't broken by one unsupported content item.
+            logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
 
     def close(self) -> Generator[ResponseStreamEvent]:
         """Close any remaining active builder."""
@@ -786,6 +1251,7 @@ class _OutputItemTracker:
         )
         self._active_type = "function_call"
         self._active_id = content.call_id
+        self._outstanding_function_calls[content.call_id or ""] = content.name
         yield self._fc_builder.emit_added()
 
     def _open_mcp_call(self, content: Content) -> Generator[ResponseStreamEvent]:
@@ -836,6 +1302,7 @@ class _OutputItemTracker:
 
         self._active_type = None
         self._active_id = None
+        self._active_message_id = None
         self._accumulated.clear()
 
 
@@ -1119,7 +1586,7 @@ async def _item_to_message(item: Item, *, approval_storage: FunctionApprovalStor
     if item["type"] == "custom_tool_call_output":
         output = item["output"] if isinstance(item["output"], str) else str(item["output"])
         # Hosted-MCP results land here because the host writes them via
-        # `aoutput_item_custom_tool_call_output` (see `_to_outputs` for
+        # `aoutput_item_custom_tool_call_output` (see `_OutputItemTracker.handle` for
         # `mcp_server_tool_result`). The persisted `call_id` keeps its
         # `mcp_*` prefix; on read, route those back to a hosted-MCP result
         # Content so the chat-client serialize layer can coalesce them
@@ -1574,170 +2041,6 @@ def _reasoning_output_item(
         "encrypted_content": encrypted_content,
         "status": status,
     })
-
-
-def _emit_reasoning_output(
-    stream: ResponseEventStream,
-    contents: Sequence[Content],
-) -> Generator[ResponseStreamEvent]:
-    """Emit one reasoning output item for contents sharing a provider reasoning ID."""
-    first = contents[0]
-    item_id = first.id
-    if not item_id or not IdGenerator.is_valid(item_id)[0]:
-        item_id = IdGenerator.new_id("rs")
-    summary_texts = [content.text or "" for content in contents]
-    encrypted_content = next(
-        (value for content in contents if (value := _reasoning_encrypted_content(content))),
-        None,
-    )
-    builder = stream.add_output_item(item_id)
-    yield builder.emit_added(
-        _reasoning_output_item(
-            item_id=item_id,
-            summary_texts=[],
-            encrypted_content=None,
-            status="in_progress",
-        )
-    )
-    for summary_index, summary_text in enumerate(summary_texts):
-        summary_part = ReasoningSummaryPartBuilder(stream, builder.output_index, summary_index, item_id)
-        yield summary_part.emit_added()
-        yield summary_part.emit_text_delta(summary_text)
-        yield summary_part.emit_text_done(summary_text)
-        yield summary_part.emit_done()
-    yield builder.emit_done(
-        _reasoning_output_item(
-            item_id=item_id,
-            summary_texts=summary_texts,
-            encrypted_content=encrypted_content,
-            status="completed",
-        )
-    )
-
-
-async def _to_outputs(
-    stream: ResponseEventStream,
-    content: Content,
-    *,
-    approval_storage: FunctionApprovalStore | None = None,
-) -> AsyncIterator[ResponseStreamEvent]:
-    """Converts a Content object to an async sequence of ResponseStreamEvent objects.
-
-    Args:
-        stream: The ResponseEventStream to use for building events.
-        content: The Content to convert.
-        approval_storage: An optional ApprovalStorage instance to use for saving and loading function approval requests.
-
-    Yields:
-        ResponseStreamEvent: The converted event objects.
-
-    Raises:
-        ValueError: If the Content type is not supported.
-    """
-    if content.type == "text" and content.text is not None:
-        async for event in stream.output_item_message(content.text):
-            yield event
-    elif content.type == "text_reasoning":
-        for event in _emit_reasoning_output(stream, [content]):
-            yield event
-    elif content.type == "function_call":
-        async for event in stream.output_item_function_call(
-            content.name,  # type: ignore[arg-type]
-            content.call_id,  # type: ignore[arg-type]
-            _arguments_to_str(content.arguments),
-        ):
-            yield event
-    elif content.type == "function_result":
-        async for event in stream.output_item_function_call_output(
-            content.call_id,  # type: ignore[arg-type]
-            str(content.result or ""),
-        ):
-            yield event
-    elif content.type == "image_generation_tool_result" and content.outputs is not None:
-        async for event in stream.output_item_image_gen_call(str(content.outputs)):
-            yield event
-    elif content.type == "mcp_server_tool_call":
-        mcp_call = stream.add_output_item_mcp_call(
-            server_label=content.server_name or "default",
-            name=content.tool_name or "",
-            item_id=content.call_id,
-        )
-        yield mcp_call.emit_added()
-        async for event in mcp_call.arguments(_arguments_to_str(content.arguments)):
-            yield event
-        yield mcp_call.emit_completed()
-        yield mcp_call.emit_done()
-    elif content.type == "mcp_server_tool_result":
-        output = (
-            content.output
-            if isinstance(content.output, str)
-            else str(content.output)
-            if content.output is not None
-            else ""
-        )
-        async for event in stream.output_item_custom_tool_call_output(content.call_id or "", output):
-            yield event
-    elif content.type == "shell_tool_call":
-        action = FunctionShellAction(commands=content.commands or [], timeout_ms=0, max_output_length=0)
-        async for event in stream.output_item_function_shell_call(
-            content.call_id or "",
-            action,
-            LocalEnvironmentResource(type="local"),
-            status=content.status or "completed",
-        ):
-            yield event
-    elif content.type == "shell_tool_result":
-        output_items: list[FunctionShellCallOutputContent] = []
-        if content.outputs:
-            for out in content.outputs:
-                exit_code = getattr(out, "exit_code", None)
-                output_items.append(
-                    FunctionShellCallOutputContent(
-                        stdout=getattr(out, "stdout", "") or "",
-                        stderr=getattr(out, "stderr", "") or "",
-                        outcome=FunctionShellCallOutputExitOutcome(
-                            type="exit",
-                            exit_code=exit_code if exit_code is not None else 0,
-                        ),
-                    )
-                )
-        async for event in stream.output_item_function_shell_call_output(
-            content.call_id or "",
-            output_items,
-            status=content.status or "completed",
-            max_output_length=content.max_output_length,
-        ):
-            yield event
-    elif content.type == "function_approval_request":
-        function_call: Content = content.function_call  # type: ignore
-        server_label = function_call.additional_properties.get("server_label", "agent_framework")
-        request_saved = False
-        async for event in stream.output_item_mcp_approval_request(
-            server_label,
-            function_call.name,  # type: ignore
-            _arguments_to_str(function_call.arguments),
-        ):
-            if approval_storage is not None and not request_saved:
-                # Extract the approval request ID generated by the infrastructure
-                # when the approval request item is added to the stream. Save the
-                # approval request to the approval storage so it can be retrieved later
-                # for round trips where the original approval request needs to be looked up.
-                item = event.get("item") if isinstance(event, Mapping) else getattr(event, "item", None)
-                approval_request_id = (
-                    cast(Mapping[str, Any], item).get("id") if isinstance(item, Mapping) else getattr(item, "id", None)
-                )
-                if isinstance(approval_request_id, str):
-                    await approval_storage.save_approval_request(approval_request_id, content)
-                    request_saved = True
-            yield event
-        if approval_storage is not None and not request_saved:
-            logger.warning(
-                "Approval request was not saved to approval storage because the approval request ID "
-                "could not be extracted from the stream event."
-            )
-    else:
-        # Log a warning for unsupported content types instead of raising an error to avoid breaking the response stream.
-        logger.warning(f"Content type '{content.type}' is not supported yet. This is usually safe to ignore.")
 
 
 def _stringify_mcp_output(output: Any) -> str:

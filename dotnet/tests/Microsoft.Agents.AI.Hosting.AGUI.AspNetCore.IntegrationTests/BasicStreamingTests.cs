@@ -131,12 +131,12 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task MultiTurnConversationPreservesAllMessagesInSessionAsync()
+    public async Task AGUIChatClientBackedAgentUsesLocalChatHistoryAcrossTurnsAsync()
     {
         // Arrange
         await this.SetupTestServerAsync();
         var chatClient = new AGUIChatClient(new(this._client!, ""));
-        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Sample assistant", tools: []);
+        ChatClientAgent agent = new(chatClient, instructions: null, name: "assistant", description: "Sample assistant", tools: []);
         ChatClientAgentSession chatClientSession = (ChatClientAgentSession)await agent.CreateSessionAsync();
         ChatMessage firstUserMessage = new(ChatRole.User, "First question");
 
@@ -149,6 +149,8 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 
         // Assert first turn completed
         firstTurnUpdates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
+        firstTurnUpdates.Should().AllSatisfy(u => u.AsChatResponseUpdate().ConversationId.Should().BeNull());
+        chatClientSession.ConversationId.Should().BeNull();
 
         // Act - Second turn with another message
         ChatMessage secondUserMessage = new(ChatRole.User, "Second question");
@@ -160,14 +162,29 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 
         // Assert second turn completed
         secondTurnUpdates.Should().Contain(u => !string.IsNullOrEmpty(u.Text));
+        secondTurnUpdates.Should().AllSatisfy(u => u.AsChatResponseUpdate().ConversationId.Should().BeNull());
+        chatClientSession.ConversationId.Should().BeNull();
 
-        // Verify first turn assistant response
+        // Verify the local provider retained both turns.
+        InMemoryChatHistoryProvider historyProvider = agent.ChatHistoryProvider.Should().BeOfType<InMemoryChatHistoryProvider>().Subject;
+        List<ChatMessage> history = historyProvider.GetMessages(chatClientSession);
+        history.Should().HaveCount(4);
+        history[0].Role.Should().Be(ChatRole.User);
+        history[0].Text.Should().Be("First question");
+        history[1].Role.Should().Be(ChatRole.Assistant);
+        history[1].Text.Should().Be("Hello from fake agent!");
+        history[2].Role.Should().Be(ChatRole.User);
+        history[2].Text.Should().Be("Second question");
+        history[3].Role.Should().Be(ChatRole.Assistant);
+        history[3].Text.Should().Be("Hello from fake agent!");
+
+        // Verify first turn assistant response.
         AgentResponse firstResponse = firstTurnUpdates.ToAgentResponse();
         firstResponse.Messages.Should().HaveCount(1);
         firstResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);
         firstResponse.Messages[0].Text.Should().Be("Hello from fake agent!");
 
-        // Verify second turn assistant response
+        // Verify second turn assistant response.
         AgentResponse secondResponse = secondTurnUpdates.ToAgentResponse();
         secondResponse.Messages.Should().HaveCount(1);
         secondResponse.Messages[0].Role.Should().Be(ChatRole.Assistant);

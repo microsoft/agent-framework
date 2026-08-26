@@ -14,7 +14,10 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     FunctionInvocationLayer,
+    InlineSkill,
     Message,
+    SkillFrontmatter,
+    SkillsProvider,
     SupportsChatGetResponse,
     tool,
 )
@@ -30,7 +33,7 @@ from anthropic.types.beta import (
 )
 from pydantic import BaseModel, Field
 
-from agent_framework_anthropic import AnthropicClient, RawAnthropicClient
+from agent_framework_anthropic import AnthropicChatOptions, AnthropicClient, RawAnthropicClient
 from agent_framework_anthropic._chat_client import AnthropicSettings
 from agent_framework_anthropic._feature_usage import FeatureIndex
 
@@ -1077,6 +1080,109 @@ async def test_prepare_options_structured_system_blocks_reject_conflicts(
         client._prepare_options(messages, options)
 
 
+async def test_prepare_options_wraps_appended_text_instructions_as_system_blocks(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Text appended to structured blocks should become an additional text block."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    cached_block = {
+        "type": "text",
+        "text": "Stable instructions",
+        "cache_control": {"type": "ephemeral", "ttl": "1h"},
+    }
+
+    run_options = client._prepare_options(messages, {"instructions": [cached_block, "Appended instructions"]})
+
+    assert run_options["system"] == [cached_block, {"type": "text", "text": "Appended instructions"}]
+
+
+async def test_prepare_options_wraps_a_single_structured_mapping_as_system_blocks(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """A lone system block mapping should be normalized into a one-element block list."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+    messages = [Message(role="user", contents=["Hello"])]
+    block = {"type": "text", "text": "Stable instructions"}
+
+    run_options = client._prepare_options(messages, {"instructions": block})
+
+    assert run_options["system"] == [block]
+
+
+@pytest.mark.parametrize("with_skills", [False, True], ids=["without_skills_provider", "with_skills_provider"])
+async def test_agent_run_preserves_structured_system_blocks(with_skills: bool) -> None:
+    """Regression test for #7700.
+
+    Structured system blocks must survive the public ``Agent.run()`` path whether or not a context
+    provider contributes instructions. Contributed instructions are appended as an extra system block
+    instead of collapsing the blocks into a string, which would disable Anthropic prompt caching.
+    """
+    requests: list[dict[str, Any]] = []
+
+    async def create(**kwargs: Any) -> BetaMessage:
+        requests.append(kwargs)
+        return BetaMessage(
+            id="msg_test",
+            content=[BetaTextBlock(type="text", text="ok")],
+            model="claude-3-5-sonnet-20241022",
+            role="assistant",
+            stop_reason="end_turn",
+            type="message",
+            usage=BetaUsage(input_tokens=1, output_tokens=1),
+        )
+
+    transport = MagicMock()
+    transport.base_url = "https://example.invalid"
+    transport.beta.messages.create = create
+
+    system_blocks = [
+        {
+            "type": "text",
+            "text": "Stable instructions that should be cached.",
+            "cache_control": {"type": "ephemeral", "ttl": "1h"},
+        },
+        {"type": "text", "text": "Dynamic request context that should not be cached."},
+    ]
+    context_providers = []
+    if with_skills:
+        skill = InlineSkill(
+            frontmatter=SkillFrontmatter(name="example-skill", description="A generic standalone example skill."),
+            instructions="Use this generic skill when asked for an example.",
+        )
+        context_providers.append(
+            SkillsProvider(
+                [skill],
+                disable_load_skill_approval=True,
+                disable_read_skill_resource_approval=True,
+            )
+        )
+
+    agent = Agent(
+        client=AnthropicClient(anthropic_client=transport, model="claude-3-5-sonnet-20241022"),
+        default_options=cast(
+            AnthropicChatOptions,
+            {"model": "claude-3-5-sonnet-20241022", "max_tokens": 64, "instructions": system_blocks},
+        ),
+        context_providers=context_providers,
+    )
+
+    async with agent:
+        await agent.run("Hello")
+
+    system = requests[0]["system"]
+    # The cached prefix must stay byte-identical so the cache breakpoint keeps matching.
+    assert system[: len(system_blocks)] == system_blocks
+
+    if not with_skills:
+        assert system == system_blocks
+        return
+
+    assert len(system) == len(system_blocks) + 1
+    assert system[-1]["type"] == "text"
+    assert "example-skill" in system[-1]["text"]
+
+
 async def test_prepare_options_splits_assistant_embedded_tool_results(
     mock_anthropic_client: MagicMock,
 ) -> None:
@@ -1422,6 +1528,74 @@ def test_process_message_with_tool_use(mock_anthropic_client: MagicMock) -> None
     assert response.messages[0].contents[0].call_id == "call_123"
     assert response.messages[0].contents[0].name == "get_weather"
     assert response.finish_reason == "tool_calls"
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "expected"),
+    [
+        ("end_turn", "stop"),
+        ("stop_sequence", "stop"),
+        ("pause_turn", "stop"),
+        ("max_tokens", "length"),
+        ("tool_use", "tool_calls"),
+        ("refusal", "content_filter"),
+        # Not in FINISH_REASON_MAP: passed through instead of dropped.
+        ("model_context_window_exceeded", "model_context_window_exceeded"),
+        (None, None),
+    ],
+)
+def test_process_message_finish_reason(
+    mock_anthropic_client: MagicMock, stop_reason: str | None, expected: str | None
+) -> None:
+    """Known stop reasons map, unmapped ones are preserved, and an absent one stays absent."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_message = MagicMock(spec=BetaMessage)
+    mock_message.id = "msg_123"
+    mock_message.model = "claude-3-5-sonnet-20241022"
+    mock_message.content = [BetaTextBlock(type="text", text="Hello there!")]
+    mock_message.usage = BetaUsage(input_tokens=10, output_tokens=5)
+    mock_message.stop_reason = stop_reason
+
+    response = client._process_message(mock_message, {})
+
+    assert response.finish_reason == expected
+
+
+def test_process_stream_event_preserves_unmapped_stop_reason(mock_anthropic_client: MagicMock) -> None:
+    """Streaming message_delta events pass an unmapped stop reason through unchanged."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_event = MagicMock()
+    mock_event.type = "message_delta"
+    mock_event.usage = None
+    mock_event.delta.stop_reason = "model_context_window_exceeded"
+
+    result = client._process_stream_event(mock_event)
+
+    assert result is not None
+    assert result.finish_reason == "model_context_window_exceeded"
+
+
+def test_process_stream_event_message_start_preserves_unmapped_stop_reason(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streaming message_start events pass an unmapped stop reason through unchanged."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_event = MagicMock()
+    mock_event.type = "message_start"
+    mock_event.message.id = "msg_abc"
+    mock_event.message.role = "assistant"
+    mock_event.message.model = "claude-3-5-sonnet-20241022"
+    mock_event.message.content = []
+    mock_event.message.usage = None
+    mock_event.message.stop_reason = "model_context_window_exceeded"
+
+    result = client._process_stream_event(mock_event)
+
+    assert result is not None
+    assert result.finish_reason == "model_context_window_exceeded"
 
 
 def test_parse_usage_from_anthropic_basic(mock_anthropic_client: MagicMock) -> None:

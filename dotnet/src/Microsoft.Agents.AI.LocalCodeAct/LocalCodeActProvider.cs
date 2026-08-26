@@ -189,6 +189,7 @@ public sealed class LocalCodeActProvider : AIContextProvider, IDisposable
             this._tools.Values.ToList(),
             this._fileMounts.Values.ToList());
 
+        FeatureUsageMarker.MarkUsed();
         var description = InstructionBuilder.BuildExecuteCodeDescription(snapshot.Tools, snapshot.FileMounts);
         var executeCode = new ExecuteCodeFunction(this._executor, snapshot, description);
 

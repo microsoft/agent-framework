@@ -1663,13 +1663,13 @@ class TestAnalyzerAutoDetectionE2E:
 class TestWarningsExtraction:
     """Verify that CU RAI warnings are surfaced via ``to_llm_input`` rendering.
 
-    The SDK serializes ``result.warnings`` under the reserved ``rai_warnings``
+    The SDK serializes ``result.warnings`` under the reserved ``warnings``
     YAML front-matter key. Telemetry filtering of stray ``LLMStats:`` lines is
     handled by the SDK helper (azure-ai-contentunderstanding >= 1.2.0b2).
     """
 
     def test_warnings_included_when_present(self) -> None:
-        """Non-empty warnings should appear under ``rai_warnings`` front-matter key."""
+        """Non-empty warnings should appear under ``warnings`` front-matter key."""
         provider = _make_provider()
         fixture = {
             "contents": [
@@ -1694,16 +1694,16 @@ class TestWarningsExtraction:
         result_obj = AnalysisResult(fixture)
         rendered = provider._render_for_llm(result_obj, "doc.pdf")
 
-        assert "rai_warnings:" in rendered
+        assert "warnings:" in rendered
         assert "ContentFiltered" in rendered
         assert "Content was filtered due to Responsible AI policy." in rendered
         assert "Violence content detected and filtered." in rendered
 
     def test_warnings_omitted_when_empty(self, pdf_analysis_result: AnalysisResult) -> None:
-        """The PDF fixture has no warnings, so ``rai_warnings:`` should not appear."""
+        """The PDF fixture has no warnings, so ``warnings:`` should not appear."""
         provider = _make_provider()
         rendered = provider._render_for_llm(pdf_analysis_result, "report.pdf")
-        assert "rai_warnings:" not in rendered
+        assert "warnings:" not in rendered
 
 
 class TestCategoryExtraction:

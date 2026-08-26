@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.13.0"
+version = "1.15.0"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,24 +23,24 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.13.0",
+    "agent-framework-core[all]==1.15.0",
 ]
 
 [dependency-groups]
 dev = [
-    "uv==0.11.32",
-    "flit==3.12.0",
-    "ruff==0.16.0",
+    "uv==0.12.5",
+    "flit==4.0.2",
+    "ruff==0.16.3",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "pytest-cov==7.1.0",
     "pytest-xdist[psutil]==3.8.0",
     "pytest-timeout==2.4.0",
     "pytest-retry==1.7.0",
-    "mypy==2.3.0",
+    "mypy==2.3.1",
     "pyright==1.1.411",
     "pyrefly==1.2.0",
-    "ty==0.0.64",
+    "ty==0.0.72",
     "zuban==0.9.1",
     "opentelemetry-sdk",
     #tasks
@@ -464,5 +464,5 @@ explicit = true
 name = "agent_framework_meta"
 
 [build-system]
-requires = ["flit-core >= 3.11,<4.0"]
+requires = ["flit-core >= 3.11,< 5.0"]
 build-backend = "flit_core.buildapi"

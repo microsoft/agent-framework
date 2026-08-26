@@ -10,6 +10,7 @@ and retrieve results. Each background task runs in its own session concurrently.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -22,6 +23,8 @@ from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._telemetry import FeatureIndex, mark_feature_used
 from .._tools import tool
 from .._types import AgentResponse, Message
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BACKGROUND_AGENTS_SOURCE_ID = "background_agents"
 
@@ -114,6 +117,15 @@ class _RuntimeState:
 
     in_flight_tasks: dict[int, asyncio.Task[AgentResponse[Any]]] = field(default_factory=lambda: {})
     background_sessions: dict[int, AgentSession] = field(default_factory=lambda: {})
+    closed: bool = False
+
+    def track_task(self, task_id: int, task: asyncio.Task[AgentResponse[Any]]) -> None:
+        """Track a background task if this runtime is still open."""
+        if self.closed:
+            task.cancel()
+            raise RuntimeError("Session runtime is closed; cannot start background task.")
+
+        self.in_flight_tasks[task_id] = task
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +136,20 @@ class _RuntimeState:
 async def _run_agent(awaitable: Awaitable[AgentResponse[Any]]) -> AgentResponse[Any]:
     """Wrap an Awaitable in a proper coroutine for use with asyncio.create_task."""
     return await awaitable
+
+
+def _log_abandoned_background_task(task: asyncio.Task[Any]) -> None:
+    """Retrieve exception from an abandoned task to avoid asyncio warnings."""
+    if task.cancelled():
+        return
+
+    try:
+        exception = task.exception()
+    except asyncio.CancelledError:
+        return
+
+    if exception is not None:
+        logger.debug("Abandoned background task raised: %s", exception)
 
 
 def _validate_and_build_agent_dict(agents: Sequence[SupportsAgentRun]) -> dict[str, SupportsAgentRun]:
@@ -308,9 +334,115 @@ class BackgroundAgentsProvider(ContextProvider):
     def _get_runtime(self, session: AgentSession) -> _RuntimeState:
         """Get or create runtime state for a session."""
         session_id = session.session_id
-        if session_id not in self._runtime:
-            self._runtime[session_id] = _RuntimeState()
-        return self._runtime[session_id]
+        runtime = self._runtime.get(session_id)
+
+        if runtime is None or runtime.closed:
+            runtime = _RuntimeState()
+            self._runtime[session_id] = runtime
+
+        return runtime
+
+    async def release_session(
+        self,
+        session: AgentSession,
+        *,
+        cancel_running: bool = True,
+        timeout: float | None = 30.0,
+    ) -> None:
+        """Release all runtime state for a session to prevent runtime leaks.
+
+        Args:
+            session: The agent session whose runtime state should be released.
+            cancel_running: If True, cancel pending asyncio.Tasks safely.
+            timeout: Maximum seconds to wait for tasks to finish cancellation.
+                If None, wait indefinitely. The default is bounded so a buggy
+                task cannot wedge host eviction or shutdown.
+        """
+        session_id = session.session_id
+        runtime = self._runtime.get(session_id)
+
+        if runtime is None or runtime.closed:
+            return
+
+        pending = [task for task in list(runtime.in_flight_tasks.values()) if not task.done()]
+
+        if pending and not cancel_running:
+            raise RuntimeError(f"Cannot release session {session_id}: {len(pending)} tasks still running.")
+
+        runtime.closed = True
+
+        try:
+            if pending:
+                await self._drain_runtime(
+                    runtime,
+                    cancel_running=cancel_running,
+                    timeout=timeout,
+                )
+            else:
+                completed = list(runtime.in_flight_tasks.values())
+                if completed:
+                    await asyncio.gather(*completed, return_exceptions=True)
+        finally:
+            runtime.in_flight_tasks.clear()
+            runtime.background_sessions.clear()
+
+            if self._runtime.get(session_id) is runtime:
+                self._runtime.pop(session_id, None)
+
+    async def _drain_runtime(
+        self,
+        runtime: _RuntimeState,
+        *,
+        cancel_running: bool,
+        timeout: float | None,
+    ) -> None:
+        """Cancel and await tracked tasks, bounded by timeout."""
+        loop = asyncio.get_running_loop()
+        deadline = None if timeout is None else loop.time() + float(timeout)
+
+        while True:
+            tasks = list(runtime.in_flight_tasks.values())
+            pending = [task for task in tasks if not task.done()]
+
+            if not pending:
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                return
+
+            if not cancel_running:
+                raise RuntimeError(f"Cannot release session: {len(pending)} tasks still running.")
+
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+
+            remaining = None
+            if deadline is not None:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    logger.warning(
+                        "Session release timed out before all tasks finished. Abandoning %s task(s).",
+                        len(pending),
+                    )
+                    for task in pending:
+                        if not task.done():
+                            task.add_done_callback(_log_abandoned_background_task)
+                    return
+
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*pending, return_exceptions=True),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                not_done = [task for task in pending if not task.done()]
+                logger.warning(
+                    "Session release timed out waiting for %s task(s). They will be abandoned.",
+                    len(not_done),
+                )
+                for task in not_done:
+                    task.add_done_callback(_log_abandoned_background_task)
+                return
 
     async def before_run(
         self,
@@ -331,6 +463,9 @@ class BackgroundAgentsProvider(ContextProvider):
         @tool(name="background_agents_start_task", approval_mode="never_require")
         def background_agents_start_task(agent_name: str, input: str, description: str) -> str:
             """Start a background task on a named agent. Returns a confirmation with the task ID."""
+            if runtime.closed:
+                return "Error: Session is being released; cannot start a new background task."
+
             key = agent_name.lower()
             if key not in self._agents:
                 available = ", ".join(a.name or "" for a in self._agents.values())
@@ -338,6 +473,17 @@ class BackgroundAgentsProvider(ContextProvider):
 
             bg_agent = self._agents[key]
             task_id = provider_state.get("next_task_id", 1)
+
+            sub_session = bg_agent.create_session()
+
+            async_task = asyncio.create_task(_run_agent(bg_agent.run(input, session=sub_session)))
+            try:
+                runtime.track_task(task_id, async_task)
+            except RuntimeError as exc:
+                return f"Error: {exc}"
+
+            runtime.background_sessions[task_id] = sub_session
+
             provider_state["next_task_id"] = task_id + 1
 
             task_info = BackgroundTaskInfo(
@@ -349,14 +495,6 @@ class BackgroundAgentsProvider(ContextProvider):
             tasks.append(task_info)
             _save_tasks(provider_state, tasks)
 
-            # Create a dedicated session for this background task.
-            sub_session = bg_agent.create_session()
-
-            # Start the task concurrently.
-            async_task = asyncio.create_task(_run_agent(bg_agent.run(input, session=sub_session)))
-            runtime.in_flight_tasks[task_id] = async_task
-            runtime.background_sessions[task_id] = sub_session
-
             _save_provider_state(session, provider_state, source_id=source_id)
             return f"Background task {task_id} started on agent '{agent_name}'."
 
@@ -365,6 +503,9 @@ class BackgroundAgentsProvider(ContextProvider):
         @tool(name="background_agents_wait_for_first_completion", approval_mode="never_require")
         async def background_agents_wait_for_first_completion(task_ids: list[int]) -> str:
             """Block until the first of the specified background tasks completes. Returns the completed task's ID."""
+            if runtime.closed:
+                return "Error: Session is being released; cannot wait for background tasks."
+
             if not task_ids:
                 return "Error: No task IDs provided."
 
@@ -448,6 +589,9 @@ class BackgroundAgentsProvider(ContextProvider):
         @tool(name="background_agents_continue_task", approval_mode="never_require")
         def background_agents_continue_task(task_id: int, text: str) -> str:
             """Send follow-up input to a completed or failed task to resume its work."""
+            if runtime.closed:
+                return "Error: Session is being released; cannot continue a background task."
+
             tasks = _refresh_task_state(session, provider_state, runtime, source_id=source_id)
             task_info = next((t for t in tasks if t.id == task_id), None)
 
@@ -472,14 +616,15 @@ class BackgroundAgentsProvider(ContextProvider):
 
             bg_agent = self._agents[key]
 
-            # Reset task state and start a new run on the existing session.
+            async_task = asyncio.create_task(_run_agent(bg_agent.run(text, session=sub_session)))
+            try:
+                runtime.track_task(task_id, async_task)
+            except RuntimeError as exc:
+                return f"Error: {exc}"
             task_info.status = BackgroundTaskStatus.RUNNING
             task_info.result_text = None
             task_info.error_text = None
             _save_tasks(provider_state, tasks)
-
-            async_task = asyncio.create_task(_run_agent(bg_agent.run(text, session=sub_session)))
-            runtime.in_flight_tasks[task_id] = async_task
 
             _save_provider_state(session, provider_state, source_id=source_id)
             return f"Task {task_id} continued with new input."
@@ -489,6 +634,9 @@ class BackgroundAgentsProvider(ContextProvider):
         @tool(name="background_agents_clear_completed_task", approval_mode="never_require")
         def background_agents_clear_completed_task(task_id: int) -> str:
             """Remove a completed or failed task and release its session to free memory."""
+            if runtime.closed:
+                return "Error: Session is being released; cannot clear tasks."
+
             tasks = _refresh_task_state(session, provider_state, runtime, source_id=source_id)
             task_info = next((t for t in tasks if t.id == task_id), None)
 

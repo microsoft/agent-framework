@@ -40,7 +40,7 @@ await UploadDataFromMarkdown(afOverviewUrl, "Microsoft Agent Framework Overview"
 await UploadDataFromMarkdown(afMigrationUrl, "Semantic Kernel to Microsoft Agent Framework Migration Guide", documentationCollection, 2000, 200);
 
 // Create an adapter function that the TextSearchProvider can use to run searches against the collection.
-Func<string, CancellationToken, Task<IEnumerable<TextSearchProvider.TextSearchResult>>> SearchAdapter = async (text, ct) =>
+async Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchAdapterAsync(string text, CancellationToken ct)
 {
     List<TextSearchProvider.TextSearchResult> results = [];
     await foreach (var result in documentationCollection.SearchAsync(text, 5, cancellationToken: ct))
@@ -54,7 +54,7 @@ Func<string, CancellationToken, Task<IEnumerable<TextSearchProvider.TextSearchRe
         });
     }
     return results;
-};
+}
 
 // Configure the options for the TextSearchProvider.
 TextSearchProviderOptions textSearchOptions = new()
@@ -72,7 +72,7 @@ AIAgent agent = aiProjectClient
     .AsAIAgent(new ChatClientAgentOptions
     {
         ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a helpful support specialist for the Microsoft Agent Framework. Answer questions using the provided context and cite the source document when available. Keep responses brief." },
-        AIContextProviders = [new TextSearchProvider(SearchAdapter, textSearchOptions)],
+        AIContextProviders = [new TextSearchProvider(SearchAdapterAsync, textSearchOptions)],
         // Configure a filter on the InMemoryChatHistoryProvider so that we don't persist the messages produced by the TextSearchProvider in chat history.
         // The default is to persist all messages except those that came from chat history in the first place.
         // You may choose to persist the TextSearchProvider messages, if you want the search output to be provided to the model in future interactions as well.

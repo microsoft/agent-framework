@@ -13,6 +13,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using AGUI.Abstractions;
+using AGUI.Client;
 using AGUI.Server;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
@@ -27,6 +28,37 @@ public sealed class ForwardedPropertiesTests : IAsyncDisposable
 {
     private WebApplication? _app;
     private HttpClient? _client;
+
+    [Fact]
+    public async Task ChatClient_ForwardsContextAndForwardedPropsFromRawRepresentationFactoryAsync()
+    {
+        // Arrange
+        FakeForwardedPropsAgent fakeAgent = new();
+        await this.SetupTestServerAsync(fakeAgent);
+        var chatClient = new AGUIChatClient(new(this._client!, "/agent"));
+        JsonElement forwardedProperties = JsonSerializer.SerializeToElement(new { tenantId = "tenant-123" });
+        ChatOptions options = new()
+        {
+            RawRepresentationFactory = _ => new RunAgentInput
+            {
+                Context = [new AGUIContext { Description = "Current user", Value = "Ada Lovelace" }],
+                ForwardedProperties = forwardedProperties,
+            },
+        };
+
+        // Act
+        await foreach (ChatResponseUpdate _ in chatClient.GetStreamingResponseAsync(
+            [new ChatMessage(ChatRole.User, "test client forwarding")],
+            options))
+        {
+        }
+
+        // Assert
+        fakeAgent.ReceivedContext.Should().ContainSingle();
+        fakeAgent.ReceivedContext![0].Description.Should().Be("Current user");
+        fakeAgent.ReceivedContext[0].Value.Should().Be("Ada Lovelace");
+        fakeAgent.ReceivedForwardedProperties.GetProperty("tenantId").GetString().Should().Be("tenant-123");
+    }
 
     [Fact]
     public async Task ForwardedProps_AreParsedAndPassedToAgent_WhenProvidedInRequestAsync()
@@ -304,6 +336,8 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
 
     public override string? Description => "Agent for forwarded properties testing";
 
+    public IList<AGUIContext>? ReceivedContext { get; private set; }
+
     public JsonElement ReceivedForwardedProperties { get; private set; }
 
     protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
@@ -319,10 +353,14 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
     {
         // Recover the originating AG-UI input from the request options (set by the hosting layer).
         if (options is ChatClientAgentRunOptions { ChatOptions: { } chatOptions } &&
-            chatOptions.TryGetRunAgentInput(out RunAgentInput? agentInput) &&
-            agentInput.ForwardedProperties is { ValueKind: not JsonValueKind.Undefined } forwardedProps)
+            chatOptions.TryGetRunAgentInput(out RunAgentInput? agentInput))
         {
-            this.ReceivedForwardedProperties = forwardedProps;
+            this.ReceivedContext = agentInput.Context;
+
+            if (agentInput.ForwardedProperties is { ValueKind: not JsonValueKind.Undefined } forwardedProps)
+            {
+                this.ReceivedForwardedProperties = forwardedProps;
+            }
         }
 
         // Always return a text response

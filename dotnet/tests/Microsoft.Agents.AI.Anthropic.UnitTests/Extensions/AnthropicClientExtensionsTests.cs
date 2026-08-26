@@ -81,6 +81,10 @@ public sealed class AnthropicClientExtensionsTests
 
         public IModelService Models => throw new NotImplementedException();
 
+        public IFileService Files => throw new NotImplementedException();
+
+        public ISkillService Skills => throw new NotImplementedException();
+
         public IBetaService Beta => throw new NotImplementedException();
 
         public IAnthropicClient WithOptions(Func<ClientOptions, ClientOptions> modifier)

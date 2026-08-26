@@ -1815,8 +1815,10 @@ RESOURCE_INSTRUCTIONS: Final[str] = (
 
 SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
     "- Use `run_skill_script` to run referenced scripts, using the name exactly as listed.\n"
-    "- Pass script arguments inside `args` as a JSON object"
+    "- Pass named script arguments inside `args` as a JSON object, including for inline scripts"
     ' (e.g. `args: {"length": 24}`), not as top-level tool parameters.\n'
+    "- For file-based scripts that document CLI-style positional arguments, pass `args` as an array of strings"
+    ' (e.g. `args: ["input.docx", "--output", "result.idx"]`).\n'
 )
 
 # endregion
@@ -4721,16 +4723,16 @@ class _ArchiveEntryLoader:
 
         blob = _mcp_first_blob(result)
         if blob is None:
-            logger.debug("Skipping skill '%s': archive resource returned no binary content", entry.name)
+            logger.warning("Skipping skill '%s': archive resource returned no binary content", entry.name)
             return None
 
         data, mime_type = blob
         if not data:
-            logger.debug("Skipping skill '%s': archive resource returned empty content", entry.name)
+            logger.warning("Skipping skill '%s': archive resource returned empty content", entry.name)
             return None
 
         if len(data) > self._max_size_bytes:
-            logger.debug(
+            logger.warning(
                 "Skipping skill '%s': archive resource exceeds the maximum allowed size (%d bytes)",
                 entry.name,
                 self._max_size_bytes,
@@ -4749,7 +4751,9 @@ class _ArchiveEntryLoader:
         """
         archive_format = _detect_archive_format(data, mime_type, entry.url)
         if archive_format is _ArchiveFormat.UNKNOWN:
-            logger.debug("Skipping skill '%s': unsupported archive media type '%s'", entry.name, mime_type or "(none)")
+            logger.warning(
+                "Skipping skill '%s': unsupported archive media type '%s'", entry.name, mime_type or "(none)"
+            )
             return None
 
         try:
@@ -4766,13 +4770,13 @@ class _ArchiveEntryLoader:
         """Assemble an in-memory :class:`FileSkill` from the archive's extracted files."""
         skill_md_key = self._find_skill_md(files)
         if skill_md_key is None:
-            logger.debug("Skipping skill '%s': archive contains no SKILL.md", entry.name)
+            logger.warning("Skipping skill '%s': archive contains no SKILL.md", entry.name)
             return None
 
         try:
             content = files[skill_md_key].decode("utf-8")
         except UnicodeDecodeError:
-            logger.debug("Skipping skill '%s': SKILL.md is not valid UTF-8", entry.name)
+            logger.warning("Skipping skill '%s': SKILL.md is not valid UTF-8", entry.name)
             return None
 
         frontmatter = FileSkillsSource._extract_frontmatter(  # pyright: ignore[reportPrivateUsage]
@@ -4782,7 +4786,7 @@ class _ArchiveEntryLoader:
             return None
 
         if frontmatter.name != entry.name:
-            logger.debug(
+            logger.warning(
                 "Skipping skill '%s': SKILL.md frontmatter name '%s' does not match the advertised entry name",
                 entry.name,
                 frontmatter.name,

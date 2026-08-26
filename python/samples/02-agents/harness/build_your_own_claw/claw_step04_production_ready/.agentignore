@@ -1,0 +1,40 @@
+# Files excluded from agent code deployment packaging.
+# Uses .gitignore syntax.
+# Note: only the root .agentignore is read; subdirectory files are not supported.
+#
+# To include a file that is excluded by default, use negation: !filename
+
+# azd tooling files
+agent.yaml
+agent.manifest.yaml
+azure.yaml
+.agentignore
+
+# Security / secrets
+.env
+.env.*
+.azure/
+.git/
+
+# Python
+__pycache__/
+.venv/
+venv/
+*.pyc
+*.pyo
+.mypy_cache/
+.pytest_cache/
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Node
+node_modules/
+
+# Docker (not used in code deploy)
+Dockerfile
+.dockerignore

@@ -917,6 +917,23 @@ class TestMCPSkillsSourceArchive:
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
+    async def test_frontmatter_name_mismatch_is_logged_as_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index = _make_archive_index("packaged-skill", url)
+        mismatched = ARCHIVE_SKILL_MD.replace("name: packaged-skill", "name: different-name")
+        archive = _make_zip({"SKILL.md": mismatched.encode()})
+        client = _archive_client(index, url, archive, "application/zip")
+
+        source = MCPSkillsSource(client=client)
+        with caplog.at_level("WARNING", logger="agent_framework._skills"):
+            skills = await source.get_skills(_SOURCE_CTX)
+
+        assert skills == []
+        assert any(
+            record.levelname == "WARNING" and "does not match the advertised entry name" in record.message
+            for record in caplog.records
+        )
+
     @pytest.mark.asyncio
     async def test_archive_without_skill_md_is_skipped(self) -> None:
         url = "skill://archives/packaged-skill.zip"

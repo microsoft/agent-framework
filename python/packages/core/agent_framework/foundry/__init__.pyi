@@ -12,6 +12,7 @@ from agent_framework_azure_contentunderstanding import (
     FileSearchConfig,
 )
 from agent_framework_foundry import (
+    FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY,
     FoundryAgent,
     FoundryChatClient,
     FoundryChatOptions,
@@ -50,6 +51,7 @@ from agent_framework_foundry_local import (
 )
 
 __all__ = [
+    "FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY",
     "AgentSessionStoreProvider",
     "AnalysisSection",
     "AnthropicFoundryClient",

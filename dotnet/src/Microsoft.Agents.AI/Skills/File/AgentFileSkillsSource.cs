@@ -116,6 +116,10 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     /// <inheritdoc/>
     public override Task<IList<AgentSkill>> GetSkillsAsync(AgentSkillsSourceContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreFileSkillsSource);
+#pragma warning restore MAAI001
+
         var discoveredPaths = this.DiscoverSkillDirectories(this._skillPaths);
 
         LogSkillsDiscovered(this._logger, discoveredPaths.Count);
@@ -622,7 +626,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
                 LogDirectoryInspectionFailed(this._logger, SanitizePathForLog(path));
             }
 
-            return Array.Empty<string>();
+            return [];
         }
     }
 
@@ -704,7 +708,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
         path = path.TrimEnd('/', '\\');
 
         // Normalize all separators to forward slashes
-        if (path.IndexOf('\\') >= 0)
+        if (path.Contains('\\'))
         {
             path = path.Replace('\\', '/');
         }

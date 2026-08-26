@@ -250,6 +250,8 @@ public sealed class FoundryEvals : IAgentEvaluator
                 "or set 'includePerAgent: false' so the evaluator only runs on the overall item.");
         }
 
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryEvals);
+
         // 2. Create the evaluation definition
         var createEvalPayload = new WireCreateEvalRequest
         {
@@ -450,6 +452,7 @@ public sealed class FoundryEvals : IAgentEvaluator
             ? evaluators
             : [Relevance, Coherence, TaskAdherence];
         EnsureAllSpecsValid(resolvedEvaluators, nameof(evaluators));
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryEvals);
 
         // Create the evaluation definition with the appropriate data source scenario
         object dataSourceConfig;
@@ -642,6 +645,7 @@ public sealed class FoundryEvals : IAgentEvaluator
             ? evaluators
             : [Relevance, Coherence, TaskAdherence];
         EnsureAllSpecsValid(resolvedEvaluators, nameof(evaluators));
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryEvals);
 
         var createEvalPayload = new WireCreateEvalRequest
         {

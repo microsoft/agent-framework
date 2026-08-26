@@ -12,7 +12,7 @@ from typing import Any, cast
 
 from ag_ui.core import RunErrorEvent
 from ag_ui.encoder import EventEncoder
-from agent_framework import SupportsAgentRun, Workflow
+from agent_framework import CheckpointStorage, SupportsAgentRun, Workflow
 from fastapi import FastAPI, HTTPException
 from fastapi.params import Depends
 from fastapi.responses import Response, StreamingResponse
@@ -90,7 +90,9 @@ def add_agent_framework_fastapi_endpoint(
     dependencies: Sequence[Depends] | None = None,
     snapshot_store: AGUIThreadSnapshotStore | None = None,
     snapshot_scope_resolver: SnapshotScopeResolver | None = None,
+    checkpoint_storage: CheckpointStorage | None = None,
     keepalive_seconds: float | None = 15,
+    a2ui_config: dict[str, Any] | None = None,
 ) -> None:
     """Add an AG-UI endpoint to a FastAPI app.
 
@@ -113,9 +115,17 @@ def add_agent_framework_fastapi_endpoint(
         snapshot_scope_resolver: Optional resolver for the application-defined Snapshot Scope. Required whenever
             a snapshot store is configured because an AG-UI Thread id is not an authorization boundary. Also scopes
             in-memory workflow_factory instances when provided without a snapshot store.
+        checkpoint_storage: Optional workflow checkpoint storage, applied when the endpoint exposes a workflow.
+            When provided, each run creates a checkpoint at the end of every superstep, and a run may resume from
+            a persisted checkpoint by supplying its id in the AG-UI forwarded props
+            (``forwarded_props: {"checkpoint_id": ...}``).
         keepalive_seconds: Endpoint SSE keepalive interval in seconds. Defaults to 15. Positive values emit fixed
             SSE comments while the stream is open. None disables keepalive and preserves the non-keepalive response
             path. Keepalive comments are transport traffic and do not change AG-UI events.
+        a2ui_config: Optional backend A2UI config used when the runtime auto-injects
+            the surface-generation tool (``forwardedProps.injectA2UITool``). Keys:
+            ``inject_a2ui_tool`` (backend opt-in override), ``default_catalog_id``,
+            ``catalog``, ``guidelines``, ``recovery``, ``default_surface_id``.
     """
     _validate_keepalive_seconds(keepalive_seconds)
 
@@ -132,9 +142,22 @@ def add_agent_framework_fastapi_endpoint(
             state_schema=state_schema,
             predict_state_config=predict_state_config,
             snapshot_store=snapshot_store,
+            a2ui_config=a2ui_config,
         )
     else:
         raise TypeError("agent must be SupportsAgentRun, Workflow, AgentFrameworkAgent, or AgentFrameworkWorkflow.")
+
+    if checkpoint_storage is not None:
+        if not isinstance(protocol_runner, AgentFrameworkWorkflow):
+            raise ValueError("checkpoint_storage is only supported when the endpoint exposes a workflow.")
+        # A pre-wrapped runner without storage adopts the endpoint's; a runner that
+        # already carries a different storage is a configuration conflict.
+        if (
+            protocol_runner.checkpoint_storage is not None
+            and protocol_runner.checkpoint_storage is not checkpoint_storage
+        ):
+            raise ValueError("checkpoint_storage is already configured on the AG-UI workflow runner.")
+        protocol_runner.checkpoint_storage = checkpoint_storage
 
     _configure_snapshot_persistence(
         protocol_runner,

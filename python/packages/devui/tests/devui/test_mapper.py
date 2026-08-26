@@ -139,6 +139,36 @@ async def test_function_call_mapping(mapper: MessageMapper, test_request: AgentF
     assert "TestCity" in full_json
 
 
+async def test_streaming_function_call_mapping_adds_item_once(
+    mapper: MessageMapper, test_request: AgentFrameworkRequest
+) -> None:
+    """Test repeated function metadata does not add duplicate output items."""
+    first_update = create_test_agent_update([
+        Content.from_function_call(
+            call_id="call_123",
+            name="get_weather",
+            arguments='{"location":',
+        )
+    ])
+    second_update = create_test_agent_update([
+        Content.from_function_call(
+            call_id="call_123",
+            name="get_weather",
+            arguments='"Seattle"}',
+        )
+    ])
+
+    events = [
+        *await mapper.convert_event(first_update, test_request),
+        *await mapper.convert_event(second_update, test_request),
+    ]
+
+    added_events = [event for event in events if event.type == "response.output_item.added"]
+    assert len(added_events) == 1
+    delta_events = [event for event in events if event.type == "response.function_call_arguments.delta"]
+    assert "".join(event.delta for event in delta_events) == '{"location":"Seattle"}'
+
+
 async def test_function_result_content_with_string_result(
     mapper: MessageMapper, test_request: AgentFrameworkRequest
 ) -> None:
