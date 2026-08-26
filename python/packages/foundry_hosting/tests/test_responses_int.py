@@ -402,6 +402,25 @@ class TestMultiTurn:
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled
+    async def test_explicit_agent_framework_message_conversation(self) -> None:
+        """Agent Framework Message and Content primitives preserve explicit conversation history."""
+        agent = Agent(
+            client=FoundryChatClient(credential=AzureCliCredential()),  # ty: ignore[invalid-argument-type]
+            instructions="You are a concise assistant. Keep answers very short.",
+        )
+
+        response = await agent.run([
+            Message(role="user", contents=[Content.from_text("My favorite color is blue.")]),
+            Message(role="assistant", contents=[Content.from_text("Your favorite color is blue.")]),
+            Message(role="user", contents=[Content.from_text("What is my favorite color?")]),
+        ])
+
+        assert response.text is not None
+        assert "blue" in response.text.lower()
+
+    @pytest.mark.flaky
+    @pytest.mark.integration
+    @skip_if_foundry_hosting_integration_tests_disabled
     async def test_explicit_user_assistant_user_conversation(self, server: ResponsesHostServer) -> None:
         """Explicit user, assistant, and follow-up user messages form one conversation."""
         resp = await _post_json(
