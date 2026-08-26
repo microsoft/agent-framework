@@ -23,10 +23,20 @@ dotnet run
 
 Ask a question such as `What is the policy for short shipments?`.
 
-The client connects to `http://localhost:5000/` by default. To use another endpoint:
+The client connects to `http://localhost:5000/` by default. To use another
+endpoint, restart the server with its listening and advertised URLs set:
+
+```powershell
+$env:ASPNETCORE_URLS="http://localhost:6000"
+$env:A2A_AGENT_URL="http://localhost:6000/"
+dotnet run
+```
+
+Then set the discovery URL before starting the client:
 
 ```powershell
 $env:A2A_AGENT_URL="http://localhost:6000/"
+dotnet run
 ```
 
 ## Test the server with the HTTP file

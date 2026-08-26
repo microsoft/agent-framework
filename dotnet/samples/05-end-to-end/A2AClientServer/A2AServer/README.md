@@ -23,9 +23,10 @@ dotnet run
 The server must remain running while you use the client, the HTTP requests, or
 the A2A Inspector. By default, it listens at `http://localhost:5000`.
 
-`A2A_AGENT_URL` controls the public URL advertised in the agent card and
-defaults to `http://localhost:5000`. Set it when clients reach the server at a
-different address.
+`ASPNETCORE_URLS` controls the address the server listens on, and
+`A2A_AGENT_URL` controls the public URL advertised in the agent card. Both
+default to `http://localhost:5000`. Set them together when the server should
+run at a different address.
 
 ## Test with the HTTP file
 
