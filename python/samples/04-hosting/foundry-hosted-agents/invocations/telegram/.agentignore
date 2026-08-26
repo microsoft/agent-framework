@@ -1,8 +1,5 @@
 .azure/
-.agent_configs/*
-!.agent_configs/baseline/
-.agent_configs/baseline/*
-!.agent_configs/baseline/instructions.md
+.agent_configs/
 .env
 .git/
 .github/
@@ -17,4 +14,5 @@ infra/
 tests/
 **/__pycache__/
 **/*.pyc
+!instructions.md
 !pyproject.toml

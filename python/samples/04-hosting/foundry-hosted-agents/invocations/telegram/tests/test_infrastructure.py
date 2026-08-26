@@ -48,8 +48,10 @@ def test_sensitive_telemetry_is_configurable_for_hosted_agent() -> None:
 
 def test_agent_instructions_are_included_in_deployment() -> None:
     agent_ignore = (SAMPLE_ROOT / ".agentignore").read_text()
+    main_source = (SAMPLE_ROOT / "main.py").read_text()
 
-    assert "!.agent_configs/baseline/instructions.md" in agent_ignore
+    assert "!instructions.md" in agent_ignore
+    assert 'Path(__file__).parent / "instructions.md"' in main_source
 
 
 def test_apim_policy_preserves_update_and_injects_channel() -> None:
@@ -93,6 +95,10 @@ def test_deployment_health_check_is_authenticated_and_subscription_scoped() -> N
     assert 'az cosmosdb sql role assignment create \\\n        --subscription "$SUBSCRIPTION_ID"' in deploy_script
     assert '--role "Foundry User"' in deploy_script
     assert '--scope "$FOUNDRY_ACCOUNT_ID"' in deploy_script
+    assert "contains(roleDefinitionId, '00000000-0000-0000-0000-000000000002')" in deploy_script
+    assert "&& scope=='$COSMOS_ACCOUNT_SCOPE'" in deploy_script
+    assert "/namedValues/telegram-webhook-secret/refreshSecret?api-version=2024-05-01" in deploy_script
+    assert 'if [[ "$valid_secret_status" == "400" ]]' in deploy_script
 
 
 def test_default_model_is_gpt_5_6_luna() -> None:

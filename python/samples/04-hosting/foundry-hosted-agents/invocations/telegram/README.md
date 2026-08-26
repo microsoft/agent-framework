@@ -87,6 +87,7 @@ All settings are optional except `TELEGRAM_BOT_TOKEN`.
 | `MODEL_CAPACITY` | `10` | Model deployment capacity |
 | `ENABLE_SENSITIVE_DATA` | `true` | Include prompts, responses, and tool data in exported telemetry |
 | `FOUNDRY_ACCESS_TIMEOUT_SECONDS` | `180` | Maximum wait for a new deployer role, with immediate access checks |
+| `APIM_SECRET_REFRESH_TIMEOUT_SECONDS` | `180` | Maximum wait for APIM to load the current Key Vault webhook secret |
 | `INFRA_DEPLOYMENT_ATTEMPTS` | `6` | Bounded retries for eventual-consistency failures during provisioning |
 | `INFRA_RETRY_DELAY_SECONDS` | `30` | Delay between infrastructure deployment attempts |
 | `RBAC_PROPAGATION_WAIT_SECONDS` | `30` | Wait only after creating data-plane assignments |
@@ -120,9 +121,11 @@ One bot is deployed per sample environment, so the chat-derived session key is s
 `/new` clears that Cosmos history without invoking the model. `/start` and `/help` are also handled in application
 code. Callback queries are acknowledged before their data is processed.
 
-For photos, documents, voice notes, audio, and video, the agent calls Telegram `getFile`, rejects files over 5 MiB,
-downloads the bytes, and creates an inline data URI. A token-bearing Telegram file URL is never sent to the model.
-Captions remain text input when media cannot be resolved.
+For photos, PDF documents, and MP3 or WAV audio, the agent calls Telegram `getFile`, rejects files over 1 MiB,
+downloads the bytes, and creates an inline data URI. The conservative limit leaves room for base64 and Cosmos DB
+item serialization overhead. Voice notes, video, and unsupported document/audio formats are rejected before model
+invocation. A token-bearing Telegram file URL is never sent to the model. Captions remain text input when supported
+media cannot be resolved.
 
 Agent execution is streaming-only. The bot sends a placeholder, consumes a `ResponseStream`, throttles cumulative
 `editMessageText` calls, and ignores only Telegram's idempotent “message is not modified” error. Final image
@@ -153,20 +156,6 @@ uv run --group dev pytest -q
 uv run --group dev ruff check main.py tests
 uv run --group dev pyright
 ```
-
-## Evaluate
-
-The hosted runtime and the included `eval.yaml` use the same canonical instructions from
-`.agent_configs/baseline/instructions.md`. After deployment, generate or run the Foundry evaluation suite from this
-directory:
-
-```bash
-azd ai agent eval generate --gen-instruction "$(cat .agent_configs/baseline/instructions.md)" --no-wait
-azd ai agent eval run
-```
-
-`eval run` waits for any pending server-side dataset/evaluator generation, finalizes the local evaluation
-configuration, and executes the suite.
 
 ## Production limitations
 

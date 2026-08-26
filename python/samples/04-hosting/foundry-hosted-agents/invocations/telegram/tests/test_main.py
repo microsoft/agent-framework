@@ -15,6 +15,7 @@ import httpx
 import pytest
 from agent_framework import AgentResponse, AgentResponseUpdate, Content, ResponseStream
 from agent_framework.observability import OBSERVABILITY_SETTINGS
+from agent_framework.openai import OpenAIChatClient
 
 MODULE_PATH = Path(__file__).parents[1] / "main.py"
 SPEC = importlib.util.spec_from_file_location("telegram_hosted_agent_main", MODULE_PATH)
@@ -225,6 +226,94 @@ async def test_resolves_media_to_bounded_data_uri(monkeypatch: pytest.MonkeyPatc
     assert sentinel not in result
 
 
+@pytest.mark.parametrize(
+    "message_fields",
+    [
+        {"voice": {"file_id": "voice-1", "mime_type": "audio/ogg"}},
+        {"video": {"file_id": "video-1", "mime_type": "video/mp4"}},
+        {"document": {"file_id": "document-1", "mime_type": "text/plain"}},
+    ],
+)
+async def test_rejects_media_the_model_serializer_does_not_support(
+    message_fields: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execute = AsyncMock(return_value={})
+    agent = SimpleNamespace(run=Mock())
+    runtime = cast(Any, SimpleNamespace(agent=agent))
+    monkeypatch.setattr(main, "execute_telegram_operation", execute)
+
+    await main.handle_telegram_update(_message_update(text="", **message_fields), "session-1", runtime)
+
+    operation = execute.await_args.args[1]
+    assert operation["method"] == "sendMessage"
+    assert "photos, PDF documents, and MP3 or WAV audio" in operation["payload"]["text"]
+    agent.run.assert_not_called()
+
+
+async def test_normalizes_telegram_mpeg_audio_for_model_serialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    stream = _empty_stream()
+    agent = SimpleNamespace(
+        create_session=Mock(return_value=object()),
+        run=Mock(return_value=stream),
+    )
+    runtime = cast(Any, SimpleNamespace(agent=agent))
+    monkeypatch.setattr(
+        main,
+        "resolve_telegram_file",
+        AsyncMock(return_value="data:audio/mp3;base64,bXAz"),
+    )
+    monkeypatch.setattr(
+        main,
+        "execute_telegram_operation",
+        AsyncMock(return_value={"message_id": 42}),
+    )
+    monkeypatch.setattr(main, "deliver_stream", AsyncMock())
+
+    await main.handle_telegram_update(
+        _message_update(text="", audio={"file_id": "audio-1", "mime_type": "audio/mpeg"}),
+        "session-1",
+        runtime,
+    )
+
+    messages = agent.run.call_args.args[0]
+    content = messages[0].contents[0]
+    assert content.type == "data"
+    assert content.media_type == "audio/mp3"
+    assert content.uri == "data:audio/mp3;base64,bXAz"
+    serialized = OpenAIChatClient(api_key="test")._prepare_content_for_openai(  # pyright: ignore[reportPrivateUsage]
+        "user",
+        content,
+    )
+    assert serialized == {
+        "type": "input_audio",
+        "input_audio": {"data": "data:audio/mp3;base64,bXAz", "format": "mp3"},
+    }
+
+
+@pytest.mark.parametrize(
+    ("media_type", "expected_type"),
+    [
+        ("image/jpeg", "input_image"),
+        ("application/pdf", "input_file"),
+        ("audio/mp3", "input_audio"),
+        ("audio/wav", "input_audio"),
+    ],
+)
+def test_supported_media_types_serialize_for_foundry(
+    media_type: str,
+    expected_type: str,
+) -> None:
+    content = Content.from_uri(uri=f"data:{media_type};base64,dGVzdA==", media_type=media_type)
+
+    serialized = OpenAIChatClient(api_key="test")._prepare_content_for_openai(  # pyright: ignore[reportPrivateUsage]
+        "user",
+        content,
+    )
+
+    assert serialized["type"] == expected_type
+
+
 async def test_rejects_media_over_size_bound(monkeypatch: pytest.MonkeyPatch) -> None:
     http = SimpleNamespace(stream=Mock())
     runtime = cast(Any, SimpleNamespace(http=http))
@@ -236,6 +325,7 @@ async def test_rejects_media_over_size_bound(monkeypatch: pytest.MonkeyPatch) ->
 
     assert await main.resolve_telegram_file("large-file", runtime) is None
     http.stream.assert_not_called()
+    assert main.MAX_MEDIA_BYTES == 1024 * 1024
 
 
 async def test_stops_media_stream_when_download_exceeds_bound(monkeypatch: pytest.MonkeyPatch) -> None:

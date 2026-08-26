@@ -22,6 +22,7 @@ APIM_PUBLISHER_NAME="${APIM_PUBLISHER_NAME:-Agent Framework sample}"
 ROTATE_TELEGRAM_WEBHOOK_SECRET="${ROTATE_TELEGRAM_WEBHOOK_SECRET:-0}"
 RBAC_PROPAGATION_WAIT_SECONDS="${RBAC_PROPAGATION_WAIT_SECONDS:-30}"
 FOUNDRY_ACCESS_TIMEOUT_SECONDS="${FOUNDRY_ACCESS_TIMEOUT_SECONDS:-180}"
+APIM_SECRET_REFRESH_TIMEOUT_SECONDS="${APIM_SECRET_REFRESH_TIMEOUT_SECONDS:-180}"
 INFRA_DEPLOYMENT_ATTEMPTS="${INFRA_DEPLOYMENT_ATTEMPTS:-6}"
 INFRA_RETRY_DELAY_SECONDS="${INFRA_RETRY_DELAY_SECONDS:-30}"
 PARAMETERS_FILE="$ROOT/.deploy-parameters.json"
@@ -76,6 +77,10 @@ if [[ ! "$RBAC_PROPAGATION_WAIT_SECONDS" =~ ^[0-9]+$ ]]; then
 fi
 if [[ ! "$FOUNDRY_ACCESS_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]; then
     printf 'FOUNDRY_ACCESS_TIMEOUT_SECONDS must be a non-negative integer.\n' >&2
+    exit 1
+fi
+if [[ ! "$APIM_SECRET_REFRESH_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]; then
+    printf 'APIM_SECRET_REFRESH_TIMEOUT_SECONDS must be a non-negative integer.\n' >&2
     exit 1
 fi
 if [[ ! "$INFRA_DEPLOYMENT_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
@@ -228,11 +233,14 @@ PROJECT_ENDPOINT="$(output_value foundryProjectEndpoint)"
 MODEL_DEPLOYMENT_NAME="$(output_value modelDeploymentName)"
 COSMOS_ENDPOINT="$(output_value cosmosEndpoint)"
 COSMOS_ACCOUNT_NAME="$(output_value cosmosAccountName)"
+COSMOS_ACCOUNT_SCOPE="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP_NAME}"\
+"/providers/Microsoft.DocumentDB/databaseAccounts/${COSMOS_ACCOUNT_NAME}"
 COSMOS_DATABASE_NAME="$(output_value cosmosDatabaseName)"
 COSMOS_CONTAINER_NAME="$(output_value cosmosContainerName)"
 KEY_VAULT_ID="$(output_value keyVaultId)"
 KEY_VAULT_URL="$(output_value keyVaultUrl)"
 WEBHOOK_URL="$(output_value telegramWebhookUrl)"
+APIM_NAME="$(output_value apimName)"
 
 if ! azd_command env list -o json \
     | jq -e --arg name "$AZD_ENV_NAME" '.[] | select((.Name // .name) == $name)' >/dev/null; then
@@ -323,7 +331,9 @@ if [[ "$(
         --subscription "$SUBSCRIPTION_ID" \
         --resource-group "$RESOURCE_GROUP_NAME" \
         --account-name "$COSMOS_ACCOUNT_NAME" \
-        --query "[?principalId=='$AGENT_PRINCIPAL_ID'] | length(@)" \
+        --query "[?principalId=='$AGENT_PRINCIPAL_ID' \
+            && contains(roleDefinitionId, '00000000-0000-0000-0000-000000000002') \
+            && scope=='$COSMOS_ACCOUNT_SCOPE'] | length(@)" \
         -o tsv
 )" == "0" ]]; then
     az cosmosdb sql role assignment create \
@@ -369,6 +379,37 @@ if [[ "$health_status" != "400" ]]; then
     printf 'Unexpected hosted-agent health response: %s\n' "$health_status" >&2
     exit 1
 fi
+
+printf 'Synchronizing the APIM webhook secret from Key Vault...\n'
+APIM_SECRET_REFRESH_URL="https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}"\
+"/resourceGroups/${RESOURCE_GROUP_NAME}/providers/Microsoft.ApiManagement/service/${APIM_NAME}"\
+"/namedValues/telegram-webhook-secret/refreshSecret?api-version=2024-05-01"
+refresh_deadline=$((SECONDS + APIM_SECRET_REFRESH_TIMEOUT_SECONDS))
+while true; do
+    refreshed=0
+    if az rest --method post --url "$APIM_SECRET_REFRESH_URL" --output none >/dev/null 2>&1; then
+        valid_secret_response="$(
+            curl -sS \
+                -w $'\n%{http_code}' \
+                -X POST "$WEBHOOK_URL" \
+                -H 'Content-Type: application/json' \
+                -H "X-Telegram-Bot-Api-Secret-Token: $webhook_secret" \
+                -d '{}'
+        )"
+        valid_secret_status="${valid_secret_response##*$'\n'}"
+        if [[ "$valid_secret_status" == "400" ]]; then
+            refreshed=1
+        fi
+    fi
+    if [[ "$refreshed" == "1" ]]; then
+        break
+    fi
+    if (( SECONDS >= refresh_deadline )); then
+        printf 'Timed out waiting for APIM to refresh the webhook secret from Key Vault.\n' >&2
+        exit 1
+    fi
+    sleep 10
+done
 
 printf 'Checking APIM rejects an invalid webhook secret...\n'
 invalid_response="$(

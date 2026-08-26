@@ -15,13 +15,13 @@ import base64
 import logging
 import os
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
-from agent_framework import Agent, AgentResponse, AgentResponseUpdate, ResponseStream
+from agent_framework import Agent, AgentResponse, AgentResponseUpdate, AgentRunInputs, Message, ResponseStream
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import enable_instrumentation
 from agent_framework_azure_cosmos import CosmosHistoryProvider
@@ -46,13 +46,23 @@ load_dotenv()
 
 LOGGER = logging.getLogger(__name__)
 EDIT_INTERVAL_SECONDS = 0.4
-MAX_MEDIA_BYTES = 5 * 1024 * 1024
+MAX_MEDIA_BYTES = 1024 * 1024
 PLACEHOLDER_TEXT = "..."
 BOT_TOKEN_SECRET_NAME = "telegram-bot-token"
 ENABLE_SENSITIVE_DATA = os.getenv("ENABLE_SENSITIVE_DATA", "true").casefold() in {"1", "true", "yes", "on"}
-AGENT_INSTRUCTIONS = (
-    (Path(__file__).parent / ".agent_configs" / "baseline" / "instructions.md").read_text(encoding="utf-8").strip()
-)
+AGENT_INSTRUCTIONS = (Path(__file__).parent / "instructions.md").read_text(encoding="utf-8").strip()
+MODEL_MEDIA_TYPES = {
+    "application/pdf": "application/pdf",
+    "audio/mp3": "audio/mp3",
+    "audio/mpeg": "audio/mp3",
+    "audio/wav": "audio/wav",
+    "audio/wave": "audio/wav",
+    "audio/x-wav": "audio/wav",
+    "image/gif": "image/gif",
+    "image/jpeg": "image/jpeg",
+    "image/png": "image/png",
+    "image/webp": "image/webp",
+}
 
 # Message bodies and Telegram file URLs can contain user content or the bot
 # token, so keep dependency INFO logs out of non-sensitive telemetry.
@@ -222,6 +232,25 @@ async def resolve_telegram_file(
     return f"data:{media_type};base64,{encoded}"
 
 
+def _normalize_run_media_type(messages: AgentRunInputs, source_media_type: str, model_media_type: str) -> None:
+    """Align converted URI content with the model serializer's supported media type."""
+    if isinstance(messages, Message):
+        normalized_messages = (messages,)
+    elif isinstance(messages, Sequence) and not isinstance(messages, (str, bytes)):
+        normalized_messages = messages
+    else:
+        return
+    for message in normalized_messages:
+        if not isinstance(message, Message):
+            continue
+        for content in message.contents:
+            if (
+                getattr(content, "type", None) in {"data", "uri"}
+                and getattr(content, "media_type", None) == source_media_type
+            ):
+                content.media_type = model_media_type
+
+
 async def _send_command_response(
     update: Mapping[str, Any],
     command: str,
@@ -305,9 +334,22 @@ async def handle_telegram_update(update: Mapping[str, Any], session_id: str, run
         return
 
     media = telegram_media_file_id(update)
+    model_media_type = MODEL_MEDIA_TYPES.get(media[1].lower()) if media is not None else None
+    if media is not None and model_media_type is None:
+        await execute_telegram_operation(
+            runtime,
+            TelegramOperation(
+                method="sendMessage",
+                payload={
+                    "chat_id": chat_id,
+                    "text": "I can process photos, PDF documents, and MP3 or WAV audio up to 1 MiB.",
+                },
+            ),
+        )
+        return
 
     async def resolve_file(file_id: str) -> str | None:
-        media_type = media[1] if media is not None and media[0] == file_id else "application/octet-stream"
+        media_type = model_media_type if media is not None and media[0] == file_id else "application/octet-stream"
         return await resolve_telegram_file(file_id, runtime, media_type=media_type)
 
     try:
@@ -323,11 +365,13 @@ async def handle_telegram_update(update: Mapping[str, Any], session_id: str, run
                 method="sendMessage",
                 payload={
                     "chat_id": chat_id,
-                    "text": "I could not process that update. Try sending text or a supported file up to 5 MiB.",
+                    "text": "I could not process that update. Try sending text or a supported file up to 1 MiB.",
                 },
             ),
         )
         return
+    if media is not None and model_media_type != media[1]:
+        _normalize_run_media_type(run["messages"], media[1], model_media_type)
 
     placeholder = await execute_telegram_operation(
         runtime,
