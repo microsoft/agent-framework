@@ -360,11 +360,11 @@ def _parse_sse_events(body: str) -> list[dict[str, Any]]:
 
 async def test_agui_service_storage_sends_only_incremental_provider_input() -> None:
     """AG-UI snapshots stay complete while service-backed provider requests contain only the new turn."""
-    hosted_agent = _make_agent(
+    hosted_agent_backend = _make_agent(
         response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ACK")])])
     )
-    hosted_server = _make_server(hosted_agent)
-    transport = _CapturingASGITransport(hosted_server)
+    local_hosted_agent_api = _make_server(hosted_agent_backend)
+    transport = _CapturingASGITransport(local_hosted_agent_api)
     responses_client = AsyncOpenAI(
         api_key="test-key",
         base_url="http://test",
@@ -372,8 +372,9 @@ async def test_agui_service_storage_sends_only_incremental_provider_input() -> N
         max_retries=0,
     )
     store = InMemoryAGUIThreadSnapshotStore()
+    hosted_agent_client = Agent(client=OpenAIChatClient(model="test-model", async_client=responses_client))
     runner = AgentFrameworkAgent(
-        agent=Agent(client=OpenAIChatClient(model="test-model", async_client=responses_client)),
+        agent=hosted_agent_client,
         use_service_session=True,
         snapshot_store=store,
     )
@@ -410,6 +411,9 @@ async def test_agui_service_storage_sends_only_incremental_provider_input() -> N
     assert [[item["role"] for item in items] for items in provider_inputs] == [["user"], ["user"]]
     assert [items[0]["content"][0]["text"] for items in provider_inputs] == ["first", "second"]
     assert [payload["conversation"] for payload in transport.payloads] == [thread_id, thread_id]
+    assert hosted_agent_backend.run.call_count == 2
+    hosted_turns = [call.kwargs["messages"] for call in hosted_agent_backend.run.call_args_list]
+    assert [turn[-1].text for turn in hosted_turns] == ["first", "second"]
 
     second_snapshot = next(
         event.model_dump(by_alias=True)["messages"]
