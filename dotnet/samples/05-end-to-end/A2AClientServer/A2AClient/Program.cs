@@ -1,77 +1,48 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.CommandLine;
-using System.Reflection;
+// This sample shows how to discover and invoke an agent hosted by an A2A server.
+
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 
 namespace A2A;
 
 public static class Program
 {
-    public static async Task<int> Main(string[] args)
+    public static async Task Main()
     {
-        // Create root command with options
-        var rootCommand = new RootCommand("A2AClient");
-        rootCommand.SetAction((_, ct) => HandleCommandsAsync(ct));
+        // Initialize an A2ACardResolver to discover the policy agent.
+        var agentUrl = Environment.GetEnvironmentVariable("A2A_AGENT_URL") ?? "http://localhost:5000/";
+        var agentCardResolver = new A2ACardResolver(new Uri(agentUrl));
 
-        // Run the command
-        return await rootCommand.Parse(args).InvokeAsync();
-    }
+        // Create an AIAgent from the A2A agent card.
+        AIAgent policyAgent = await agentCardResolver.GetAIAgentAsync();
 
-    private static async Task HandleCommandsAsync(CancellationToken cancellationToken)
-    {
-        // Set up the logging
-        using var loggerFactory = LoggerFactory.Create(builder =>
+        // Create a session to preserve the conversation between requests.
+        AgentSession session = await policyAgent.CreateSessionAsync();
+
+        while (true)
         {
-            builder.AddConsole();
-            builder.SetMinimumLevel(LogLevel.Information);
-        });
-        var logger = loggerFactory.CreateLogger("A2AClient");
+            // Read the next request from the console.
+            Console.Write("\nUser (:q or quit to exit): ");
+            string? message = Console.ReadLine();
 
-        // Retrieve configuration settings
-        IConfigurationRoot configRoot = new ConfigurationBuilder()
-            .AddEnvironmentVariables()
-            .AddUserSecrets(Assembly.GetExecutingAssembly())
-            .Build();
-        var apiKey = configRoot["A2AClient:ApiKey"] ?? throw new ArgumentException("A2AClient:ApiKey must be provided");
-        var modelId = configRoot["A2AClient:ModelId"] ?? "gpt-5.4-mini";
-        var agentUrls = configRoot["A2AClient:AgentUrls"] ?? "http://localhost:5000/;http://localhost:5001/;http://localhost:5002/";
-
-        // Create the Host agent
-        var hostAgent = new HostClientAgent(loggerFactory);
-        await hostAgent.InitializeAgentAsync(modelId, apiKey, agentUrls!.Split(";"));
-        AgentSession session = await hostAgent.Agent!.CreateSessionAsync(cancellationToken);
-        try
-        {
-            while (true)
+            if (string.IsNullOrWhiteSpace(message))
             {
-                // Get user message
-                Console.Write("\nUser (:q or quit to exit): ");
-                string? message = Console.ReadLine();
-                if (string.IsNullOrWhiteSpace(message))
-                {
-                    Console.WriteLine("Request cannot be empty.");
-                    continue;
-                }
-
-                if (message is ":q" or "quit")
-                {
-                    break;
-                }
-
-                var agentResponse = await hostAgent.Agent!.RunAsync(message, session, cancellationToken: cancellationToken);
-
-                Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine($"\nAgent: {agentResponse.Text}");
-                Console.ResetColor();
+                Console.WriteLine("Request cannot be empty.");
+                continue;
             }
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "An error occurred while running the A2AClient");
-            return;
+
+            if (message is ":q" or "quit")
+            {
+                break;
+            }
+
+            // Invoke the remote policy agent over A2A and display its response.
+            AgentResponse response = await policyAgent.RunAsync(message, session);
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"\nPolicy agent: {response.Text}");
+            Console.ResetColor();
         }
     }
 }
