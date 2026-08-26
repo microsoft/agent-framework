@@ -1,0 +1,17 @@
+.azure/
+.agent_configs/
+.env
+.git/
+.github/
+.pytest_cache/
+.ruff_cache/
+.venv/
+README.md
+azure.yaml
+deploy.sh
+eval.yaml
+infra/
+tests/
+**/__pycache__/
+**/*.pyc
+!pyproject.toml

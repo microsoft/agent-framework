@@ -1,0 +1,1 @@
+A concise Telegram assistant that handles text and media requests, maintains conversation context, and supports conversation reset commands.
