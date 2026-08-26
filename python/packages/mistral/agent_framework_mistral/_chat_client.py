@@ -20,6 +20,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FinishReasonLiteral,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -186,6 +187,20 @@ _FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "model_length": "length",
     "tool_calls": "tool_calls",
 }
+
+
+def _map_finish_reason(reason: Any) -> FinishReason | None:
+    """Map a Mistral finish reason onto a framework finish reason.
+
+    Finish reasons that are not in ``_FINISH_REASON_MAP`` are passed through unchanged so that
+    values such as ``error`` still reach the caller instead of being reported as no finish
+    reason at all.
+    """
+    if not reason:
+        return None
+    raw = str(reason)
+    return FinishReason(_FINISH_REASON_MAP.get(raw, raw))
+
 
 # La Plateforme requires tool call IDs to be exactly 9 alphanumeric characters.
 _MISTRAL_TOOL_CALL_ID_PATTERN = re.compile(r"^[a-zA-Z0-9]{9}$")
@@ -754,9 +769,7 @@ class RawMistralChatClient(
         choice: Mapping[str, Any] = choices[0] if choices else {}
         message: Mapping[str, Any] = choice.get("message") or {}
         contents = self._parse_message_contents(message)
-        finish_reason: FinishReasonLiteral | None = None
-        if reason := choice.get("finish_reason"):
-            finish_reason = _FINISH_REASON_MAP.get(str(reason))
+        finish_reason = _map_finish_reason(choice.get("finish_reason"))
         return ChatResponse(
             response_id=response.get("id"),
             messages=[Message(role="assistant", contents=contents, raw_representation=choice or None)],
@@ -775,7 +788,7 @@ class RawMistralChatClient(
         emitted as complete calls when their choice finishes.
         """
         contents: list[Content] = []
-        finish_reason: FinishReasonLiteral | None = None
+        finish_reason: FinishReason | None = None
         choices = cast("Sequence[Mapping[str, Any]]", chunk.get("choices") or ())
         for choice in choices:
             choice_index = index if isinstance(index := choice.get("index"), int) else 0
@@ -786,7 +799,7 @@ class RawMistralChatClient(
             if reason := choice.get("finish_reason"):
                 contents.extend(tool_calls.flush_choice(choice_index))
                 if finish_reason is None:
-                    finish_reason = _FINISH_REASON_MAP.get(str(reason))
+                    finish_reason = _map_finish_reason(reason)
         if usage := self._parse_usage(chunk.get("usage")):
             contents.append(Content.from_usage(usage_details=usage, raw_representation=chunk))
         return ChatResponseUpdate(
