@@ -3419,29 +3419,15 @@ class SecureMCPToolProxy:
             raise ValueError("Provide either 'mcp_tool' (an MCPTool instance) or 'url' (a remote MCP server URL).")
 
         if url is not None:
-            from httpx import AsyncClient, Timeout
+            from ._mcp import MCPStreamableHTTPTool
 
-            from ._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT, MCPStreamableHTTPTool
-
-            static_headers = dict(headers or {})
-            # Pass headers via an AsyncClient so they are included on ALL requests
-            # (including session.initialize()), not just tool calls. ``headers=`` on
-            # MCPStreamableHTTPTool is the preferred origin-scoped equivalent;
-            # SecureMCPToolProxy still uses a dedicated client because it exposes a
-            # static ``headers`` mapping of its own.
-            http_client = (
-                AsyncClient(
-                    headers=static_headers,
-                    follow_redirects=True,
-                    timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
-                )
-                if static_headers
-                else None
-            )
+            # Prefer origin-scoped ``headers=`` over baking tokens into an
+            # ``AsyncClient(headers=..., follow_redirects=True)``, which can leak
+            # non-Authorization credentials on cross-origin redirects.
             mcp_tool = MCPStreamableHTTPTool(
                 name=name or "mcp",
                 url=url,
-                http_client=http_client,
+                headers=dict(headers) if headers else None,
                 description=description,
             )
 

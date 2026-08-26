@@ -3028,6 +3028,9 @@ class MCPStreamableHTTPTool(MCPTool):
                 itself. Prefer ``headers`` over baking tokens into a custom
                 ``http_client`` so the origin-scoped injection policy still applies.
                 Per-call ``header_provider`` values overlay these static headers.
+                On a cross-origin redirect, headers previously injected by this hook
+                are stripped from the redirected request (HTTPX already strips
+                ``Authorization``; other secrets such as ``X-API-Key`` are removed here).
             header_provider: Optional callable that receives the runtime keyword arguments
                 (from ``FunctionInvocationContext.kwargs``) and returns a ``dict[str, str]``
                 of HTTP headers to inject into outbound requests to the MCP server.
@@ -3096,6 +3099,10 @@ class MCPStreamableHTTPTool(MCPTool):
         # otherwise overwrite each other's snapshot and attach the wrong per-call headers.
         self._active_call_headers: dict[str, str] | None = None
         self._call_headers_lock = asyncio.Lock()
+        # Keys last injected by the request hook. HTTPX may copy non-Authorization secrets
+        # onto a cross-origin redirect; the hook strips these keys when the next request
+        # leaves the configured origin.
+        self._injected_header_keys: set[str] = set()
 
     def _mcp_base_span_attributes(self) -> dict[str, Any]:
         attrs = super()._mcp_base_span_attributes()
@@ -3169,6 +3176,11 @@ class MCPStreamableHTTPTool(MCPTool):
 
                 async def _inject_headers(request: Request) -> None:  # ruff:ignore[unused-async]
                     if _url_origin(request.url) != target_origin:
+                        # Strip secrets this hook previously injected. HTTPX removes
+                        # Authorization on cross-origin redirects, but other credentials
+                        # (e.g. X-API-Key) can remain on the redirected request.
+                        for key in self._injected_header_keys:
+                            request.headers.pop(key, None)
                         return
                     # The transport may send this request from a task whose context was
                     # captured before call_tool set the ContextVar; fall back to the
@@ -3176,7 +3188,9 @@ class MCPStreamableHTTPTool(MCPTool):
                     # only when this is an ambient request outside call_tool; an active
                     # call that legitimately produced no headers yields an empty dict and
                     # must not trigger the ambient header_provider({}) fallback.
-                    for key, value in self._resolve_outbound_headers().items():
+                    outbound = self._resolve_outbound_headers()
+                    self._injected_header_keys = set(outbound)
+                    for key, value in outbound.items():
                         request.headers[key] = value
 
                 self._inject_headers_hook = _inject_headers

@@ -6303,7 +6303,11 @@ async def test_mcp_streamable_http_tool_header_provider_ambient_non_keyerror_pro
 
 
 async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redirect():
-    """The request hook must not re-add caller headers after a cross-origin redirect."""
+    """The request hook must strip previously injected secrets after a cross-origin redirect.
+
+    HTTPX already strips Authorization on cross-origin redirects, so this uses X-API-Key
+    and preserves that header on the redirected request the way a real redirect copy would.
+    """
     import httpx
 
     from agent_framework._mcp import _mcp_call_headers
@@ -6311,7 +6315,7 @@ async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redir
     tool = MCPStreamableHTTPTool(
         name="test",
         url="http://example.com/mcp",
-        header_provider=lambda kw: {"Authorization": f"Bearer {kw.get('token', '')}"},
+        header_provider=lambda kw: {"X-API-Key": kw.get("token", "")},
     )
 
     try:
@@ -6322,15 +6326,20 @@ async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redir
             hooks = tool._httpx_client.event_hooks.get("request", [])
             assert len(hooks) == 1
 
-            token = _mcp_call_headers.set({"Authorization": "Bearer secret"})
+            token = _mcp_call_headers.set({"X-API-Key": "secret"})
             try:
                 same_origin = httpx.Request("POST", "http://example.com/redirected")
                 await hooks[0](same_origin)
-                assert same_origin.headers.get("Authorization") == "Bearer secret"
+                assert same_origin.headers.get("X-API-Key") == "secret"
 
-                cross_origin = httpx.Request("POST", "http://attacker.example/capture")
+                # Simulate HTTPX copying non-Authorization credentials onto the redirect.
+                cross_origin = httpx.Request(
+                    "POST",
+                    "http://attacker.example/capture",
+                    headers={"X-API-Key": "secret"},
+                )
                 await hooks[0](cross_origin)
-                assert "Authorization" not in cross_origin.headers
+                assert "X-API-Key" not in cross_origin.headers
             finally:
                 _mcp_call_headers.reset(token)
     finally:
@@ -6339,13 +6348,13 @@ async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redir
 
 
 async def test_mcp_streamable_http_tool_static_headers_skip_cross_origin_redirect():
-    """Static connect headers must not leak to a different origin after a redirect."""
+    """Static connect headers must be stripped from a cross-origin redirect request."""
     import httpx
 
     tool = MCPStreamableHTTPTool(
         name="test",
         url="http://example.com/mcp",
-        headers={"Authorization": "Bearer connect-token"},
+        headers={"X-API-Key": "connect-token"},
     )
 
     try:
@@ -6358,11 +6367,17 @@ async def test_mcp_streamable_http_tool_static_headers_skip_cross_origin_redirec
 
             same_origin = httpx.Request("POST", "http://example.com/mcp")
             await hooks[0](same_origin)
-            assert same_origin.headers.get("Authorization") == "Bearer connect-token"
+            assert same_origin.headers.get("X-API-Key") == "connect-token"
 
-            cross_origin = httpx.Request("POST", "http://attacker.example/capture")
+            # Simulate HTTPX copying the secret onto the redirected request. Authorization
+            # would already be stripped by HTTPX; X-API-Key would not.
+            cross_origin = httpx.Request(
+                "POST",
+                "http://attacker.example/capture",
+                headers={"X-API-Key": "connect-token"},
+            )
             await hooks[0](cross_origin)
-            assert "Authorization" not in cross_origin.headers
+            assert "X-API-Key" not in cross_origin.headers
     finally:
         if getattr(tool, "_httpx_client", None) is not None:
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
