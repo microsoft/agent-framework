@@ -114,12 +114,6 @@ public static partial class AIAgentExtensions
     /// <paramref name="conversationId"/> is empty, consists only of whitespace, or is a value the framework reserves
     /// for internal use.
     /// </exception>
-    /// <exception cref="InvalidOperationException">
-    /// Not thrown by this method, but thrown by the returned client when a session-bound call supplies an
-    /// unrecognized <see cref="ChatOptions.ConversationId"/>. From
-    /// <see cref="IChatClient.GetStreamingResponseAsync"/> it surfaces from the call itself rather than when the
-    /// returned sequence is enumerated.
-    /// </exception>
     /// <remarks>
     /// <para>
     /// By default the returned client is stateless: no <see cref="AgentSession"/> is used, so every call must supply the
@@ -134,17 +128,29 @@ public static partial class AIAgentExtensions
     /// so the returned client reports one on every response. Callers should follow it: send only the new messages on
     /// each subsequent call, along with the reported id, rather than resending a history the session is already
     /// accumulating. The reported id is the service-managed one once the <paramref name="session"/> holds one, and
-    /// otherwise an id belonging to the returned client itself; when the caller echoes the latter back it is stripped
-    /// before the agent sees it, which restores the as-if-absent semantics of the first turn, because a fixed bound
-    /// session cannot fork. A conversation id naming neither of those is rejected with an
-    /// <see cref="InvalidOperationException"/>. Whichever id is reported is therefore always one the next call accepts.
+    /// otherwise an id belonging to the returned client itself. Echoing back any id the client has reported is
+    /// accepted: it is stripped before the agent sees it, which restores the as-if-absent semantics of the first turn,
+    /// and a fixed bound session cannot fork, so the conversation simply continues. Acceptance spans the client's own
+    /// id, the session's current service conversation id, and the id most recently reported — the last because a
+    /// service that forks the conversation each turn advances the session's id after one has already been handed out.
+    /// A conversation id naming none of those is rejected with an <see cref="InvalidOperationException"/>, which for
+    /// <see cref="IChatClient.GetStreamingResponseAsync"/> surfaces from the call itself rather than when the returned
+    /// sequence is enumerated. Whichever id is reported is therefore always one the next call accepts.
     /// </para>
     /// <para>
-    /// On the first turn of a service-backed conversation the streaming and non-streaming entry points can report
-    /// different ids: streaming re-checks the <paramref name="session"/> as each update goes out, so updates streamed
-    /// before the service id has been learned carry the client's own id, while the identical non-streaming call
-    /// already reports the just-learned service id. Both remain acceptable on the following turn, so a caller that
-    /// echoes back what it was given is unaffected.
+    /// The streaming and non-streaming entry points can report different ids for the same call whenever the service
+    /// mints or advances an id during the run: streaming re-checks the <paramref name="session"/> as each update goes
+    /// out, so updates streamed before the session adopts the service id carry the client's own id, while the
+    /// identical non-streaming call reports the adopted id throughout. Against a service that forks per turn this
+    /// happens on every turn, not merely the first, and streaming may report an id the session has superseded by the
+    /// time the caller replies. Echoing that id back is accepted and resolved transparently to the current
+    /// conversation, so a caller that returns what it was given is unaffected.
+    /// </para>
+    /// <para>
+    /// So that the conversation id is reported even when there is nothing else to report, a session-bound stream that
+    /// produces no updates still yields a single update carrying only that id. Aggregating such a stream with
+    /// <see cref="ChatResponseExtensions.ToChatResponse(System.Collections.Generic.IEnumerable{ChatResponseUpdate})"/>
+    /// therefore produces one empty assistant message rather than an empty message list.
     /// </para>
     /// <para>
     /// A session-bound client supports one in-flight request at a time. Concurrent calls over the same bound session

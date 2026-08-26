@@ -1348,6 +1348,251 @@ public partial class AIAgentChatClientTests
     }
 
     [Fact]
+    public async Task GetStreamingResponseAsync_WhenSessionLearnsServiceIdMidRun_ReportsItFromThatPointAndRoundTripsAsync()
+    {
+        // Arrange
+        // The session starts with no id and adopts "S" part-way through the stream, exactly as a service-managed run
+        // does: the agent records the id on the session, but only once its own update loop has moved on.
+        var session = new ChatClientAgentSession();
+        AgentRunOptions? capturedOptions = null;
+
+        async IAsyncEnumerable<AgentResponseUpdate> StreamAsync()
+        {
+            yield return new(ChatRole.Assistant, "before");
+            await Task.Yield();
+
+            session.ConversationId = "S";
+
+            yield return new(ChatRole.Assistant, "after")
+            {
+                RawRepresentation = new ChatResponseUpdate(ChatRole.Assistant, "after") { ConversationId = "S" }
+            };
+        }
+
+        var agent = new TestAIAgent
+        {
+            RunStreamingAsyncFunc = (messages, s, options, cancellationToken) =>
+            {
+                capturedOptions = options;
+                return StreamAsync();
+            }
+        };
+
+        using var chatClient = agent.AsIChatClient(session, "adapter-conversation");
+
+        // Act
+        List<ChatResponseUpdate> receivedUpdates = [];
+        await foreach (var update in chatClient.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Hi")]))
+        {
+            receivedUpdates.Add(update);
+        }
+
+        var reportedConversationId = receivedUpdates.ToChatResponse().ConversationId;
+
+        // Echo back whatever was reported, which is all a protocol-conformant caller knows to do.
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(
+            [new ChatMessage(ChatRole.User, "Again")],
+            new ChatOptions { ConversationId = reportedConversationId }))
+        {
+            // Enumerate to completion.
+        }
+
+        // Assert
+        Assert.Equal(2, receivedUpdates.Count);
+        Assert.Equal("adapter-conversation", receivedUpdates[0].ConversationId);
+        Assert.Equal("S", receivedUpdates[1].ConversationId);
+        Assert.Equal("S", reportedConversationId);
+
+        // The echo is accepted rather than rejected. By the second call the session holds "S" itself, so the id is
+        // forwarded for ChatClientAgent to validate rather than stripped; either outcome names the same conversation.
+        var forwarded = Assert.IsType<ChatClientAgentRunOptions>(capturedOptions).ChatOptions;
+        Assert.True(
+            forwarded!.ConversationId is null || forwarded.ConversationId == "S",
+            $"Expected the echoed id to be stripped or forwarded as the current conversation, got '{forwarded.ConversationId}'.");
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WhenServiceAdvancesConversationIdMidRun_ReportedIdIsStillAcceptedAsync()
+    {
+        // Arrange
+        // A forking service mints a new id every turn: the stream carries "S2" while the session still holds "S1",
+        // and the session only catches up as the run ends. Whatever the caller is handed must remain usable, or the
+        // very next turn fails on an id this adapter itself produced.
+        var session = new ChatClientAgentSession("S1");
+        AgentRunOptions? capturedOptions = null;
+
+        async IAsyncEnumerable<AgentResponseUpdate> StreamAsync()
+        {
+            yield return new(ChatRole.Assistant, "chunk")
+            {
+                RawRepresentation = new ChatResponseUpdate(ChatRole.Assistant, "chunk") { ConversationId = "S2" }
+            };
+
+            await Task.Yield();
+
+            // End of run: the session adopts the new id, superseding whatever was already streamed.
+            session.ConversationId = "S2";
+        }
+
+        var agent = new TestAIAgent
+        {
+            RunStreamingAsyncFunc = (messages, s, options, cancellationToken) =>
+            {
+                capturedOptions = options;
+                return StreamAsync();
+            }
+        };
+
+        using var chatClient = agent.AsIChatClient(session, "adapter-conversation");
+
+        // Act
+        List<ChatResponseUpdate> receivedUpdates = [];
+        await foreach (var update in chatClient.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Hi")]))
+        {
+            receivedUpdates.Add(update);
+        }
+
+        var reportedConversationId = receivedUpdates.ToChatResponse().ConversationId;
+
+        // Assert
+        // The reported id must round-trip. It is stale by now — the session moved to "S2" only after it was
+        // streamed — so acceptance cannot be decided from the session's current value alone.
+        Assert.NotNull(reportedConversationId);
+
+        await foreach (var _ in chatClient.GetStreamingResponseAsync(
+            [new ChatMessage(ChatRole.User, "Again")],
+            new ChatOptions { ConversationId = reportedConversationId }))
+        {
+            // Enumerate to completion; the absence of an InvalidOperationException is the assertion.
+        }
+
+        var forwarded = Assert.IsType<ChatClientAgentRunOptions>(capturedOptions).ChatOptions;
+        Assert.True(
+            forwarded!.ConversationId is null || forwarded.ConversationId == "S2",
+            $"Expected the echoed id to be stripped or resolved to the current conversation, got '{forwarded.ConversationId}'.");
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithBoundSessionAndEmptyStream_ReportsConversationIdAnywayAsync()
+    {
+        // Arrange
+        // A run that yields nothing would otherwise aggregate to a null conversation id, which the IChatClient
+        // contract reads as "no stored history" — inviting the caller to resend everything into a session that is
+        // already accumulating it.
+        var agent = new TestAIAgent
+        {
+            RunStreamingAsyncFunc = (messages, session, options, cancellationToken) =>
+                ToAsyncEnumerableAsync<AgentResponseUpdate>([], cancellationToken)
+        };
+
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation");
+
+        // Act
+        List<ChatResponseUpdate> receivedUpdates = [];
+        await foreach (var update in chatClient.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Hi")]))
+        {
+            receivedUpdates.Add(update);
+        }
+
+        // Assert
+        var trailing = Assert.Single(receivedUpdates);
+        Assert.Equal("adapter-conversation", trailing.ConversationId);
+
+        // The aggregate shape is deliberate: one empty assistant message carrying the id, rather than an empty
+        // message list, so that the id survives aggregation at all.
+        var aggregated = receivedUpdates.ToChatResponse();
+        Assert.Equal("adapter-conversation", aggregated.ConversationId);
+        var message = Assert.Single(aggregated.Messages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        Assert.Empty(message.Contents);
+        Assert.Equal(string.Empty, message.Text);
+    }
+
+    [Fact]
+    public async Task GetStreamingResponseAsync_WithoutSessionAndEmptyStream_YieldsNothingAsync()
+    {
+        // Arrange
+        var agent = new TestAIAgent
+        {
+            RunStreamingAsyncFunc = (messages, session, options, cancellationToken) =>
+                ToAsyncEnumerableAsync<AgentResponseUpdate>([], cancellationToken)
+        };
+
+        using var chatClient = agent.AsIChatClient();
+
+        // Act
+        List<ChatResponseUpdate> receivedUpdates = [];
+        await foreach (var update in chatClient.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Hi")]))
+        {
+            receivedUpdates.Add(update);
+        }
+
+        // Assert
+        // Stateless mode stores nothing, so there is no conversation to announce and nothing is invented.
+        Assert.Empty(receivedUpdates);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_WithNonChatClientAgentSession_ReportsAdapterIdAsync()
+    {
+        // Arrange
+        // The service-id probe recognizes ChatClientAgentSession only. Any other session type falls back to the
+        // adapter's own id, which is the documented limitation.
+        var agent = new TestAIAgent
+        {
+            RunAsyncFunc = (messages, session, options, cancellationToken) =>
+                Task.FromResult(new AgentResponse(new ChatMessage(ChatRole.Assistant, "ok")))
+        };
+
+        using var chatClient = agent.AsIChatClient(new UnrecognizedAgentSession(), "adapter-conversation");
+
+        // Act
+        var response = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "Hi")]);
+
+        // Assert
+        Assert.Equal("adapter-conversation", response.ConversationId);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_WithReservedConversationIdInOptions_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        // RunAsyncFunc is left at its throwing default: the sentinel names no resumable conversation, so it must be
+        // rejected like any other unrecognized id rather than reaching the agent.
+        var agent = new TestAIAgent();
+        using var chatClient = agent.AsIChatClient(new ChatClientAgentSession(), "adapter-conversation");
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            chatClient.GetResponseAsync(
+                [new ChatMessage(ChatRole.User, "Hi")],
+                new ChatOptions { ConversationId = PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId }));
+
+        Assert.Contains("AsIChatClient", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetResponseAsync_WithForeignConversationId_DoesNotDiscloseAcceptedIdsAsync()
+    {
+        // Arrange
+        // The message can reach an untrusted caller through a host, so it must not turn into an oracle for live
+        // conversation ids.
+        var agent = new TestAIAgent();
+        var session = new ChatClientAgentSession("secret-service-conversation");
+        using var chatClient = agent.AsIChatClient(session, "secret-adapter-conversation");
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            chatClient.GetResponseAsync(
+                [new ChatMessage(ChatRole.User, "Hi")],
+                new ChatOptions { ConversationId = "probe" }));
+
+        Assert.Contains("probe", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-service-conversation", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-adapter-conversation", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ToChatResponseAsync_ResolvesConversationIdAsLastNonNullWinsAsync()
     {
         // Arrange
@@ -1383,6 +1628,12 @@ public partial class AIAgentChatClientTests
             yield return item;
         }
     }
+
+    /// <summary>
+    /// An <see cref="AgentSession"/> that is not a <see cref="ChatClientAgentSession"/>, used to exercise the
+    /// documented fallback for session types whose service conversation id the adapter cannot read.
+    /// </summary>
+    private sealed class UnrecognizedAgentSession : AgentSession;
 
     /// <summary>
     /// A simple structured-output payload used by the end-to-end structured output test.

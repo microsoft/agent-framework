@@ -40,20 +40,30 @@ namespace Microsoft.Agents.AI;
 /// hand the caller an id the next request would have to reject.
 /// </description></item>
 /// </list>
-/// This is what keeps the adapter's central promise: every id it reports is an id it accepts back.
+/// This is what keeps the adapter's central promise: every id it reports is an id it accepts back. Acceptance covers
+/// three values — the adapter's own id, the session's current service conversation id, and the id most recently
+/// reported. The last is needed because services commonly fork the conversation on each turn, advancing the session's
+/// id after an id has already been handed out; without it, a caller echoing exactly what it was given would be
+/// rejected.
 /// </para>
 /// <para>
 /// The adapter's own id is per instance rather than a constant, so an id minted by an adapter over one session cannot
-/// be replayed against an adapter over another. When the caller echoes it back it is stripped before the agent sees
-/// it, which restores the as-if-absent semantics of the first turn; a fixed bound session cannot fork, so an absent
-/// id means "continue this conversation" rather than "start a new one".
+/// be replayed against an adapter over another. When the caller echoes back any accepted id it is stripped before the
+/// agent sees it, which restores the as-if-absent semantics of the first turn; a fixed bound session cannot fork, so
+/// an absent id means "continue this conversation" rather than "start a new one". An echoed id the session has since
+/// superseded therefore resolves transparently to the current conversation rather than failing.
 /// </para>
 /// <para>
 /// Streaming applies the same test to every update, re-reading the session as it goes, so updates streamed before the
-/// session learns a service id carry the adapter's id and later ones carry the service id. The two entry points can
-/// therefore disagree on the first turn of a service-backed conversation, where the identical non-streaming call
-/// reports the just-learned service id throughout. Both ids are accepted on the following turn, so a caller that
-/// simply echoes what it was given is unaffected.
+/// session adopts a service id carry the adapter's id and later ones carry the service id. The two entry points can
+/// therefore report different ids for the same call whenever the service mints or advances an id during the run — the
+/// first turn of a service-backed conversation is only the most obvious case, and a service that forks per turn does
+/// it on every turn. Streaming may consequently report an id the session has already superseded by the time the
+/// caller replies; echoing it back is accepted and resolved to the current conversation.
+/// </para>
+/// <para>
+/// A bound run that yields no updates at all ends with one final update carrying nothing but the conversation id, so
+/// that aggregating the stream still reports stored history rather than an absent id.
 /// </para>
 /// <para>
 /// A session-bound adapter supports one in-flight request at a time. Concurrent calls over the same bound session
@@ -83,6 +93,23 @@ internal sealed class AIAgentChatClient : IChatClient
 
     /// <summary>Lazily-created metadata synthesized from the agent's <see cref="AIAgentMetadata"/>.</summary>
     private ChatClientMetadata? _metadata;
+
+    /// <summary>
+    /// The conversation id most recently reported to a caller, or <see langword="null"/> if none has been.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Services that fork a conversation per turn hand out a new id on every call, and the bound session adopts it as
+    /// the run ends. Without this field, an id reported mid-stream would stop being recognized the moment the session
+    /// moved on, and a caller echoing back exactly what it was given would be rejected. Remembering it keeps the
+    /// acceptance set aligned with what was actually reported rather than with what the session happens to hold now.
+    /// </para>
+    /// <para>
+    /// A plain field write is sufficient because a session-bound adapter serves one request at a time, which the
+    /// caller is required to guarantee; the acceptance window is only as well-defined as that constraint.
+    /// </para>
+    /// </remarks>
+    private string? _lastReportedConversationId;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AIAgentChatClient"/> class.
@@ -164,17 +191,16 @@ internal sealed class AIAgentChatClient : IChatClient
         // Read after the run: the agent records a service-managed id on the session as the run ends, so a real id
         // the response introduced on this very turn is already visible here.
         var knownServiceConversationId = this.KnownServiceConversationId;
-        if (knownServiceConversationId is not null)
-        {
-            return response.ConversationId == knownServiceConversationId
-                ? response
-                : CloneWithConversationId(response, knownServiceConversationId);
-        }
 
-        // No real id anywhere. Any id the response still carries is one the session does not stand behind, such as
-        // the local-history sentinel, and reporting it would hand back an id the next request would have to reject.
-        // Reporting this adapter's own id keeps the promise that whatever is reported is also accepted.
-        return CloneWithConversationId(response, this._conversationId!);
+        // With no real id anywhere, any id the response still carries is one the session does not stand behind, such
+        // as the local-history sentinel, so this adapter's own id is reported instead.
+        var resolved =
+            knownServiceConversationId is null ? CloneWithConversationId(response, this._conversationId!) :
+            response.ConversationId == knownServiceConversationId ? response :
+            CloneWithConversationId(response, knownServiceConversationId);
+
+        this._lastReportedConversationId = resolved.ConversationId;
+        return resolved;
     }
 
     /// <inheritdoc/>
@@ -207,9 +233,11 @@ internal sealed class AIAgentChatClient : IChatClient
     /// Each update is judged against the session, exactly as <see cref="GetResponseAsync"/> judges a response: an id is
     /// passed through only when the session stands behind it, and anything else is replaced. The session is consulted
     /// per update rather than once up front, so a service id learned part-way through the run is honored from that
-    /// point on. Deciding from the stream instead would break the adapter's promise that every id it reports is one it
-    /// accepts back: the agent records a service id on the session only after its update loop completes, so a consumer
-    /// that stops enumerating early would be handed an id the session never learned and the next call would reject.
+    /// point on. What the probe buys is that the adapter never advertises an id the session cannot serve — the
+    /// local-history sentinel, or a raw id the session does not recognize — because such an id names no conversation
+    /// this adapter could resume. Reporting from the stream alone would advertise exactly those. The
+    /// <see cref="_lastReportedConversationId"/> field is a safety net for ids that go stale after being reported, not
+    /// a licence to report ids the session never backed in the first place.
     /// </para>
     /// </remarks>
     private async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseCoreAsync(
@@ -219,9 +247,12 @@ internal sealed class AIAgentChatClient : IChatClient
     {
         var updates = this._agent.RunStreamingAsync(messages, this._session, ToAgentRunOptions(options), cancellationToken);
 
+        var yieldedAnyUpdate = false;
+
         await foreach (var update in updates.ConfigureAwait(false))
         {
             var converted = update.AsChatResponseUpdate();
+            yieldedAnyUpdate = true;
 
             // Re-read per update so that an id the session learns mid-run is picked up rather than missed.
             var knownServiceConversationId = this.KnownServiceConversationId;
@@ -229,6 +260,7 @@ internal sealed class AIAgentChatClient : IChatClient
             if (this._session is null ||
                 (converted.ConversationId is { } conversationId && conversationId == knownServiceConversationId))
             {
+                this._lastReportedConversationId = converted.ConversationId;
                 yield return converted;
                 continue;
             }
@@ -237,7 +269,22 @@ internal sealed class AIAgentChatClient : IChatClient
             // session the adapter's own id is never null, so every update leaves here carrying an acceptable id.
             var stamped = converted.Clone();
             stamped.ConversationId = knownServiceConversationId ?? this._conversationId;
+            this._lastReportedConversationId = stamped.ConversationId;
             yield return stamped;
+        }
+
+        if (this._session is not null && !yieldedAnyUpdate)
+        {
+            // A bound run that produced nothing would otherwise aggregate to a null conversation id, which under the
+            // IChatClient contract means "no stored history" and invites the caller to resend everything into a
+            // session that is already accumulating it. One id-only update repairs the aggregate.
+            //
+            // This is reachable only on the zero-update stream: both branches above report a non-null id whenever a
+            // session is bound, so any stream that yielded at all has already carried the id to the caller.
+            var trailingConversationId = this.KnownServiceConversationId ?? this._conversationId;
+            this._lastReportedConversationId = trailingConversationId;
+
+            yield return new ChatResponseUpdate { ConversationId = trailingConversationId };
         }
     }
 
@@ -286,12 +333,28 @@ internal sealed class AIAgentChatClient : IChatClient
     /// stripped from a copy so that the caller's own instance is never mutated.
     /// </returns>
     /// <exception cref="InvalidOperationException">
-    /// A bound adapter was given a conversation id naming neither the conversation it reports nor the bound session's
-    /// service conversation.
+    /// A bound adapter was given a conversation id naming none of the conversations it accepts.
     /// </exception>
     /// <remarks>
+    /// <para>
+    /// A bound adapter accepts three ids: its own, the session's current service conversation id, and the id it most
+    /// recently reported. The last of these matters because a service that forks the conversation each turn advances
+    /// the session's id out from under an id already handed to the caller; without it, echoing back exactly what was
+    /// reported would be rejected.
+    /// </para>
+    /// <para>
+    /// A stale echo is self-healing rather than authoritative: stripping it leaves the agent to continue the bound
+    /// session, which already holds the current id, and the resulting response reports that current id.
+    /// </para>
+    /// <para>
+    /// The rejection message deliberately names only the caller's own id. The accepted ids are live conversation
+    /// identifiers, and this adapter is expected to sit behind hosts that surface exceptions to untrusted callers, so
+    /// echoing them back would let a caller harvest them by probing.
+    /// </para>
+    /// <para>
     /// A stateless adapter interprets nothing: the id, like every other option, is the caller's to set and is passed
     /// through untouched.
+    /// </para>
     /// </remarks>
     private ChatOptions? ResolveRequestOptions(ChatOptions? options)
     {
@@ -311,21 +374,23 @@ internal sealed class AIAgentChatClient : IChatClient
             return options;
         }
 
-        if (incomingId == this._conversationId)
+        if (incomingId == this._conversationId || incomingId == this._lastReportedConversationId)
         {
-            // The caller is echoing the id this adapter reported. Removing it restores the as-if-absent semantics of
-            // the first turn, which the bound session interprets as "continue".
+            // The caller is echoing an id this adapter reported, either its own or one the session has since
+            // superseded. Removing it restores the as-if-absent semantics of the first turn, which the bound session
+            // interprets as "continue" using whichever id it now holds.
             var stripped = options.Clone();
             stripped.ConversationId = null;
             return stripped;
         }
 
+        // Only the caller's own value is named. The accepted ids are live conversation identifiers and this message
+        // may reach an untrusted caller through a host, so disclosing them would turn the error into an oracle.
         throw new InvalidOperationException(
-            $"The supplied {nameof(ChatOptions)}.{nameof(ChatOptions.ConversationId)} '{incomingId}' does not name the conversation this " +
-            $"{nameof(AIAgentExtensions.AsIChatClient)} adapter is bound to. It accepts the conversation id reported on its responses ('{this._conversationId}')" +
-            (knownServiceConversationId is null ? string.Empty : $" and the bound session's service conversation id ('{knownServiceConversationId}')") +
-            ". To converse over a different existing service conversation, bind the adapter to a session obtained from " +
-            $"{nameof(ChatClientAgent)}.{nameof(ChatClientAgent.CreateSessionAsync)}(conversationId).");
+            $"The supplied {nameof(ChatOptions)}.{nameof(ChatOptions.ConversationId)} '{incomingId}' does not name a conversation this " +
+            $"{nameof(AIAgentExtensions.AsIChatClient)} adapter can serve. Send back the conversation id from the most recent response, or omit " +
+            "it to continue the bound conversation. To converse over a different existing service conversation, bind the adapter to a " +
+            $"session obtained from {nameof(ChatClientAgent)}.{nameof(ChatClientAgent.CreateSessionAsync)}(conversationId).");
     }
 
     /// <summary>
