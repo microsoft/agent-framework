@@ -5447,6 +5447,69 @@ async def test_chat_client_records_duration_on_streaming_error(
     assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
 
 
+async def test_chat_client_records_duration_when_stream_setup_fails(
+    mock_chat_client: Any, span_exporter: InMemorySpanExporter
+) -> None:
+    """A stream that fails before it is built records the duration metric with error.type."""
+
+    class FailingSetupChatClient(mock_chat_client):  # type: ignore[misc, valid-type]
+        def _get_streaming_response(self, **kwargs: Any) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+            raise RuntimeError("setup broke")
+
+    client = FailingSetupChatClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(RuntimeError, match="setup broke"):
+        async for _ in client.get_response(
+            messages=[Message(role="user", contents=["hi"])], stream=True, options={"model": "Test"}
+        ):
+            pass
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "RuntimeError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "Test"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.CHAT_COMPLETION_OPERATION
+
+
+async def test_embedding_client_records_duration_on_error(span_exporter: InMemorySpanExporter) -> None:
+    """A failed embedding call records gen_ai.client.operation.duration with error.type."""
+    from agent_framework import BaseEmbeddingClient, GeneratedEmbeddings
+    from agent_framework.observability import EmbeddingTelemetryLayer
+
+    class RawFailingEmbeddingClient(BaseEmbeddingClient[str, list[float], Any]):  # type: ignore[type-arg]
+        async def get_embeddings(
+            self, values: Sequence[str], *, options: Any = None
+        ) -> GeneratedEmbeddings[list[float], Any]:
+            raise ValueError("embed boom")
+
+    class FailingEmbeddingClient(EmbeddingTelemetryLayer, RawFailingEmbeddingClient):  # type: ignore[misc]
+        OTEL_PROVIDER_NAME = "test"
+
+        def service_url(self) -> str:
+            return "https://test.example.com"
+
+    client = FailingEmbeddingClient()
+    histogram = Mock()
+    client.duration_histogram = histogram
+    span_exporter.clear()
+
+    with pytest.raises(ValueError, match="embed boom"):
+        await client.get_embeddings(["hi"], options={"model": "test-embed"})
+
+    histogram.record.assert_called_once()
+    duration, kwargs = histogram.record.call_args[0][0], histogram.record.call_args[1]
+    assert duration >= 0
+    attributes = kwargs["attributes"]
+    assert attributes[OtelAttr.ERROR_TYPE] == "ValueError"
+    assert attributes[OtelAttr.REQUEST_MODEL] == "test-embed"
+    assert attributes[OtelAttr.OPERATION] == OtelAttr.EMBEDDING_OPERATION
+
+
 def test_backfill_request_model_when_unknown(span_exporter: InMemorySpanExporter):
     """_backfill_request_model updates the span name and REQUEST_MODEL attribute when unknown."""
     from agent_framework.observability import OtelAttr, get_tracer
