@@ -7,9 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- **agent-framework-core**: Add `max_duration_seconds` to `FunctionInvocationConfiguration` to bound total wall-clock time of the function-invocation loop; when exceeded, tools are disabled and the model is forced to produce a final text response via the same graceful-degradation path as `max_function_calls`. Rejects `float("nan")` during configuration validation. Add `_agent_framework_stop_reason` to `ChatResponse.additional_properties` with machine-readable enum values (`"completed"`, `"max_iterations"`, `"max_duration_seconds"`, `"max_function_calls"`, `"max_consecutive_errors"`) so callers can detect how a run ended ([#7587](https://github.com/microsoft/agent-framework/issues/7587), [#7772](https://github.com/microsoft/agent-framework/pull/7772)). Includes a small, additive update to `ToolApprovalMiddleware` to persist budget state across human approval round-trips via session state.
-
 ## [1.15.0] - 2026-08-21
 
 ### Added
