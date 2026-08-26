@@ -97,38 +97,87 @@ public static partial class AIAgentExtensions
     /// Optional <see cref="AgentSession"/> to use for every request made through the returned client. If not provided,
     /// each request is made without a session and the caller is responsible for supplying the conversation history.
     /// </param>
+    /// <param name="conversationId">
+    /// Optional conversation id for the returned client to report on its responses when it cannot report a
+    /// service-managed one. May only be supplied together with a <paramref name="session"/>, and must not be empty or
+    /// whitespace; if omitted, an id unique to the returned client is generated. Supply one when the id has to be
+    /// recognizable outside the process, for example when it is persisted or routed on.
+    /// </param>
     /// <returns>
     /// An <see cref="IChatClient"/> that can be used anywhere the <see cref="IChatClient"/> abstraction is consumed,
     /// such as in a <see cref="ChatClientBuilder"/> pipeline.
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="agent"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="conversationId"/> is non-<see langword="null"/> and either <paramref name="session"/> is
+    /// <see langword="null"/> — without a session nothing stores the history, so there is no conversation to name — or
+    /// <paramref name="conversationId"/> is empty, consists only of whitespace, or is a value the framework reserves
+    /// for internal use.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Not thrown by this method, but thrown by the returned client when a session-bound call supplies an
+    /// unrecognized <see cref="ChatOptions.ConversationId"/>. From
+    /// <see cref="IChatClient.GetStreamingResponseAsync"/> it surfaces from the call itself rather than when the
+    /// returned sequence is enumerated.
+    /// </exception>
     /// <remarks>
     /// <para>
     /// By default the returned client is stateless: no <see cref="AgentSession"/> is used, so every call must supply the
-    /// full conversation history, just as when calling an <see cref="IChatClient"/> directly.
+    /// full conversation history, just as when calling an <see cref="IChatClient"/> directly. Nothing about the
+    /// conversation id is interpreted in this mode; it is the caller's to set and flows through untouched in both
+    /// directions.
     /// </para>
     /// <para>
     /// If a <paramref name="session"/> is provided, the returned client is stateful, referencing both the
-    /// <paramref name="agent"/> and the <paramref name="session"/>. Avoid using such a client concurrently in multiple
-    /// conversations or in requests where parallel calls may result in concurrent usage of the session, as that could
-    /// lead to undefined and unpredictable behavior. In particular, do not register a session-bound client as a shared
-    /// or singleton service that serves multiple users: concurrent use is unsupported, and every caller appends to and
-    /// reads from the same conversation, so history bleeds across them. Because a bound session already accumulates the
-    /// conversation history, callers should send only the new messages on each call rather than the full history, which
-    /// would otherwise be duplicated.
+    /// <paramref name="agent"/> and the <paramref name="session"/>. The session stores the history, which is exactly
+    /// what a non-null <see cref="ChatResponse.ConversationId"/> signals under the <see cref="IChatClient"/> contract,
+    /// so the returned client reports one on every response. Callers should follow it: send only the new messages on
+    /// each subsequent call, along with the reported id, rather than resending a history the session is already
+    /// accumulating. The reported id is the service-managed one once the <paramref name="session"/> holds one, and
+    /// otherwise an id belonging to the returned client itself; when the caller echoes the latter back it is stripped
+    /// before the agent sees it, which restores the as-if-absent semantics of the first turn, because a fixed bound
+    /// session cannot fork. A conversation id naming neither of those is rejected with an
+    /// <see cref="InvalidOperationException"/>. Whichever id is reported is therefore always one the next call accepts.
+    /// </para>
+    /// <para>
+    /// On the first turn of a service-backed conversation the streaming and non-streaming entry points can report
+    /// different ids: streaming re-checks the <paramref name="session"/> as each update goes out, so updates streamed
+    /// before the service id has been learned carry the client's own id, while the identical non-streaming call
+    /// already reports the just-learned service id. Both remain acceptable on the following turn, so a caller that
+    /// echoes back what it was given is unaffected.
+    /// </para>
+    /// <para>
+    /// A session-bound client supports one in-flight request at a time. Concurrent calls over the same bound session
+    /// race on its history state, which is not synchronized, so the caller must serialize them. In particular, do not
+    /// register a session-bound client as a shared or singleton service that serves multiple users: concurrent use is
+    /// unsupported, and every caller appends to and reads from the same conversation, so history bleeds across them.
+    /// </para>
+    /// <para>
+    /// The service-managed conversation id is read from the <paramref name="session"/>, and only a
+    /// <see cref="ChatClientAgentSession"/> is recognized. A session belonging to some other agent type that tracks a
+    /// service conversation internally is not detected, and the returned client reports its own id instead. An id that
+    /// appears on a response without the session standing behind it is likewise not reported, since passing it on would
+    /// promise a conversation the next call would have to reject. In both cases the reported id still identifies the
+    /// conversation correctly for callers that simply echo it back; it is only opaque to anything that expects the
+    /// service's own identifier.
     /// </para>
     /// <para>
     /// Any <see cref="ChatOptions"/> supplied to the returned client are passed to the agent as
     /// <see cref="ChatClientAgentRunOptions"/>. Agents that understand that type, such as <see cref="ChatClientAgent"/>,
     /// honor those options; other agent implementations may ignore them. The exception is
     /// <see cref="ChatOptions.ResponseFormat"/>, which is additionally copied to <see cref="AgentRunOptions.ResponseFormat"/>
-    /// and so may be honored by any agent implementation.
+    /// and so may be honored by any agent implementation. Except where a conversation id has to be stripped, the
+    /// caller's <see cref="ChatOptions"/> instance is handed to the agent by reference rather than copied.
+    /// <see cref="ChatClientAgent"/> clones it before use, but a custom <see cref="AIAgent"/> receives the caller's own
+    /// object and must treat it as read-only.
     /// </para>
     /// <para>
     /// For agents that honor <see cref="ChatClientAgentRunOptions"/>, this means a caller supplying
     /// <see cref="ChatOptions"/> can add tools to those configured on the agent and append to its instructions; the
-    /// collections are unioned and the instructions concatenated rather than replaced. When requests originate from an
-    /// untrusted caller, do not pass caller-supplied <see cref="ChatOptions"/> through unfiltered. Follow the
+    /// collections are unioned and the instructions concatenated rather than replaced. <see cref="ChatOptions.ConversationId"/>
+    /// deserves the same care: a stateless client forwards it verbatim, so an untrusted caller could name a service-side
+    /// conversation of its choosing and have the agent read and extend it under the host's credentials. When requests
+    /// originate from an untrusted caller, do not pass caller-supplied <see cref="ChatOptions"/> through unfiltered. Follow the
     /// default-closed pattern used by the <c>Microsoft.Agents.AI.Hosting.OpenAI</c> package, whose
     /// <c>RunOptionsFactory</c> defaults to <c>RejectRequestSettings</c> and rejects caller-supplied settings unless the
     /// host explicitly maps the ones it chooses to honor.
@@ -142,8 +191,9 @@ public static partial class AIAgentExtensions
     /// <para>
     /// Some option combinations cause the underlying agent to throw an <see cref="InvalidOperationException"/> at run
     /// time. With <see cref="ChatClientAgent"/>, requesting <see cref="ChatOptions.AllowBackgroundResponses"/> without a
-    /// bound <paramref name="session"/> throws, as does supplying a <see cref="ChatOptions.ConversationId"/> that
-    /// differs from the conversation id already held by a bound <paramref name="session"/>.
+    /// bound <paramref name="session"/> throws. To converse over an existing service conversation, bind a session
+    /// obtained from <see cref="ChatClientAgent.CreateSessionAsync(string, CancellationToken)"/> rather than passing its
+    /// id through <see cref="ChatOptions.ConversationId"/>.
     /// </para>
     /// <para>
     /// Calling this method on a <see cref="ChatClientAgent"/> returns an adapter over the full agent pipeline, including
@@ -157,11 +207,35 @@ public static partial class AIAgentExtensions
     /// disposing it does not dispose either of them.
     /// </para>
     /// </remarks>
-    public static IChatClient AsIChatClient(this AIAgent agent, AgentSession? session = null)
+    public static IChatClient AsIChatClient(this AIAgent agent, AgentSession? session = null, string? conversationId = null)
     {
         Throw.IfNull(agent);
 
-        return new AIAgentChatClient(agent, session);
+        if (conversationId is not null)
+        {
+            if (session is null)
+            {
+                // Without a session the caller owns the history, so there is no stored conversation for an id to name.
+                Throw.ArgumentException(
+                    nameof(conversationId),
+                    $"A conversation id is only meaningful for a session-bound client, so it may not be supplied without a {nameof(session)}.");
+            }
+
+            // An empty or whitespace id is reported verbatim on every response, where callers that test it with
+            // string.IsNullOrEmpty read it as "no stored history" and resend the full history the session already has.
+            _ = Throw.IfNullOrWhitespace(conversationId);
+
+            if (conversationId == PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId)
+            {
+                // The framework stamps this value to mark history as handled in process. Reporting it as this
+                // client's conversation id would make an internal marker indistinguishable from a real conversation.
+                Throw.ArgumentException(
+                    nameof(conversationId),
+                    $"The conversation id '{conversationId}' is reserved for internal use and cannot be used as a client-supplied conversation id.");
+            }
+        }
+
+        return new AIAgentChatClient(agent, session, conversationId);
     }
 
     /// <summary>
