@@ -20,10 +20,12 @@ import json
 import logging
 import re
 import threading
+import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, MutableMapping
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, cast
 
@@ -1631,12 +1633,19 @@ class _PendingPolicyApproval(NamedTuple):
     there is no separate user identity here); ``disclosed_violations`` the canonical set of violation
     types disclosed in the approval request, so an approval granted for one set of risks cannot wave
     a different (e.g. larger) set that a replay computes after the tool's policy metadata changes.
+    ``created_at`` is a ``time.monotonic()`` timestamp used for TTL eviction of abandoned approvals.
     """
 
     body_signature: str
     label_key: str
     session_key: str
     disclosed_violations: tuple[str, ...]
+    created_at: float
+
+
+# Bounds for abandoned policy-approval state on long-lived middleware instances (#7890).
+_DEFAULT_MAX_PENDING_POLICY_APPROVALS = 256
+_DEFAULT_PENDING_POLICY_APPROVAL_TTL = timedelta(hours=1)
 
 
 @experimental(feature_id=ExperimentalFeature.FIDES)
@@ -1677,6 +1686,9 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         block_on_violation: bool = True,
         enable_audit_log: bool = True,
         approval_on_violation: bool = False,
+        *,
+        max_pending_policy_approvals: int = _DEFAULT_MAX_PENDING_POLICY_APPROVALS,
+        pending_policy_approval_ttl: timedelta | None = _DEFAULT_PENDING_POLICY_APPROVAL_TTL,
     ) -> None:
         """Initialize PolicyEnforcementFunctionMiddleware.
 
@@ -1689,19 +1701,33 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                 when a policy violation is detected. If True, the middleware will return
                 a special result that triggers an approval request in the UI. After user
                 approval, the tool will execute with a warning about untrusted context.
+
+        Keyword Args:
+            max_pending_policy_approvals: Maximum number of unconsumed policy-approval
+                bindings retained on this instance. Oldest entries are evicted when the
+                limit is exceeded so abandoned approvals cannot grow without bound.
+            pending_policy_approval_ttl: How long an unconsumed pending approval may live
+                before it is discarded. ``None`` disables time-based expiration.
         """
+        if max_pending_policy_approvals < 1:
+            raise ValueError("max_pending_policy_approvals must be >= 1.")
+        if pending_policy_approval_ttl is not None and pending_policy_approval_ttl.total_seconds() <= 0:
+            raise ValueError("pending_policy_approval_ttl must be positive when set.")
         self.allow_untrusted_tools = allow_untrusted_tools or set()
         self.approval_on_violation = approval_on_violation
         # If approval_on_violation is True, we don't block - we request approval instead
         self.block_on_violation = block_on_violation if not approval_on_violation else False
         self.enable_audit_log = enable_audit_log
         self.audit_log: list[dict[str, Any]] = []
+        self._max_pending_policy_approvals = max_pending_policy_approvals
+        self._pending_policy_approval_ttl = pending_policy_approval_ttl
         # Track call_ids awaiting approval, each mapped to a binding record capturing the exact
         # invocation the approval was requested for: the function name + arguments, the security
         # label (integrity/confidentiality) shown for review, and the session. Combined with the
         # call_id key and consume-on-use, an approval cannot re-authorize a repeated call, a
         # different function, changed arguments, a different security label, or a different session.
-        self._pending_policy_approvals: dict[str, _PendingPolicyApproval] = {}
+        # OrderedDict preserves insertion order so abandoned entries can be evicted FIFO (#7890).
+        self._pending_policy_approvals: OrderedDict[str, _PendingPolicyApproval] = OrderedDict()
 
     def _get_call_id(self, context: FunctionInvocationContext) -> str:
         """Get the tool call id for this invocation context."""
@@ -1790,7 +1816,40 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             label_key=self._context_label_key(context),
             session_key=self._session_key(context),
             disclosed_violations=self._violation_set_key(violations),
+            created_at=time.monotonic(),
         )
+
+    def _prune_pending_policy_approvals(self) -> None:
+        """Drop expired pending approvals and enforce the max-size bound."""
+        ttl = self._pending_policy_approval_ttl
+        if ttl is not None:
+            ttl_seconds = ttl.total_seconds()
+            now = time.monotonic()
+            expired = [
+                call_id
+                for call_id, pending in self._pending_policy_approvals.items()
+                if now - pending.created_at > ttl_seconds
+            ]
+            for call_id in expired:
+                self._pending_policy_approvals.pop(call_id, None)
+        while len(self._pending_policy_approvals) > self._max_pending_policy_approvals:
+            self._pending_policy_approvals.popitem(last=False)
+
+    def _store_pending_policy_approval(self, call_id: str, pending: _PendingPolicyApproval) -> None:
+        """Record a pending approval, refreshing TTL/size bounds first."""
+        self._prune_pending_policy_approvals()
+        # Re-insert so a re-request for the same call_id moves to the newest end.
+        self._pending_policy_approvals.pop(call_id, None)
+        self._pending_policy_approvals[call_id] = pending
+        while len(self._pending_policy_approvals) > self._max_pending_policy_approvals:
+            self._pending_policy_approvals.popitem(last=False)
+
+    def _pending_approval_is_alive(self, pending: _PendingPolicyApproval) -> bool:
+        """Return whether a pending approval is still within its TTL."""
+        ttl = self._pending_policy_approval_ttl
+        if ttl is None:
+            return True
+        return time.monotonic() - pending.created_at <= ttl.total_seconds()
 
     def _signature_from_function_call(self, function_call: Any) -> str | None:
         """Compute the body signature for a ``function_call`` Content, or None if it is not one."""
@@ -1840,8 +1899,12 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         call_id = self._get_call_id(context)
         if not call_id:
             return False
+        self._prune_pending_policy_approvals()
         pending = self._pending_policy_approvals.get(call_id)
         if pending is None:
+            return False
+        if not self._pending_approval_is_alive(pending):
+            self._pending_policy_approvals.pop(call_id, None)
             return False
         approval_response = context.metadata.get("approval_response")
         if not (
@@ -1860,6 +1923,29 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             and self._session_key(context) == pending.session_key
             and self._violation_set_key(current_violations) == pending.disclosed_violations
         )
+
+    def _discard_rejected_pending_approval(self, context: FunctionInvocationContext) -> bool:
+        """Remove a pending approval when the user explicitly rejects it.
+
+        Returns True when a matching rejected approval was found and discarded so the
+        caller can stop without re-requesting approval for the same abandoned call.
+        """
+        call_id = self._get_call_id(context)
+        if not call_id:
+            return False
+        pending = self._pending_policy_approvals.get(call_id)
+        if pending is None:
+            return False
+        approval_response = context.metadata.get("approval_response")
+        if not (
+            isinstance(approval_response, Content)
+            and approval_response.type == "function_approval_response"
+            and approval_response.approved is False
+            and self._response_matches_pending(approval_response, call_id, pending.body_signature)
+        ):
+            return False
+        self._pending_policy_approvals.pop(call_id, None)
+        return True
 
     def _consume_pending_approval(self, context: FunctionInvocationContext) -> None:
         """Remove the pending approval for this call so it authorizes exactly one invocation.
@@ -1900,7 +1986,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         )
         call_id = self._get_call_id(context)
         if call_id:
-            self._pending_policy_approvals[call_id] = self._pending_record(context, violations)
+            self._store_pending_policy_approval(call_id, self._pending_record(context, violations))
         additional_properties: dict[str, Any] = {
             "policy_violation": True,
             "violation_type": primary["violation_type"],
@@ -2074,6 +2160,18 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                     "approved execution."
                 ),
             )
+        elif self._discard_rejected_pending_approval(context):
+            logger.info(
+                f"Policy approval rejected for tool '{function_name}' "
+                f"(violation(s): {disclosed}); clearing pending approval state."
+            )
+            context.result = {
+                "error": f"Policy approval rejected for tool '{function_name}'.",
+                "function": function_name,
+                "context_label": context_label.to_dict(),
+                "violation_type": "policy_approval_rejected",
+            }
+            raise MiddlewareTermination("Policy approval rejected")
         elif self.approval_on_violation:
             self._request_policy_violation_approval(
                 context,
