@@ -2,7 +2,9 @@
 
 """Unit tests for prompt injection defense system."""
 
+import asyncio
 import json
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -696,6 +698,118 @@ class TestPolicyEnforcementMiddleware:
         assert context.metadata["user_approved_violation"] is True
         assert context.result == [Content.from_text("approved result")]
         assert "call-approved" not in middleware._pending_policy_approvals
+
+    async def test_abandoned_policy_approvals_do_not_grow_without_bound(self, mock_function):
+        """Regression for #7890: unconsumed approvals must not accumulate without bound."""
+        max_pending = 8
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True,
+            max_pending_policy_approvals=max_pending,
+            pending_policy_approval_ttl=None,
+        )
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        for i in range(max_pending + 25):
+            context = FunctionInvocationContext(
+                function=mock_function,
+                arguments=mock_function.args_schema(arg="test"),
+            )
+            context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+            context.metadata["call_id"] = f"call-abandoned-{i}"
+            with pytest.raises(MiddlewareTermination):
+                await middleware.process(context, stop_before_execute)
+
+        assert len(middleware._pending_policy_approvals) == max_pending
+        # FIFO eviction: the oldest abandoned entries are gone; the newest remain.
+        assert "call-abandoned-0" not in middleware._pending_policy_approvals
+        assert f"call-abandoned-{max_pending + 24}" in middleware._pending_policy_approvals
+
+    async def test_expired_policy_approvals_are_discarded(self, mock_function):
+        """Pending approvals older than the configured TTL must not authorize a replay."""
+        middleware = PolicyEnforcementFunctionMiddleware(
+            approval_on_violation=True,
+            pending_policy_approval_ttl=timedelta(milliseconds=1),
+        )
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "call-expired"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert "call-expired" in middleware._pending_policy_approvals
+
+        await asyncio.sleep(0.02)
+
+        replay_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        replay_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        replay_context.metadata["call_id"] = "call-expired"
+        replay_context.metadata["approval_response"] = approval_request.to_function_approval_response(True)
+
+        async def next_fn() -> None:
+            pytest.fail("Expired approvals must not authorize execution")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(replay_context, next_fn)
+
+        # Expired grant must not execute; a fresh approval request may be stored again.
+        assert isinstance(replay_context.result, Content)
+        assert replay_context.result.type == "function_approval_request"
+        assert replay_context.metadata.get("user_approved_violation") is not True
+        pending = middleware._pending_policy_approvals.get("call-expired")
+        assert pending is not None
+        assert middleware._pending_approval_is_alive(pending)
+
+    async def test_rejected_policy_approval_clears_pending_state(self, mock_function):
+        """An explicit rejection must remove the pending approval instead of leaving it behind."""
+        middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
+        request_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        request_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        request_context.metadata["call_id"] = "call-rejected"
+
+        async def stop_before_execute() -> None:
+            pytest.fail("Tool execution should not continue before approval")
+
+        with pytest.raises(MiddlewareTermination):
+            await middleware.process(request_context, stop_before_execute)
+
+        approval_request = request_context.result
+        assert isinstance(approval_request, Content)
+        assert "call-rejected" in middleware._pending_policy_approvals
+
+        reject_context = FunctionInvocationContext(
+            function=mock_function,
+            arguments=mock_function.args_schema(arg="test"),
+        )
+        reject_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
+        reject_context.metadata["call_id"] = "call-rejected"
+        reject_context.metadata["approval_response"] = approval_request.to_function_approval_response(False)
+
+        async def next_fn() -> None:
+            pytest.fail("Rejected approvals must not execute the tool")
+
+        with pytest.raises(MiddlewareTermination, match="Policy approval rejected"):
+            await middleware.process(reject_context, next_fn)
+
+        assert "call-rejected" not in middleware._pending_policy_approvals
+        assert isinstance(reject_context.result, dict)
+        assert reject_context.result["violation_type"] == "policy_approval_rejected"
 
     async def test_auto_invoke_passes_approval_response_to_middleware(self, mock_function):
         """Test the main tool loop passes approval response content via metadata."""
