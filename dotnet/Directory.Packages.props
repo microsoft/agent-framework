@@ -103,9 +103,9 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="10.0.11" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.7.0" />
+    <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.8.2" />
     <!-- Vector Stores -->
-    <PackageVersion Include="CommunityToolkit.VectorData.CosmosNoSql" Version="1.0.0" />
+    <PackageVersion Include="CommunityToolkit.VectorData.AzureCosmosDB" Version="1.0.0" />
     <PackageVersion Include="CommunityToolkit.VectorData.InMemory" Version="1.0.0" />
     <PackageVersion Include="CommunityToolkit.VectorData.Qdrant" Version="1.0.0" />
     <!-- Agent SDKs -->
