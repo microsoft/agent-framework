@@ -23,7 +23,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from copy import deepcopy
 from datetime import datetime, timedelta
 from enum import Enum
@@ -1924,28 +1924,35 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             and self._violation_set_key(current_violations) == pending.disclosed_violations
         )
 
-    def _discard_rejected_pending_approval(self, context: FunctionInvocationContext) -> bool:
-        """Remove a pending approval when the user explicitly rejects it.
+    def discard_rejected_policy_approvals(self, responses: Sequence[Content]) -> None:
+        """Clear pending approvals for explicitly rejected decisions.
 
-        Returns True when a matching rejected approval was found and discarded so the
-        caller can stop without re-requesting approval for the same abandoned call.
+        The normal agent approval path converts rejections into synthetic function results
+        without re-entering :meth:`process`. The approval resolver notifies this middleware
+        through the function middleware pipeline so abandoned bindings are released promptly
+        instead of waiting for TTL or max-size eviction.
         """
-        call_id = self._get_call_id(context)
-        if not call_id:
-            return False
-        pending = self._pending_policy_approvals.get(call_id)
-        if pending is None:
-            return False
-        approval_response = context.metadata.get("approval_response")
-        if not (
-            isinstance(approval_response, Content)
-            and approval_response.type == "function_approval_response"
-            and approval_response.approved is False
-            and self._response_matches_pending(approval_response, call_id, pending.body_signature)
-        ):
-            return False
-        self._pending_policy_approvals.pop(call_id, None)
-        return True
+        for response in responses:
+            if not (
+                isinstance(response, Content)
+                and response.type == "function_approval_response"
+                and response.approved is False
+            ):
+                continue
+            function_call = response.function_call
+            call_id = function_call.call_id if function_call is not None else None
+            if not call_id:
+                continue
+            pending = self._pending_policy_approvals.get(call_id)
+            if pending is None:
+                continue
+            if self._response_matches_pending(response, call_id, pending.body_signature):
+                self._pending_policy_approvals.pop(call_id, None)
+                logger.info(
+                    "Cleared pending policy approval for rejected call_id=%s (function=%s).",
+                    call_id,
+                    function_call.name if function_call is not None else None,
+                )
 
     def _consume_pending_approval(self, context: FunctionInvocationContext) -> None:
         """Remove the pending approval for this call so it authorizes exactly one invocation.
@@ -2160,18 +2167,6 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                     "approved execution."
                 ),
             )
-        elif self._discard_rejected_pending_approval(context):
-            logger.info(
-                f"Policy approval rejected for tool '{function_name}' "
-                f"(violation(s): {disclosed}); clearing pending approval state."
-            )
-            context.result = {
-                "error": f"Policy approval rejected for tool '{function_name}'.",
-                "function": function_name,
-                "context_label": context_label.to_dict(),
-                "violation_type": "policy_approval_rejected",
-            }
-            raise MiddlewareTermination("Policy approval rejected")
         elif self.approval_on_violation:
             self._request_policy_violation_approval(
                 context,

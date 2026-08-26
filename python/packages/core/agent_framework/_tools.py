@@ -2851,6 +2851,7 @@ async def _resolve_approval_responses(
     max_errors: int,
     execute_function_calls: _FunctionCallExecutor,
     invocation_session: AgentSession | None = None,
+    middleware_pipeline: FunctionMiddlewarePipeline | None = None,
 ) -> _FunctionProcessingResult:
     """Resolve inbound approval responses before the next model call."""
     from ._types import Message
@@ -2877,9 +2878,16 @@ async def _resolve_approval_responses(
         return _FunctionProcessingResult(errors_in_a_row=errors_in_a_row)
 
     # 3. Execute approved decisions once. Rejected decisions are converted to results during normalization below.
+    #    Notify middleware of rejections separately so pending approval state (e.g. policy bindings)
+    #    can be cleared without re-entering tool execution.
     responses_to_execute = [
         response for response in pending_approval_responses.values() if _is_approval_granted(response.approved)
     ]
+    rejected_responses = [
+        response for response in pending_approval_responses.values() if not _is_approval_granted(response.approved)
+    ]
+    if middleware_pipeline is not None and rejected_responses:
+        middleware_pipeline.notify_rejected_approvals(rejected_responses)
     execution_result_groups: list[list[Content]] = []
     should_terminate = False
     reached_error_limit = False
@@ -3064,6 +3072,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         invocation_session: AgentSession | None,
         budget_state: dict[str, Any],
         max_errors: int,
+        middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     ) -> ChatResponse[Any]:
         """Run the non-streaming function invocation loop."""
         from ._types import ChatResponse, add_usage_details
@@ -3086,6 +3095,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             max_errors=max_errors,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
+            middleware_pipeline=middleware_pipeline,
         )
         function_call_messages.extend(approval_processing.response_messages)
         errors_in_a_row = approval_processing.errors_in_a_row
@@ -3197,6 +3207,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         invocation_session: AgentSession | None,
         budget_state: dict[str, Any],
         max_errors: int,
+        middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     ) -> AsyncIterable[ChatResponseUpdate]:
         """Run the streaming function invocation loop."""
         errors_in_a_row = 0
@@ -3215,6 +3226,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             max_errors=max_errors,
             execute_function_calls=execute_function_calls,
             invocation_session=invocation_session,
+            middleware_pipeline=middleware_pipeline,
         )
         errors_in_a_row = approval_processing.errors_in_a_row
         total_function_calls = _record_function_calls(
@@ -3490,6 +3502,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 invocation_session=invocation_session,
                 budget_state=budget_state,
                 max_errors=max_errors,
+                middleware_pipeline=function_middleware_pipeline,
             )
 
         response_format = mutable_options.get("response_format")
@@ -3505,6 +3518,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 invocation_session=invocation_session,
                 budget_state=budget_state,
                 max_errors=max_errors,
+                middleware_pipeline=function_middleware_pipeline,
             ),
             finalizer=partial(ChatResponse.from_updates, output_format_type=response_format),
         )

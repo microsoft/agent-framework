@@ -19,6 +19,7 @@ from ._types import (
     AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Message,
     ResponseStream,
     normalize_messages,
@@ -1049,6 +1050,21 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
     def matches(self, middleware: Sequence[FunctionMiddlewareTypes]) -> bool:
         """Return whether this pipeline was built from the provided middleware sequence."""
         return self._source_middleware == tuple(middleware)
+
+    def notify_rejected_approvals(self, responses: Sequence[Content]) -> None:
+        """Let middleware observe rejected approval decisions without executing tools.
+
+        The approval resolver converts rejected decisions into synthetic function results and
+        does not re-enter :meth:`execute`. Middleware that retains pending approval state
+        (for example policy-enforcement bindings) can implement
+        ``discard_rejected_policy_approvals`` to clear that state here.
+        """
+        if not responses:
+            return
+        for middleware in self._middleware:
+            discard = getattr(middleware, "discard_rejected_policy_approvals", None)
+            if callable(discard):
+                discard(responses)
 
     def _register_middleware(self, middleware: FunctionMiddlewareTypes) -> None:
         """Register a function middleware item.

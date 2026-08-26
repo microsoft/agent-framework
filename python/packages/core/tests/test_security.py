@@ -12,8 +12,13 @@ from pydantic import BaseModel
 
 from agent_framework import AgentSession, ExperimentalFeature, FunctionInvocationContext, FunctionMiddleware
 from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
-from agent_framework._tools import FunctionTool, _auto_invoke_function, normalize_function_invocation_configuration
-from agent_framework._types import Content
+from agent_framework._tools import (
+    FunctionTool,
+    _auto_invoke_function,
+    _resolve_approval_responses,
+    normalize_function_invocation_configuration,
+)
+from agent_framework._types import Content, Message
 from agent_framework.security import (
     ConfidentialityLabel,
     ContentLabel,
@@ -773,8 +778,13 @@ class TestPolicyEnforcementMiddleware:
         assert pending is not None
         assert middleware._pending_approval_is_alive(pending)
 
-    async def test_rejected_policy_approval_clears_pending_state(self, mock_function):
-        """An explicit rejection must remove the pending approval instead of leaving it behind."""
+    async def test_rejected_policy_approval_clears_pending_state_via_resolver(self, mock_function):
+        """Rejection cleanup must run through the approval resolver, not process().
+
+        ``_resolve_approval_responses`` converts rejections into synthetic results without
+        re-entering function middleware. The resolver must notify policy middleware so the
+        pending binding is released immediately (regression for #7890 / Copilot review).
+        """
         middleware = PolicyEnforcementFunctionMiddleware(approval_on_violation=True)
         request_context = FunctionInvocationContext(
             function=mock_function,
@@ -791,25 +801,38 @@ class TestPolicyEnforcementMiddleware:
 
         approval_request = request_context.result
         assert isinstance(approval_request, Content)
+        assert approval_request.type == "function_approval_request"
         assert "call-rejected" in middleware._pending_policy_approvals
 
-        reject_context = FunctionInvocationContext(
-            function=mock_function,
-            arguments=mock_function.args_schema(arg="test"),
+        rejection = approval_request.to_function_approval_response(False)
+        function_call = approval_request.function_call
+        assert function_call is not None
+
+        async def execute_function_calls(**_kwargs: object) -> object:
+            pytest.fail("Rejected approvals must not execute tools")
+
+        result = await _resolve_approval_responses(
+            prepared_messages=[
+                Message(role="assistant", contents=[function_call, approval_request]),
+                Message(role="user", contents=[rejection]),
+            ],
+            options={"tools": [mock_function]},
+            errors_in_a_row=0,
+            max_errors=3,
+            execute_function_calls=execute_function_calls,  # type: ignore[arg-type]
+            middleware_pipeline=FunctionMiddlewarePipeline(middleware),
         )
-        reject_context.metadata["context_label"] = ContentLabel(integrity=IntegrityLabel.UNTRUSTED)
-        reject_context.metadata["call_id"] = "call-rejected"
-        reject_context.metadata["approval_response"] = approval_request.to_function_approval_response(False)
-
-        async def next_fn() -> None:
-            pytest.fail("Rejected approvals must not execute the tool")
-
-        with pytest.raises(MiddlewareTermination, match="Policy approval rejected"):
-            await middleware.process(reject_context, next_fn)
 
         assert "call-rejected" not in middleware._pending_policy_approvals
-        assert isinstance(reject_context.result, dict)
-        assert reject_context.result["violation_type"] == "policy_approval_rejected"
+        rejection_results = [
+            content
+            for message in result.response_messages
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        assert len(rejection_results) == 1
+        assert rejection_results[0].call_id == "call-rejected"
+        assert "rejected" in str(rejection_results[0].result).lower()
 
     async def test_auto_invoke_passes_approval_response_to_middleware(self, mock_function):
         """Test the main tool loop passes approval response content via metadata."""
