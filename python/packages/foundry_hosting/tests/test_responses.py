@@ -47,6 +47,8 @@ from agent_framework import (
     executor,
     tool,
 )
+from agent_framework.ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+from agent_framework.openai import OpenAIChatClient
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
     FileResponseStore,
@@ -59,6 +61,7 @@ from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputIt
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
+from openai import AsyncOpenAI
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
@@ -285,6 +288,19 @@ def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
     return server
 
 
+class _CapturingASGITransport(httpx.AsyncBaseTransport):
+    def __init__(self, app: Any) -> None:
+        self._transport = httpx.ASGITransport(app=app)
+        self.payloads: list[dict[str, Any]] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.payloads.append(json.loads(await request.aread()))
+        return await self._transport.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
+
+
 async def _post(
     server: ResponsesHostServer,
     *,
@@ -340,6 +356,67 @@ def _parse_sse_events(body: str) -> list[dict[str, Any]]:
             current_data_lines = []
 
     return events
+
+
+async def test_agui_service_storage_sends_only_incremental_provider_input() -> None:
+    """AG-UI snapshots stay complete while service-backed provider requests contain only the new turn."""
+    hosted_agent = _make_agent(
+        response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ACK")])])
+    )
+    hosted_server = _make_server(hosted_agent)
+    transport = _CapturingASGITransport(hosted_server)
+    responses_client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="http://test",
+        http_client=httpx.AsyncClient(transport=transport),
+        max_retries=0,
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    runner = AgentFrameworkAgent(
+        agent=Agent(client=OpenAIChatClient(model="test-model", async_client=responses_client)),
+        use_service_session=True,
+        snapshot_store=store,
+    )
+    thread_id = "conv_agui_service_storage"
+
+    try:
+        first_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [{"role": "user", "content": "first"}],
+            })
+        ]
+        first_snapshot = next(
+            event.model_dump(by_alias=True)["messages"]
+            for event in reversed(first_events)
+            if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+        )
+        second_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [*first_snapshot, {"role": "user", "content": "second"}],
+            })
+        ]
+    finally:
+        await responses_client.close()
+
+    provider_inputs = [
+        [item for item in payload["input"] if item.get("type") == "message"] for payload in transport.payloads
+    ]
+    assert [[item["role"] for item in items] for items in provider_inputs] == [["user"], ["user"]]
+    assert [items[0]["content"][0]["text"] for items in provider_inputs] == ["first", "second"]
+    assert [payload["conversation"] for payload in transport.payloads] == [thread_id, thread_id]
+
+    second_snapshot = next(
+        event.model_dump(by_alias=True)["messages"]
+        for event in reversed(second_events)
+        if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+    )
+    assert [message["role"] for message in second_snapshot] == ["user", "assistant", "user", "assistant"]
 
 
 def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
