@@ -120,6 +120,7 @@ logger = logging.getLogger(__name__)
 # Keys that are internal to AG-UI orchestration and should not be passed to chat clients
 AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state", "forwarded_props"}
 _COLLECTED_APPROVAL_RESPONSES_KEY = "collected_approval_responses"
+_PROVIDER_SERVICE_SESSION_ID_STATE_KEY = "__ag_ui_provider_service_session_id"
 
 
 @dataclass
@@ -2112,12 +2113,15 @@ def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThr
     """Restore typed private state from trusted snapshot storage."""
     if snapshot is None or snapshot.session_state is None:
         return
+    serialized_state = copy.deepcopy(snapshot.session_state)
+    service_session_id = serialized_state.pop(_PROVIDER_SERVICE_SESSION_ID_STATE_KEY, None)
     try:
         restored = AgentSession.from_dict(
             {
                 "type": "session",
                 "session_id": session.session_id,
-                "state": snapshot.session_state,
+                "service_session_id": service_session_id,
+                "state": serialized_state,
             }
         )
     except Exception:
@@ -2126,6 +2130,8 @@ def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThr
             session.session_id,
         )
         return
+    if service_session_id is not None:
+        session.service_session_id = restored.service_session_id
     session.state.update(restored.state)
 
 
@@ -2184,15 +2190,23 @@ def _serialize_session_continuation_state(
     excluded_keys = {
         *shared_state_keys,
         _TOOL_APPROVAL_STATE_KEY,
+        _PROVIDER_SERVICE_SESSION_ID_STATE_KEY,
         *(provider.source_id for provider in context_providers if isinstance(provider, HistoryProvider)),
     }
     continuation_state = {key: value for key, value in session.state.items() if key not in excluded_keys}
-    if not continuation_state:
+    if not continuation_state and session.service_session_id is None:
         return None
 
-    serialized_session = AgentSession(session_id=session.session_id)
+    serialized_session = AgentSession(
+        session_id=session.session_id,
+        service_session_id=session.service_session_id,
+    )
     serialized_session.state.update(continuation_state)
-    return cast(dict[str, Any], serialized_session.to_dict()["state"])
+    serialized_payload = serialized_session.to_dict()
+    serialized_state = cast(dict[str, Any], serialized_payload["state"])
+    if serialized_service_session_id := serialized_payload.get("service_session_id"):
+        serialized_state[_PROVIDER_SERVICE_SESSION_ID_STATE_KEY] = serialized_service_session_id
+    return serialized_state
 
 
 def _safe_serialize_session_continuation_state(
@@ -2518,7 +2532,32 @@ async def run_agent_stream(
 
     # Create session (with service session support)
     if config.use_service_session:
-        session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
+        service_session_id = supplied_thread_id
+        native_agui_thread = False
+        if snapshot_session.enabled and supplied_thread_id is not None:
+            try:
+                uuid.UUID(supplied_thread_id)
+            except ValueError:
+                pass
+            else:
+                # Native AG-UI clients use UUID thread ids. They identify the UI
+                # thread, not a provider conversation or response.
+                service_session_id = None
+                native_agui_thread = True
+        session = AgentSession(session_id=thread_id, service_session_id=service_session_id)
+        stored_service_session_id = (
+            stored_snapshot.session_state.get(_PROVIDER_SERVICE_SESSION_ID_STATE_KEY)
+            if stored_snapshot is not None and stored_snapshot.session_state is not None
+            else None
+        )
+        create_conversation = getattr(agent, "create_conversation", None)
+        if native_agui_thread and stored_service_session_id is None and callable(create_conversation):
+            created_session = create_conversation(session_id=thread_id)
+            if isinstance(created_session, Awaitable):
+                created_session = await created_session
+            if not isinstance(created_session, AgentSession):
+                raise TypeError("agent.create_conversation() must return AgentSession")
+            session = created_session
     else:
         session = AgentSession(session_id=thread_id)
     _restore_session_continuation_state(session, stored_snapshot)

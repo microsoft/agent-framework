@@ -1529,22 +1529,30 @@ async def test_foundry_agent_basic_run() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_foundry_agent_integration_tests_disabled
+@pytest.mark.parametrize("continuation_mode", ["conversation", "native_agui"])
 async def test_foundry_agent_ag_ui_service_session_continues_without_history_replay(
     monkeypatch: pytest.MonkeyPatch,
+    continuation_mode: str,
 ) -> None:
-    """AG-UI snapshots hydrate the UI while Foundry remains the provider-history authority."""
+    """AG-UI supports Foundry conversation and response continuation without history replay."""
     marker = f"AF-AGUI-{uuid4().hex}"
-    scope = f"foundry-service-session-{uuid4().hex}"
+    scope = f"foundry-{continuation_mode}-session-{uuid4().hex}"
     store = InMemoryAGUIThreadSnapshotStore()
 
     async with FoundryAgent(credential=cast(Any, AzureCliCredential()), allow_preview=True) as foundry_agent:
-        conversation = await foundry_agent.create_conversation()
-        thread_id = cast(str, conversation.service_session_id)
+        if continuation_mode == "conversation":
+            conversation = await foundry_agent.create_conversation()
+            thread_id = cast(str, conversation.service_session_id)
+        else:
+            thread_id = str(uuid4())
         provider_inputs: list[list[Message]] = []
+        provider_session_ids: list[Any] = []
         original_run = foundry_agent.run
 
         def capture_provider_input(messages: Any = None, **kwargs: Any) -> Any:
             provider_inputs.append(list(messages) if isinstance(messages, list) else [messages])
+            session = kwargs.get("session")
+            provider_session_ids.append(session.service_session_id if session is not None else None)
             return original_run(messages, **kwargs)
 
         monkeypatch.setattr(foundry_agent, "run", capture_provider_input)
@@ -1557,7 +1565,7 @@ async def test_foundry_agent_ag_ui_service_session_continues_without_history_rep
             event
             async for event in runner.run({
                 "threadId": thread_id,
-                "runId": "foundry-ag-ui-first",
+                "runId": f"foundry-ag-ui-{continuation_mode}-first",
                 "__ag_ui_snapshot_scope": scope,
                 "messages": [
                     {
@@ -1577,7 +1585,7 @@ async def test_foundry_agent_ag_ui_service_session_continues_without_history_rep
             event
             async for event in runner.run({
                 "threadId": thread_id,
-                "runId": "foundry-ag-ui-second",
+                "runId": f"foundry-ag-ui-{continuation_mode}-second",
                 "__ag_ui_snapshot_scope": scope,
                 "messages": [
                     *prior_messages,
@@ -1589,6 +1597,13 @@ async def test_foundry_agent_ag_ui_service_session_continues_without_history_rep
     assert not [event for event in second_events if getattr(event, "type", None) == "RUN_ERROR"]
     assert len(provider_inputs) == 2
     assert [(message.role, message.text) for message in provider_inputs[1]] == [("user", follow_up)]
+    if continuation_mode == "conversation":
+        assert provider_session_ids == [thread_id, thread_id]
+    else:
+        assert all(isinstance(service_session_id, str) for service_session_id in provider_session_ids)
+        assert provider_session_ids[0] == provider_session_ids[1]
+        assert provider_session_ids[0].startswith("conv_")
+        assert provider_session_ids[0] != thread_id
     response_text = "".join(
         str(getattr(event, "delta", ""))
         for event in second_events
