@@ -37,6 +37,9 @@ updates:
     labels:
       - "python"
       - "dependencies"
+    cooldown:
+      default-days: 7
+
   - package-ecosystem: "uv"
     directory: "python/"
     schedule:
