@@ -32,6 +32,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework.foundry import FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY
+from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
 from agent_framework_openai._chat_client import RawOpenAIChatClient
 from agent_framework_openai._feature_usage import FeatureIndex as OpenAIFeatureIndex
 from azure.ai.projects import models as projects_models
@@ -1523,6 +1524,82 @@ async def test_foundry_agent_basic_run() -> None:
     assert isinstance(response, AgentResponse)
     assert response.text is not None
     assert "response test" in response.text.lower()
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_foundry_agent_integration_tests_disabled
+async def test_foundry_agent_ag_ui_service_session_continues_without_history_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AG-UI snapshots hydrate the UI while Foundry remains the provider-history authority."""
+    marker = f"AF-AGUI-{uuid4().hex}"
+    scope = f"foundry-service-session-{uuid4().hex}"
+    store = InMemoryAGUIThreadSnapshotStore()
+
+    async with FoundryAgent(credential=cast(Any, AzureCliCredential()), allow_preview=True) as foundry_agent:
+        conversation = await foundry_agent.create_conversation()
+        thread_id = cast(str, conversation.service_session_id)
+        provider_inputs: list[list[Message]] = []
+        original_run = foundry_agent.run
+
+        def capture_provider_input(messages: Any = None, **kwargs: Any) -> Any:
+            provider_inputs.append(list(messages) if isinstance(messages, list) else [messages])
+            return original_run(messages, **kwargs)
+
+        monkeypatch.setattr(foundry_agent, "run", capture_provider_input)
+        runner = AgentFrameworkAgent(
+            agent=foundry_agent,
+            use_service_session=True,
+            snapshot_store=store,
+        )
+        first_events = [
+            event
+            async for event in runner.run({
+                "threadId": thread_id,
+                "runId": "foundry-ag-ui-first",
+                "__ag_ui_snapshot_scope": scope,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": f"Remember this exact marker for my next message: {marker}",
+                    }
+                ],
+            })
+        ]
+        first_snapshot = next(
+            event for event in reversed(first_events) if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+        )
+        prior_messages = cast(list[dict[str, Any]], first_snapshot.model_dump(by_alias=True)["messages"])
+        follow_up = "Return only the exact marker I asked you to remember."
+
+        second_events = [
+            event
+            async for event in runner.run({
+                "threadId": thread_id,
+                "runId": "foundry-ag-ui-second",
+                "__ag_ui_snapshot_scope": scope,
+                "messages": [
+                    *prior_messages,
+                    {"role": "user", "content": follow_up},
+                ],
+            })
+        ]
+
+    assert not [event for event in second_events if getattr(event, "type", None) == "RUN_ERROR"]
+    assert len(provider_inputs) == 2
+    assert [(message.role, message.text) for message in provider_inputs[1]] == [("user", follow_up)]
+    response_text = "".join(
+        str(getattr(event, "delta", ""))
+        for event in second_events
+        if getattr(event, "type", None) == "TEXT_MESSAGE_CONTENT"
+    )
+    assert marker in response_text
+    stored = await store.get(scope=scope, thread_id=thread_id)
+    assert stored is not None
+    assert sum(message.get("role") == "user" for message in stored.messages) == 2
+    assert sum(message.get("role") == "assistant" for message in stored.messages) >= 2
+    assert marker in json.dumps(stored.messages)
 
 
 @pytest.mark.flaky

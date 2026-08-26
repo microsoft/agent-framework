@@ -2228,55 +2228,18 @@ def _safe_serialize_session_continuation_state(
 def _split_service_session_input(
     stored_snapshot_messages: list[dict[str, Any]],
     current_turn_messages: list[dict[str, Any]],
+    stored_interrupt: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Splits current turn messages into provider suffix and full snapshot messages.
-
-    Uses identity (message ID) matching with a role-based fallback for assistant
-    messages (whose agent-generated IDs may differ from what the UI relays) to
-    safely handle stale snapshots, incremental requests, and truncated histories
-    without relying on brittle length cursors.
-
-    Args:
-        stored_snapshot_messages: The messages persisted from the previous turn.
-        current_turn_messages: The incoming messages from the UI for the current turn.
-
-    Returns:
-        A tuple containing the provider suffix and the reconstructed snapshot messages.
-    """
-
-    def _get_msg_id(msg: Mapping[str, Any]) -> str | None:
-        return msg.get("id") or msg.get("message_id")
-
-    def _get_msg_role(msg: Mapping[str, Any]) -> str | None:
-        return msg.get("role")
-
-    i = 0
-    j = 0
-    while i < len(stored_snapshot_messages) and j < len(current_turn_messages):
-        stored_msg = stored_snapshot_messages[i]
-        current_msg = current_turn_messages[j]
-        stored_id = _get_msg_id(stored_msg)
-        current_id = _get_msg_id(current_msg)
-        stored_role = _get_msg_role(stored_msg)
-        current_role = _get_msg_role(current_msg)
-
-        if stored_id and current_id and stored_id == current_id:
-            i += 1
-            j += 1
-        elif stored_role == "assistant" and current_role == "assistant":
-            i += 1
-            j += 1
-        else:
-            break
-
-    provider_suffix = current_turn_messages[j:]
-
-    if j > 0:
-        snapshot_messages = list(current_turn_messages)
+    """Return the validated new suffix and backend-authoritative snapshot history."""
+    if not current_turn_messages:
+        snapshot_messages = copy.deepcopy(stored_snapshot_messages)
     else:
-        snapshot_messages = list(stored_snapshot_messages) + list(current_turn_messages)
-
-    return provider_suffix, snapshot_messages
+        snapshot_messages = _reconstruct_messages_from_thread_snapshot(
+            stored_messages=stored_snapshot_messages,
+            incoming_messages=current_turn_messages,
+            stored_interrupt=stored_interrupt,
+        )
+    return snapshot_messages[len(stored_snapshot_messages) :], snapshot_messages
 
 
 async def run_agent_stream(
@@ -2362,6 +2325,7 @@ async def run_agent_stream(
                 provider_suffix, snapshot_seed_messages = _split_service_session_input(
                     stored_snapshot_messages=stored_snapshot.messages,
                     current_turn_messages=raw_messages,
+                    stored_interrupt=stored_snapshot.interrupt,
                 )
                 raw_messages = provider_suffix
         elif not config.use_service_session:
@@ -2374,6 +2338,7 @@ async def run_agent_stream(
             provider_suffix, snapshot_seed_messages = _split_service_session_input(
                 stored_snapshot_messages=stored_snapshot.messages,
                 current_turn_messages=raw_messages,
+                stored_interrupt=stored_snapshot.interrupt,
             )
             raw_messages = provider_suffix
 
@@ -2463,9 +2428,13 @@ async def run_agent_stream(
     if approval_resume_messages:
         logger.info(f"Appending {len(approval_resume_messages)} synthesized approval resume message(s).")
         raw_messages.extend(approval_resume_messages)
+        if snapshot_seed_messages is not None:
+            snapshot_seed_messages.extend(copy.deepcopy(approval_resume_messages))
     if resume_messages:
         logger.info(f"Appending {len(resume_messages)} synthesized resume message(s) to AG-UI input.")
         raw_messages.extend(resume_messages)
+        if snapshot_seed_messages is not None:
+            snapshot_seed_messages.extend(copy.deepcopy(resume_messages))
     if retained_approval_results and not raw_messages:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         for event in _make_approval_tool_result_events(retained_approval_results):
@@ -2475,23 +2444,15 @@ async def run_agent_stream(
     protected_tool_call_ids = _approval_state_tool_call_ids(approval_state_store, approval_thread_id)
     messages, snapshot_messages = normalize_agui_input_messages(
         raw_messages,
+        sanitize_tool_history=not (config.use_service_session and stored_snapshot is not None),
         protected_tool_call_ids=protected_tool_call_ids,
     )
 
-    if config.use_service_session and snapshot_seed_messages is not None:
+    if snapshot_seed_messages is not None:
         _, snapshot_messages = normalize_agui_input_messages(
             snapshot_seed_messages,
             protected_tool_call_ids=protected_tool_call_ids,
         )
-    elif config.use_service_session and stored_snapshot is not None:
-        if seeded_resume_from_snapshot:
-            snapshot_messages = snapshot_session.resume_seeded_messages(snapshot_messages)
-        else:
-            snapshot_messages = _reconstruct_messages_from_thread_snapshot(
-                stored_messages=stored_snapshot.messages,
-                incoming_messages=snapshot_messages,
-                stored_interrupt=stored_snapshot.interrupt,
-            )
     # Check for structured output mode (skip text content)
     skip_text = False
     response_format: type[Any] | None = None
@@ -2684,7 +2645,7 @@ async def run_agent_stream(
         # Persist the completed confirmation turn with interrupt=None so hydration
         # does not replay the stale pending interrupt after the user responded.
         persisted_messages = snapshot_messages + _text_events_to_snapshot_messages(confirmation_events)
-        if resume_payload is not None and not seeded_resume_from_snapshot:
+        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
             # Generic resume requests carry only the synthesized response, so prepend
             # stored history unless this run already seeded raw messages from it.
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
@@ -3015,7 +2976,6 @@ async def run_agent_stream(
         flow.pending_tool_calls or flow.tool_results or flow.accumulated_text or flow.reasoning_messages
     )
     latest_messages_snapshot = snapshot_messages
-
     if should_emit_snapshot:
         # Always fold this turn's output into the persisted snapshot, even when the
         # outbound MESSAGES_SNAPSHOT event is suppressed for predictive tools.
@@ -3043,7 +3003,7 @@ async def run_agent_stream(
             yield snapshot_event
 
     persisted_messages = latest_messages_snapshot
-    if resume_payload is not None and not seeded_resume_from_snapshot:
+    if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
         # Generic resume requests carry only the synthesized response, so prepend
         # stored history unless this run already seeded raw messages from it.
         persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
