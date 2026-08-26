@@ -3,6 +3,7 @@
 using AgentWebChat.AgentHost;
 using AgentWebChat.AgentHost.Custom;
 using AgentWebChat.AgentHost.Utilities;
+using Azure.Storage.Blobs;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.DevUI;
 using Microsoft.Agents.AI.Hosting;
@@ -43,8 +44,26 @@ var pirateAgentBuilder = builder.AddAIAgent(
     description: "An agent that speaks like a pirate.",
     chatClientServiceKey: "chat-model")
     .WithAITool(new CustomAITool())
-    .WithAITool(new CustomFunctionTool())
-    .WithInMemorySessionStore();
+    .WithAITool(new CustomFunctionTool());
+
+// Set both environment variables to replace development-only in-memory storage with Azure Blob Storage.
+string? blobConnectionString = Environment.GetEnvironmentVariable("AZURE_STORAGE_BLOB_CONNECTION_STRING");
+if (string.IsNullOrWhiteSpace(blobConnectionString))
+{
+    pirateAgentBuilder.WithInMemorySessionStore();
+}
+else
+{
+    string? blobContainerName = Environment.GetEnvironmentVariable("AZURE_STORAGE_BLOB_CONTAINER_NAME");
+    if (string.IsNullOrWhiteSpace(blobContainerName))
+    {
+        throw new InvalidOperationException(
+            "AZURE_STORAGE_BLOB_CONTAINER_NAME must be set when AZURE_STORAGE_BLOB_CONNECTION_STRING is configured.");
+    }
+
+    BlobContainerClient containerClient = new(blobConnectionString, blobContainerName);
+    pirateAgentBuilder.WithAzureBlobSessionStore(containerClient);
+}
 
 var knightsKnavesAgentBuilder = builder.AddAIAgent("knights-and-knaves", (sp, key) =>
 {

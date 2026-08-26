@@ -112,6 +112,10 @@ public sealed class CompactionProvider : AIContextProvider
     /// </returns>
     protected override async ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreCompactionProvider);
+#pragma warning restore MAAI001
+
         using Activity? activity = CompactionTelemetry.ActivitySource.StartActivity(CompactionTelemetry.ActivityNames.CompactionProviderInvoke);
 
         ILoggerFactory loggerFactory = this.GetLoggerFactory(context.Agent);
@@ -146,9 +150,9 @@ public sealed class CompactionProvider : AIContextProvider
             // Treat all messages already in the index as chat history.
             foreach (var message in messageIndex.Groups.SelectMany(x => x.Messages))
             {
-                message.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+                message.AdditionalProperties ??= [];
                 message.AdditionalProperties[AgentRequestMessageSourceAttribution.AdditionalPropertiesKey] =
-                    new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName!);
+                    new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName);
             }
 
             // Update existing index with any new messages appended since the last call.
@@ -188,9 +192,9 @@ public sealed class CompactionProvider : AIContextProvider
             // Only consider messages that aren't already marked as ChatHistory and messages that weren't passed into the provider.
             if (message.GetAgentRequestMessageSourceType() != AgentRequestMessageSourceType.ChatHistory && !messageList.Any(x => x.ContentEquals(message)))
             {
-                message.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+                message.AdditionalProperties ??= [];
                 message.AdditionalProperties[AgentRequestMessageSourceAttribution.AdditionalPropertiesKey] =
-                    new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName!);
+                    new AgentRequestMessageSourceAttribution(AgentRequestMessageSourceType.ChatHistory, this.GetType().FullName);
             }
         }
 

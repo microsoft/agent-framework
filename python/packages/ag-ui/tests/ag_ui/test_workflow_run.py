@@ -133,7 +133,11 @@ async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch:
     monkeypatch.setattr(
         observability,
         "OBSERVABILITY_SETTINGS",
-        SimpleNamespace(ENABLED=True, SENSITIVE_DATA_ENABLED=False),
+        SimpleNamespace(
+            ENABLED=True,
+            SENSITIVE_DATA_ENABLED=False,
+            use_latest_experimental_gen_ai_semconv=True,
+        ),
     )
     monkeypatch.setattr(observability, "get_tracer", lambda *args, **kwargs: tracer_provider.get_tracer("test"))
 

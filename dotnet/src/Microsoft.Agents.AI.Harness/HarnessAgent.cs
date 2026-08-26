@@ -4,6 +4,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Compaction;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
@@ -128,6 +131,37 @@ public sealed class HarnessAgent : DelegatingAIAgent
             loggerFactory,
             services))
     {
+    }
+
+    /// <inheritdoc />
+    protected override Task<AgentResponse> RunCoreAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreHarnessAgent);
+#pragma warning restore MAAI001
+
+        return this.InnerAgent.RunAsync(messages, session, options, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreHarnessAgent);
+#pragma warning restore MAAI001
+
+        await foreach (AgentResponseUpdate update in this.InnerAgent.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
+        {
+            yield return update;
+        }
     }
 
     private static AIAgent BuildAgent(IChatClient chatClient, HarnessAgentOptions? options, ILoggerFactory? loggerFactory, IServiceProvider? services)
