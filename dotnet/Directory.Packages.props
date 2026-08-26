@@ -105,7 +105,7 @@
     <PackageVersion Include="Microsoft.Extensions.VectorData.Abstractions" Version="10.8.2" />
     <!-- Vector Stores -->
     <PackageVersion Include="CommunityToolkit.VectorData.AzureCosmosDB" Version="1.0.0" />
-    <PackageVersion Include="CommunityToolkit.VectorData.InMemory" Version="1.0.0" />
+    <PackageVersion Include="CommunityToolkit.VectorData.InMemory" Version="1.0.1" />
     <PackageVersion Include="CommunityToolkit.VectorData.Qdrant" Version="1.0.0" />
     <!-- Agent SDKs -->
     <PackageVersion Include="GitHub.Copilot.SDK" Version="1.0.5" />
