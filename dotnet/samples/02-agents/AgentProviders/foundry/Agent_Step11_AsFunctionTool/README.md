@@ -4,7 +4,7 @@ This sample demonstrates how to use one agent as a function tool for another age
 
 Function tools expose operations through structured inputs and outputs making them useful for many different integration scenarios. 
 
-Using `yourAIAgent.AsAIFunction()` exposes an agent as a function, enabling them to be used by other agents as tools allowing interesting agent composition scenarios.
+Using `yourAIAgent.AsAIFunction()` exposes the agent as a function that other agents can use as a tool, enabling agent-composition scenarios.
 
 > [!NOTE]
 > Wrapping an AI Model driven agent exposed as an `AIFunction` doesn't make your agent deterministic, it will return the original agent output as the function result. The determinism of the result is completely dependent on how your agent is configured.
