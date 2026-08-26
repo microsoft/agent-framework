@@ -155,6 +155,10 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
     {
         _ = Throw.IfNull(context);
 
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreChatHistoryMemoryProvider);
+#pragma warning restore MAAI001
+
         var state = this._sessionState.GetOrInitializeState(context.Session);
         var searchScope = state.SearchScope;
 
@@ -196,6 +200,10 @@ public sealed class ChatHistoryMemoryProvider : MessageAIContextProvider, IDispo
         {
             throw new InvalidOperationException($"Using the {nameof(ChatHistoryMemoryProvider)} as a {nameof(MessageAIContextProvider)} is not supported when {nameof(ChatHistoryMemoryProviderOptions.SearchTime)} is set to {ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling}.");
         }
+
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreChatHistoryMemoryProvider);
+#pragma warning restore MAAI001
 
         return base.InvokingCoreAsync(context, cancellationToken);
     }

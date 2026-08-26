@@ -2,6 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Numerics;
+using System.Reflection;
 using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -311,8 +314,8 @@ public partial class WorkflowBuilderTests
 
         // Assert
         workflow.Ports.Should().ContainKey(PortId);
-        workflow.Ports[PortId].Request.Should().Be(typeof(string));
-        workflow.Ports[PortId].Response.Should().Be(typeof(int));
+        workflow.Ports[PortId].Request.Should().Be<string>();
+        workflow.Ports[PortId].Response.Should().Be<int>();
         workflow.ExecutorBindings.Should().ContainKey(PortId);
 
         Edge requestEdge = GetSingleEdge(workflow, source.Id);
@@ -482,7 +485,7 @@ public partial class WorkflowBuilderTests
             .WithIntermediateOutputFrom([b])
             .Build();
 
-        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        workflow.OutputExecutors["b"].Should().BeEquivalentTo([OutputTag.Intermediate]);
     }
 
     [Fact]
@@ -514,7 +517,7 @@ public partial class WorkflowBuilderTests
             .Build();
 
         // WithOutputFrom doesn't add a tag; WithIntermediateOutputFrom adds Intermediate.
-        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        workflow.OutputExecutors["b"].Should().BeEquivalentTo([OutputTag.Intermediate]);
     }
 
     [Fact]
@@ -528,7 +531,7 @@ public partial class WorkflowBuilderTests
             .WithIntermediateOutputFrom([b])
             .Build();
 
-        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        workflow.OutputExecutors["b"].Should().BeEquivalentTo([OutputTag.Intermediate]);
     }
 
     [Fact]
@@ -544,7 +547,7 @@ public partial class WorkflowBuilderTests
             .Build();
 
         workflow.OutputExecutors.Should().ContainKey("b");
-        workflow.OutputExecutors["b"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        workflow.OutputExecutors["b"].Should().BeEquivalentTo([OutputTag.Intermediate]);
     }
 
     [Fact]
@@ -561,6 +564,118 @@ public partial class WorkflowBuilderTests
             .Build();
 
         workflow.OutputExecutors.Should().ContainKey("future");
-        workflow.OutputExecutors["future"].Should().BeEquivalentTo(new[] { OutputTag.Intermediate });
+        workflow.OutputExecutors["future"].Should().BeEquivalentTo([OutputTag.Intermediate]);
     }
+}
+
+[CollectionDefinition("WorkflowFeatureUsage", DisableParallelization = true)]
+public sealed class WorkflowFeatureUsageScope;
+
+[Collection("WorkflowFeatureUsage")]
+public sealed class WorkflowFeatureUsageTests
+{
+    private sealed class NoOpExecutor(string id) : Executor(id)
+    {
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
+            => protocolBuilder.ConfigureRoutes(routeBuilder =>
+                routeBuilder.AddHandler<object>((message, context) => context.SendMessageAsync(message)));
+    }
+
+    [Fact]
+    public void Build_MarksOnlyTheActivatedWorkflowFeature()
+    {
+        // Arrange
+        ResetFeatureUsage();
+        WorkflowBuilder custom = new(new NoOpExecutor("custom"));
+        OrchestrationTestHelpers.DoubleEchoAgent sequentialAgent = new("sequential");
+        OrchestrationTestHelpers.DoubleEchoAgent concurrentAgent = new("concurrent");
+        OrchestrationTestHelpers.DoubleEchoAgent groupChatAgent = new("group-chat");
+        OrchestrationTestHelpers.DoubleEchoAgent magenticManager = new("magentic-manager");
+        OrchestrationTestHelpers.DoubleEchoAgent magenticAgent = new("magentic-agent");
+        OrchestrationTestHelpers.DoubleEchoAgent handoffCoordinator = new("handoff-coordinator");
+        OrchestrationTestHelpers.DoubleEchoAgent handoffSpecialist = new("handoff-specialist");
+
+        SequentialWorkflowBuilder sequential = new(sequentialAgent);
+        ConcurrentWorkflowBuilder concurrent = new(concurrentAgent);
+        GroupChatWorkflowBuilder groupChat = AgentWorkflowBuilder
+            .CreateGroupChatBuilderWith(agents => new RoundRobinGroupChatManager(agents))
+            .AddParticipants(groupChatAgent);
+        MagenticWorkflowBuilder magentic = new MagenticWorkflowBuilder(magenticManager)
+            .AddParticipants(magenticAgent)
+            .RequirePlanSignoff(false);
+        HandoffWorkflowBuilder handoff = AgentWorkflowBuilder
+            .CreateHandoffBuilderWith(handoffCoordinator)
+            .WithHandoff(handoffCoordinator, handoffSpecialist);
+
+        (string Name, int FeatureIndex, Func<Workflow> Build)[] specialized =
+        [
+            ("sequential", (int)FeatureIndex.OrchestrationSequential, sequential.Build),
+            ("concurrent", (int)FeatureIndex.OrchestrationConcurrent, concurrent.Build),
+            ("group chat", (int)FeatureIndex.OrchestrationGroupChat, groupChat.Build),
+            ("magentic", (int)FeatureIndex.OrchestrationMagentic, magentic.Build),
+            ("handoff", (int)FeatureIndex.OrchestrationHandoff, handoff.Build),
+        ];
+
+        // Act and assert
+        Assert.Equal(BigInteger.Zero, GetFeatureMask());
+
+        _ = custom.Build();
+        AssertFeatureMask(FeatureIndex.CoreWorkflow, "custom");
+
+        foreach ((string name, int featureIndex, Func<Workflow> build) in specialized)
+        {
+            ResetFeatureUsage();
+            _ = build();
+            AssertFeatureMask(featureIndex, name);
+        }
+    }
+
+    [Fact]
+    public void Build_WhenValidationFails_DoesNotMarkCoreWorkflow()
+    {
+        // Arrange
+        ResetFeatureUsage();
+        WorkflowBuilder builder = new("unbound");
+
+        // Act
+        Action build = () => builder.Build();
+
+        // Assert
+        build.Should().Throw<InvalidOperationException>();
+        Assert.Equal(BigInteger.Zero, GetFeatureMask());
+    }
+
+    private static void AssertFeatureMask(FeatureIndex featureIndex, string workflowKind)
+        => AssertFeatureMask((int)featureIndex, workflowKind);
+
+    private static void AssertFeatureMask(int featureIndex, string workflowKind)
+    {
+        BigInteger expected = BigInteger.One << featureIndex;
+        BigInteger actual = GetFeatureMask();
+        Assert.True(
+            actual == expected,
+            $"Expected {workflowKind} workflow build to mark only feature bit {featureIndex}, but found mask 0x{actual:x}.");
+    }
+
+    private static BigInteger GetFeatureMask()
+    {
+#pragma warning disable MAAI001
+        string userAgent = FeatureUsage.ApplyToUserAgent("test");
+#pragma warning restore MAAI001
+        const string Prefix = "test (feat=v1.";
+        if (userAgent == "test")
+        {
+            return BigInteger.Zero;
+        }
+
+        Assert.StartsWith(Prefix, userAgent);
+        Assert.EndsWith(")", userAgent);
+        string mask = userAgent.Substring(Prefix.Length, userAgent.Length - Prefix.Length - 1);
+        return BigInteger.Parse($"0{mask}", NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture);
+    }
+
+    private static void ResetFeatureUsage()
+        => typeof(FeatureUsage)
+            .GetMethod("ResetStateForTests", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, null);
 }

@@ -451,6 +451,10 @@ public sealed class AnthropicBetaServiceExtensionsTests
 
         public IModelService Models => throw new NotImplementedException();
 
+        public IFileService Files => throw new NotImplementedException();
+
+        public ISkillService Skills => throw new NotImplementedException();
+
         public IBetaService Beta => this.BetaService;
 
         public IBetaService BetaService { get; }
@@ -502,6 +506,10 @@ public sealed class AnthropicBetaServiceExtensionsTests
             public global::Anthropic.Services.Beta.IWebhookService Webhooks => throw new NotImplementedException();
 
             public global::Anthropic.Services.Beta.IUserProfileService UserProfiles => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.IDreamService Dreams => throw new NotImplementedException();
+
+            public global::Anthropic.Services.Beta.ITunnelService Tunnels => throw new NotImplementedException();
 
             public IBetaService WithOptions(Func<ClientOptions, ClientOptions> modifier)
             {

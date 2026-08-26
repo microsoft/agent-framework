@@ -4,6 +4,9 @@ from collections.abc import Generator
 from typing import Any
 from unittest.mock import patch
 
+from opentelemetry._logs import get_logger_provider, set_logger_provider
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pytest import fixture
@@ -29,6 +32,8 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
         "ENABLE_INSTRUMENTATION",
         "ENABLE_SENSITIVE_DATA",
         "ENABLE_CONSOLE_EXPORTERS",
+        "ENABLE_MESSAGE_EVENTS",
+        "OTEL_SEMCONV_STABILITY_OPT_IN",
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
         "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
@@ -87,3 +92,23 @@ def span_exporter(monkeypatch, enable_instrumentation: bool, enable_sensitive_da
         yield exporter
         # Clean up
         exporter.clear()
+
+
+@fixture
+def log_record_exporter(span_exporter: SpanExporter) -> Generator[InMemoryLogRecordExporter]:
+    """Fixture providing an in-memory exporter for OTel log records (e.g. gen_ai message events).
+
+    Depends on ``span_exporter`` so ObservabilitySettings/env vars are configured first. The global
+    OTel LoggerProvider can only be set once per process, so on later test runs this just attaches
+    another processor to whichever LoggerProvider a previous test already installed.
+    """
+    exporter = InMemoryLogRecordExporter()
+    set_logger_provider(LoggerProvider())
+    provider = get_logger_provider()
+    if not hasattr(provider, "add_log_record_processor"):
+        raise RuntimeError("Logger provider does not support adding log record processors.")
+    provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))  # type: ignore
+
+    yield exporter
+    # Clean up
+    exporter.clear()

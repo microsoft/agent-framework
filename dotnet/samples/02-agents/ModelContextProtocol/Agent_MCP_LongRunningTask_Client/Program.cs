@@ -5,7 +5,7 @@
 // A small MCP server (hosted in this same executable when launched with "--server") exposes
 // a single task-supporting tool "AnalyzeDataset" that simulates ~15 seconds of work. The
 // client (default mode) connects to it over stdio via Microsoft.Agents.AI.Mcp's
-// McpClientTaskExtensions.ListAgentToolsWithTaskSupportAsync, hands the wrapped tools to a
+// McpClientTaskExtensions.ListAgentToolsWithTasksAsync, hands the wrapped tools to a
 // ChatClientAgent, and exercises both invocation styles:
 //   * RunAsync          — blocks until the agent's final response is ready.
 //   * RunStreamingAsync — yields response updates as the model produces them; the model
@@ -14,9 +14,9 @@
 //                         tool execution time, not stream-channel latency.
 //
 // In both cases the wrapper transparently:
-//   1. Calls tools/call with task augmentation (CallToolAsTaskAsync)
-//   2. Polls tasks/get until terminal (PollTaskUntilCompleteAsync)
-//   3. Fetches tasks/result and returns the final result to the function-calling loop
+//   1. Calls tools/call with the io.modelcontextprotocol/tasks extension capability
+//   2. Accepts either an inline result or a task handle
+//   3. Polls tasks/get until the final result is available
 //
 // No application-level loop or continuation tokens are required in either mode.
 
@@ -29,8 +29,8 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using ModelContextProtocol;
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Extensions.Tasks;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using OpenAI.Chat;
@@ -53,15 +53,9 @@ await using var mcpClient = await McpClient.CreateAsync(new StdioClientTransport
     Arguments = [thisAssemblyPath, "--server"],
 }));
 
-// Wrap each MCP tool with task-aware behavior. The wrapper inspects the server's
-// execution.taskSupport on each tool and, when it is Required, drives the task lifecycle
-// transparently within the agent's tool loop. Tools that don't require task semantics are
-// returned as-is and invoked inline.
-var taskOptions = new McpTaskOptions
-{
-    DefaultTimeToLive = TimeSpan.FromMinutes(5),
-};
-var mcpTools = await mcpClient.ListAgentToolsWithTaskSupportAsync(taskOptions);
+// Wrap each MCP tool with task-aware behavior. Each invocation opts into the Tasks extension;
+// a task-capable server may return a task handle, while other servers can return inline.
+var mcpTools = await mcpClient.ListAgentToolsWithTasksAsync();
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
@@ -76,6 +70,8 @@ AIAgent agent = new AzureOpenAIClient(
 
 const string Prompt = "Analyze the dataset named 'sales-2025-q1' and summarize the findings.";
 
+Console.WriteLine("MCP 2026-07-28 Tasks extension enabled.");
+Console.WriteLine();
 Console.WriteLine("=== Transparent long-running MCP task (RunAsync) ===");
 Console.WriteLine("Asking the agent to analyze a dataset; the tool takes ~15s to complete.");
 Console.WriteLine("RunAsync blocks while the wrapper polls the task to completion.");
@@ -117,12 +113,10 @@ static async Task RunMcpServerAsync()
     builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 
     builder.Services.AddMcpServer(o =>
-    {
-        o.TaskStore = new InMemoryMcpTaskStore();
-        o.ServerInfo = new Implementation { Name = "DatasetAnalyzer", Version = "1.0.0" };
-    })
+        o.ServerInfo = new Implementation { Name = "DatasetAnalyzer", Version = "1.0.0" })
     .WithStdioServerTransport()
-    .WithTools<DatasetAnalysisTools>();
+    .WithTools<DatasetAnalysisTools>()
+    .WithTasks(new InMemoryMcpTaskStore());
 
     await builder.Build().RunAsync();
 }
@@ -132,7 +126,7 @@ static async Task RunMcpServerAsync()
 internal sealed class DatasetAnalysisTools
 #pragma warning restore CA1812
 {
-    [McpServerTool(Name = "AnalyzeDataset", TaskSupport = ToolTaskSupport.Required)]
+    [McpServerTool(Name = "AnalyzeDataset")]
     [Description("Analyze a tabular dataset and return summary statistics. This tool simulates a long-running analytic job (~15 seconds).")]
     public static async Task<string> AnalyzeDatasetAsync(
         [Description("The dataset identifier, e.g. 'sales-2025-q1'.")] string datasetName,

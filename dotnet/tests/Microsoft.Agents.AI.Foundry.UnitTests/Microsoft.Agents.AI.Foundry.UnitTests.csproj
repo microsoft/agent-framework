@@ -6,7 +6,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Azure.AI.OpenAI" />
     <PackageReference Include="Azure.AI.Projects" />
     <PackageReference Include="Azure.Core" />
     <PackageReference Include="System.ClientModel" />

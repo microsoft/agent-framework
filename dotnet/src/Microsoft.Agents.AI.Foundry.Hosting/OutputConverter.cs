@@ -32,6 +32,9 @@ internal static class OutputConverter
     /// <param name="updates">The agent response updates to convert.</param>
     /// <param name="stream">The SDK event stream builder.</param>
     /// <param name="stateBag">Optional session state bag used to persist tool-approval id mappings across turns.</param>
+    /// <param name="persistWorkflowCheckpointHandler">
+    /// Optional callback invoked after all output from a completed workflow superstep has been closed.
+    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>An async enumerable of SDK response stream events (excluding lifecycle events).</returns>
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing function call arguments dictionary.")]
@@ -40,6 +43,7 @@ internal static class OutputConverter
         IAsyncEnumerable<AgentResponseUpdate> updates,
         ResponseEventStream stream,
         AgentSessionStateBag? stateBag = null,
+        Func<CheckpointInfo, CancellationToken, ValueTask<ResponseStreamEvent?>>? persistWorkflowCheckpointHandler = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         ResponseUsage? accumulatedUsage = null;
@@ -76,6 +80,21 @@ internal static class OutputConverter
                 foreach (var evt in EmitWorkflowEvent(stream, workflowEvent, executorItemIds))
                 {
                     yield return evt;
+                }
+
+                if (workflowEvent is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } checkpoint }
+                    && persistWorkflowCheckpointHandler is not null)
+                {
+                    ResponseStreamEvent? checkpointStateEvent =
+                        await persistWorkflowCheckpointHandler(checkpoint, cancellationToken).ConfigureAwait(false);
+                    if (checkpointStateEvent is not null)
+                    {
+                        // AgentServer persists its orchestrator-owned response snapshot. Emit the
+                        // updated response state first so internal metadata becomes part of that
+                        // authoritative snapshot, then persist it with the control event.
+                        yield return checkpointStateEvent;
+                        yield return stream.Checkpoint();
+                    }
                 }
 
                 continue;

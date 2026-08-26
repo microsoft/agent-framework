@@ -6,13 +6,16 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Threading;
+using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
+using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 // The terminal stream events are named the same in two namespaces this file pulls in, and the short
 // name binds to the one the event objects are not. Naming them here keeps `is` checks against the
@@ -20,6 +23,7 @@ using Microsoft.Shared.DiagnosticIds;
 using ResponseCompletedEvent = Azure.AI.AgentServer.Responses.Models.ResponseCompletedEvent;
 using ResponseFailedEvent = Azure.AI.AgentServer.Responses.Models.ResponseFailedEvent;
 using ResponseIncompleteEvent = Azure.AI.AgentServer.Responses.Models.ResponseIncompleteEvent;
+using ResponseOutputItemDoneEvent = Azure.AI.AgentServer.Responses.Models.ResponseOutputItemDoneEvent;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting;
 
@@ -31,9 +35,18 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public class AgentFrameworkResponseHandler : ResponseHandler
 {
+    private const string LatestWorkflowCheckpointIdMetadataKey = "_last_checkpoint_id";
+
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<AgentFrameworkResponseHandler> _logger;
     private readonly FoundryToolboxService? _toolboxService;
+
+    /// <summary>
+    /// Whether the host was configured for durable long-running (resilient) background responses
+    /// (<see cref="FoundryResponsesOptions.ResilientBackground"/>). When <see langword="false"/> the
+    /// handler never does mid-turn session saves or recovery exit and behaves exactly as a non-resilient host.
+    /// </summary>
+    private readonly bool _resilientBackground;
 
     /// <summary>
     /// Cached fallback used when no <see cref="HostedSessionIsolationKeyProvider"/> is registered in DI.
@@ -52,13 +65,39 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         IServiceProvider serviceProvider,
         ILogger<AgentFrameworkResponseHandler> logger,
         FoundryToolboxService? toolboxService = null)
+        : this(
+            serviceProvider,
+            logger,
+            Options.Create(new FoundryResponsesOptions()),
+            toolboxService)
     {
-        ArgumentNullException.ThrowIfNull(serviceProvider);
-        ArgumentNullException.ThrowIfNull(logger);
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentFrameworkResponseHandler"/> class
+    /// that resolves agents from keyed DI services.
+    /// </summary>
+    /// <param name="serviceProvider">The service provider for resolving agents.</param>
+    /// <param name="logger">The logger instance.</param>
+    /// <param name="foundryResponsesOptions">
+    /// Hosting options, used to read whether resilient background responses are enabled.
+    /// </param>
+    /// <param name="toolboxService">Optional Foundry Toolbox service providing MCP tools.</param>
+    [ActivatorUtilitiesConstructor]
+    public AgentFrameworkResponseHandler(
+        IServiceProvider serviceProvider,
+        ILogger<AgentFrameworkResponseHandler> logger,
+        IOptions<FoundryResponsesOptions> foundryResponsesOptions,
+        FoundryToolboxService? toolboxService = null)
+    {
+        _ = Throw.IfNull(serviceProvider);
+        _ = Throw.IfNull(logger);
+        _ = Throw.IfNull(foundryResponsesOptions);
 
         this._serviceProvider = serviceProvider;
         this._logger = logger;
         this._toolboxService = toolboxService;
+        this._resilientBackground = foundryResponsesOptions.Value.ResilientBackground;
     }
 
     /// <inheritdoc/>
@@ -71,20 +110,6 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var agent = this.ResolveAgent(request);
         var sessionStore = this.ResolveSessionStore(request);
 
-        // Fail fast with a clear, actionable error when this 2.0.0-only image is served container
-        // protocol 1.0.0. The x-agent-foundry-call-id header is exclusive to protocol 2.0.0, so when the
-        // container is hosted by Foundry yet receives no call id, the platform is talking 1.0.0 to an
-        // image that does not support it. Detecting this here turns an opaque 500 into a 501 that names
-        // the cause and the fix instead of bubbling up as a generic server error on every request.
-        var unsupportedProtocolError = HostedProtocolCompatibility.GetUnsupportedProtocolError(
-            FoundryEnvironment.IsHosted, context.PlatformContext?.CallId);
-        if (unsupportedProtocolError is not null)
-        {
-            this._logger.LogError(
-                "Hosted container served unsupported Responses protocol 1.0.0 (no x-agent-foundry-call-id header); this image requires protocol 2.0.0.");
-            throw unsupportedProtocolError;
-        }
-
         // 2. Resolve the per-request hosted session identity context, so the session can be
         // loaded from a per-user partition. Fresh sessions are tagged once; resumed sessions are
         // validated against the live request to detect cross-user session leaks and in-process tampering.
@@ -93,8 +118,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var resolvedHostedContext = await isolationKeyProvider.GetKeysAsync(context, request, cancellationToken).ConfigureAwait(false);
         if (resolvedHostedContext is null && FoundryEnvironment.IsHosted)
         {
-            // Hosted by Foundry yet the provider produced no user identity. Protocol 1.0.0 (no call id)
-            // was already turned into a clear 501 above, so this is the unexpected case of a 2.0.0
+            // Hosted by Foundry yet the provider produced no user identity. The endpoint filter
+            // already rejected protocol 1.0.0, so this is the unexpected case of a 2.0.0
             // request that carried a call id but no x-agent-user-id, or a custom provider that returned
             // null in production. Reject rather than silently persist an unscoped, cross-user session.
             throw new InvalidOperationException(
@@ -130,9 +155,23 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         // Load the session for this conversation, or start a new one. The store returns null when
         // nothing is persisted for the key, so a fresh conversation and a resumed one both end up with
         // a session to run against.
-        AgentSession? session = !string.IsNullOrWhiteSpace(agentSessionId)
-            ? await sessionStore.GetOrCreateSessionAsync(agent, agentSessionId, resolvedUserId, cancellationToken).ConfigureAwait(false)
-            : await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        AgentSession? session;
+        bool sessionRestoredFromStore = false;
+        if (string.IsNullOrWhiteSpace(agentSessionId))
+        {
+            session = await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            session = await sessionStore.GetSessionAsync(
+                agent,
+                agentSessionId,
+                resolvedUserId,
+                cancellationToken).ConfigureAwait(false);
+
+            sessionRestoredFromStore = session is not null;
+            session ??= await agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         // Capture the platform per-request call id (x-agent-foundry-call-id, protocol 2.0.0 only).
         // It is re-applied to the ambient HostedCallContext immediately before each outbound egress
@@ -164,8 +203,31 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             }
         }
 
-        // 3. Create the SDK event stream builder
-        var stream = new ResponseEventStream(context, request);
+        // 3. Create the SDK event stream builder.
+        // On recovery, AgentServer supplies the last ResponseObject snapshot that it persisted.
+        // Workflow response checkpoints carry the exact workflow checkpoint id represented by that
+        // snapshot, so recovery can select the matching workflow boundary rather than a newer
+        // checkpoint that may already exist in workflow storage.
+        var stream = context.IsRecovery && context.PersistedResponse is { } persistedResponse
+            ? new ResponseEventStream(context, persistedResponse)
+            : new ResponseEventStream(context, request);
+
+        WorkflowSessionCheckpointRecovery? workflowCheckpointRecovery =
+            session?.GetService<WorkflowSessionCheckpointRecovery>();
+        if (context.IsRecovery
+            && sessionRestoredFromStore
+            && workflowCheckpointRecovery is not null)
+        {
+            string? checkpointId =
+                stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? persistedCheckpointId)
+                && !string.IsNullOrWhiteSpace(persistedCheckpointId)
+                    ? persistedCheckpointId
+                    : null;
+
+            // When metadata is absent, TryPrepare keeps the checkpoint already referenced by the
+            // restored session. Either path continues queued work without starting a new turn.
+            workflowCheckpointRecovery.TryPrepare(checkpointId);
+        }
 
         // 3. Emit lifecycle events
         yield return stream.EmitCreated();
@@ -173,18 +235,26 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         // 4. Convert input: the current input items become the run's messages. Earlier turns are not
         // added here; whatever holds the history for this agent supplies them, see step 5.
+        //
+        // On recovery the platform re-delivers the original input. When a persisted AgentSession was
+        // restored, this adapter leaves the message list empty and lets that session define re-entry.
+        // If no session was ever saved, there is no resumable MAF state, so recovery restarts from the
+        // original input instead of invoking a fresh session with no messages.
+        bool shouldInjectRequestInput = !context.IsRecovery || !sessionRestoredFromStore;
         var messages = new List<ChatMessage>();
-
-        // Load and convert current input items
-        var inputItems = await context.GetInputItemsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (inputItems.Count > 0)
+        if (shouldInjectRequestInput)
         {
-            messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems, session?.StateBag));
-        }
-        else
-        {
-            // Fall back to raw request input
-            messages.AddRange(InputConverter.ConvertInputToMessages(request, session?.StateBag));
+            // Load and convert current input items
+            var inputItems = await context.GetInputItemsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (inputItems.Count > 0)
+            {
+                messages.AddRange(InputConverter.ConvertItemsToMessages(inputItems, session?.StateBag));
+            }
+            else
+            {
+                // Fall back to raw request input
+                messages.AddRange(InputConverter.ConvertInputToMessages(request, session?.StateBag));
+            }
         }
 
         // 5. Build chat options
@@ -338,9 +408,13 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         var options = new ChatClientAgentRunOptions(chatOptions);
 
-        // We only use a volatile provider for the conversation history if the agent is a ChatClientAgent and the allow setting is not intentionally set or not custom chat history provider is intentionally supplied.
+        // We only use a volatile provider for the conversation history if the agent is a
+        // ChatClientAgent, stored output is not allowed, and no custom history provider was supplied.
+        // Recovery does not reload platform history because the restored AgentSession owns re-entry
+        // state. For workflows, that includes the workflow checkpoint reference.
         var useVolatileChatHistoryProvider =
-            !allowStoredOutputEnabled
+            shouldInjectRequestInput
+            && !allowStoredOutputEnabled
             && agent.GetService<ChatClientAgent>() is not null
             && agentOptions?.ChatHistoryProvider is null;
 
@@ -359,13 +433,22 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         //    We create a linked CTS so the consent-aware tool wrapper can cancel the agent
         //    run mid-loop when a -32006 error is returned by the proxy. The RequestConsentState
         //    is a shared mutable object that flows via AsyncLocal to the tool wrapper.
-        using var consentCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var consentCts = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            context.Shutdown);
         var consentState = new RequestConsentState { CancellationSource = consentCts };
         McpConsentContext.Current.Value = consentState;
 
         // 7. Run the agent and convert output
         // NOTE: C# forbids 'yield return' inside a try block that has a catch clause,
         // and inside catch blocks. We use a flag to defer the yield to outside the try/catch.
+        //
+        // On a resilient turn, save the AgentSession after completed response output items so a
+        // process crash can reload a recent session snapshot. Workflow supersteps use a stronger
+        // boundary below: save the session, record its workflow checkpoint id in internal response
+        // metadata, then ask AgentServer to persist the matching ResponseObject snapshot.
+        bool isResilientTurn = this.ShouldPersistForResilience(request) || context.IsRecovery;
+
         bool emittedTerminal = false;
         bool notAllowedStoreUsageDetected = false;
 
@@ -376,6 +459,49 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
         // A successful terminal event, held until the run is wound up and the session can be checked.
         ResponseStreamEvent? completedEvent = null;
+        bool steeringDetected = false;
+        bool deferredForRecovery = false;
+
+        async ValueTask<ResponseStreamEvent?> PersistWorkflowCheckpointAsync(
+            CheckpointInfo checkpoint,
+            CancellationToken checkpointCancellationToken)
+        {
+            if (!isResilientTurn
+                || workflowCheckpointRecovery is null
+                || session is null
+                || string.IsNullOrWhiteSpace(agentSessionId)
+                || (stream.InternalMetadata.TryGetValue(LatestWorkflowCheckpointIdMetadataKey, out string? lastCheckpointId)
+                    && string.Equals(lastCheckpointId, checkpoint.CheckpointId, StringComparison.Ordinal)))
+            {
+                return null;
+            }
+
+            try
+            {
+                await sessionStore.SaveSessionAsync(
+                    agent,
+                    agentSessionId,
+                    session,
+                    resolvedUserId,
+                    checkpointCancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                if (this._logger.IsEnabled(LogLevel.Debug))
+                {
+                    this._logger.LogDebug(
+                        ex,
+                        "Workflow checkpoint {CheckpointId} was not paired with response {ResponseId} because its AgentSession could not be saved.",
+                        checkpoint.CheckpointId,
+                        context.ResponseId);
+                }
+
+                return null;
+            }
+
+            stream.InternalMetadata[LatestWorkflowCheckpointIdMetadataKey] = checkpoint.CheckpointId;
+            return stream.EmitInProgress();
+        }
 
         // Check whenever the agent is storing messages when it should not.
         bool CheckNotAllowedStoreUsage() =>
@@ -387,7 +513,8 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             agent.RunStreamingAsync(messages, session, options: options, cancellationToken: consentCts.Token),
             stream,
             session?.StateBag,
-            cancellationToken).GetAsyncEnumerator(cancellationToken);
+            persistWorkflowCheckpointHandler: PersistWorkflowCheckpointAsync,
+            cancellationToken: cancellationToken).GetAsyncEnumerator(cancellationToken);
         try
         {
             while (true)
@@ -409,6 +536,13 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     }
 
                     evt = enumerator.Current;
+                    if (evt is ResponseCompletedEvent)
+                    {
+                        consentCts.Token.ThrowIfCancellationRequested();
+                    }
+
+                    shutdownDetected =
+                        context.IsShutdownRequested && !emittedTerminal;
                 }
                 catch (OperationCanceledException) when (!emittedTerminal && consentState.Pending is not null)
                 {
@@ -418,6 +552,10 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 catch (OperationCanceledException) when (context.IsShutdownRequested && !emittedTerminal)
                 {
                     shutdownDetected = true;
+                }
+                catch (OperationCanceledException) when (context.PendingInputCount > 0 && !emittedTerminal)
+                {
+                    steeringDetected = true;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException && !emittedTerminal)
                 {
@@ -468,9 +606,37 @@ public class AgentFrameworkResponseHandler : ResponseHandler
 
                 if (shutdownDetected)
                 {
-                    // Server is shutting down — emit incomplete so clients can resume
+                    // Server is shutting down. On a resilient turn, leave the response in_progress
+                    // so AgentServer can re-invoke this handler in a later process. The restored
+                    // AgentSession determines how the agent continues. On a non-resilient turn,
+                    // preserve the existing behavior and emit incomplete.
+                    if (isResilientTurn)
+                    {
+                        this._logger.LogInformation("Shutdown detected on a resilient turn; deferring for recovery.");
+                        deferredForRecovery = true;
+                        await context.ExitForRecoveryAsync(cancellationToken).ConfigureAwait(false);
+                        yield break;
+                    }
+
                     this._logger.LogInformation("Shutdown detected, emitting incomplete response.");
                     yield return stream.EmitIncomplete();
+                    yield break;
+                }
+
+                if (steeringDetected)
+                {
+                    // AgentServer cancelled this active turn because another input is queued for the
+                    // same conversation. Finish the current response cleanly so Core can drain the
+                    // queued input as a new handler invocation. The MAF AgentSession is saved in the
+                    // outer finally block and becomes the starting state for that invocation.
+                    if (this._logger.IsEnabled(LogLevel.Information))
+                    {
+                        this._logger.LogInformation(
+                            "Steering input detected for response {ResponseId}; completing the active turn.",
+                            context.ResponseId);
+                    }
+                    emittedTerminal = true;
+                    yield return stream.EmitCompleted();
                     yield break;
                 }
 
@@ -485,8 +651,40 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     continue;
                 }
 
+                // Emit the output boundary before saving the matching MAF session. AgentServer
+                // persists the event while this iterator is suspended. Reversing this order could
+                // advance the session past output that the caller never received. A crash after the
+                // event but before the save can replay work, which is the deliberate at-least-once
+                // side of this cross-store boundary.
                 // yield is in the outer try (finally-only) — allowed by C#
                 yield return evt!;
+
+                // Best-effort session snapshot for a non-workflow agent after a response output item
+                // closes. Workflow agents save only at the paired superstep boundary so their session
+                // cursor cannot advance independently of the response snapshot. The final save below
+                // remains authoritative for a turn that reaches normal completion.
+                if (isResilientTurn
+                    && evt is ResponseOutputItemDoneEvent
+                    && workflowCheckpointRecovery is null
+                    && session is not null
+                    && !string.IsNullOrWhiteSpace(agentSessionId)
+                    && !turnFailed)
+                {
+                    try
+                    {
+                        await sessionStore.SaveSessionAsync(agent, agentSessionId!, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        if (this._logger.IsEnabled(LogLevel.Debug))
+                        {
+                            this._logger.LogDebug(
+                                ex,
+                                "Incremental session save was skipped for response {ResponseId}; the end-of-turn save will persist the final state.",
+                                context.ResponseId);
+                        }
+                    }
+                }
 
                 if (evt is ResponseFailedEvent or ResponseIncompleteEvent)
                 {
@@ -505,10 +703,16 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 turnFailed = true;
             }
 
-            // Persist the session for the next turn of this conversation, unless this one is being failed.
-            if (session is not null && !turnFailed)
+            // Persist the session for the next turn unless this turn failed or deferred after the
+            // agent advanced beyond the last event emitted to AgentServer.
+            if (session is not null && !turnFailed && !deferredForRecovery)
             {
-                await sessionStore.SaveSessionAsync(agent, agentSessionId!, session, resolvedUserId, cancellationToken).ConfigureAwait(false);
+                await sessionStore.SaveSessionAsync(
+                    agent,
+                    agentSessionId!,
+                    session,
+                    resolvedUserId,
+                    steeringDetected ? CancellationToken.None : cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -570,6 +774,16 @@ public class AgentFrameworkResponseHandler : ResponseHandler
     }
 
     /// <summary>
+    /// The resilience gate for the mid-turn session-save path: saving is worthwhile only when the
+    /// host enabled resilient background responses and this specific request is a background response
+    /// that did not explicitly disable storage. A null <c>store</c> value means the Responses API
+    /// default of true. When any part is false, the request runs exactly as it does on a non-resilient
+    /// host (the recovery path is gated separately on <c>ResponseContext.IsRecovery</c>).
+    /// </summary>
+    private bool ShouldPersistForResilience(CreateResponse request)
+        => this._resilientBackground && request.Background == true && request.Store != false;
+
+    /// <summary>
     /// Resolves an <see cref="AIAgent"/> from the request.
     /// Tries <c>agent.name</c> first, then falls back to <c>metadata["entity_id"]</c>.
     /// If neither is present, attempts to resolve a default (non-keyed) <see cref="AIAgent"/>.
@@ -583,8 +797,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             var agent = this._serviceProvider.GetKeyedService<AIAgent>(agentName);
             if (agent is not null)
             {
-                FoundryHostingExtensions.TryApplyUserAgent(agent);
-                return FoundryHostingExtensions.ApplyOpenTelemetry(agent);
+                string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(
+                    agent,
+                    agentName,
+                    this._serviceProvider.GetService<AIAgent>());
+                return this.PrepareResolvedAgent(agent, storageIdentity);
             }
 
             if (this._logger.IsEnabled(LogLevel.Warning))
@@ -597,8 +814,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
         var defaultAgent = this._serviceProvider.GetService<AIAgent>();
         if (defaultAgent is not null)
         {
-            FoundryHostingExtensions.TryApplyUserAgent(defaultAgent);
-            return FoundryHostingExtensions.ApplyOpenTelemetry(defaultAgent);
+            string storageIdentity = FoundryHostingAgent.ResolveSessionStorageIdentity(
+                defaultAgent,
+                registrationKey: null,
+                defaultAgent);
+            return this.PrepareResolvedAgent(defaultAgent, storageIdentity);
         }
 
         var errorMessage = string.IsNullOrEmpty(agentName)
@@ -606,6 +826,18 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             : $"Agent '{agentName}' not found. Ensure it is registered via AddFoundryResponses(services, agent) or services.AddKeyedSingleton<AIAgent>(\"{agentName}\", ...).";
 
         throw new InvalidOperationException(errorMessage);
+    }
+
+    private AIAgent PrepareResolvedAgent(AIAgent agent, string sessionStorageIdentity)
+    {
+        FoundryHostingExtensions.TryApplyUserAgent(agent);
+
+        AIAgent prepared = FoundryHostingExtensions.ApplyWorkflowCheckpointing(
+            agent,
+            this._serviceProvider.GetService<ILoggerFactory>());
+        prepared = new FoundryHostingAgent(prepared, sessionStorageIdentity);
+
+        return FoundryHostingExtensions.ApplyOpenTelemetry(prepared);
     }
 
     /// <summary>

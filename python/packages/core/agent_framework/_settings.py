@@ -115,6 +115,19 @@ def _coerce_value(value: str, target_type: type) -> Any:
     return value
 
 
+def _runtime_class(annotation: Any) -> type | None:
+    """Return the class ``isinstance`` can test *annotation* against, or ``None``.
+
+    Parameterized generics such as ``dict[str, Any]`` cannot be passed to ``isinstance``
+    and are instances of ``type`` on Python 3.10 but not on later versions, so the origin
+    is always preferred. Annotations without a runtime class, such as ``Literal[...]``,
+    return ``None`` so callers can skip validation instead of guessing.
+    """
+    origin = get_origin(annotation)
+    candidate = annotation if origin is None else origin
+    return candidate if isinstance(candidate, type) else None
+
+
 def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
     """Validate that *value* is compatible with *field_type*.
 
@@ -135,14 +148,27 @@ def _check_override_type(value: Any, field_type: type, field_name: str) -> None:
 
     allowed: tuple[type, ...]
     if origin is Union or origin is type(int | str):
-        allowed = tuple(a for a in args if isinstance(a, type) and a is not type(None))
         # If any arm is a Callable, allow anything callable
         if any(get_origin(a) is Callable or a is Callable for a in args):
             return
-    elif isinstance(field_type, type):
-        allowed = (field_type,)
+        resolved: list[type] = []
+        for arm in args:
+            if arm is type(None):
+                continue
+            # ``isinstance`` rejects parameterized generics, and on Python 3.10 they are
+            # themselves instances of ``type``, so resolve through the origin first.
+            runtime_type = _runtime_class(arm)
+            if runtime_type is None:
+                # An arm such as ``Literal[...]`` has no runtime class to test against;
+                # checking the remaining arms would reject values the annotation allows.
+                return
+            resolved.append(runtime_type)
+        allowed = tuple(resolved)
     else:
-        return  # complex / unknown annotation — skip check
+        field_class = _runtime_class(field_type)
+        if field_class is None:
+            return  # complex / unknown annotation — skip check
+        allowed = (field_class,)
 
     if not allowed:
         return

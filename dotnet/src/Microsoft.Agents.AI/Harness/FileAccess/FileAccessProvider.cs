@@ -244,6 +244,10 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
     /// <inheritdoc />
     protected override ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreFileAccessProvider);
+#pragma warning restore MAAI001
+
         return new ValueTask<AIContext>(new AIContext
         {
             Instructions = this._instructions,
@@ -429,7 +433,7 @@ public sealed class FileAccessProvider : AIContextProvider, IDisposable
         string prefix = target;
         if (prefix.Length == 0)
         {
-            return new List<FileSearchResult>(results);
+            return [.. results];
         }
 
         var rerooted = new List<FileSearchResult>(results.Count);

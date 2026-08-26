@@ -102,7 +102,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-openai
           path: ./python/pytest.xml
@@ -138,7 +138,7 @@ jobs:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
       - name: Azure CLI Login
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -156,7 +156,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-azure-openai
           path: ./python/pytest.xml
@@ -248,7 +248,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-misc
           path: ./python/pytest.xml
@@ -308,7 +308,7 @@ jobs:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
       - name: Azure CLI Login
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -325,7 +325,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-foundry
           path: ./python/pytest.xml
@@ -358,7 +358,7 @@ jobs:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
       - name: Azure CLI Login
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -375,7 +375,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-foundry-hosting
           path: ./python/pytest.xml
@@ -427,7 +427,7 @@ jobs:
         run: uv run --directory packages/azure-cosmos poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5 --junitxml=${{ github.workspace }}/python/pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-cosmos
           path: ./python/pytest.xml
@@ -469,7 +469,7 @@ jobs:
           --junitxml=pytest.xml
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-results-github-copilot
           path: ./python/pytest.xml
@@ -535,7 +535,7 @@ jobs:
           key: integration-report-history-integration-${{ github.run_id }}
       - name: Upload unified trend report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: integration-test-report
           path: |
@@ -559,12 +559,12 @@ jobs:
     steps:
       - name: Fail workflow if tests failed
         if: contains(join(needs.*.result, ','), 'failure')
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: core.setFailed('Integration Tests Failed!')
 
       - name: Fail workflow if tests cancelled
         if: contains(join(needs.*.result, ','), 'cancelled')
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: core.setFailed('Integration Tests Cancelled!')

@@ -30,7 +30,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// <param name="managerAgent"></param>
 public class MagenticWorkflowBuilder(AIAgent managerAgent) : OrchestrationBuilderBase<MagenticWorkflowBuilder>
 {
-    private readonly List<AIAgent> _team = new();
+    private readonly List<AIAgent> _team = [];
     private int _maxStalls = TaskLimits.DefaultMaxStallCount;
     private int? _maxRounds;
     private int? _maxResets;
@@ -201,7 +201,7 @@ public class MagenticWorkflowBuilder(AIAgent managerAgent) : OrchestrationBuilde
                 "otherwise progress-ledger parsing and next-speaker routing would break.");
         }
 
-        return this.ReduceToWorkflowBuilder().Build();
+        return this.ReduceToWorkflowBuilder().BuildForFeature((int)FeatureIndex.OrchestrationMagentic);
     }
 
     private TaskLimits Limits => new(

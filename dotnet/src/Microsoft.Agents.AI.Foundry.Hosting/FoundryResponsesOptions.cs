@@ -50,4 +50,50 @@ public sealed class FoundryResponsesOptions
     /// Default is <see langword="true"/>.
     /// </value>
     public bool IncludeReasoningEncryptedContent { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether background responses are resilient to process crashes
+    /// and graceful shutdown.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When <see langword="true"/>, accepted background responses (<c>background=true</c> and
+    /// <c>store</c> omitted or <see langword="true"/>) are registered with the durable task subsystem
+    /// so a handler interrupted by a crash or shutdown is
+    /// re-invoked in a subsequent process lifetime with the original request context restored
+    /// (<c>ResponseContext.IsRecovery</c> is <see langword="true"/>). AgentServer supplies its last durable
+    /// response snapshot. For workflow agents, the hosting handler pairs completed supersteps with response
+    /// checkpoints and records the matching workflow checkpoint ID in AgentServer internal response metadata.
+    /// Recovery restores the AgentSession, selects that exact workflow checkpoint, skips re-injecting the
+    /// original input, and defers on shutdown instead of ending the response as incomplete. Regular agents
+    /// continue to depend on their serialized AgentSession state.
+    /// </para>
+    /// <para>
+    /// When <see langword="false"/> (the default), an interrupted background response transitions to a
+    /// failed terminal state and is not re-invoked. The hosting handler does not perform resilient
+    /// mid-turn session saves or shutdown deferral.
+    /// </para>
+    /// <para>
+    /// This value is forwarded to
+    /// <see cref="Azure.AI.AgentServer.Responses.ResponsesServerOptions.ResilientBackground"/>.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    public bool ResilientBackground { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether in-flight conversations accept steering (mid-turn
+    /// additional input) sharing a single resilient task.
+    /// </summary>
+    /// <remarks>
+    /// Forwarded to
+    /// <see cref="Azure.AI.AgentServer.Responses.ResponsesServerOptions.SteerableConversations"/>.
+    /// When <see langword="false"/> (the default), steering is disabled.
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    public bool SteerableConversations { get; set; }
 }
