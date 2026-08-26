@@ -70,11 +70,12 @@ async def test_runtime_configures_azure_monitor_with_sensitive_data(monkeypatch:
     monkeypatch.setenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-5.6-luna")
 
     client = SimpleNamespace(configure_azure_monitor=AsyncMock())
+    agent_constructor = Mock(return_value=SimpleNamespace())
     monkeypatch.setattr(main, "DefaultAzureCredential", Mock(return_value=SimpleNamespace()))
     monkeypatch.setattr(main, "SecretClient", Mock(return_value=SimpleNamespace()))
     monkeypatch.setattr(main, "CosmosHistoryProvider", Mock(return_value=SimpleNamespace()))
     monkeypatch.setattr(main, "FoundryChatClient", Mock(return_value=client))
-    monkeypatch.setattr(main, "Agent", Mock(return_value=SimpleNamespace()))
+    monkeypatch.setattr(main, "Agent", agent_constructor)
     monkeypatch.setattr(main.httpx, "AsyncClient", Mock(return_value=SimpleNamespace()))
     monkeypatch.setattr(main, "_runtime", None)
 
@@ -84,6 +85,7 @@ async def test_runtime_configures_azure_monitor_with_sensitive_data(monkeypatch:
         enable_sensitive_data=True,
         enable_live_metrics=True,
     )
+    assert agent_constructor.call_args.kwargs["instructions"] == main.AGENT_INSTRUCTIONS
     main._runtime = None
 
 

@@ -156,8 +156,9 @@ uv run --group dev pyright
 
 ## Evaluate
 
-The included `eval.yaml` targets the hosted Telegram agent and uses the baseline purpose under
-`.agent_configs/baseline/`. After deployment, generate or run the Foundry evaluation suite from this directory:
+The hosted runtime and the included `eval.yaml` use the same canonical instructions from
+`.agent_configs/baseline/instructions.md`. After deployment, generate or run the Foundry evaluation suite from this
+directory:
 
 ```bash
 azd ai agent eval generate --gen-instruction "$(cat .agent_configs/baseline/instructions.md)" --no-wait

@@ -1,5 +1,8 @@
 .azure/
-.agent_configs/
+.agent_configs/*
+!.agent_configs/baseline/
+.agent_configs/baseline/*
+!.agent_configs/baseline/instructions.md
 .env
 .git/
 .github/

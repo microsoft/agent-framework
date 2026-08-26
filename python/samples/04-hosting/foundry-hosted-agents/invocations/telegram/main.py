@@ -17,6 +17,7 @@ import os
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -49,6 +50,9 @@ MAX_MEDIA_BYTES = 5 * 1024 * 1024
 PLACEHOLDER_TEXT = "..."
 BOT_TOKEN_SECRET_NAME = "telegram-bot-token"
 ENABLE_SENSITIVE_DATA = os.getenv("ENABLE_SENSITIVE_DATA", "true").casefold() in {"1", "true", "yes", "on"}
+AGENT_INSTRUCTIONS = (
+    (Path(__file__).parent / ".agent_configs" / "baseline" / "instructions.md").read_text(encoding="utf-8").strip()
+)
 
 # Message bodies and Telegram file URLs can contain user content or the bot
 # token, so keep dependency INFO logs out of non-sensitive telemetry.
@@ -103,10 +107,7 @@ async def get_runtime() -> Runtime:
         agent = Agent(
             client=client,
             name="TelegramAssistant",
-            instructions=(
-                "You are a friendly Telegram assistant. Respond helpfully and naturally. "
-                "Keep answers concise unless the user asks for detail."
-            ),
+            instructions=AGENT_INSTRUCTIONS,
             context_providers=[history],
             default_options={"store": False},
         )

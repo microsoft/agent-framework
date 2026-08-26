@@ -46,6 +46,12 @@ def test_sensitive_telemetry_is_configurable_for_hosted_agent() -> None:
     assert 'azd_command env set ENABLE_SENSITIVE_DATA "$ENABLE_SENSITIVE_DATA"' in deploy_script
 
 
+def test_agent_instructions_are_included_in_deployment() -> None:
+    agent_ignore = (SAMPLE_ROOT / ".agentignore").read_text()
+
+    assert "!.agent_configs/baseline/instructions.md" in agent_ignore
+
+
 def test_apim_policy_preserves_update_and_injects_channel() -> None:
     policy_path = SAMPLE_ROOT / "infra" / "telegram-policy.xml"
     rendered = (
