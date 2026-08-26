@@ -47,13 +47,12 @@ internal static class AspireDashboardTraceClient
         HttpClient client,
         Uri dashboardBaseUri,
         string? dashboardApiKey,
-        string resourceName,
         string traceId,
         string responseId,
         string entityId,
         CancellationToken cancellationToken)
     {
-        var path = $"/api/telemetry/spans?resource={Uri.EscapeDataString(resourceName)}&traceId={Uri.EscapeDataString(traceId)}";
+        var path = $"/api/telemetry/traces/{Uri.EscapeDataString(traceId)}";
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(dashboardBaseUri, path));
         AddApiKey(request, dashboardApiKey);
 
@@ -71,6 +70,15 @@ internal static class AspireDashboardTraceClient
         using var document = await JsonDocument.ParseAsync(
             await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false),
             cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        if (document.RootElement.TryGetProperty("totalCount", out var totalCount) &&
+            totalCount.TryGetInt64(out var total) &&
+            document.RootElement.TryGetProperty("returnedCount", out var returnedCount) &&
+            returnedCount.TryGetInt64(out var returned) &&
+            total != returned)
+        {
+            return null;
+        }
 
         if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
         {
@@ -198,7 +206,7 @@ internal static class AspireDashboardTraceClient
         error = null;
         if (!span.TryGetProperty("status", out var status) || status.ValueKind != JsonValueKind.Object)
         {
-            return "OK";
+            return "StatusCode.UNSET";
         }
 
         var code = status.TryGetProperty("code", out var codeElement) && codeElement.TryGetInt32(out var value)
@@ -211,7 +219,7 @@ internal static class AspireDashboardTraceClient
             return "ERROR";
         }
 
-        return code == 1 ? "OK" : "UNSET";
+        return code == 1 ? "OK" : "StatusCode.UNSET";
     }
 
     private static JsonObject ReadAttributes(JsonElement container)

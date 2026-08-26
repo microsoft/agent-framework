@@ -127,7 +127,42 @@ public class AspireDashboardTracingTests
     }
 
     [Fact]
-    public async Task GetTraceEventsAsync_UsesScopedFiltersAndKeepsDashboardKeyServerSide()
+    public void ConvertToTraceEvents_UnsetStatuses_UseFrontendContractValue()
+    {
+        // Arrange
+        using var document = JsonDocument.Parse("""
+            {
+              "resourceSpans": [{
+                "scopeSpans": [{
+                  "spans": [{
+                    "traceId": "00112233445566778899aabbccddeeff",
+                    "spanId": "0011223344556677",
+                    "name": "invoke_agent"
+                  }, {
+                    "traceId": "00112233445566778899aabbccddeeff",
+                    "spanId": "8899aabbccddeeff",
+                    "name": "invoke_tool",
+                    "status": {"code": 0}
+                  }]
+                }]
+              }]
+            }
+            """);
+
+        // Act
+        var events = AspireDashboardTraceClient.ConvertToTraceEvents(
+            document.RootElement,
+            responseId: "resp_123",
+            entityId: "writer-service/writer");
+
+        // Assert
+        Assert.Equal(2, events.Count);
+        Assert.All(events, traceEvent =>
+            Assert.Equal("StatusCode.UNSET", traceEvent["data"]?["status"]?.GetValue<string>()));
+    }
+
+    [Fact]
+    public async Task GetTraceEventsAsync_UsesTraceByIdEndpointAndKeepsDashboardKeyServerSide()
     {
         // Arrange
         HttpRequestMessage? observedRequest = null;
@@ -161,7 +196,6 @@ public class AspireDashboardTracingTests
             client,
             new Uri("https://localhost:18888"),
             "dashboard-secret",
-            "writer service",
             "00112233445566778899aabbccddeeff",
             "resp_123",
             "writer-service/writer",
@@ -172,10 +206,40 @@ public class AspireDashboardTracingTests
         Assert.Single(events);
         Assert.NotNull(observedRequest);
         Assert.Equal(
-            "/api/telemetry/spans?resource=writer%20service&traceId=00112233445566778899aabbccddeeff",
+            "/api/telemetry/traces/00112233445566778899aabbccddeeff",
             observedRequest.RequestUri?.PathAndQuery);
         Assert.Equal("dashboard-secret", Assert.Single(observedRequest.Headers.GetValues("x-api-key")));
         Assert.DoesNotContain("dashboard-secret", observedRequest.RequestUri?.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetTraceEventsAsync_TruncatedTraceResponse_ReturnsUnavailable()
+    {
+        // Arrange
+        using var client = new HttpClient(new StubHttpMessageHandler(_ =>
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                    {
+                      "data": {"resourceSpans": []},
+                      "totalCount": 2,
+                      "returnedCount": 1
+                    }
+                    """, Encoding.UTF8, "application/json")
+            }));
+
+        // Act
+        var events = await AspireDashboardTraceClient.GetTraceEventsAsync(
+            client,
+            new Uri("https://localhost:18888"),
+            "dashboard-secret",
+            "00112233445566778899aabbccddeeff",
+            "resp_123",
+            "writer-service/writer",
+            CancellationToken.None);
+
+        // Assert
+        Assert.Null(events);
     }
 
     [Fact]
@@ -190,7 +254,6 @@ public class AspireDashboardTracingTests
             client,
             new Uri("https://localhost:18888"),
             "dashboard-secret",
-            "writer-service",
             "00112233445566778899aabbccddeeff",
             "resp_123",
             "writer-service/writer",
@@ -295,7 +358,6 @@ public class AspireDashboardTracingTests
         Assert.Matches("^00-[0-9a-f]{32}-[0-9a-f]{16}-01$", context.AgentTraceParent);
         Assert.Equal("dashboard-secret", context.DashboardApiKey);
         Assert.Equal(context.AgentTraceParent![3..35], context.DashboardTraceId);
-        Assert.Equal("writer-service", context.DashboardResourceName);
         Assert.Equal(HttpStatusCode.OK, tracesResponse.StatusCode);
         Assert.Equal(
             "response.trace.completed",
@@ -489,8 +551,6 @@ public class AspireDashboardTracingTests
 
         public string? DashboardTraceId { get; private set; }
 
-        public string? DashboardResourceName { get; private set; }
-
         public int DashboardResourceProbeCount => Volatile.Read(ref this._dashboardResourceProbeCount);
 
         public void FailDashboardResourceProbe() => this._failDashboardResourceProbe = true;
@@ -530,14 +590,10 @@ public class AspireDashboardTracingTests
                 await context.Response.WriteAsync("data: [DONE]\n\n", context.RequestAborted);
             });
 
-            dashboard.MapGet("/api/telemetry/spans", async Task<IResult> (HttpContext context) =>
+            dashboard.MapGet("/api/telemetry/traces/{traceId}", async Task<IResult> (HttpContext context, string traceId) =>
             {
-                var dashboardApiKey = context.Request.Headers["x-api-key"].FirstOrDefault();
-                var dashboardTraceId = context.Request.Query["traceId"].FirstOrDefault();
-                var dashboardResourceName = context.Request.Query["resource"].FirstOrDefault();
-                testContext!.DashboardApiKey = dashboardApiKey;
-                testContext.DashboardTraceId = dashboardTraceId;
-                testContext.DashboardResourceName = dashboardResourceName;
+                testContext!.DashboardApiKey = context.Request.Headers["x-api-key"].FirstOrDefault();
+                testContext.DashboardTraceId = traceId;
 
                 if (dashboardUnavailable)
                 {
@@ -566,7 +622,7 @@ public class AspireDashboardTracingTests
                                         {
                                             new
                                             {
-                                                traceId = dashboardTraceId,
+                                                traceId,
                                                 spanId = "0011223344556677",
                                                 name = "invoke_agent"
                                             }

@@ -601,7 +601,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
         if (traceId is not null && responseId is not null && resourceName is not null)
         {
-            this._responseTraceMap[responseId] = new TraceRequestInfo(traceId, resourceName, entityId, DateTimeOffset.UtcNow);
+            this._responseTraceMap[responseId] = new TraceRequestInfo(traceId, entityId, DateTimeOffset.UtcNow);
             this.RemoveExpiredTraceMappings();
         }
     }
@@ -628,7 +628,6 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
                 client,
                 dashboardBaseUri,
                 dashboardApiKey,
-                traceRequest.ResourceName,
                 traceRequest.TraceId,
                 responseId,
                 traceRequest.EntityId,
@@ -1055,7 +1054,7 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         }
     }
 
-    private sealed record TraceRequestInfo(string TraceId, string ResourceName, string EntityId, DateTimeOffset CreatedAt);
+    private sealed record TraceRequestInfo(string TraceId, string EntityId, DateTimeOffset CreatedAt);
 
     private static async Task<byte[]> ReadRequestBodyAsync(HttpRequest request)
     {

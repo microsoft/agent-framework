@@ -74,6 +74,9 @@ const DEFAULT_API_BASE_URL =
 const RETRY_INTERVAL_MS = 1000; // Base retry interval (will use exponential backoff)
 const MAX_RETRY_ATTEMPTS = 10; // Max 10 retries (~30 seconds with exponential backoff)
 const STREAMING_STATE_SAVE_INTERVAL_MS = 250;
+const TRACE_POLL_ATTEMPTS = 12;
+const TRACE_POLL_INTERVAL_MS = 500;
+const TRACE_STABLE_SNAPSHOT_COUNT = 3;
 
 // Get backend URL from localStorage or default
 function getBackendUrl(): string {
@@ -104,6 +107,43 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     };
     signal.addEventListener("abort", handleAbort, { once: true });
   });
+}
+
+interface TraceSpanSnapshotData {
+  span_id?: string;
+  parent_span_id?: string | null;
+  end_time?: number;
+  status?: string;
+}
+
+function getTraceSpanData(event: ExtendedResponseStreamEvent): TraceSpanSnapshotData | undefined {
+  if (
+    event.type !== "response.trace.completed" ||
+    !("data" in event) ||
+    typeof event.data !== "object" ||
+    event.data === null
+  ) {
+    return undefined;
+  }
+
+  return event.data as TraceSpanSnapshotData;
+}
+
+function getTraceSnapshotSignature(events: ExtendedResponseStreamEvent[]): string {
+  return events
+    .map((event) => {
+      const data = getTraceSpanData(event);
+      if (!data) return "";
+
+      return [
+        data.span_id,
+        data.parent_span_id,
+        data.end_time,
+        data.status,
+      ].join(":");
+    })
+    .sort()
+    .join("|");
 }
 
 class ApiClient {
@@ -213,8 +253,13 @@ class ApiClient {
       headers.Authorization = `Bearer ${this.authToken}`;
     }
 
+    const spansById = new Map<string, ExtendedResponseStreamEvent>();
+    let previousSignature: string | undefined;
+    let stableSnapshotCount = 0;
+
     // Aspire's batch exporter can make completed spans visible shortly after the response stream ends.
-    for (let attempt = 0; attempt < 12; attempt++) {
+    // Publish after three identical merged snapshots, with a bounded wait if the trace keeps changing.
+    for (let attempt = 0; attempt < TRACE_POLL_ATTEMPTS; attempt++) {
       try {
         const response = await fetch(
           `${this.baseUrl}/v1/responses/${encodeURIComponent(responseId)}/traces`,
@@ -224,7 +269,21 @@ class ApiClient {
         if (response.ok) {
           const result = await response.json() as { data?: ExtendedResponseStreamEvent[] };
           if (result.data && result.data.length > 0) {
-            return result.data;
+            for (const event of result.data) {
+              const spanId = getTraceSpanData(event)?.span_id;
+              if (spanId) spansById.set(spanId, event);
+            }
+
+            const mergedEvents = Array.from(spansById.values());
+            const signature = getTraceSnapshotSignature(mergedEvents);
+            stableSnapshotCount = signature === previousSignature
+              ? stableSnapshotCount + 1
+              : 1;
+            previousSignature = signature;
+
+            if (stableSnapshotCount >= TRACE_STABLE_SNAPSHOT_COUNT) {
+              return mergedEvents;
+            }
           }
         } else if (response.status === 401) {
           this.clearAuthToken();
@@ -237,12 +296,12 @@ class ApiClient {
         return [];
       }
 
-      if (attempt < 11) {
-        await sleep(500, signal);
+      if (attempt < TRACE_POLL_ATTEMPTS - 1) {
+        await sleep(TRACE_POLL_INTERVAL_MS, signal);
       }
     }
 
-    return [];
+    return Array.from(spansById.values());
   }
 
   // Health check
