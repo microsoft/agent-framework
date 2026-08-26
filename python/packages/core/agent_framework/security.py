@@ -3425,10 +3425,10 @@ class SecureMCPToolProxy:
 
             static_headers = dict(headers or {})
             # Pass headers via an AsyncClient so they are included on ALL requests
-            # (including session.initialize()), not just tool calls. Using
-            # header_provider alone only sets headers via a ContextVar that is
-            # populated during call_tool() and would be empty during initialization,
-            # causing 401s that silently manifest as anyio cancel-scope errors.
+            # (including session.initialize()), not just tool calls. ``headers=`` on
+            # MCPStreamableHTTPTool is the preferred origin-scoped equivalent;
+            # SecureMCPToolProxy still uses a dedicated client because it exposes a
+            # static ``headers`` mapping of its own.
             http_client = (
                 AsyncClient(
                     headers=static_headers,

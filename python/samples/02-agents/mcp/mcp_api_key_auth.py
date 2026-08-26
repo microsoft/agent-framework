@@ -18,6 +18,11 @@ This sample demonstrates the runtime ``header_provider`` pattern for
 ``function_invocation_kwargs`` passed to ``Agent.run(...)`` so the API key stays
 in runtime context instead of being baked into a shared ``httpx.AsyncClient``.
 
+If the MCP server authenticates the ``connect()`` handshake itself, also pass
+``headers={"Authorization": f"Bearer {api_key}"}`` (or use a ``header_provider``
+that returns credentials for empty kwargs). ``header_provider`` alone cannot see
+``function_invocation_kwargs`` until a tool call is in flight.
+
 Replace the ``url`` parameter in the ``MCPStreamableHTTPTool`` with your authenticated server URL and
 run the sample with your API key as a command-line argument:
     python mcp_api_key_auth.py <your_api_key>

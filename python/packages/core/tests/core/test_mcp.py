@@ -6059,6 +6059,100 @@ async def test_mcp_streamable_http_tool_header_provider_injects_on_ambient_reque
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
 
 
+async def test_mcp_streamable_http_tool_static_headers_inject_on_ambient_request():
+    """Regression test for #7841: static headers must authenticate connect/initialize.
+
+    A kwargs-only header_provider cannot supply handshake credentials because
+    connect runs before FunctionInvocationContext kwargs exist. ``headers=`` is the
+    connect-time hook and must be attached even when no header_provider is set.
+    """
+    import httpx
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        headers={"Authorization": "Bearer connect-token"},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            request = httpx.Request("POST", "http://example.com/mcp")
+            await hooks[0](request)
+            assert request.headers.get("Authorization") == "Bearer connect-token"
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
+async def test_mcp_streamable_http_tool_static_headers_overlay_kwargs_provider_on_ambient_request():
+    """Static headers still authenticate connect when header_provider requires per-call kwargs."""
+    import httpx
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        headers={"Authorization": "Bearer connect-token"},
+        header_provider=lambda kw: {"Authorization": f"Bearer {kw['mcp_api_key']}"},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            request = httpx.Request("POST", "http://example.com/mcp")
+            await hooks[0](request)
+            assert request.headers.get("Authorization") == "Bearer connect-token"
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
+async def test_mcp_streamable_http_tool_header_provider_overlays_static_headers_on_call():
+    """Per-call header_provider values overlay static headers during call_tool."""
+    import httpx
+
+    from agent_framework._mcp import _mcp_call_headers
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        headers={"Authorization": "Bearer connect-token", "X-Static": "static"},
+        header_provider=lambda kw: {"Authorization": f"Bearer {kw.get('mcp_api_key', '')}"},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            token = _mcp_call_headers.set({"Authorization": "Bearer call-token"})
+            tool._active_call_headers = {"Authorization": "Bearer call-token"}
+            try:
+                request = httpx.Request("POST", "http://example.com/mcp")
+                await hooks[0](request)
+                assert request.headers.get("Authorization") == "Bearer call-token"
+                assert request.headers.get("X-Static") == "static"
+            finally:
+                tool._active_call_headers = None
+                _mcp_call_headers.reset(token)
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
 async def test_mcp_streamable_http_tool_header_provider_ambient_request_tolerates_kwargs_provider():
     """A header_provider that requires per-call kwargs must not crash ambient requests.
 
@@ -6239,6 +6333,36 @@ async def test_mcp_streamable_http_tool_header_provider_skips_cross_origin_redir
                 assert "Authorization" not in cross_origin.headers
             finally:
                 _mcp_call_headers.reset(token)
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()  # type: ignore[union-attr]
+
+
+async def test_mcp_streamable_http_tool_static_headers_skip_cross_origin_redirect():
+    """Static connect headers must not leak to a different origin after a redirect."""
+    import httpx
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        headers={"Authorization": "Bearer connect-token"},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1
+
+            same_origin = httpx.Request("POST", "http://example.com/mcp")
+            await hooks[0](same_origin)
+            assert same_origin.headers.get("Authorization") == "Bearer connect-token"
+
+            cross_origin = httpx.Request("POST", "http://attacker.example/capture")
+            await hooks[0](cross_origin)
+            assert "Authorization" not in cross_origin.headers
     finally:
         if getattr(tool, "_httpx_client", None) is not None:
             await tool._httpx_client.aclose()  # type: ignore[union-attr]
@@ -6426,6 +6550,78 @@ async def test_mcp_streamable_http_tool_header_provider_applies_across_transport
     )
     try:
         async with tool:
+            await tool.call_tool("greet", name="Alice", api_key="secret-token")
+    finally:
+        await http_client.aclose()
+
+    call_headers = [headers for _, method, headers in captured_requests if method == "tools/call"]
+    assert len(call_headers) == 1
+    assert call_headers[0].get("authorization") == "Bearer secret-token"
+
+
+async def test_mcp_streamable_http_tool_static_headers_apply_to_initialize():
+    """Regression test for #7841: static headers must reach the initialize handshake.
+
+    A kwargs-only header_provider cannot authenticate connect. ``headers=`` is applied
+    to initialize, tools/list, and tools/call; the provider overlays Authorization
+    on the in-flight tools/call.
+    """
+    import httpx
+
+    captured_requests: list[tuple[str, str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        if request.method == "GET":
+            return httpx.Response(405)
+        body = json.loads(request.content.decode())
+        method = body.get("method", "")
+        captured_requests.append((request.method, method, {k.lower(): v for k, v in request.headers.items()}))
+        if method == "initialize":
+            result = {
+                "protocolVersion": body["params"]["protocolVersion"],
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "mock-server", "version": "1.0.0"},
+            }
+            return httpx.Response(
+                200,
+                headers={"mcp-session-id": "test-session"},
+                json={"jsonrpc": "2.0", "id": body["id"], "result": result},
+            )
+        if method == "tools/list":
+            result = {
+                "tools": [
+                    {
+                        "name": "greet",
+                        "description": "Says hello",
+                        "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}},
+                    }
+                ]
+            }
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+        if method == "tools/call":
+            result = {"content": [{"type": "text", "text": "Hello!"}], "isError": False}
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": result})
+        if "id" in body:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}})
+        return httpx.Response(202)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://127.0.0.1:8000/mcp",
+        load_prompts=False,
+        http_client=http_client,
+        headers={"Authorization": "Bearer connect-token"},
+        header_provider=lambda kw: {"Authorization": f"Bearer {kw['api_key']}"},
+    )
+    try:
+        async with tool:
+            initialize_headers = [headers for _, method, headers in captured_requests if method == "initialize"]
+            assert len(initialize_headers) == 1
+            assert initialize_headers[0].get("authorization") == "Bearer connect-token"
+
             await tool.call_tool("greet", name="Alice", api_key="secret-token")
     finally:
         await http_client.aclose()

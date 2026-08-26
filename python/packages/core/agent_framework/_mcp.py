@@ -2940,6 +2940,7 @@ class MCPStreamableHTTPTool(MCPTool):
         sampling_max_requests: int | None = _DEFAULT_SAMPLING_MAX_REQUESTS,
         additional_properties: dict[str, Any] | None = None,
         http_client: AsyncClient | None = None,
+        headers: Mapping[str, str] | None = None,
         header_provider: Callable[[dict[str, Any]], dict[str, str]] | None = None,
         task_options: MCPTaskOptions | None = None,
         additional_tool_argument_names: Sequence[str] | Mapping[str, Sequence[str]] | None = None,
@@ -3013,23 +3014,35 @@ class MCPStreamableHTTPTool(MCPTool):
                 and pass your own ``asyncClient`` instance.
                 Security: when you attach sensitive headers (e.g. authentication tokens)
                 via a custom ``http_client``, you are responsible for enforcing the same
-                origin-scoped header policy that the built-in ``header_provider`` hook
-                applies. The framework only injects ``header_provider`` headers on requests
-                whose origin (scheme, host, port) matches the configured ``url``, so tokens
-                are not leaked to third-party origins on cross-origin redirects. A custom
-                client that sets headers unconditionally (e.g. via ``AsyncClient(headers=...)``
-                or ``follow_redirects=True`` without an origin check) can leak those headers
-                to other origins; scope them to the target origin yourself.
+                origin-scoped header policy that the built-in ``headers`` /
+                ``header_provider`` hook applies. The framework only injects those
+                headers on requests whose origin (scheme, host, port) matches the
+                configured ``url``, so tokens are not leaked to third-party origins on
+                cross-origin redirects. A custom client that sets headers unconditionally
+                (e.g. via ``AsyncClient(headers=...)`` or ``follow_redirects=True``
+                without an origin check) can leak those headers to other origins; scope
+                them to the target origin yourself.
+            headers: Optional static HTTP headers attached to every same-origin request,
+                including ``connect()`` / initialize, discovery, pings, reconnects, and
+                tool calls. Use this when the MCP server authenticates the handshake
+                itself. Prefer ``headers`` over baking tokens into a custom
+                ``http_client`` so the origin-scoped injection policy still applies.
+                Per-call ``header_provider`` values overlay these static headers.
             header_provider: Optional callable that receives the runtime keyword arguments
                 (from ``FunctionInvocationContext.kwargs``) and returns a ``dict[str, str]``
-                of HTTP headers to inject into every outbound request to the MCP server.
+                of HTTP headers to inject into outbound requests to the MCP server.
                 Use this to forward per-request context (e.g. authentication tokens set in
                 agent middleware) without creating a separate ``httpx.AsyncClient``.
-                The framework attaches these headers only to requests whose origin (scheme,
-                host, port) matches the configured ``url``, so they are not leaked to other
-                origins on cross-origin redirects. If you instead supply sensitive headers
-                through a custom ``http_client``, you must enforce this same origin-scoped
-                policy yourself.
+                Ambient requests outside ``call_tool`` (the initialize handshake,
+                discovery, and pings) invoke the provider with ``{}``. Providers that
+                authenticate connect must either tolerate empty kwargs and return
+                handshake credentials, or the caller must also supply ``headers``.
+                A ``KeyError`` from a kwargs-only provider is tolerated on ambient
+                requests so connect can still succeed against servers that do not
+                require handshake auth. The framework attaches these headers only to
+                requests whose origin (scheme, host, port) matches the configured
+                ``url``. If you instead supply sensitive headers through a custom
+                ``http_client``, you must enforce this same origin-scoped policy yourself.
             task_options: Options for tools that advertise
                 ``execution.taskSupport == "required"``. See :class:`MCPTaskOptions`.
             additional_tool_argument_names: Extra argument names to forward to the MCP server in
@@ -3073,6 +3086,7 @@ class MCPStreamableHTTPTool(MCPTool):
         self.url = url
         self.terminate_on_close = terminate_on_close
         self._httpx_client: AsyncClient | None = http_client
+        self._static_headers: dict[str, str] = dict(headers) if headers else {}
         self._header_provider = header_provider
         # Headers for the in-flight call_tool invocation. The streamable HTTP transport
         # sends requests from tasks spawned at connect time, whose contexts never observe
@@ -3101,6 +3115,38 @@ class MCPStreamableHTTPTool(MCPTool):
             logger.debug("Failed to parse URL for MCP span transport attributes", exc_info=True)
         return attrs
 
+    def _resolve_outbound_headers(self) -> dict[str, str]:
+        """Resolve origin-scoped headers for the current HTTP request.
+
+        Static ``headers`` always apply. Per-call ``header_provider`` values overlay
+        them when a tool call is in flight. Ambient requests (connect, discovery,
+        pings) call ``header_provider({})`` so static providers can authenticate the
+        handshake; ``KeyError`` is tolerated for kwargs-only providers.
+        """
+        resolved = dict(self._static_headers)
+        call_headers = _mcp_call_headers.get(None)
+        if call_headers is None:
+            call_headers = self._active_call_headers
+        if call_headers is None:
+            # Ambient request made outside call_tool (the initialize handshake,
+            # load_tools/load_prompts discovery, or background pings).
+            if self._header_provider is not None:
+                try:
+                    call_headers = self._header_provider({})
+                except KeyError:
+                    # A kwargs-dependent provider raises on every ambient request.
+                    logger.debug(
+                        "header_provider raised KeyError for MCP server %r on an ambient "
+                        "request (missing per-call kwargs); proceeding with static headers.",
+                        self.name,
+                        exc_info=True,
+                    )
+                    call_headers = {}
+            else:
+                call_headers = {}
+        resolved.update(call_headers)
+        return resolved
+
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
 
@@ -3110,7 +3156,7 @@ class MCPStreamableHTTPTool(MCPTool):
         from httpx import URL, AsyncClient, Request, Timeout
 
         http_client = self._httpx_client
-        if self._header_provider is not None:
+        if self._header_provider is not None or self._static_headers:
             target_origin = _url_origin(URL(self.url))
             if http_client is None:
                 http_client = AsyncClient(
@@ -3129,34 +3175,8 @@ class MCPStreamableHTTPTool(MCPTool):
                     # instance-level snapshot of the active call's headers. Both are None
                     # only when this is an ambient request outside call_tool; an active
                     # call that legitimately produced no headers yields an empty dict and
-                    # must not trigger the ambient fallback below.
-                    headers = _mcp_call_headers.get(None)
-                    if headers is None:
-                        headers = self._active_call_headers
-                    if headers is None:
-                        # Ambient request made outside call_tool (the initialize handshake,
-                        # load_tools/load_prompts discovery, or background pings). Invoke the
-                        # provider with empty kwargs so static providers can authenticate these
-                        # requests too. A provider that indexes a required per-call kwarg (e.g.
-                        # kwargs["api_key"]) raises KeyError on the empty dict; that specific
-                        # case is tolerated so connect still succeeds. Any other error is a
-                        # genuine provider failure and is left to propagate, matching the
-                        # call_tool path which does not catch header_provider exceptions.
-                        if self._header_provider is None:
-                            raise RuntimeError("Header injection hook invoked without a header_provider.")
-                        try:
-                            headers = self._header_provider({})
-                        except KeyError:
-                            # A kwargs-dependent provider raises on every ambient request
-                            # (initialize, discovery, and recurring pings).
-                            logger.debug(
-                                "header_provider raised KeyError for MCP server %r on an ambient "
-                                "request (missing per-call kwargs); proceeding without headers.",
-                                self.name,
-                                exc_info=True,
-                            )
-                            headers = {}
-                    for key, value in headers.items():
+                    # must not trigger the ambient header_provider({}) fallback.
+                    for key, value in self._resolve_outbound_headers().items():
                         request.headers[key] = value
 
                 self._inject_headers_hook = _inject_headers
