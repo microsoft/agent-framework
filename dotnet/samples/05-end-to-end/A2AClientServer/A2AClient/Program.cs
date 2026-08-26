@@ -12,7 +12,7 @@ var agentCardResolver = new A2ACardResolver(new Uri(agentUrl));
 // Create an AIAgent from the A2A agent card.
 AIAgent policyAgent = await agentCardResolver.GetAIAgentAsync();
 
-// Create a session to preserve the conversation between requests.
+// Create a session so requests share the same A2A protocol context.
 AgentSession session = await policyAgent.CreateSessionAsync();
 
 while (true)

@@ -13,8 +13,8 @@ internal static class PolicyAgentCard
             Name = "PolicyAgent",
             Description = "Handles requests relating to policies and customer communications.",
             Version = "1.0.0",
-            DefaultInputModes = ["text"],
-            DefaultOutputModes = ["text"],
+            DefaultInputModes = ["text/plain"],
+            DefaultOutputModes = ["text/plain"],
             Capabilities = new()
             {
                 Streaming = false,
