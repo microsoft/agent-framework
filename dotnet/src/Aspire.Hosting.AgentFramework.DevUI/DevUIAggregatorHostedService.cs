@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -17,6 +18,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -35,6 +37,13 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
     private WebApplication? _app;
     private readonly DevUIResource _resource;
     private readonly ILogger _logger;
+    private readonly IConfiguration? _configuration;
+    private readonly AspireDashboardConnection? _dashboardConnectionOverride;
+    private readonly SemaphoreSlim _tracingProbeLock = new(1, 1);
+    private bool _tracingAvailable;
+    private int _tracingUnavailableLogged;
+    private int _tracingEnabledLogged;
+    private int _disposed;
 
     // Frontend resources loaded from the Microsoft.Agents.AI.DevUI assembly (null if unavailable)
     private readonly Dictionary<string, (string ResourceName, string ContentType)>? _frontendResources;
@@ -43,12 +52,19 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
     // Populated when the aggregator routes conversation requests to a positively-resolved backend.
     private readonly ConcurrentDictionary<string, string> _conversationBackendMap = new(StringComparer.OrdinalIgnoreCase);
 
+    // Maps OpenAI response IDs to the Aspire resource and W3C trace ID propagated to that backend request.
+    private readonly ConcurrentDictionary<string, TraceRequestInfo> _responseTraceMap = new(StringComparer.Ordinal);
+
     public DevUIAggregatorHostedService(
         DevUIResource resource,
-        ILogger logger)
+        ILogger logger,
+        IConfiguration? configuration = null,
+        AspireDashboardConnection? dashboardConnectionOverride = null)
     {
         this._resource = resource;
         this._logger = logger;
+        this._configuration = configuration;
+        this._dashboardConnectionOverride = dashboardConnectionOverride;
         this._frontendResources = LoadFrontendResources(logger);
     }
 
@@ -99,11 +115,18 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref this._disposed, 1) != 0)
+        {
+            return;
+        }
+
         if (this._app is not null)
         {
             await this._app.DisposeAsync().ConfigureAwait(false);
             this._app = null;
         }
+
+        this._tracingProbeLock.Dispose();
     }
 
     /// <summary>
@@ -247,8 +270,10 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         return true;
     }
 
-    private static IResult GetMeta()
+    private async Task<IResult> GetMetaAsync(HttpContext context)
     {
+        var tracingAvailable = await this.IsTracingAvailableAsync(context).ConfigureAwait(false);
+
         return Results.Json(new
         {
             ui_mode = "developer",
@@ -257,12 +282,94 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             runtime = "dotnet",
             capabilities = new Dictionary<string, bool>
             {
-                ["tracing"] = false,
+                ["instrumentation"] = tracingAvailable,
+                ["tracing"] = tracingAvailable,
+                ["trace_retrieval"] = tracingAvailable,
                 ["openai_proxy"] = false,
                 ["deployment"] = false
             },
             auth_required = false
         });
+    }
+
+    private async Task<bool> IsTracingAvailableAsync(HttpContext context)
+    {
+        if (this._tracingAvailable)
+        {
+            return true;
+        }
+
+        await this._tracingProbeLock.WaitAsync(context.RequestAborted).ConfigureAwait(false);
+        try
+        {
+            // Once the dashboard API has responded successfully, keep tracing armed. A later
+            // browser cancellation or transient dashboard failure must not disable other clients.
+            if (this._tracingAvailable)
+            {
+                return true;
+            }
+
+            if (!this.TryResolveDashboardConnection(out var dashboardBaseUri, out var dashboardApiKey))
+            {
+                this.LogTracingUnavailable("no loopback Aspire Dashboard endpoint was found in ASPNETCORE_URLS");
+                return false;
+            }
+
+            var httpClientFactory = context.RequestServices.GetRequiredService<IHttpClientFactory>();
+            using var client = httpClientFactory.CreateClient("devui-proxy");
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+            timeout.CancelAfter(TimeSpan.FromSeconds(2));
+
+            try
+            {
+                this._tracingAvailable = await AspireDashboardTraceClient.IsAvailableAsync(
+                    client,
+                    dashboardBaseUri,
+                    dashboardApiKey,
+                    timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException ex)
+            {
+                this.LogTracingUnavailable("the Aspire Dashboard telemetry API probe timed out", ex);
+                return false;
+            }
+            catch (HttpRequestException ex)
+            {
+                this.LogTracingUnavailable("the Aspire Dashboard telemetry API could not be reached", ex);
+                return false;
+            }
+
+            if (!this._tracingAvailable)
+            {
+                this.LogTracingUnavailable("the Aspire Dashboard telemetry API rejected the availability probe");
+                return false;
+            }
+
+            if (Interlocked.Exchange(ref this._tracingEnabledLogged, 1) == 0)
+            {
+                this._logger.LogInformation(
+                    "Aspire Dashboard trace retrieval is enabled at {DashboardBaseUri}",
+                    dashboardBaseUri);
+            }
+
+            return true;
+        }
+        finally
+        {
+            this._tracingProbeLock.Release();
+        }
+    }
+
+    private void LogTracingUnavailable(string reason, Exception? exception = null)
+    {
+        if (Interlocked.Exchange(ref this._tracingUnavailableLogged, 1) == 0)
+        {
+            this._logger.LogInformation(exception, "Aspire Dashboard trace retrieval is disabled because {Reason}.", reason);
+        }
     }
 
     private void MapRoutes(WebApplication app)
@@ -273,8 +380,9 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         app.MapGet("/v1/entities", (Delegate)this.AggregateEntitiesAsync);
         app.MapGet("/v1/entities/{**entityPath}", this.RouteEntityInfoAsync);
         app.MapPost("/v1/responses", this.RouteResponsesAsync);
+        app.MapGet("/v1/responses/{responseId}/traces", this.GetResponseTracesAsync);
         app.Map("/v1/conversations/{**path}", this.ProxyConversationsAsync);
-        app.MapGet("/meta", GetMeta);
+        app.MapGet("/meta", (Delegate)this.GetMetaAsync);
 
         // Serve the DevUI frontend from embedded assembly resources
         app.Map("/devui/{**path}", this.ServeDevUIFrontendAsync);
@@ -473,7 +581,78 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         json!["metadata"]!["entity_id"] = actualEntityId;
         var rewrittenBody = JsonSerializer.SerializeToUtf8Bytes(json);
 
-        await ProxyRequestAsync(context, backendUrl, "/v1/responses", rewrittenBody, streaming: true).ConfigureAwait(false);
+        var resourceName = this.ResolveResourceName(entityId);
+        var traceId = resourceName is not null && this.TryResolveDashboardConnection(out _, out _)
+            ? ActivityTraceId.CreateRandom().ToHexString()
+            : null;
+        var traceParent = traceId is not null
+            ? $"00-{traceId}-{ActivitySpanId.CreateRandom().ToHexString()}-01"
+            : null;
+
+        string? responseId = null;
+        await ProxyRequestAsync(
+            context,
+            backendUrl,
+            "/v1/responses",
+            rewrittenBody,
+            streaming: true,
+            traceParent,
+            capturedResponseId => responseId = capturedResponseId).ConfigureAwait(false);
+
+        if (traceId is not null && responseId is not null && resourceName is not null)
+        {
+            this._responseTraceMap[responseId] = new TraceRequestInfo(traceId, resourceName, entityId, DateTimeOffset.UtcNow);
+            this.RemoveExpiredTraceMappings();
+        }
+    }
+
+    private async Task<IResult> GetResponseTracesAsync(string responseId, HttpContext context)
+    {
+        if (!this._responseTraceMap.TryGetValue(responseId, out var traceRequest))
+        {
+            return Results.NotFound();
+        }
+
+        if (!this.TryResolveDashboardConnection(out var dashboardBaseUri, out var dashboardApiKey))
+        {
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
+        try
+        {
+            var httpClientFactory = context.RequestServices.GetRequiredService<IHttpClientFactory>();
+            using var client = httpClientFactory.CreateClient("devui-proxy");
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+            timeout.CancelAfter(TimeSpan.FromSeconds(2));
+            var events = await AspireDashboardTraceClient.GetTraceEventsAsync(
+                client,
+                dashboardBaseUri,
+                dashboardApiKey,
+                traceRequest.ResourceName,
+                traceRequest.TraceId,
+                responseId,
+                traceRequest.EntityId,
+                timeout.Token).ConfigureAwait(false);
+
+            if (events is null)
+            {
+                return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            }
+
+            return events.Count == 0
+                ? Results.Accepted(value: new { data = events })
+                : Results.Ok(new { data = events });
+        }
+        catch (OperationCanceledException ex) when (!context.RequestAborted.IsCancellationRequested)
+        {
+            this._logger.LogDebug(ex, "Timed out reading trace {TraceId} from the Aspire Dashboard", traceRequest.TraceId);
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException)
+        {
+            this._logger.LogDebug(ex, "Unable to read trace {TraceId} from the Aspire Dashboard", traceRequest.TraceId);
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
     }
 
     private async Task ProxyConversationsAsync(HttpContext context, string? path)
@@ -686,7 +865,9 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         string backendUrl,
         string path,
         byte[]? bodyBytes,
-        bool streaming = false)
+        bool streaming = false,
+        string? traceParent = null,
+        Action<string>? onResponseId = null)
     {
         var httpClientFactory = context.RequestServices.GetRequiredService<IHttpClientFactory>();
         using var client = httpClientFactory.CreateClient("devui-proxy");
@@ -709,6 +890,13 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             }
 
             request.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+        }
+
+        if (traceParent is not null)
+        {
+            request.Headers.Remove("traceparent");
+            request.Headers.Remove("tracestate");
+            request.Headers.TryAddWithoutValidation("traceparent", traceParent);
         }
 
         if (bodyBytes is not null)
@@ -735,11 +923,28 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             context.Response.Headers.CacheControl = "no-cache";
 
             using var stream = await response.Content.ReadAsStreamAsync(context.RequestAborted).ConfigureAwait(false);
-            await stream.CopyToAsync(context.Response.Body, context.RequestAborted).ConfigureAwait(false);
+            var responseIdCapture = new SseResponseIdCapture();
+            var buffer = new byte[16 * 1024];
+            int bytesRead;
+            while ((bytesRead = await stream.ReadAsync(buffer, context.RequestAborted).ConfigureAwait(false)) > 0)
+            {
+                var bytes = buffer.AsMemory(0, bytesRead);
+                responseIdCapture.Append(bytes.Span);
+                await context.Response.Body.WriteAsync(bytes, context.RequestAborted).ConfigureAwait(false);
+                await context.Response.Body.FlushAsync(context.RequestAborted).ConfigureAwait(false);
+            }
+
+            if (responseIdCapture.ResponseId is not null)
+            {
+                onResponseId?.Invoke(responseIdCapture.ResponseId);
+            }
         }
         else
         {
-            await CopyResponseAsync(response, context).ConfigureAwait(false);
+            await CopyResponseAsync(
+                response,
+                context,
+                response.IsSuccessStatusCode ? onResponseId : null).ConfigureAwait(false);
         }
     }
 
@@ -771,6 +976,87 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         return (null, prefixedId);
     }
 
+    private string? ResolveResourceName(string prefixedId)
+    {
+        var slashIndex = prefixedId.IndexOf('/');
+        var prefix = slashIndex >= 0 ? prefixedId[..slashIndex] : prefixedId;
+
+        return this._resource.Annotations
+            .OfType<AgentServiceAnnotation>()
+            .FirstOrDefault(annotation => string.Equals(
+                annotation.EntityIdPrefix ?? annotation.AgentService.Name,
+                prefix,
+                StringComparison.Ordinal))?
+            .AgentService.Name;
+    }
+
+    internal bool TryResolveDashboardConnection(out Uri dashboardBaseUri, out string? dashboardApiKey)
+    {
+        dashboardBaseUri = null!;
+        dashboardApiKey = null;
+
+        if (this._dashboardConnectionOverride is not null)
+        {
+            dashboardBaseUri = this._dashboardConnectionOverride.BaseUri;
+            dashboardApiKey = this._dashboardConnectionOverride.ApiKey;
+            return true;
+        }
+
+        var dashboardUrls = this._configuration?["ASPNETCORE_URLS"];
+        if (string.IsNullOrWhiteSpace(dashboardUrls))
+        {
+            return false;
+        }
+
+        // In an AppHost, ASPNETCORE_URLS contains the built-in Dashboard frontend endpoints.
+        // Only loopback endpoints are accepted so the Dashboard API key can never be sent to
+        // an unrelated host through configuration.
+        foreach (var value in dashboardUrls.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (Uri.TryCreate(value, UriKind.Absolute, out var candidate) && candidate.IsLoopback)
+            {
+                dashboardBaseUri = candidate;
+                break;
+            }
+        }
+
+        if (dashboardBaseUri is null)
+        {
+            return false;
+        }
+
+        dashboardApiKey = this._configuration?["AppHost:DashboardApiKey"];
+        return true;
+    }
+
+    private void RemoveExpiredTraceMappings()
+    {
+        if (this._responseTraceMap.Count <= 512)
+        {
+            return;
+        }
+
+        var cutoff = DateTimeOffset.UtcNow.AddMinutes(-30);
+        foreach (var item in this._responseTraceMap)
+        {
+            if (item.Value.CreatedAt < cutoff)
+            {
+                this._responseTraceMap.TryRemove(item.Key, out _);
+            }
+        }
+
+        var overflow = this._responseTraceMap.Count - 512;
+        if (overflow > 0)
+        {
+            foreach (var item in this._responseTraceMap.OrderBy(item => item.Value.CreatedAt).Take(overflow))
+            {
+                this._responseTraceMap.TryRemove(item.Key, out _);
+            }
+        }
+    }
+
+    private sealed record TraceRequestInfo(string TraceId, string ResourceName, string EntityId, DateTimeOffset CreatedAt);
+
     private static async Task<byte[]> ReadRequestBodyAsync(HttpRequest request)
     {
         using var ms = new MemoryStream();
@@ -778,7 +1064,10 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
         return ms.ToArray();
     }
 
-    private static async Task CopyResponseAsync(HttpResponseMessage response, HttpContext context)
+    private static async Task CopyResponseAsync(
+        HttpResponseMessage response,
+        HttpContext context,
+        Action<string>? onResponseId = null)
     {
         context.Response.StatusCode = (int)response.StatusCode;
 
@@ -792,7 +1081,29 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             context.Response.Headers[header.Key] = header.Value.ToArray();
         }
 
-        await response.Content.CopyToAsync(context.Response.Body).ConfigureAwait(false);
+        if (onResponseId is null)
+        {
+            await response.Content.CopyToAsync(context.Response.Body, context.RequestAborted).ConfigureAwait(false);
+            return;
+        }
+
+        var responseBody = await response.Content.ReadAsByteArrayAsync(context.RequestAborted).ConfigureAwait(false);
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            if (document.RootElement.TryGetProperty("id", out var responseId) &&
+                responseId.ValueKind == JsonValueKind.String &&
+                responseId.GetString() is { Length: > 0 } value)
+            {
+                onResponseId(value);
+            }
+        }
+        catch (JsonException)
+        {
+            // Best-effort capture only. The proxied response must remain unchanged.
+        }
+
+        await context.Response.Body.WriteAsync(responseBody, context.RequestAborted).ConfigureAwait(false);
     }
 
     private static bool IsHopByHopHeader(string headerName)
