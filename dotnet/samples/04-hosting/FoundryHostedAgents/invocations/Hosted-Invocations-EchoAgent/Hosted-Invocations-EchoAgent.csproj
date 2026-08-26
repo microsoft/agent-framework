@@ -32,7 +32,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI.Abstractions" Version="$(AgentFrameworkVersion)" />
-    <PackageReference Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.5" />
+    <PackageReference Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-beta.6" />
     <PackageReference Include="OpenTelemetry.Api" Version="1.15.3" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
     <PackageReference Include="DotNetEnv" Version="3.1.1" />
