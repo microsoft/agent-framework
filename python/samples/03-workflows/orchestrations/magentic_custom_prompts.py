@@ -19,7 +19,7 @@ answer with a set of built-in prompts. Every one of them can be replaced through
 `MagenticBuilder`, which is useful when the orchestration has to follow a house style, a
 domain vocabulary, or a fixed report format.
 
-Overridable prompts and the placeholders each one must keep:
+Overridable prompts and the placeholders available to each one:
 
 | Builder argument                   | Placeholders                       | Used for                          |
 | ---------------------------------- | ---------------------------------- | --------------------------------- |
@@ -32,12 +32,13 @@ Overridable prompts and the placeholders each one must keep:
 | `final_answer_prompt`              | `{task}`                           | Final synthesized answer          |
 
 A prompt is formatted with `str.format`, so any literal brace in a custom prompt must be
-doubled (`{{`, `}}`). `progress_ledger_prompt` is the one override to treat with care: its
-response is parsed as JSON, so a replacement must keep the same schema as the built-in
-prompt. This sample leaves it at the default and overrides the six prompts that shape the
-ledger and the final report. Note that the replan prompts have to be overridden alongside the
-initial ones: a stall makes the manager rebuild the fact sheet and the plan, and leaving the
-replan prompts at their defaults would silently drop the custom format mid-run.
+doubled (`{{`, `}}`). An override may omit any available placeholder, but any placeholder it
+uses must have a name listed above. `progress_ledger_prompt` is the one override to treat with
+care: its response is parsed as JSON, so a replacement must keep the same schema as the
+built-in prompt. This sample leaves it at the default and overrides the six prompts that shape
+the ledger and the final report. Note that the replan prompts have to be overridden alongside
+the initial ones: a stall makes the manager rebuild the fact sheet and the plan, and leaving
+the replan prompts at their defaults would silently drop the custom format mid-run.
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Microsoft Foundry Agent Service (V2) project endpoint.
