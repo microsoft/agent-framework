@@ -1870,6 +1870,7 @@ class RawOpenAIChatClient(
                         "type": "output_text",
                         "text": content.text,
                         "annotations": _annotations_to_output_text(getattr(content, "annotations", None)),
+                        "logprobs": [],
                     }
                 return _attach_prompt_cache_breakpoint(
                     {
