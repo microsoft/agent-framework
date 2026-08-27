@@ -4,6 +4,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -426,6 +427,36 @@ public class AspireDashboardTracingTests
         Assert.Equal(context.AgentTraceParents["resp_non_streaming"][3..35], context.DashboardTraceId);
     }
 
+    [Theory]
+    [InlineData(true, "gzip")]
+    [InlineData(true, "br")]
+    [InlineData(false, "gzip")]
+    [InlineData(false, "br")]
+    public async Task Aggregator_ResponseCapture_RequestsIdentityEncodingAsync(
+        bool streaming,
+        string acceptedEncoding)
+    {
+        // Arrange
+        await using var context = await TracingProxyTestContext.StartAsync(
+            responseCompressionEncoding: acceptedEncoding);
+        var responseId = $"resp_{(streaming ? "streaming" : "non_streaming")}_{acceptedEncoding}";
+        using var request = CreateAgentRequest(responseId, streaming);
+        request.Headers.AcceptEncoding.ParseAdd(acceptedEncoding);
+
+        // Act
+        using var response = await context.Client.SendAsync(request);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        using var tracesResponse = await context.Client.GetAsync(
+            new Uri($"/v1/responses/{responseId}/traces", UriKind.Relative));
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(responseId, responseBody, StringComparison.Ordinal);
+        Assert.Empty(response.Content.Headers.ContentEncoding);
+        Assert.Equal("identity", context.AgentAcceptEncoding);
+        Assert.Equal(HttpStatusCode.OK, tracesResponse.StatusCode);
+    }
+
     [Fact]
     public async Task Aggregator_DashboardTraceTimeout_ReturnsServiceUnavailableAsync()
     {
@@ -576,6 +607,8 @@ public class AspireDashboardTracingTests
 
         public string? AgentTraceParent { get; private set; }
 
+        public string? AgentAcceptEncoding { get; private set; }
+
         public ConcurrentDictionary<string, string> AgentTraceParents { get; } = new(StringComparer.Ordinal);
 
         public string? DashboardApiKey { get; private set; }
@@ -592,7 +625,8 @@ public class AspireDashboardTracingTests
         public static async Task<TracingProxyTestContext> StartAsync(
             bool dashboardUnavailable = false,
             bool dashboardTraceTimeout = false,
-            bool pauseStreamingResponseAfterCreated = false)
+            bool pauseStreamingResponseAfterCreated = false,
+            string? responseCompressionEncoding = null)
         {
             var agentBackend = CreateWebApplication();
             var dashboard = CreateWebApplication();
@@ -608,20 +642,36 @@ public class AspireDashboardTracingTests
                         : "resp_integration";
                 var traceParent = context.Request.Headers.TraceParent.FirstOrDefault();
                 testContext!.AgentTraceParent = traceParent;
+                testContext.AgentAcceptEncoding = context.Request.Headers.AcceptEncoding.ToString();
                 testContext.AgentTraceParents[responseId] = traceParent!;
 
                 if (requestDocument.RootElement.TryGetProperty("stream", out var stream) && !stream.GetBoolean())
                 {
-                    await context.Response.WriteAsJsonAsync(
-                        new { id = responseId, output = Array.Empty<object>() },
-                        context.RequestAborted);
+                    context.Response.ContentType = "application/json";
+                    await WriteAgentResponseAsync(
+                        context,
+                        JsonSerializer.SerializeToUtf8Bytes(new { id = responseId, output = Array.Empty<object>() }),
+                        responseCompressionEncoding);
                     return;
                 }
 
                 context.Response.ContentType = "text/event-stream";
-                await context.Response.WriteAsync(
-                    $"data: {{\"type\":\"response.created\",\"response\":{{\"id\":\"{responseId}\"}}}}\n\n",
-                    context.RequestAborted);
+                var createdEvent =
+                    $"data: {{\"type\":\"response.created\",\"response\":{{\"id\":\"{responseId}\"}}}}\n\n";
+
+                if (responseCompressionEncoding is not null &&
+                    context.Request.Headers.AcceptEncoding.ToString().Contains(
+                        responseCompressionEncoding,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteAgentResponseAsync(
+                        context,
+                        Encoding.UTF8.GetBytes(createdEvent + "data: [DONE]\n\n"),
+                        responseCompressionEncoding);
+                    return;
+                }
+
+                await context.Response.WriteAsync(createdEvent, context.RequestAborted);
 
                 if (pauseStreamingResponseAfterCreated)
                 {
@@ -734,6 +784,30 @@ public class AspireDashboardTracingTests
             var app = builder.Build();
             app.Urls.Add("http://127.0.0.1:0");
             return app;
+        }
+
+        private static async Task WriteAgentResponseAsync(
+            HttpContext context,
+            byte[] responseBody,
+            string? compressionEncoding)
+        {
+            if (compressionEncoding is null ||
+                !context.Request.Headers.AcceptEncoding.ToString().Contains(
+                    compressionEncoding,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                await context.Response.Body.WriteAsync(responseBody, context.RequestAborted);
+                return;
+            }
+
+            context.Response.Headers.ContentEncoding = compressionEncoding;
+            await using Stream compressionStream = compressionEncoding switch
+            {
+                "gzip" => new GZipStream(context.Response.Body, CompressionLevel.Fastest, leaveOpen: true),
+                "br" => new BrotliStream(context.Response.Body, CompressionLevel.Fastest, leaveOpen: true),
+                _ => throw new InvalidOperationException($"Unsupported test compression encoding '{compressionEncoding}'.")
+            };
+            await compressionStream.WriteAsync(responseBody, context.RequestAborted);
         }
 
         private static TestBackendResource CreateBackendResource(string name, string backendUrl)

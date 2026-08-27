@@ -891,6 +891,13 @@ internal sealed class DevUIAggregatorHostedService : IAsyncDisposable
             request.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
         }
 
+        if (onResponseId is not null)
+        {
+            // Response ID capture parses SSE or JSON, so keep the upstream body uncompressed.
+            request.Headers.Remove("Accept-Encoding");
+            request.Headers.TryAddWithoutValidation("Accept-Encoding", "identity");
+        }
+
         if (traceParent is not null)
         {
             request.Headers.Remove("traceparent");
