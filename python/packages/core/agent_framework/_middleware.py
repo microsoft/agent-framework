@@ -72,6 +72,56 @@ def _empty_async_iterable() -> AsyncIterable[Any]:
     return _EmptyAsyncIterator()
 
 
+def _propagate_compaction_summaries(
+    source_messages: list[Message],
+    working_messages: Sequence[Message],
+    previous_message_ids: set[int],
+) -> None:
+    """Propagate summaries of source messages without persisting middleware rewrites."""
+    from ._compaction import (
+        EXCLUDE_REASON_KEY,
+        EXCLUDED_KEY,
+        GROUP_ANNOTATION_KEY,
+        SUMMARIZED_BY_SUMMARY_ID_KEY,
+        SUMMARY_OF_MESSAGE_IDS_KEY,
+    )
+
+    source_message_ids = {message.message_id for message in source_messages if message.message_id}
+    for message in working_messages:
+        if id(message) in previous_message_ids:
+            continue
+
+        annotation_value: Any = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+        if not isinstance(annotation_value, Mapping):
+            continue
+        annotation = cast("Mapping[str, Any]", annotation_value)
+        summarized_message_ids: Any = annotation.get(SUMMARY_OF_MESSAGE_IDS_KEY)
+        summarized_id_set: set[str] = (
+            {value for value in cast("list[Any]", summarized_message_ids) if isinstance(value, str)}
+            if isinstance(summarized_message_ids, list)
+            else set()
+        )
+        linked_sources: list[tuple[int, Message, dict[str, Any]]] = []
+        for source_index, source_message in enumerate(source_messages):
+            source_annotation_value: Any = source_message.additional_properties.get(GROUP_ANNOTATION_KEY)
+            if not isinstance(source_annotation_value, dict):
+                continue
+            source_annotation = cast("dict[str, Any]", source_annotation_value)
+            if source_annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY) == message.message_id:
+                linked_sources.append((source_index, source_message, source_annotation))
+        if not linked_sources:
+            continue
+
+        if summarized_id_set and summarized_id_set.issubset(source_message_ids):
+            source_messages.insert(linked_sources[0][0], message)
+            continue
+
+        for _, source_message, source_annotation in linked_sources:
+            source_annotation.pop(SUMMARIZED_BY_SUMMARY_ID_KEY, None)
+            source_message.additional_properties.pop(EXCLUDED_KEY, None)
+            source_message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
+
+
 class MiddlewareTermination(MiddlewareException):
     """Control-flow exception to terminate middleware execution early."""
 
@@ -1376,9 +1426,17 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         )
 
         async def _execute() -> ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None:
+            def _final_handler(
+                middleware_context: ChatContext,
+            ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+                return self._middleware_handler(
+                    middleware_context,
+                    source_messages=messages if isinstance(messages, list) else None,
+                )
+
             return await pipeline.execute(
                 context=context,
-                final_handler=self._middleware_handler,
+                final_handler=_final_handler,
             )
 
         if stream:
@@ -1402,21 +1460,59 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         return _execute()  # type: ignore[return-value]
 
     def _middleware_handler(
-        self, context: ChatContext
+        self,
+        context: ChatContext,
+        *,
+        source_messages: list[Message] | None = None,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Internal middleware handler to adapt to pipeline."""
         handler_kwargs = dict(context.kwargs)
         compaction_strategy = handler_kwargs.pop("compaction_strategy", None)
         tokenizer = handler_kwargs.pop("tokenizer", None)
-        return super().get_response(  # type: ignore[misc, no-any-return]
-            messages=context.messages,
-            stream=context.stream,
-            options=context.options or {},
-            compaction_strategy=compaction_strategy,
-            tokenizer=tokenizer,
-            function_invocation_kwargs=context.function_invocation_kwargs,
-            client_kwargs=handler_kwargs,
+        result = cast(
+            "Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]",
+            super().get_response(  # type: ignore[misc]
+                messages=context.messages,
+                stream=context.stream,
+                options=context.options or {},
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                function_invocation_kwargs=context.function_invocation_kwargs,
+                client_kwargs=handler_kwargs,
+            ),
         )
+        if source_messages is None:
+            return result
+
+        if isinstance(result, ResponseStream):
+            stream_result = cast("ResponseStream[ChatResponseUpdate, ChatResponse]", result)
+
+            async def _resolve_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
+                previous_message_ids = {id(message) for message in context.messages}
+                try:
+                    await stream_result
+                finally:
+                    _propagate_compaction_summaries(
+                        source_messages,
+                        context.messages,
+                        previous_message_ids,
+                    )
+                return stream_result
+
+            return ResponseStream[ChatResponseUpdate, ChatResponse].from_awaitable(_resolve_stream())
+
+        async def _resolve_response() -> ChatResponse:
+            previous_message_ids = {id(message) for message in context.messages}
+            try:
+                return await result
+            finally:
+                _propagate_compaction_summaries(
+                    source_messages,
+                    context.messages,
+                    previous_message_ids,
+                )
+
+        return _resolve_response()
 
 
 class AgentMiddlewareLayer:

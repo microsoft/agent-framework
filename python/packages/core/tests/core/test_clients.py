@@ -10,16 +10,28 @@ from agent_framework import (
     GROUP_ANNOTATION_KEY,
     GROUP_TOKEN_COUNT_KEY,
     BaseChatClient,
+    ChatMiddleware,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     Message,
     SlidingWindowStrategy,
+    SummarizationStrategy,
     SupportsChatGetResponse,
     ToolResultCompactionStrategy,
     TruncationStrategy,
     tool,
 )
+
+
+class _NoOpChatMiddleware(ChatMiddleware):
+    async def process(self, context: Any, call_next: Any) -> None:
+        await call_next()
+
+
+class _FixedSummarizer:
+    async def get_response(self, *args: Any, **kwargs: Any) -> ChatResponse:
+        return ChatResponse(messages=[Message(role="assistant", contents=["SUMMARY"])])
 
 
 class _FixedTokenizer:
@@ -293,8 +305,10 @@ def _is_tool_result_summary(message: Message) -> bool:
     return message.role == "assistant" and text.startswith("[Tool results:")
 
 
+@pytest.mark.parametrize("with_chat_middleware", [False, True])
 async def test_function_loop_persists_inserted_summaries_across_iterations(
     chat_client_base: SupportsChatGetResponse,
+    with_chat_middleware: bool,
 ) -> None:
     # Regression test for #4991: compaction inserts summary messages and excludes the
     # originals. Across tool-loop iterations the exclusion flags persisted (shared Message
@@ -303,6 +317,8 @@ async def test_function_loop_persists_inserted_summaries_across_iterations(
     chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    if with_chat_middleware:
+        chat_client_base.chat_middleware = [_NoOpChatMiddleware()]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     @tool(name="lookup_weather", approval_mode="never_require")
     def lookup_weather(location: str) -> str:
@@ -361,14 +377,18 @@ def _tool_call_update(call_id: str, location: str) -> list[ChatResponseUpdate]:
     ]
 
 
+@pytest.mark.parametrize("with_chat_middleware", [False, True])
 async def test_function_loop_persists_inserted_summaries_across_iterations_streaming(
     chat_client_base: SupportsChatGetResponse,
+    with_chat_middleware: bool,
 ) -> None:
     # Streaming counterpart of the #4991 regression test: the summary persistence fix in
     # ``_prepare_messages_for_model_call`` must cover the streaming tool loop too.
     chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    if with_chat_middleware:
+        chat_client_base.chat_middleware = [_NoOpChatMiddleware()]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     @tool(name="lookup_weather", approval_mode="never_require")
     def lookup_weather(location: str) -> str:
@@ -411,8 +431,10 @@ async def test_function_loop_persists_inserted_summaries_across_iterations_strea
     assert "Paris" in summary_text
 
 
+@pytest.mark.parametrize("with_chat_middleware", [False, True])
 async def test_function_loop_compaction_conversation_id_mode_does_not_resend_history(
     chat_client_base: SupportsChatGetResponse,
+    with_chat_middleware: bool,
 ) -> None:
     # In conversation-id mode the server owns prior context, so the tool loop clears
     # ``prepped_messages`` and only sends the latest message. Compaction must not fight that
@@ -420,6 +442,8 @@ async def test_function_loop_compaction_conversation_id_mode_does_not_resend_his
     chat_client_base.function_invocation_configuration["enabled"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
     chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    if with_chat_middleware:
+        chat_client_base.chat_middleware = [_NoOpChatMiddleware()]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
     @tool(name="lookup_weather", approval_mode="never_require")
     def lookup_weather(location: str) -> str:
@@ -460,6 +484,59 @@ async def test_function_loop_compaction_conversation_id_mode_does_not_resend_his
     for sent in captured_inputs[1:]:
         assert len(sent) <= 1, [message.text for message in sent]
         assert not any(_is_tool_result_summary(message) for message in sent)
+
+
+async def test_chat_middleware_does_not_persist_summary_of_middleware_messages(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    class _InsertEphemeralMessage(ChatMiddleware):
+        async def process(self, context: Any, call_next: Any) -> None:
+            context.messages.insert(1, Message(role="user", contents=["ephemeral middleware context"]))
+            await call_next()
+
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.chat_middleware = [_InsertEphemeralMessage()]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = SummarizationStrategy(  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        client=_FixedSummarizer(),  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        target_count=1,
+        threshold=0,
+    )
+    messages = [
+        Message(role="user", contents=["original request"]),
+        Message(role="assistant", contents=["old response"]),
+        Message(role="user", contents=["latest request"]),
+    ]
+
+    await chat_client_base.get_response(messages)
+
+    assert [message.text for message in messages] == ["original request", "old response", "latest request"]
+    assert all(not message.additional_properties.get("_excluded", False) for message in messages)
+
+
+async def test_chat_middleware_persists_compaction_summary_when_model_call_fails(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    async def _raise_after_compaction(**kwargs: Any) -> ChatResponse:
+        raise RuntimeError("model call failed")
+
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.chat_middleware = [_NoOpChatMiddleware()]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    chat_client_base.compaction_strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    messages = [
+        Message(role="user", contents=["request"]),
+        _tool_call_response("call_1", "first").messages[0],
+        Message(role="tool", contents=[Content.from_function_result(call_id="call_1", result="first result")]),
+        _tool_call_response("call_2", "second").messages[0],
+        Message(role="tool", contents=[Content.from_function_result(call_id="call_2", result="second result")]),
+    ]
+
+    with (
+        patch.object(chat_client_base, "_inner_get_response", side_effect=_raise_after_compaction),
+        pytest.raises(RuntimeError, match="model call failed"),
+    ):
+        await chat_client_base.get_response(messages)
+
+    assert any(_is_tool_result_summary(message) for message in messages)
 
 
 def test_base_client_as_agent_does_not_copy_client_compaction_defaults(

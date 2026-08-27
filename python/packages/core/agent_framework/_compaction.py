@@ -813,6 +813,7 @@ class TruncationStrategy:
         compact_to: int,
         tokenizer: TokenizerProtocol | None = None,
         preserve_system: bool = True,
+        preserve_first_user_group: bool = False,
     ) -> None:
         """Create a truncation strategy.
 
@@ -824,6 +825,8 @@ class TruncationStrategy:
             tokenizer: Optional tokenizer used for token-based truncation.
             preserve_system: When True, system groups remain included and only
                 non-system groups are eligible for exclusion.
+            preserve_first_user_group: When True, the earliest user group
+                remains included along with the minimum retained group.
         """
         if max_n <= 0:
             raise ValueError("max_n must be greater than 0.")
@@ -835,6 +838,7 @@ class TruncationStrategy:
         self.compact_to = compact_to
         self.tokenizer = tokenizer
         self.preserve_system = preserve_system
+        self.preserve_first_user_group = preserve_first_user_group
 
     async def __call__(self, messages: list[Message]) -> bool:
         ordered_group_ids = _ordered_group_ids_from_annotations(messages)
@@ -850,6 +854,13 @@ class TruncationStrategy:
         protected_ids: set[str] = set()
         if self.preserve_system:
             protected_ids = {group_id for group_id in ordered_group_ids if kinds.get(group_id) == "system"}
+        if self.preserve_first_user_group:
+            first_user_group_id = next(
+                (group_id for group_id in ordered_group_ids if kinds.get(group_id) == "user"),
+                None,
+            )
+            if first_user_group_id is not None:
+                protected_ids.add(first_user_group_id)
         protected_ids.update(_minimum_retained_group_ids(messages, ordered_group_ids, kinds))
 
         changed = False
@@ -1472,6 +1483,50 @@ class TokenBudgetComposedStrategy:
         return changed
 
 
+async def _run_compaction_strategy(
+    messages: list[Message],
+    *,
+    strategy: CompactionStrategy,
+    tokenizer: TokenizerProtocol | None = None,
+    phase: str,
+) -> bool:
+    """Apply a strategy and log aggregate metrics when it changes context."""
+    resolved_tokenizer = tokenizer
+    if resolved_tokenizer is None:
+        strategy_tokenizer = getattr(strategy, "tokenizer", None)
+        if isinstance(strategy_tokenizer, TokenizerProtocol):
+            resolved_tokenizer = strategy_tokenizer
+
+    annotate_message_groups(messages)
+    if resolved_tokenizer is not None:
+        annotate_token_counts(messages, tokenizer=resolved_tokenizer)
+    before_message_count = _count_included_messages(messages)
+    before_token_count = included_token_count(messages) if resolved_tokenizer is not None else None
+
+    changed = await strategy(messages)
+    if not changed:
+        return False
+
+    annotate_message_groups(messages)
+    if resolved_tokenizer is not None:
+        annotate_token_counts(messages, tokenizer=resolved_tokenizer)
+    after_message_count = _count_included_messages(messages)
+    after_token_count = included_token_count(messages) if resolved_tokenizer is not None else None
+    strategy_name = getattr(strategy, "__name__", type(strategy).__name__)
+    logger.info(
+        "Compaction applied",
+        extra={
+            "compaction_phase": phase,
+            "compaction_strategy": strategy_name,
+            "compaction_included_messages_before": before_message_count,
+            "compaction_included_messages_after": after_message_count,
+            "compaction_included_tokens_before": before_token_count,
+            "compaction_included_tokens_after": after_token_count,
+        },
+    )
+    return True
+
+
 async def apply_compaction(
     messages: list[Message],
     *,
@@ -1481,10 +1536,12 @@ async def apply_compaction(
     """Apply configured compaction and return projected model-input messages."""
     if strategy is None:
         return messages
-    annotate_message_groups(messages)
-    if tokenizer is not None:
-        annotate_token_counts(messages, tokenizer=tokenizer)
-    await strategy(messages)
+    await _run_compaction_strategy(
+        messages,
+        strategy=strategy,
+        tokenizer=tokenizer,
+        phase="in_run",
+    )
     return project_included_messages(messages)
 
 
@@ -1579,10 +1636,12 @@ class CompactionProvider(ContextProvider):
         if not all_messages:
             return
 
-        annotate_message_groups(all_messages)
-        if self.tokenizer is not None:
-            annotate_token_counts(all_messages, tokenizer=self.tokenizer)
-        await self.before_strategy(all_messages)
+        await _run_compaction_strategy(
+            all_messages,
+            strategy=self.before_strategy,
+            tokenizer=self.tokenizer,
+            phase="before_run",
+        )
 
         projected = project_included_messages(all_messages)
         projected_set = {id(m) for m in projected}
@@ -1611,10 +1670,12 @@ class CompactionProvider(ContextProvider):
             return
         stored_messages: list[Message] = raw_messages  # type: ignore[assignment]
 
-        annotate_message_groups(stored_messages)
-        if self.tokenizer is not None:
-            annotate_token_counts(stored_messages, tokenizer=self.tokenizer)
-        await self.after_strategy(stored_messages)
+        await _run_compaction_strategy(
+            stored_messages,
+            strategy=self.after_strategy,
+            tokenizer=self.tokenizer,
+            phase="after_run",
+        )
 
         # Keep all messages (including excluded) in storage so annotations are
         # preserved. The history provider's ``skip_excluded`` flag controls
@@ -1663,6 +1724,7 @@ class ContextWindowCompactionStrategy:
         tool_eviction_threshold: float = DEFAULT_TOOL_EVICTION_THRESHOLD,
         truncation_threshold: float = DEFAULT_TRUNCATION_THRESHOLD,
         keep_last_tool_call_groups: int = 4,
+        preserve_first_user_group: bool = False,
     ) -> None:
         """Create a context-window compaction strategy.
 
@@ -1681,6 +1743,8 @@ class ContextWindowCompactionStrategy:
             keep_last_tool_call_groups: Number of most recent tool-call groups
                 to retain verbatim during tool eviction. Older groups are
                 collapsed into summaries. Defaults to 4.
+            preserve_first_user_group: Whether destructive truncation preserves
+                the earliest user group. Defaults to False.
 
         Raises:
             ValueError: If thresholds are out of range or inconsistent.
@@ -1706,24 +1770,18 @@ class ContextWindowCompactionStrategy:
         self.input_budget_tokens = input_budget
         self.tool_eviction_threshold = tool_eviction_threshold
         self.truncation_threshold = truncation_threshold
+        self.tokenizer = resolved_tokenizer
+        self._tool_eviction_tokens = tool_eviction_tokens
+        self._truncation_tokens = truncation_tokens
 
-        self._tool_eviction = TokenBudgetComposedStrategy(
-            token_budget=tool_eviction_tokens,
-            tokenizer=resolved_tokenizer,
-            strategies=[
-                ToolResultCompactionStrategy(keep_last_tool_call_groups=keep_last_tool_call_groups),
-            ],
+        self._tool_eviction = ToolResultCompactionStrategy(
+            keep_last_tool_call_groups=keep_last_tool_call_groups,
         )
-        self._truncation = TokenBudgetComposedStrategy(
-            token_budget=truncation_tokens,
+        self._truncation = TruncationStrategy(
+            max_n=truncation_tokens,
+            compact_to=tool_eviction_tokens,
             tokenizer=resolved_tokenizer,
-            strategies=[
-                TruncationStrategy(
-                    max_n=truncation_tokens,
-                    compact_to=tool_eviction_tokens,
-                    tokenizer=resolved_tokenizer,
-                ),
-            ],
+            preserve_first_user_group=preserve_first_user_group,
         )
 
     async def __call__(self, messages: list[Message]) -> bool:
@@ -1732,8 +1790,18 @@ class ContextWindowCompactionStrategy:
         Returns:
             True if compaction changed message inclusion; otherwise False.
         """
-        changed = await self._tool_eviction(messages)
-        return (await self._truncation(messages)) or changed
+        annotate_message_groups(messages)
+        annotate_token_counts(messages, tokenizer=self.tokenizer)
+
+        changed = False
+        if included_token_count(messages) > self._tool_eviction_tokens:
+            changed = await self._tool_eviction(messages)
+            annotate_message_groups(messages)
+            annotate_token_counts(messages, tokenizer=self.tokenizer)
+
+        if included_token_count(messages) > self._truncation_tokens:
+            changed = (await self._truncation(messages)) or changed
+        return changed
 
 
 __all__ = [
