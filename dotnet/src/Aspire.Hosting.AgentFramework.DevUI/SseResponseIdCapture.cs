@@ -58,6 +58,12 @@ internal sealed class SseResponseIdCapture
 
             if (this._lineBuffer.WrittenCount >= MaxLineLength)
             {
+                this.ProcessLine(this._lineBuffer.WrittenSpan, isFinalBlock: false);
+                if (this.ResponseId is not null)
+                {
+                    return;
+                }
+
                 this._lineBuffer.Clear();
                 this._discardingOversizedLine = true;
                 continue;
@@ -68,7 +74,7 @@ internal sealed class SseResponseIdCapture
         }
     }
 
-    private void ProcessLine(ReadOnlySpan<byte> line)
+    private void ProcessLine(ReadOnlySpan<byte> line, bool isFinalBlock = true)
     {
         if (!line.IsEmpty && line[^1] == (byte)'\r')
         {
@@ -89,25 +95,53 @@ internal sealed class SseResponseIdCapture
 
         try
         {
-            using var document = JsonDocument.Parse(line.ToArray());
-            var root = document.RootElement;
+            var reader = new Utf8JsonReader(line, isFinalBlock, state: default);
+            var responseObjectDepth = -1;
+            var pendingResponseObject = false;
+            var pendingResponseId = false;
+            var pendingDirectId = false;
+            string? candidateResponseId = null;
 
-            if (root.TryGetProperty("response", out var response) &&
-                response.ValueKind == JsonValueKind.Object &&
-                response.TryGetProperty("id", out var responseId) &&
-                responseId.ValueKind == JsonValueKind.String)
+            while (reader.Read())
             {
-                this.ResponseId = responseId.GetString();
-                return;
+                if (reader.TokenType == JsonTokenType.PropertyName)
+                {
+                    pendingResponseObject = reader.CurrentDepth == 1 && reader.ValueTextEquals("response"u8);
+                    pendingResponseId = reader.CurrentDepth == responseObjectDepth && reader.ValueTextEquals("id"u8);
+                    pendingDirectId = reader.CurrentDepth == 1 && reader.ValueTextEquals("id"u8);
+                    continue;
+                }
+
+                if (reader.TokenType == JsonTokenType.StartObject && pendingResponseObject)
+                {
+                    responseObjectDepth = reader.CurrentDepth + 1;
+                }
+                else if (reader.TokenType == JsonTokenType.EndObject &&
+                    responseObjectDepth == reader.CurrentDepth + 1)
+                {
+                    responseObjectDepth = -1;
+                }
+                else if (reader.TokenType == JsonTokenType.String && (pendingResponseId || pendingDirectId))
+                {
+                    var responseId = reader.GetString();
+                    if (pendingResponseId ||
+                        responseId?.StartsWith("resp_", StringComparison.Ordinal) == true)
+                    {
+                        candidateResponseId = responseId;
+                        if (!isFinalBlock)
+                        {
+                            this.ResponseId = candidateResponseId;
+                            return;
+                        }
+                    }
+                }
+
+                pendingResponseObject = false;
+                pendingResponseId = false;
+                pendingDirectId = false;
             }
 
-            if (root.TryGetProperty("id", out var id) &&
-                id.ValueKind == JsonValueKind.String &&
-                id.GetString() is { } directId &&
-                directId.StartsWith("resp_", StringComparison.Ordinal))
-            {
-                this.ResponseId = directId;
-            }
+            this.ResponseId = candidateResponseId;
         }
         catch (JsonException)
         {

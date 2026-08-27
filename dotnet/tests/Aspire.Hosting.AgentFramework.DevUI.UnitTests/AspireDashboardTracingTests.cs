@@ -60,6 +60,38 @@ public class AspireDashboardTracingTests
     }
 
     [Fact]
+    public void SseResponseIdCapture_MalformedEventAfterResponseId_DoesNotCaptureInvalidId()
+    {
+        // Arrange
+        var capture = new SseResponseIdCapture();
+
+        // Act
+        capture.Append(Encoding.UTF8.GetBytes("data: {\"response\":{\"id\":\"resp_invalid\"},not-json}\n\n"));
+        capture.Append(Encoding.UTF8.GetBytes("data: {\"response\":{\"id\":\"resp_valid\"}}\n\n"));
+
+        // Assert
+        Assert.Equal("resp_valid", capture.ResponseId);
+    }
+
+    [Fact]
+    public void SseResponseIdCapture_OversizedFragmentedResponseCreatedEvent_CapturesResponseId()
+    {
+        // Arrange
+        var capture = new SseResponseIdCapture();
+        var oversizedEvent = Encoding.UTF8.GetBytes(
+            $"data: {{\"type\":\"response.created\",\"response\":{{\"id\":\"resp_oversized\",\"instructions\":\"{new string('x', 80 * 1024)}\"}}}}\n\n");
+
+        // Act
+        for (var offset = 0; offset < oversizedEvent.Length; offset += 1024)
+        {
+            capture.Append(oversizedEvent.AsSpan(offset, Math.Min(1024, oversizedEvent.Length - offset)));
+        }
+
+        // Assert
+        Assert.Equal("resp_oversized", capture.ResponseId);
+    }
+
+    [Fact]
     public void ConvertToTraceEvents_OtlpSpan_PreservesHierarchyTimingAttributesAndError()
     {
         // Arrange
