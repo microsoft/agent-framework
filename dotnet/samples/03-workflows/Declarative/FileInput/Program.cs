@@ -5,6 +5,7 @@ using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
+using OpenAI.Files;
 using Shared.Foundry;
 using Shared.Workflows;
 
@@ -29,17 +30,18 @@ internal sealed class Program
         await CreateAgentAsync(foundryEndpoint, configuration);
 
         FileWorkflowInput workflowInput = ParseWorkflowInput(args);
+        await using UploadedFile uploadedFile = await UploadInputFileAsync(foundryEndpoint, workflowInput);
 
         // Create the workflow factory. This class demonstrates how to initialize a
         // declarative workflow from a YAML file. Once the workflow is created, it
         // can be executed just like any regular workflow.
         WorkflowFactory workflowFactory = new("FileInput.yaml", foundryEndpoint);
 
-        // Execute the workflow with a ChatMessage that contains both text and file content.
-        // The workflow can inspect the message through System.LastMessage and forward it
-        // to agent-backed actions.
+        // Execute the workflow with a ChatMessage that contains both text and an uploaded
+        // file reference. Agent-backed actions can use the same workflow conversation to
+        // access the file.
         WorkflowRunner runner = new();
-        await runner.ExecuteAsync(workflowFactory.CreateWorkflow, CreateInputMessage(workflowInput));
+        await runner.ExecuteAsync(workflowFactory.CreateWorkflow, CreateInputMessage(workflowInput, uploadedFile.FileId));
     }
 
     private static async Task CreateAgentAsync(Uri foundryEndpoint, IConfiguration configuration)
@@ -92,43 +94,52 @@ internal sealed class Program
         return new FileWorkflowInput(filePath, prompt);
     }
 
-    private static ChatMessage CreateInputMessage(FileWorkflowInput input)
+    private static async Task<UploadedFile> UploadInputFileAsync(Uri foundryEndpoint, FileWorkflowInput input)
+    {
+        // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+        // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+        // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+        AIProjectClient aiProjectClient = new(foundryEndpoint, new DefaultAzureCredential());
+        OpenAIFileClient fileClient = aiProjectClient.GetProjectOpenAIClient().GetOpenAIFileClient();
+
+        using FileStream fileStream = File.OpenRead(input.FilePath);
+        OpenAIFile uploadedFile = await fileClient.UploadFileAsync(
+            fileStream,
+            Path.GetFileName(input.FilePath),
+            FileUploadPurpose.Assistants).ConfigureAwait(false);
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        try
+        {
+            Console.WriteLine($"FILE: {uploadedFile.Id}");
+        }
+        finally
+        {
+            Console.ResetColor();
+        }
+
+        return new UploadedFile(fileClient, uploadedFile.Id);
+    }
+
+    private static ChatMessage CreateInputMessage(FileWorkflowInput input, string fileId)
     {
         string fileName = Path.GetFileName(input.FilePath);
-        string mediaType = InferMediaType(input.FilePath);
-        byte[] fileBytes = File.ReadAllBytes(input.FilePath);
-        string fileDataUri = $"data:{mediaType};base64,{Convert.ToBase64String(fileBytes)}";
 
         return new ChatMessage(
             ChatRole.User,
             [
                 new TextContent($"{input.Prompt} File name: {fileName}"),
-                new DataContent(fileDataUri)
-                {
-                    Name = fileName,
-                },
+                new HostedFileContent(fileId),
             ]);
     }
 
-    private static string InferMediaType(string filePath)
-    {
-        string extension = Path.GetExtension(filePath);
-        return extension.ToUpperInvariant() switch
-        {
-            ".CSV" => "text/csv",
-            ".GIF" => "image/gif",
-            ".HTML" or ".HTM" => "text/html",
-            ".JPEG" or ".JPG" => "image/jpeg",
-            ".JSON" => "application/json",
-            ".MD" => "text/markdown",
-            ".PDF" => "application/pdf",
-            ".PNG" => "image/png",
-            ".TXT" => "text/plain",
-            ".WEBP" => "image/webp",
-            ".XML" => "application/xml",
-            _ => "application/octet-stream",
-        };
-    }
-
     private sealed record FileWorkflowInput(string FilePath, string Prompt);
+
+    private sealed record UploadedFile(OpenAIFileClient FileClient, string FileId) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            await this.FileClient.DeleteFileAsync(this.FileId).ConfigureAwait(false);
+        }
+    }
 }

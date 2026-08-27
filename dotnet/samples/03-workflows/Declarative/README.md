@@ -101,7 +101,7 @@ To run the sampes from the command line:
 ### File-based input
 
 The `FileInput` sample demonstrates starting a declarative workflow with a `ChatMessage`
-that contains file bytes, not just text:
+that contains an uploaded file reference, not just text:
 
 ```pwsh
 cd dotnet/samples/03-workflows/Declarative/FileInput

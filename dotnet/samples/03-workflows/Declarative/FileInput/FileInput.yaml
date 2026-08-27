@@ -11,13 +11,9 @@ trigger:
   id: workflow_demo
   actions:
 
-    # Capture the complete incoming ChatMessage, including non-text content.
-    - kind: SetVariable
-      id: capture_input_message
-      variable: Local.InputMessage
-      value: =System.LastMessage
-
-    # Show that the workflow can inspect the message text and content collection.
+    # Show that the workflow can inspect the text portion of the message.
+    # The uploaded file is already attached to the conversation and is available
+    # to agent-backed actions that use System.ConversationId.
     - kind: SendActivity
       id: announce_file_input
       activity: |-
@@ -25,9 +21,6 @@ trigger:
 
         Prompt:
         {System.LastMessage.Text}
-
-        Content item count:
-        {CountRows(System.LastMessage.Content)}
 
     # Invoke an agent in the original conversation. The workflow root already added
     # the file-bearing user message to this conversation before the first action ran.
