@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Awaitable, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -182,11 +183,19 @@ def _validate_wait_timeout(timeout_seconds: float | None) -> float | None:
     # bool is an int subclass, and a timeout of True/False is always a caller mistake.
     if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
         raise ValueError(f"Background agent wait timeout must be a number or None; got {timeout_seconds!r}.")
-    if timeout_seconds != timeout_seconds:  # NaN never compares greater than 0.
-        raise ValueError("Background agent wait timeout must not be NaN.")
-    if timeout_seconds <= 0:
+    # Convert before range checks: a very large int raises OverflowError here, which would escape as
+    # something other than the documented ValueError.
+    try:
+        timeout = float(timeout_seconds)
+    except OverflowError as exc:
+        raise ValueError(f"Background agent wait timeout is too large; got {timeout_seconds!r}.") from exc
+    # Rejects NaN and infinity together: an infinite deadline would restore the unbounded wait that
+    # this timeout exists to prevent. Callers who want that must pass None explicitly.
+    if not math.isfinite(timeout):
+        raise ValueError(f"Background agent wait timeout must be a finite number or None; got {timeout_seconds!r}.")
+    if timeout <= 0:
         raise ValueError(f"Background agent wait timeout must be greater than 0; got {timeout_seconds!r}.")
-    return float(timeout_seconds)
+    return timeout
 
 
 def _validate_and_build_agent_dict(agents: Sequence[SupportsAgentRun]) -> dict[str, SupportsAgentRun]:
@@ -304,7 +313,7 @@ async def _wait_first_completed(
     *,
     timeout: float | None,
     source_id: str,
-) -> set[asyncio.Task[AgentResponse[Any]]]:
+) -> tuple[set[asyncio.Task[AgentResponse[Any]]], bool]:
     """Wait for the first of ``waitable`` to finish, bounded by ``timeout``.
 
     The wait is performed in slices of at most ``_WAIT_SLICE_SECONDS``. Between slices
@@ -312,20 +321,21 @@ async def _wait_first_completed(
     to ``LOST``, ending the wait early rather than stalling for the whole timeout.
 
     Returns:
-        The set of tasks that completed, which is empty when the timeout elapsed or every awaited
-        task stopped being tracked.
+        A tuple of the tasks that completed and whether the deadline expired. The task set is empty
+        both when the deadline expired and when a requested task reached a terminal state without
+        its asyncio task finishing; the boolean distinguishes the two.
     """
     loop = asyncio.get_running_loop()
     deadline = None if timeout is None else loop.time() + timeout
     pending_tasks = [task for _, task in waitable]
-    waited_ids = [task_id for task_id, _ in waitable]
+    waited_ids = set(task_id for task_id, _ in waitable)
 
     while True:
         slice_timeout = _WAIT_SLICE_SECONDS
         if deadline is not None:
             remaining = deadline - loop.time()
             if remaining <= 0:
-                return set()
+                return set(), True
             slice_timeout = min(slice_timeout, remaining)
 
         done, _ = await asyncio.wait(
@@ -334,13 +344,17 @@ async def _wait_first_completed(
             return_when=asyncio.FIRST_COMPLETED,
         )
         if done:
-            return done
+            return done, False
 
-        # Nothing finished in this slice. Refresh so a vanished runtime reference becomes LOST,
-        # and stop waiting if none of the requested tasks is still considered running.
+        # Nothing finished in this slice. Refresh so a vanished runtime reference becomes LOST.
+        # Stop as soon as any requested task reaches a terminal state: the caller asked for the
+        # first result, so one task going LOST must not be masked by another still running.
         tasks = _refresh_task_state(session, state, runtime, source_id=source_id)
-        if not any(t.id in waited_ids and t.status == BackgroundTaskStatus.RUNNING for t in tasks):
-            return set()
+        watched = [t for t in tasks if t.id in waited_ids]
+        if any(t.status != BackgroundTaskStatus.RUNNING for t in watched) or not any(
+            t.status == BackgroundTaskStatus.RUNNING for t in watched
+        ):
+            return set(), False
 
 
 # ---------------------------------------------------------------------------
@@ -595,12 +609,16 @@ class BackgroundAgentsProvider(ContextProvider):
 
         @tool(name="background_agents_wait_for_first_completion", approval_mode="never_require")
         async def background_agents_wait_for_first_completion(
-            task_ids: list[int], timeout_seconds: float | None = None
+            task_ids: list[int],
+            # The provider default is bound as this parameter's default so an explicitly passed
+            # None means "wait without a bound" rather than being indistinguishable from omission.
+            timeout_seconds: float | None = self._wait_timeout_seconds,
         ) -> str:
             """Block until the first of the specified background tasks completes, or the timeout elapses.
 
             Returns the completed task's ID, or the current status of each task if the wait timed out.
-            Pass timeout_seconds to override the provider's default wait timeout.
+            Pass timeout_seconds to override the provider's default wait timeout, or null to wait
+            without a bound.
             """
             if runtime.closed:
                 return "Error: Session is being released; cannot wait for background tasks."
@@ -611,13 +629,10 @@ class BackgroundAgentsProvider(ContextProvider):
             # A model-supplied timeout is reported back as an error string rather than raised: this
             # tool exists to keep the function-calling loop responsive, so a bad argument must not
             # fail the tool invocation.
-            if timeout_seconds is None:
-                timeout = self._wait_timeout_seconds
-            else:
-                try:
-                    timeout = _validate_wait_timeout(timeout_seconds)
-                except ValueError as exc:
-                    return f"Error: {exc}"
+            try:
+                timeout = _validate_wait_timeout(timeout_seconds)
+            except ValueError as exc:
+                return f"Error: {exc}"
 
             # Collect in-flight tasks matching the requested IDs.
             waitable: list[tuple[int, asyncio.Task[AgentResponse[Any]]]] = []
@@ -642,7 +657,7 @@ class BackgroundAgentsProvider(ContextProvider):
             # sliced so _refresh_task_state runs between slices: a task whose runtime reference has
             # disappeared is promoted to LOST there, which ends the wait early instead of stalling
             # for the full timeout.
-            done = await _wait_first_completed(
+            done, timed_out = await _wait_first_completed(
                 session,
                 provider_state,
                 runtime,
@@ -654,10 +669,17 @@ class BackgroundAgentsProvider(ContextProvider):
             if not done:
                 tasks = _refresh_task_state(session, provider_state, runtime, source_id=source_id)
                 statuses = ", ".join(f"task {t.id}: {t.status.value}" for t in tasks if t.id in task_ids)
+                if timed_out:
+                    return (
+                        f"Timed out after {timeout} seconds waiting for tasks {task_ids} to complete. "
+                        f"Current status: {statuses or 'unknown'}. "
+                        "The tasks may still be running; wait again or check their status."
+                    )
+                # The wait ended because a requested task reached a terminal state (for example
+                # LOST) without its asyncio task producing a result.
                 return (
-                    f"Timed out after {timeout} seconds waiting for tasks {task_ids} to complete. "
-                    f"Current status: {statuses or 'unknown'}. "
-                    "The tasks may still be running; wait again or check their status."
+                    f"Stopped waiting for tasks {task_ids}: no running task remains to wait for. "
+                    f"Current status: {statuses or 'unknown'}."
                 )
 
             # Find which ID completed.

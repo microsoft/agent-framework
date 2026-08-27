@@ -431,9 +431,11 @@ async def test_wait_returns_early_when_task_becomes_lost() -> None:
     )
     elapsed = asyncio.get_running_loop().time() - start
 
-    # Returned well before the 30s timeout because the task was promoted to LOST.
+    # Returned well before the 30s timeout because the task was promoted to LOST, and the message
+    # must not claim the deadline expired.
     assert elapsed < 20.0
     assert "lost" in result.lower()
+    assert "timed out" not in result.lower()
 
     await dropper
     unblock.set()
@@ -441,14 +443,98 @@ async def test_wait_returns_early_when_task_becomes_lost() -> None:
         await asyncio.wait_for(hanging, timeout=1.0)
 
 
-@pytest.mark.parametrize("bad_timeout", [0, -1, -0.5, float("nan"), True])
+@pytest.mark.parametrize(
+    "bad_timeout",
+    [0, -1, -0.5, float("nan"), True, float("inf"), float("-inf"), 10**400, "30"],
+)
 def test_constructor_rejects_invalid_wait_timeout(bad_timeout: Any) -> None:
-    """Provider-level timeout misconfiguration should fail fast with ValueError."""
+    """Provider-level timeout misconfiguration should fail fast with ValueError.
+
+    Infinity is rejected because an infinite deadline would restore the unbounded wait this
+    timeout exists to prevent; callers who want that must pass ``None`` explicitly.
+    """
     with pytest.raises(ValueError, match="wait timeout"):
         BackgroundAgentsProvider(
             [_FakeAgent("Worker")],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
             wait_timeout_seconds=bad_timeout,
         )
+
+
+async def test_wait_explicit_none_timeout_argument_waits_unbounded() -> None:
+    """An explicit timeout_seconds=None must be unbounded, not fall back to the provider default."""
+    provider = BackgroundAgentsProvider(
+        [_FakeAgent("Slow", response_text="slow result", delay=0.2)],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        wait_timeout_seconds=0.01,
+    )
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    await _invoke_tool(
+        tools["background_agents_start_task"],
+        agent_name="Slow",
+        input="go",
+        description="slower than the provider default",
+    )
+    # The provider default of 0.01s would time out; an explicit None must wait for the result.
+    result = await _invoke_tool(
+        tools["background_agents_wait_for_first_completion"],
+        task_ids=[1],
+        timeout_seconds=None,
+    )
+
+    assert "completed" in result.lower()
+    assert "timed out" not in result.lower()
+
+
+async def test_wait_returns_when_one_of_several_tasks_is_lost() -> None:
+    """One requested task going LOST should end the wait even while another is still running."""
+    provider = BackgroundAgentsProvider(
+        [_FakeAgent("Worker")],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        wait_timeout_seconds=30.0,
+    )
+    session = _make_session()
+    tools = await _get_tools(provider, session)
+
+    runtime = provider._get_runtime(session)
+    unblock = asyncio.Event()
+
+    for index in (1, 2):
+        await _invoke_tool(
+            tools["background_agents_start_task"],
+            agent_name="Worker",
+            input="go",
+            description=f"task {index}",
+        )
+        runtime.in_flight_tasks[index].cancel()
+        waiter = asyncio.create_task(unblock.wait())
+        runtime.in_flight_tasks[index] = waiter  # type: ignore[assignment]  # pyrefly: ignore[bad-assignment]  # ty: ignore[invalid-assignment]
+
+    hanging = [runtime.in_flight_tasks[1], runtime.in_flight_tasks[2]]
+
+    async def _drop_one_reference() -> None:
+        # Task 1 loses its reference while task 2 keeps running.
+        await asyncio.sleep(0.05)
+        runtime.in_flight_tasks.pop(1, None)
+
+    dropper = asyncio.create_task(_drop_one_reference())
+    start = asyncio.get_running_loop().time()
+
+    result = await asyncio.wait_for(
+        _invoke_tool(tools["background_agents_wait_for_first_completion"], task_ids=[1, 2]),
+        timeout=30.0,
+    )
+    elapsed = asyncio.get_running_loop().time() - start
+
+    # Returned on the lost task rather than parking until the 30s deadline.
+    assert elapsed < 20.0
+    assert "lost" in result.lower()
+    assert "timed out" not in result.lower()
+
+    await dropper
+    unblock.set()
+    for task in hanging:
+        with suppress(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1.0)
 
 
 def test_constructor_accepts_none_wait_timeout() -> None:

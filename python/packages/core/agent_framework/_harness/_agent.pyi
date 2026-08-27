@@ -77,6 +77,7 @@ def create_harness_agent(
     skills_paths: str | Path | Sequence[str | Path] | None = None,
     background_agents: Sequence[SupportsAgentRun] | None = None,
     background_agents_instructions: str | None = None,
+    background_agents_wait_timeout_seconds: float | None = ...,
     shell_executor: _ShellExecutorLike | None = None,
     shell_environment_provider_options: _ShellEnvironmentProviderOptionsLike | None = None,
     disable_web_search: bool = False,
