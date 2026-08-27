@@ -1866,11 +1866,16 @@ class RawOpenAIChatClient(
                 if role == "assistant":
                     # Assistant history is represented as output text items; Azure validation
                     # requires `annotations` to be present for this type.
-                    return {
+                    output_text = {
                         "type": "output_text",
                         "text": content.text,
                         "annotations": _annotations_to_output_text(getattr(content, "annotations", None)),
                     }
+                    if "logprobs" in content.additional_properties:
+                        output_text["logprobs"] = self._serialize_provider_payload(
+                            content.additional_properties["logprobs"]
+                        )
+                    return output_text
                 return _attach_prompt_cache_breakpoint(
                     {
                         "type": "input_text",
@@ -2614,8 +2619,14 @@ class RawOpenAIChatClient(
                     for message_content in item.content:  # type: ignore[reportMissingTypeArgument]
                         match message_content.type:
                             case "output_text":
+                                logprobs = getattr(message_content, "logprobs", None)
                                 text_content = Content.from_text(
                                     text=message_content.text,
+                                    additional_properties=(
+                                        {"logprobs": self._serialize_provider_payload(logprobs)}
+                                        if logprobs is not None
+                                        else None
+                                    ),
                                     raw_representation=message_content,
                                 )
                                 metadata.update(self._get_metadata_from_response(message_content))

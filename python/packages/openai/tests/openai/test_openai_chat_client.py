@@ -2881,8 +2881,58 @@ def test_prepare_content_for_openai_text_uses_role_specific_type() -> None:
     assert user_result["type"] == "input_text"
     assert assistant_result["type"] == "output_text"
     assert assistant_result["annotations"] == []
+    assert "logprobs" not in assistant_result
     assert user_result["text"] == "hello"
     assert assistant_result["text"] == "hello"
+
+
+def test_prepare_content_for_openai_replays_real_assistant_logprobs() -> None:
+    """Assistant history replays provider logprobs only when the response supplied them."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    logprobs = [
+        {
+            "token": "hello",
+            "bytes": [104, 101, 108, 108, 111],
+            "logprob": -0.1,
+            "top_logprobs": [],
+        }
+    ]
+    text_content = Content.from_text(text="hello", additional_properties={"logprobs": logprobs})
+
+    result = client._prepare_content_for_openai("assistant", text_content)
+
+    assert result["logprobs"] == logprobs
+
+
+def test_parse_and_replay_preserves_real_assistant_logprobs() -> None:
+    """Parsed Responses logprobs remain attached to assistant content for direct replay."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    logprobs = [
+        {
+            "token": "hello",
+            "bytes": [104, 101, 108, 108, 111],
+            "logprob": -0.1,
+            "top_logprobs": [],
+        }
+    ]
+    output_text = MagicMock(type="output_text", text="hello", annotations=[], logprobs=logprobs)
+    output_message = MagicMock(type="message", content=[output_text])
+    response = MagicMock(
+        output_parsed=None,
+        output=[output_message],
+        metadata={},
+        usage=None,
+        id="resp-test",
+        created_at=1_000_000_000,
+        model="test-model",
+    )
+
+    parsed = client._parse_response_from_openai(response, options={"store": False})
+    text_content = parsed.messages[0].contents[0]
+    replayed = client._prepare_content_for_openai("assistant", text_content)
+
+    assert text_content.additional_properties["logprobs"] == logprobs
+    assert replayed["logprobs"] == logprobs
 
 
 def test_prepare_messages_for_openai_assistant_history_uses_output_text_with_annotations() -> None:
