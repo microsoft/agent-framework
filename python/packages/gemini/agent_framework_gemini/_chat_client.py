@@ -19,6 +19,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FinishReasonLiteral,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -1260,18 +1261,20 @@ class RawGeminiChatClient(
             details["reasoning_output_token_count"] = v
         return details or None
 
-    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | None:
+    def _map_finish_reason(self, reason: str | None) -> FinishReasonLiteral | FinishReason | None:
         """Map a Gemini finish reason string to the framework's FinishReasonLiteral.
 
         Args:
             reason: The finish reason name from the Gemini API (e.g. ``"STOP"``), or None.
 
         Returns:
-            The corresponding ``FinishReasonLiteral``, or None if the reason is absent or unmapped.
+            The corresponding ``FinishReasonLiteral`` for known reasons, the raw reason string for
+            values not yet mapped (so callers still see that the response terminated abnormally
+            instead of losing it), or None if the reason is absent or ``FINISH_REASON_UNSPECIFIED``.
         """
-        if not reason:
+        if not reason or reason == "FINISH_REASON_UNSPECIFIED":
             return None
-        return _FINISH_REASON_MAP.get(reason)
+        return _FINISH_REASON_MAP.get(reason, FinishReason(reason))
 
     # endregion
 

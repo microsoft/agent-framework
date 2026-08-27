@@ -24,7 +24,7 @@ from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvide
 from .._skills import SkillsProvider
 from .._telemetry import FeatureIndex, mark_feature_used
 from .._types import ChatOptions
-from ._background_agents import BackgroundAgentsProvider
+from ._background_agents import DEFAULT_BACKGROUND_AGENTS_WAIT_TIMEOUT_SECONDS, BackgroundAgentsProvider
 from ._file_access import AgentFileStore, FileAccessProvider, FileSystemAgentFileStore
 from ._file_memory import FileMemoryProvider
 from ._loop import DEFAULT_MAX_ITERATIONS, AgentLoopMiddleware
@@ -160,6 +160,7 @@ def _assemble_context_providers(
     skills_paths: str | Path | Sequence[str | Path] | None,
     background_agents: Sequence[SupportsAgentRun] | None,
     background_agents_instructions: str | None,
+    background_agents_wait_timeout_seconds: int,
     shell_context_provider: ContextProvider | None,
     extra_context_providers: Sequence[ContextProvider] | None,
 ) -> list[ContextProvider]:
@@ -205,7 +206,13 @@ def _assemble_context_providers(
 
     # Background agents are opt-in: only added when agents are provided.
     if background_agents:
-        providers.append(BackgroundAgentsProvider(background_agents, instructions=background_agents_instructions))
+        providers.append(
+            BackgroundAgentsProvider(
+                background_agents,
+                instructions=background_agents_instructions,
+                wait_timeout_seconds=background_agents_wait_timeout_seconds,
+            )
+        )
 
     # Shell environment provider is opt-in: only added when a shell tool was wired.
     if shell_context_provider is not None:
@@ -329,6 +336,7 @@ def create_harness_agent(
     skills_paths: str | Path | Sequence[str | Path] | None = None,
     background_agents: Sequence[SupportsAgentRun] | None = None,
     background_agents_instructions: str | None = None,
+    background_agents_wait_timeout_seconds: int = DEFAULT_BACKGROUND_AGENTS_WAIT_TIMEOUT_SECONDS,
     shell_executor: ShellExecutor | None = None,
     shell_environment_provider_options: ShellEnvironmentProviderOptions | None = None,
     disable_web_search: bool = False,
@@ -478,6 +486,10 @@ def create_harness_agent(
         background_agents_instructions: Optional instruction override for the
             ``BackgroundAgentsProvider``. May include ``{background_agents}`` placeholder
             which will be replaced with the agent listing.
+        background_agents_wait_timeout_seconds: Maximum seconds the background-agent wait
+            tool blocks for a task to complete. Must be a positive integer.
+            Defaults to 300 seconds. On expiry, the tool returns normally and leaves the
+            background tasks running. Only used when ``background_agents`` is provided.
         shell_executor: Optional shell tool that enables shell command execution. When
             provided, the shell tool and a ``ShellEnvironmentProvider`` are automatically
             added (provided the client supports shell tools; otherwise a warning is logged
@@ -525,7 +537,8 @@ def create_harness_agent(
     Raises:
         ValueError: If max_context_window_tokens is provided and <= 0, or
             max_output_tokens is provided and <= 0, or max_output_tokens >=
-            max_context_window_tokens when both are provided.
+            max_context_window_tokens when both are provided, or
+            background_agents_wait_timeout_seconds is invalid when background agents are provided.
     """
     if max_context_window_tokens is not None and max_context_window_tokens <= 0:
         raise ValueError("max_context_window_tokens must be positive.")
@@ -601,6 +614,7 @@ def create_harness_agent(
         skills_paths=skills_paths,
         background_agents=background_agents,
         background_agents_instructions=background_agents_instructions,
+        background_agents_wait_timeout_seconds=background_agents_wait_timeout_seconds,
         shell_context_provider=shell_provider,
         extra_context_providers=context_providers,
     )

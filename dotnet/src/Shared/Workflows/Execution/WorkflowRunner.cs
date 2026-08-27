@@ -55,6 +55,17 @@ internal sealed class WorkflowRunner
 
     public async Task ExecuteAsync(Func<Workflow> workflowProvider, string input)
     {
+        await this.ExecuteCoreAsync(workflowProvider, input).ConfigureAwait(false);
+    }
+
+    public async Task ExecuteAsync(Func<Workflow> workflowProvider, ChatMessage input)
+    {
+        await this.ExecuteCoreAsync(workflowProvider, input).ConfigureAwait(false);
+    }
+
+    private async Task ExecuteCoreAsync<TInput>(Func<Workflow> workflowProvider, TInput input)
+        where TInput : notnull
+    {
         // Reset EOF flag so a reused WorkflowRunner instance handles stdin correctly on each run.
         this._stdinEof = false;
 
