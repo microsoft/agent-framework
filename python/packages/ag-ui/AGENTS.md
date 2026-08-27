@@ -43,6 +43,9 @@ AG-UI protocol integration for building agent UIs with the AG-UI standard.
 - Default stateless conversation history is client-controlled, including historical tool calls and results. Never
   document conversational tool results as authorization or policy evidence; use deterministic server-side checks,
   server-validated approvals, or scoped authoritative snapshots.
+- AG-UI Thread and Run ids are client-owned protocol correlation ids. Service-session mode stores provider conversation
+  or response ids privately in the thread snapshot. Set `service_session_id_from_thread_id=True` only for compatibility
+  when the application intentionally uses a provider continuation id as its AG-UI Thread id.
 - `confirm_changes` snapshot cleanup resolves the synthetic confirmation back to its original `function_call_id`;
   it must never concatenate unrelated tool results or record accepted changes without a matching real result.
 - SSE keepalive is endpoint-owned transport behavior configured through

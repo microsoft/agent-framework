@@ -1530,6 +1530,74 @@ def test_process_message_with_tool_use(mock_anthropic_client: MagicMock) -> None
     assert response.finish_reason == "tool_calls"
 
 
+@pytest.mark.parametrize(
+    ("stop_reason", "expected"),
+    [
+        ("end_turn", "stop"),
+        ("stop_sequence", "stop"),
+        ("pause_turn", "stop"),
+        ("max_tokens", "length"),
+        ("tool_use", "tool_calls"),
+        ("refusal", "content_filter"),
+        # Not in FINISH_REASON_MAP: passed through instead of dropped.
+        ("model_context_window_exceeded", "model_context_window_exceeded"),
+        (None, None),
+    ],
+)
+def test_process_message_finish_reason(
+    mock_anthropic_client: MagicMock, stop_reason: str | None, expected: str | None
+) -> None:
+    """Known stop reasons map, unmapped ones are preserved, and an absent one stays absent."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_message = MagicMock(spec=BetaMessage)
+    mock_message.id = "msg_123"
+    mock_message.model = "claude-3-5-sonnet-20241022"
+    mock_message.content = [BetaTextBlock(type="text", text="Hello there!")]
+    mock_message.usage = BetaUsage(input_tokens=10, output_tokens=5)
+    mock_message.stop_reason = stop_reason
+
+    response = client._process_message(mock_message, {})
+
+    assert response.finish_reason == expected
+
+
+def test_process_stream_event_preserves_unmapped_stop_reason(mock_anthropic_client: MagicMock) -> None:
+    """Streaming message_delta events pass an unmapped stop reason through unchanged."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_event = MagicMock()
+    mock_event.type = "message_delta"
+    mock_event.usage = None
+    mock_event.delta.stop_reason = "model_context_window_exceeded"
+
+    result = client._process_stream_event(mock_event)
+
+    assert result is not None
+    assert result.finish_reason == "model_context_window_exceeded"
+
+
+def test_process_stream_event_message_start_preserves_unmapped_stop_reason(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Streaming message_start events pass an unmapped stop reason through unchanged."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_event = MagicMock()
+    mock_event.type = "message_start"
+    mock_event.message.id = "msg_abc"
+    mock_event.message.role = "assistant"
+    mock_event.message.model = "claude-3-5-sonnet-20241022"
+    mock_event.message.content = []
+    mock_event.message.usage = None
+    mock_event.message.stop_reason = "model_context_window_exceeded"
+
+    result = client._process_stream_event(mock_event)
+
+    assert result is not None
+    assert result.finish_reason == "model_context_window_exceeded"
+
+
 def test_parse_usage_from_anthropic_basic(mock_anthropic_client: MagicMock) -> None:
     """Test _parse_usage_from_anthropic with basic usage."""
     client = create_test_anthropic_client(mock_anthropic_client)

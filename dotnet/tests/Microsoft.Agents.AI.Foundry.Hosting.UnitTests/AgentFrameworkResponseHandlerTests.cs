@@ -666,15 +666,26 @@ public class AgentFrameworkResponseHandlerTests
             .ReturnsAsync(Array.Empty<Item>());
 
         using var cts = new CancellationTokenSource();
+        var events = new List<ResponseStreamEvent>();
+
+        async Task ExecuteAsync()
+        {
+            await foreach (var evt in handler.CreateAsync(request, mockContext.Object, cts.Token))
+            {
+                events.Add(evt);
+            }
+        }
+
+        // Act
+        var execution = ExecuteAsync();
+        await agent.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cts.Cancel();
 
-        // Act & Assert
-        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
-        {
-            await foreach (var _ in handler.CreateAsync(request, mockContext.Object, cts.Token))
-            {
-            }
-        });
+        // Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await execution.WaitAsync(TimeSpan.FromSeconds(5)));
+        await agent.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.DoesNotContain(events, evt => evt is ResponseCompletedEvent);
     }
 
     [Fact]
@@ -1643,15 +1654,29 @@ public class AgentFrameworkResponseHandlerTests
 
     private sealed class CancellationCheckingAgent : AIAgent
     {
+        public TaskCompletionSource Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource CancellationObserved { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
             IEnumerable<ChatMessage> messages,
             AgentSession? session,
             AgentRunOptions? options,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            yield return new AgentResponseUpdate { Contents = [new MeaiTextContent("test")] };
-            await Task.CompletedTask;
+            this.Started.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                this.CancellationObserved.TrySetResult();
+            }
+
+            yield break;
         }
 
         protected override Task<AgentResponse> RunCoreAsync(
