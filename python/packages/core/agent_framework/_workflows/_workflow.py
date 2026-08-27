@@ -628,11 +628,17 @@ class Workflow(DictConvertible):
         checkpoint_id: str | None,
         checkpoint_storage: CheckpointStorage | None,
     ) -> None:
-        """Internal handler for executing workflow with either initial message or checkpoint restoration.
+        """Restore from a checkpoint and/or seed a start-executor message.
+
+        Checkpoint restoration always runs first when ``checkpoint_id`` is set so
+        validation/hydration failures never process ``message``. When both are
+        provided, the restored state is hydrated and then ``message`` is applied
+        in the same run (#7863).
 
         Args:
-            message: Initial message for the start executor (for new runs).
-            checkpoint_id: ID of checkpoint to restore from (for resuming runs).
+            message: Initial message for the start executor (new turn, optionally
+                after restore).
+            checkpoint_id: ID of checkpoint to restore from.
             checkpoint_storage: Runtime checkpoint storage.
 
         Raises:
@@ -642,7 +648,7 @@ class Workflow(DictConvertible):
         if message is None and checkpoint_id is None:
             raise ValueError("Must provide either 'message' or 'checkpoint_id'")
 
-        # Handle checkpoint restoration
+        # Handle checkpoint restoration first so failures never execute new input.
         if checkpoint_id is not None:
             has_checkpointing = self._runner.context.has_checkpointing()
 
@@ -654,8 +660,8 @@ class Workflow(DictConvertible):
 
             await self._runner.restore_from_checkpoint(checkpoint_id, checkpoint_storage)
 
-        # Handle initial message
-        elif message is not None:
+        # Seed start-executor input for a new turn (alone or after restore).
+        if message is not None:
             # Seed the initial input through the start executor's internal self-edge. If the caller
             # passed a WorkflowMessage, unwrap it so we don't double-wrap.
             start_id = self.start_executor_id
@@ -725,7 +731,8 @@ class Workflow(DictConvertible):
 
         Args:
             message: Initial message for the start executor. Required for new workflow runs.
-                Mutually exclusive with responses.
+                Mutually exclusive with responses. Can be combined with checkpoint_id to
+                restore a checkpoint and apply new input in a single call (#7863).
             stream: If True, returns a ResponseStream of events with
                 ``get_final_response()`` for the final WorkflowRunResult. If False
                 (default), returns an awaitable WorkflowRunResult.
@@ -734,8 +741,8 @@ class Workflow(DictConvertible):
                 exclusive with message. Can be combined with checkpoint_id to restore
                 a checkpoint and send responses in a single call.
             checkpoint_id: ID of checkpoint to restore from. Can be used alone (resume
-                from checkpoint), with message (not allowed), or with responses
-                (restore then send responses).
+                from checkpoint), with message (restore then seed start-executor input),
+                or with responses (restore then send responses).
             checkpoint_storage: Runtime checkpoint storage.
             include_status_events: Whether to include status events (non-streaming only).
             function_invocation_kwargs: Keyword arguments forwarded to tool invocations in
@@ -825,17 +832,17 @@ class Workflow(DictConvertible):
             self._runner.context.set_runtime_checkpoint_storage(checkpoint_storage)
 
         try:
-            # Async validation: a fresh-message run is only allowed when the
-            # runner context has fully drained from any prior run. If it still
-            # has in-flight executor messages, the prior run didn't complete -
-            # the caller must either resume from a checkpoint or wait for the
-            # prior run to drain. Pending request_info events are intentionally
-            # NOT blocked here (they are answered via a follow-up ``responses=...``
-            # run); the warning below surfaces the abandon/overwrite cases instead.
-            # NOTE: _validate_run_params already enforces that ``message`` is
-            # mutually exclusive with both ``checkpoint_id`` and ``responses``,
-            # so we don't need to re-check those here.
-            if message is not None and await self._runner.context.has_messages():
+            # Async validation: a fresh-message run (without checkpoint restore) is
+            # only allowed when the runner context has fully drained from any prior
+            # run. If it still has in-flight executor messages, the prior run didn't
+            # complete - the caller must either resume from a checkpoint (alone or
+            # combined with message) or wait for the prior run to drain. When
+            # ``checkpoint_id`` is also provided, restore replaces the context before
+            # the new message is seeded, so leftover in-flight messages are allowed.
+            # Pending request_info events are intentionally NOT blocked here (they
+            # are answered via a follow-up ``responses=...`` run); the warning below
+            # surfaces the abandon/overwrite cases instead.
+            if message is not None and checkpoint_id is None and await self._runner.context.has_messages():
                 raise RuntimeError(
                     "Cannot start a new run with 'message' while in-flight executor "
                     "messages remain from a prior run. Resume from a checkpoint "
@@ -947,15 +954,12 @@ class Workflow(DictConvertible):
 
         Rules:
         - message and responses are mutually exclusive
-        - message and checkpoint_id are mutually exclusive
         - At least one of message, responses, or checkpoint_id must be provided
+        - message + checkpoint_id is allowed (restore then seed start-executor input)
         - responses + checkpoint_id is allowed (restore then send)
         """
         if message is not None and responses is not None:
             raise ValueError("Cannot provide both 'message' and 'responses'. Use one or the other.")
-
-        if message is not None and checkpoint_id is not None:
-            raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
 
         if message is None and responses is None and checkpoint_id is None:
             raise ValueError(

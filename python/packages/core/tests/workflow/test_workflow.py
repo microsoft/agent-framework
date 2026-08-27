@@ -1387,16 +1387,9 @@ async def test_workflow_run_parameter_validation(simple_executor: Executor) -> N
     result = await workflow.run(test_message)
     assert result.get_final_state() == WorkflowRunState.IDLE
 
-    # Invalid: message + checkpoint_id (mutually exclusive). Multi-turn
-    # state preservation is handled by Workflow.run preserving state across
-    # calls, so the host pattern is two separate calls (restore-then-run),
-    # not a single combined call.
-    with pytest.raises(ValueError, match="Cannot provide both 'message' and 'checkpoint_id'"):
-        await workflow.run(test_message, checkpoint_id="some-checkpoint")
-
-    with pytest.raises(ValueError, match="Cannot provide both 'message' and 'checkpoint_id'"):
-        async for _ in workflow.run(test_message, checkpoint_id="some-checkpoint", stream=True):
-            pass
+    # Invalid: message + responses remain mutually exclusive
+    with pytest.raises(ValueError, match="Cannot provide both 'message' and 'responses'"):
+        await workflow.run(test_message, responses={"req": True})
 
     # Invalid: none of message or checkpoint_id
     with pytest.raises(ValueError, match="Must provide at least one of"):

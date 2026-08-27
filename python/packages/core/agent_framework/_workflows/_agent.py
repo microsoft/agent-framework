@@ -407,27 +407,73 @@ class WorkflowAgent(BaseAgent):
         Yields:
             WorkflowEvent objects from the workflow execution.
         """
-        # Restore the workflow state if a checkpoint is provided
+        run_kwargs = {
+            "checkpoint_storage": checkpoint_storage,
+            "function_invocation_kwargs": function_invocation_kwargs,
+            "client_kwargs": client_kwargs,
+        }
+
+        # Checkpoint + input: restore and continue in one workflow.run (#7863).
         if checkpoint_id is not None:
             if checkpoint_storage is None:
                 raise AgentInvalidRequestException("checkpoint_storage must be provided when checkpoint_id is provided")
             logger.debug(f"Restoring workflow from checkpoint {checkpoint_id}")
-            # Restore the workflow from checkpoint
-            if streaming:
-                async for _ in self.workflow.run(
-                    stream=True,
-                    checkpoint_id=checkpoint_id,
-                    checkpoint_storage=checkpoint_storage,
-                ):
-                    pass
-            else:
-                _ = await self.workflow.run(
-                    checkpoint_id=checkpoint_id,
-                    checkpoint_storage=checkpoint_storage,
-                )
+
             if not input_messages:
+                # Hydrate only; no new turn.
+                if streaming:
+                    async for _ in self.workflow.run(
+                        stream=True,
+                        checkpoint_id=checkpoint_id,
+                        checkpoint_storage=checkpoint_storage,
+                    ):
+                        pass
+                else:
+                    _ = await self.workflow.run(
+                        checkpoint_id=checkpoint_id,
+                        checkpoint_storage=checkpoint_storage,
+                    )
                 logger.info("No input messages provided; the workflow has been restored to the checkpoint state.")
                 return
+
+            checkpoint = await checkpoint_storage.load(checkpoint_id)
+            if checkpoint.pending_request_info_events:
+                # HITL continuation: restore and deliver responses together.
+                function_responses = self._extract_function_responses(input_messages)
+                if streaming:
+                    async for event in self.workflow.run(
+                        responses=function_responses,
+                        stream=True,
+                        checkpoint_id=checkpoint_id,
+                        **run_kwargs,
+                    ):
+                        yield event
+                else:
+                    for event in await self.workflow.run(
+                        responses=function_responses,
+                        checkpoint_id=checkpoint_id,
+                        **run_kwargs,
+                    ):
+                        yield event
+                return
+
+            # Idle checkpoint: restore and seed the new user turn together.
+            if streaming:
+                async for event in self.workflow.run(
+                    message=input_messages,
+                    stream=True,
+                    checkpoint_id=checkpoint_id,
+                    **run_kwargs,
+                ):
+                    yield event
+            else:
+                for event in await self.workflow.run(
+                    message=input_messages,
+                    checkpoint_id=checkpoint_id,
+                    **run_kwargs,
+                ):
+                    yield event
+            return
 
         final_state = self._workflow.status
         logger.debug(f"Workflow state: {final_state}")
@@ -444,17 +490,13 @@ class WorkflowAgent(BaseAgent):
                 async for event in self.workflow.run(
                     responses=function_responses,
                     stream=True,
-                    checkpoint_storage=checkpoint_storage,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
+                    **run_kwargs,
                 ):
                     yield event
             else:
                 for event in await self.workflow.run(
                     responses=function_responses,
-                    checkpoint_storage=checkpoint_storage,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
+                    **run_kwargs,
                 ):
                     yield event
         elif final_state == WorkflowRunState.IDLE:
@@ -462,17 +504,13 @@ class WorkflowAgent(BaseAgent):
                 async for event in self.workflow.run(
                     message=input_messages,
                     stream=True,
-                    checkpoint_storage=checkpoint_storage,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
+                    **run_kwargs,
                 ):
                     yield event
             else:
                 for event in await self.workflow.run(
                     message=input_messages,
-                    checkpoint_storage=checkpoint_storage,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
+                    **run_kwargs,
                 ):
                     yield event
         else:

@@ -824,8 +824,9 @@ class FunctionalWorkflow:
         HITL interruption; *checkpoint_id* restores from a previously saved
         checkpoint.  *responses* may be combined with *checkpoint_id* to
         restore a checkpoint and inject HITL responses in a single call.
-        *message* is mutually exclusive with both *responses* and
-        *checkpoint_id*.
+        *message* may be combined with *checkpoint_id* to restore a checkpoint
+        and apply new start input in a single call (#7863).  *message* remains
+        mutually exclusive with *responses*.
 
         Args:
             message: Input data passed as the first positional argument to
@@ -1281,9 +1282,6 @@ class FunctionalWorkflow:
     ) -> None:
         if message is not None and responses is not None:
             raise ValueError("Cannot provide both 'message' and 'responses'. Use one or the other.")
-
-        if message is not None and checkpoint_id is not None:
-            raise ValueError("Cannot provide both 'message' and 'checkpoint_id'. Use one or the other.")
 
         if message is None and responses is None and checkpoint_id is None:
             raise ValueError(

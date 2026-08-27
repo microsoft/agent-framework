@@ -467,14 +467,6 @@ class TestErrorHandling:
         with pytest.raises(ValueError, match="Cannot provide both"):
             await wf.run("hello", responses={"r1": "val"})
 
-    async def test_invalid_params_message_and_checkpoint(self):
-        @built_workflow
-        async def wf(x: int) -> None:
-            pass
-
-        with pytest.raises(ValueError, match="Cannot provide both"):
-            await wf.run("hello", checkpoint_id="abc")
-
     async def test_invalid_params_nothing(self):
         @built_workflow
         async def wf(x: int) -> None:
@@ -669,6 +661,25 @@ class TestCheckpointing:
         # Phase 2: restore and respond
         result2 = await hitl_wf.run(checkpoint_id=ckpt_id, responses={"req1": "Approved!"})
         assert result2.get_outputs() == ["Done: Approved!"]
+
+    async def test_checkpoint_and_message_in_one_call(self):
+        """Restore from a completed run and apply a new message without a second hydrate call."""
+        storage = InMemoryCheckpointStorage()
+
+        @built_workflow(checkpoint_storage=storage)
+        async def echo_wf(text: str, ctx: RunContext) -> str:
+            history = ctx.get_state("history") or []
+            history = [*history, text]
+            ctx.set_state("history", history)
+            return "|".join(history)
+
+        first = await echo_wf.run("one")
+        assert first.get_outputs() == ["one"]
+        latest = await storage.get_latest(workflow_name="echo_wf")
+        assert latest is not None
+
+        second = await echo_wf.run("two", checkpoint_id=latest.checkpoint_id)
+        assert second.get_outputs() == ["one|two"]
 
     async def test_checkpoint_without_storage_raises(self):
         @built_workflow

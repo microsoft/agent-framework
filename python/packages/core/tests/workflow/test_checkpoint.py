@@ -336,6 +336,92 @@ async def test_workflow_checkpoint_chaining_via_previous_checkpoint_id():
         )
 
 
+async def test_workflow_run_restores_checkpoint_and_applies_message_in_one_call():
+    """Hydrate from a completed-turn checkpoint and seed new start input atomically (#7863)."""
+    from typing_extensions import Never
+
+    from agent_framework import WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._executor import Executor
+
+    class AccumulatorExecutor(Executor):
+        def __init__(self, id: str) -> None:
+            super().__init__(id=id)
+            self.history: list[str] = []
+
+        @handler
+        async def accumulate(self, message: str, ctx: WorkflowContext[Never, list[str]]) -> None:  # type: ignore[valid-type]
+            self.history.append(message)
+            await ctx.yield_output(list(self.history))
+
+        async def on_checkpoint_save(self) -> dict[str, Any]:
+            return {"history": list(self.history)}
+
+        async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+            self.history = list(state.get("history", []))
+
+    storage = InMemoryCheckpointStorage()
+
+    def _build() -> tuple[Any, AccumulatorExecutor]:
+        start = AccumulatorExecutor(id="start")
+        workflow = WorkflowBuilder(
+            name="hydrate-and-input",
+            max_iterations=5,
+            start_executor=start,
+            checkpoint_storage=storage,
+        ).build()
+        return workflow, start
+
+    workflow, _ = _build()
+    first = await workflow.run("turn-1")
+    assert first.get_outputs() == [["turn-1"]]
+    latest = await storage.get_latest(workflow_name=workflow.name)
+    assert latest is not None
+
+    # Fresh instance: restore + new input in a single run (streaming and non-streaming).
+    resumed, resumed_start = _build()
+    second = await resumed.run("turn-2", checkpoint_id=latest.checkpoint_id)
+    assert second.get_outputs() == [["turn-1", "turn-2"]]
+    assert resumed_start.history == ["turn-1", "turn-2"]
+
+    after_second = await storage.get_latest(workflow_name=workflow.name)
+    assert after_second is not None
+    streamed, streamed_start = _build()
+    events = [event async for event in streamed.run("turn-3", checkpoint_id=after_second.checkpoint_id, stream=True)]
+    assert any(e.type == "output" and e.data == ["turn-1", "turn-2", "turn-3"] for e in events)
+    assert streamed_start.history == ["turn-1", "turn-2", "turn-3"]
+
+
+async def test_workflow_run_invalid_checkpoint_does_not_apply_message():
+    """Checkpoint validation failures must occur before the new message is seeded."""
+    from typing_extensions import Never
+
+    from agent_framework import WorkflowBuilder, WorkflowContext, handler
+    from agent_framework._workflows._executor import Executor
+
+    class CountingExecutor(Executor):
+        def __init__(self, id: str) -> None:
+            super().__init__(id=id)
+            self.calls = 0
+
+        @handler
+        async def run(self, message: str, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+            self.calls += 1
+            await ctx.yield_output(message)
+
+    storage = InMemoryCheckpointStorage()
+    executor = CountingExecutor(id="start")
+    workflow = WorkflowBuilder(
+        name="hydrate-fail",
+        start_executor=executor,
+        checkpoint_storage=storage,
+    ).build()
+
+    with pytest.raises(WorkflowCheckpointException):
+        await workflow.run("should-not-run", checkpoint_id="missing-checkpoint-id")
+
+    assert executor.calls == 0
+
+
 async def test_workflow_checkpoint_ancestry_preserved_after_resume():
     """Resuming from a checkpoint must preserve ancestry: future checkpoints chain back to the resumed one."""
     from typing_extensions import Never

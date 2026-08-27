@@ -1116,11 +1116,15 @@ async def run_workflow_stream(
         telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
         telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
         with telemetry_context():
-            if responses or checkpoint_id is not None:
-                # ``message`` is mutually exclusive with both ``responses`` and
-                # ``checkpoint_id`` in the core API; ``responses`` + ``checkpoint_id``
-                # restores the checkpoint and delivers the responses in a single call.
-                event_stream = workflow.run(stream=True, responses=responses or None, **checkpoint_kwargs, **fwd_kwargs)
+            if responses:
+                # HITL: restore (optional) and deliver responses in one call.
+                event_stream = workflow.run(stream=True, responses=responses, **checkpoint_kwargs, **fwd_kwargs)
+            elif checkpoint_id is not None:
+                # Pure checkpoint restore. Incoming chat messages are not start-executor
+                # input here; AG-UI maps HITL replies through ``responses`` above.
+                # Hosts that need hydrate+new-user-input can pass both via core
+                # ``Workflow.run(message=..., checkpoint_id=...)`` (#7863).
+                event_stream = workflow.run(stream=True, **checkpoint_kwargs, **fwd_kwargs)
             else:
                 event_stream = workflow.run(message=messages, stream=True, **checkpoint_kwargs, **fwd_kwargs)
 
