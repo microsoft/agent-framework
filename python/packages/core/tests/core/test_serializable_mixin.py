@@ -471,8 +471,8 @@ class TestSerializationMixin:
         assert obj.options["existing"] == "value"
         assert obj.options["injected"] == "option"
 
-    def test_deepcopy_preserves_shallow_copy_fields_by_reference(self):
-        """Test that deepcopy keeps _SHALLOW_COPY_FIELDS fields as shallow references."""
+    def test_deepcopy_discards_non_copyable_shallow_copy_fields(self, caplog: pytest.LogCaptureFixture):
+        """Non-copyable _SHALLOW_COPY_FIELDS values are discarded with a warning (#7851)."""
         import copy
 
         class NonCopyable:
@@ -491,14 +491,17 @@ class TestSerializationMixin:
         opaque = NonCopyable()
         original_items = ["a", "b"]
         obj = TestClass(items=original_items, raw_representation=raw, other_opaque=opaque)
-        cloned = copy.deepcopy(obj)
 
-        # _SHALLOW_COPY_FIELDS fields should be the same object (shallow copy)
-        assert cloned.raw_representation is raw
-        assert cloned.other_opaque is opaque
-        # Normal attributes should be independent copies
+        with caplog.at_level(logging.WARNING, logger="agent_framework"):
+            cloned = copy.deepcopy(obj)
+
+        assert cloned.raw_representation is None
+        assert cloned.other_opaque is None
+        assert obj.raw_representation is raw
+        assert obj.other_opaque is opaque
         assert cloned.items is not original_items
         assert cloned.items == ["a", "b"]
+        assert len([r for r in caplog.records if "Discarding non-deep-copyable field" in r.getMessage()]) == 2
 
     def test_deepcopy_deep_copies_non_shallow_copy_fields(self):
         """Test that deepcopy fully copies fields not in _SHALLOW_COPY_FIELDS."""
@@ -512,14 +515,15 @@ class TestSerializationMixin:
                 self.raw_representation = raw_representation
 
         original_list = ["a", "b"]
-        obj = TestClass(items=original_list, raw_representation="raw")
+        obj = TestClass(items=original_list, raw_representation={"raw": True})
         cloned = copy.deepcopy(obj)
 
         # list should be a new object
         assert cloned.items is not original_list
         assert cloned.items == ["a", "b"]
-        # raw_representation should be the same object
-        assert cloned.raw_representation is obj.raw_representation
+        # copyable raw_representation is deep-copied
+        assert cloned.raw_representation == {"raw": True}
+        assert cloned.raw_representation is not obj.raw_representation
 
     def test_deepcopy_deep_copies_default_exclude_fields(self):
         """Test that DEFAULT_EXCLUDE fields are deep-copied unless also in _SHALLOW_COPY_FIELDS."""
@@ -540,8 +544,10 @@ class TestSerializationMixin:
         assert cloned.additional_properties is not original_props
         assert cloned.additional_properties == {"key": "value"}
 
-    def test_deepcopy_shallow_copy_fields_override_default_exclude(self):
-        """Test that _SHALLOW_COPY_FIELDS controls deepcopy independently of DEFAULT_EXCLUDE."""
+    def test_deepcopy_discards_non_copyable_fields_even_if_default_excluded(
+        self, caplog: pytest.LogCaptureFixture
+    ):
+        """_SHALLOW_COPY_FIELDS discard-on-failure applies independently of DEFAULT_EXCLUDE (#7851)."""
         import copy
 
         class NonCopyable:
@@ -560,13 +566,13 @@ class TestSerializationMixin:
         opaque = NonCopyable()
         original_props = {"key": "value"}
         obj = TestClass(items=["a"], opaque=opaque, additional_properties=original_props)
-        cloned = copy.deepcopy(obj)
 
-        # Field in both DEFAULT_EXCLUDE and _SHALLOW_COPY_FIELDS: shallow-copied
-        assert cloned.opaque is opaque
-        # Field in DEFAULT_EXCLUDE only: deep-copied
+        with caplog.at_level(logging.WARNING, logger="agent_framework"):
+            cloned = copy.deepcopy(obj)
+
+        assert cloned.opaque is None
         assert cloned.additional_properties is not original_props
         assert cloned.additional_properties == {"key": "value"}
-        # Normal field: deep-copied
         assert cloned.items is not obj.items
         assert cloned.items == ["a"]
+        assert any("opaque" in record.getMessage() for record in caplog.records)

@@ -286,21 +286,33 @@ class SerializationMixin:
     _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
 
     def __deepcopy__(self, memo: dict[int, Any]) -> SerializationMixin:
-        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+        """Create a deep copy of this instance.
 
-        Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
-        (e.g., proto/gRPC responses) that are not safe to deep-copy.  They are
-        kept as shallow references in the copy; all other attributes are
-        deep-copied normally.
+        Fields listed in ``_SHALLOW_COPY_FIELDS`` (typically ``raw_representation``)
+        may hold LLM SDK objects that are not deep-copyable. When deepcopy of such a
+        field fails, the clone gets ``None`` for that field and a warning is logged,
+        rather than sharing a shallow reference that would obscure deepcopy semantics
+        (#7851). All other attributes are deep-copied normally.
         """
         cls = type(self)
         result = cls.__new__(cls)
         memo[id(self)] = result
+        unsafe = cls._SHALLOW_COPY_FIELDS
         for k, v in self.__dict__.items():
-            if k in cls._SHALLOW_COPY_FIELDS:
-                object.__setattr__(result, k, v)
-            else:
+            try:
                 object.__setattr__(result, k, copy.deepcopy(v, memo))
+            except Exception as exc:
+                if k not in unsafe:
+                    raise
+                logger.warning(
+                    "Discarding non-deep-copyable field %r on %s during deepcopy "
+                    "(clone will use None). Original error: %s: %s",
+                    k,
+                    cls.__name__,
+                    type(exc).__name__,
+                    exc,
+                )
+                object.__setattr__(result, k, None)
         return result
 
     def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:

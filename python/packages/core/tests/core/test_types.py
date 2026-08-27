@@ -2,6 +2,7 @@
 
 import base64
 import json
+import logging
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -2440,36 +2441,52 @@ class _NonCopyableRaw:
         raise TypeError("Cannot deepcopy this object")
 
 
-def test_content_deepcopy_preserves_raw_representation():
-    """Test that deepcopy of Content keeps raw_representation by reference."""
+def test_content_deepcopy_discards_non_copyable_raw_representation(caplog: pytest.LogCaptureFixture):
+    """Non-copyable raw_representation is dropped (None) with a warning, not shallow-shared (#7851)."""
     import copy
 
     raw = _NonCopyableRaw()
     content = Content.from_text("hello", raw_representation=raw)
 
-    cloned = copy.deepcopy(content)
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        cloned = copy.deepcopy(content)
 
     assert cloned.text == "hello"
-    assert cloned.raw_representation is raw
+    assert cloned.raw_representation is None
+    assert content.raw_representation is raw
     assert cloned.additional_properties is not content.additional_properties
+    assert any("raw_representation" in record.getMessage() for record in caplog.records)
 
 
-def test_message_deepcopy_preserves_raw_representation():
-    """Test that deepcopy of Message keeps raw_representation by reference."""
+def test_content_deepcopy_preserves_copyable_raw_representation():
+    """Copyable raw_representation values are deep-copied normally."""
+    import copy
+
+    content = Content.from_text("hello", raw_representation={"provider": "test"})
+    cloned = copy.deepcopy(content)
+
+    assert cloned.raw_representation == {"provider": "test"}
+    assert cloned.raw_representation is not content.raw_representation
+
+
+def test_message_deepcopy_discards_non_copyable_raw_representation(caplog: pytest.LogCaptureFixture):
+    """Non-copyable Message.raw_representation is discarded on deepcopy (#7851)."""
     import copy
 
     raw = _NonCopyableRaw()
     msg = Message("assistant", ["hello"], raw_representation=raw)
 
-    cloned = copy.deepcopy(msg)
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        cloned = copy.deepcopy(msg)
 
     assert cloned.text == "hello"
-    assert cloned.raw_representation is raw
+    assert cloned.raw_representation is None
     assert cloned.contents is not msg.contents
+    assert any("raw_representation" in record.getMessage() for record in caplog.records)
 
 
-def test_agent_response_deepcopy_preserves_raw_representation():
-    """Test that deepcopy of AgentResponse keeps raw_representation by reference."""
+def test_agent_response_deepcopy_discards_non_copyable_raw_representation(caplog: pytest.LogCaptureFixture):
+    """Non-copyable AgentResponse.raw_representation is discarded on deepcopy (#7851)."""
     import copy
 
     raw = _NonCopyableRaw()
@@ -2478,15 +2495,16 @@ def test_agent_response_deepcopy_preserves_raw_representation():
         raw_representation=raw,
     )
 
-    cloned = copy.deepcopy(response)
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        cloned = copy.deepcopy(response)
 
     assert cloned.text == "test"
-    assert cloned.raw_representation is raw
+    assert cloned.raw_representation is None
     assert cloned.messages is not response.messages
 
 
-def test_chat_response_deepcopy_preserves_raw_representation():
-    """Test that deepcopy of ChatResponse keeps raw_representation by reference."""
+def test_chat_response_deepcopy_discards_non_copyable_raw_representation(caplog: pytest.LogCaptureFixture):
+    """Non-copyable ChatResponse.raw_representation is discarded on deepcopy (#7851)."""
     import copy
 
     raw = _NonCopyableRaw()
@@ -2495,15 +2513,18 @@ def test_chat_response_deepcopy_preserves_raw_representation():
         raw_representation=raw,
     )
 
-    cloned = copy.deepcopy(response)
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        cloned = copy.deepcopy(response)
 
     assert cloned.text == "test"
-    assert cloned.raw_representation is raw
+    assert cloned.raw_representation is None
     assert cloned.messages is not response.messages
 
 
-def test_chat_response_update_deepcopy_preserves_raw_representation():
-    """Test that deepcopy of ChatResponseUpdate keeps raw_representation by reference."""
+def test_chat_response_update_deepcopy_discards_non_copyable_raw_representation(
+    caplog: pytest.LogCaptureFixture,
+):
+    """Non-copyable ChatResponseUpdate.raw_representation is discarded on deepcopy (#7851)."""
     import copy
 
     raw = _NonCopyableRaw()
@@ -2513,15 +2534,18 @@ def test_chat_response_update_deepcopy_preserves_raw_representation():
         raw_representation=raw,
     )
 
-    cloned = copy.deepcopy(update)
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        cloned = copy.deepcopy(update)
 
     assert cloned.text == "hello"
-    assert cloned.raw_representation is raw
+    assert cloned.raw_representation is None
     assert cloned.contents is not update.contents
 
 
-def test_agent_response_update_deepcopy_preserves_raw_representation():
-    """Test that deepcopy of AgentResponseUpdate keeps raw_representation by reference."""
+def test_agent_response_update_deepcopy_discards_non_copyable_raw_representation(
+    caplog: pytest.LogCaptureFixture,
+):
+    """Non-copyable AgentResponseUpdate.raw_representation is discarded on deepcopy (#7851)."""
     import copy
 
     raw = _NonCopyableRaw()
@@ -2531,15 +2555,16 @@ def test_agent_response_update_deepcopy_preserves_raw_representation():
         raw_representation=raw,
     )
 
-    cloned = copy.deepcopy(update)
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        cloned = copy.deepcopy(update)
 
     assert cloned.text == "hello"
-    assert cloned.raw_representation is raw
+    assert cloned.raw_representation is None
     assert cloned.contents is not update.contents
 
 
-def test_nested_deepcopy_preserves_raw_representation():
-    """Test that deepcopy of an AgentResponse with nested Message raw_representations works."""
+def test_nested_deepcopy_discards_non_copyable_raw_reps(caplog: pytest.LogCaptureFixture):
+    """Nested Message/AgentResponse non-copyable raw_reps are discarded (#7851)."""
     import copy
 
     raw_msg = _NonCopyableRaw()
@@ -2549,27 +2574,28 @@ def test_nested_deepcopy_preserves_raw_representation():
         raw_representation=raw_response,
     )
 
-    cloned = copy.deepcopy(response)
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        cloned = copy.deepcopy(response)
 
-    assert cloned.raw_representation is raw_response
-    assert cloned.messages[0].raw_representation is raw_msg
+    assert cloned.raw_representation is None
+    assert cloned.messages[0].raw_representation is None
     assert cloned.messages is not response.messages
     assert cloned.text == "hello"
+    assert len([r for r in caplog.records if "raw_representation" in r.getMessage()]) >= 2
 
 
-def test_content_deepcopy_shallow_copy_fields_identity():
-    """Test that Content._SHALLOW_COPY_FIELDS fields are identity-preserved while others are deep-copied."""
+def test_content_deepcopy_unsafe_fields_discarded_others_deep_copied(caplog: pytest.LogCaptureFixture):
+    """Unsafe fields become None; other fields remain independently deep-copied (#7851)."""
     import copy
 
     raw = _NonCopyableRaw()
     content = Content.from_text("hello", raw_representation=raw)
     content.additional_properties["key"] = "value"
 
-    cloned = copy.deepcopy(content)
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        cloned = copy.deepcopy(content)
 
-    # _SHALLOW_COPY_FIELDS (raw_representation) should be same object
-    assert cloned.raw_representation is raw
-    # Non-shallow fields should be independent deep copies
+    assert cloned.raw_representation is None
     assert cloned.additional_properties is not content.additional_properties
     assert cloned.additional_properties == {"key": "value"}
 

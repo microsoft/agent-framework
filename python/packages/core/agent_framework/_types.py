@@ -589,20 +589,33 @@ class Content:
         self.consent_link = consent_link
 
     def __deepcopy__(self, memo: dict[int, Any]) -> Content:
-        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+        """Create a deep copy of this content item.
 
-        Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
-        (e.g., proto/gRPC responses) that are not safe to deep-copy.
+        Fields listed in ``_SHALLOW_COPY_FIELDS`` (currently ``raw_representation``)
+        may hold LLM SDK objects that are not deep-copyable. When deepcopy of such a
+        field fails, the clone gets ``None`` for that field and a warning is logged,
+        rather than sharing a shallow reference that would obscure deepcopy semantics
+        (#7851).
         """
         cls = type(self)
         result = cls.__new__(cls)
         memo[id(self)] = result
-        shallow = cls._SHALLOW_COPY_FIELDS
+        unsafe = cls._SHALLOW_COPY_FIELDS
         for k, v in self.__dict__.items():
-            if k in shallow:
-                object.__setattr__(result, k, v)
-            else:
+            try:
                 object.__setattr__(result, k, deepcopy(v, memo))
+            except Exception as exc:
+                if k not in unsafe:
+                    raise
+                logger.warning(
+                    "Discarding non-deep-copyable field %r on %s during deepcopy "
+                    "(clone will use None). Original error: %s: %s",
+                    k,
+                    cls.__name__,
+                    type(exc).__name__,
+                    exc,
+                )
+                object.__setattr__(result, k, None)
         return result
 
     @classmethod

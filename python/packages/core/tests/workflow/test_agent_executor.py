@@ -380,11 +380,12 @@ async def test_agent_executor_workflow_with_non_copyable_raw_representation() ->
     assert len(completed_a) == 1
     assert completed_a[0].data is not None
 
-    # The yielded AgentResponse should preserve its raw_representation reference
+    # Workflow completes even when AgentResponse.raw_representation cannot be deep-copied;
+    # the yielded clone discards the unsafe field (#7851) instead of sharing a shallow reference.
     agent_responses = [d for d in completed_a[0].data if isinstance(d, AgentResponse)]
     assert len(agent_responses) > 0
     assert agent_responses[0].text == "reply from AgentA"
-    assert agent_responses[0].raw_representation is raw
+    assert agent_responses[0].raw_representation is None
 
 
 # ---------------------------------------------------------------------------
