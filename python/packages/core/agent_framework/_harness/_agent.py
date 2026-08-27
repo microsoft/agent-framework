@@ -20,6 +20,7 @@ from .._agents import Agent, SupportsAgentRun
 from .._clients import SupportsShellTool, SupportsWebSearchTool
 from .._compaction import CompactionProvider, ContextWindowCompactionStrategy
 from .._feature_stage import ExperimentalFeature, warn_experimental_feature
+from .._middleware import _copy_middleware_sequence  # pyright: ignore[reportPrivateUsage]
 from .._sessions import ContextProvider, HistoryProvider, InMemoryHistoryProvider, MessageInjectionMiddleware
 from .._skills import SkillsProvider
 from .._telemetry import FeatureIndex, mark_feature_used
@@ -670,7 +671,7 @@ def create_harness_agent(
     # so there is no opt-out.
     assembled_middleware.append(MessageInjectionMiddleware())
     if middleware is not None:
-        assembled_middleware.extend(middleware)
+        assembled_middleware.extend(_copy_middleware_sequence(middleware))
 
     agent = Agent(
         client,

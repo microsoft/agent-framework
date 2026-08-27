@@ -2,7 +2,7 @@
 
 import asyncio
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, cast
 
 import pytest
@@ -36,6 +36,14 @@ from agent_framework._sessions import InMemoryHistoryProvider
 from .conftest import MockBaseChatClient, MockChatClient
 
 # region Agent Tests
+
+
+class _IterableAgentMiddleware(AgentMiddleware):
+    def __iter__(self) -> Iterator[Any]:
+        return iter(())
+
+    async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
 
 
 class TestChatAgentClassBasedMiddleware:
@@ -72,42 +80,31 @@ class TestChatAgentClassBasedMiddleware:
         # Verify middleware execution order
         assert execution_order == ["agent_middleware_before", "agent_middleware_after"]
 
-    def test_bare_middleware_at_construction_is_rejected(self, client: SupportsChatGetResponse) -> None:
-        """A single middleware object is not a valid construction-time middleware sequence."""
-
-        class TrackingAgentMiddleware(AgentMiddleware):
-            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-                await call_next()
-
+    @pytest.mark.parametrize("middleware", [_IterableAgentMiddleware(), "middleware", b"middleware"])
+    def test_non_sequence_middleware_at_construction_is_rejected(
+        self, client: SupportsChatGetResponse, middleware: object
+    ) -> None:
+        """Construction rejects iterable middleware objects and string sequences."""
         with pytest.raises(TypeError):
-            Agent(client=client, middleware=cast("Any", TrackingAgentMiddleware()))
+            Agent(client=client, middleware=cast("Any", middleware))
 
-    async def test_bare_middleware_assigned_to_attribute_is_rejected(self, client: SupportsChatGetResponse) -> None:
-        """A singular value assigned to ``agent.middleware`` is rejected when the agent runs."""
-
-        class TrackingAgentMiddleware(AgentMiddleware):
-            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-                await call_next()
-
+    async def test_iterable_middleware_assigned_to_attribute_is_rejected(self, client: SupportsChatGetResponse) -> None:
+        """An iterable middleware object assigned to ``agent.middleware`` is rejected."""
         agent = Agent(client=client)
-        agent.middleware = cast("Any", TrackingAgentMiddleware())
+        agent.middleware = cast("Any", _IterableAgentMiddleware())
 
         with pytest.raises(TypeError):
             await agent.run([Message(role="user", contents=["test message"])])
 
-    async def test_bare_run_middleware_is_rejected(self, client: SupportsChatGetResponse) -> None:
-        """Per-run middleware must also be supplied as a sequence."""
-
-        class TrackingAgentMiddleware(AgentMiddleware):
-            async def process(self, context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
-                await call_next()
-
+    async def test_generator_run_middleware_is_rejected(self, client: SupportsChatGetResponse) -> None:
+        """Per-run middleware rejects iterables that are not sequences."""
         agent = Agent(client=client)
+        middleware = (item for item in [_IterableAgentMiddleware()])
 
         with pytest.raises(TypeError):
             await agent.run(
                 [Message(role="user", contents=["test message"])],
-                middleware=cast("Any", TrackingAgentMiddleware()),
+                middleware=cast("Any", middleware),
             )
 
     async def test_class_based_function_middleware_with_chat_agent(self, client: "MockChatClient") -> None:

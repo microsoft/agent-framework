@@ -828,6 +828,15 @@ MiddlewareTypes: TypeAlias = (
 )
 
 
+def _copy_middleware_sequence(source: object | None) -> list[MiddlewareTypes]:
+    """Validate and copy a middleware sequence."""
+    if source is None:
+        return []
+    if isinstance(source, (str, bytes)) or not isinstance(source, Sequence):
+        raise TypeError("middleware must be a non-string sequence of middleware.")
+    return list(cast("Sequence[MiddlewareTypes]", source))
+
+
 def agent_middleware(func: AgentMiddlewareCallable) -> AgentMiddlewareCallable:
     """Decorator to mark a function as agent middleware.
 
@@ -1428,11 +1437,12 @@ class AgentMiddlewareLayer:
         middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> None:
-        middleware_list = categorize_middleware(middleware)
+        middleware_sequence = _copy_middleware_sequence(middleware) if middleware is not None else None
+        middleware_list = categorize_middleware(middleware_sequence)
         self.agent_middleware = middleware_list["agent"]
         self._cached_agent_middleware_pipeline: AgentMiddlewarePipeline | None = None
         # Pass middleware to super so BaseAgent can store it for dynamic rebuild
-        super().__init__(*args, middleware=middleware, **kwargs)  # type: ignore[call-arg]
+        super().__init__(*args, middleware=middleware_sequence, **kwargs)  # type: ignore[call-arg]
         # Note: We intentionally don't extend client's middleware lists here.
         # Chat and function middleware is passed to the chat client at runtime via kwargs
         # in AgentMiddlewareLayer.run(), where it's properly combined with run-level middleware.
@@ -1512,11 +1522,13 @@ class AgentMiddlewareLayer:
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """MiddlewareTypes-enabled unified run method."""
-        # Copy the declared sequences so invalid singular values fail instead of becoming
-        # implicitly supported inputs.
-        base_middleware = cast("Sequence[MiddlewareTypes] | None", getattr(self, "middleware", None))
-        base_middleware_list = categorize_middleware(list(base_middleware) if base_middleware is not None else None)
-        run_middleware_list = categorize_middleware(list(middleware) if middleware is not None else None)
+        base_middleware = getattr(self, "middleware", None)
+        base_middleware_list = categorize_middleware(
+            _copy_middleware_sequence(base_middleware) if base_middleware is not None else None
+        )
+        run_middleware_list = categorize_middleware(
+            _copy_middleware_sequence(middleware) if middleware is not None else None
+        )
         pipeline = self._get_agent_middleware_pipeline([*base_middleware_list["agent"], *run_middleware_list["agent"]])
 
         # Combine base and run-level function/chat middleware for forwarding to chat client

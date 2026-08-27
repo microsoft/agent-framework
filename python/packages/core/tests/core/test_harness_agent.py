@@ -1132,20 +1132,22 @@ def test_create_harness_agent_disable_tool_auto_approval_preserves_user_middlewa
     assert [type(mw) for mw in agent.middleware] == [MessageInjectionMiddleware, _CustomMiddleware]
 
 
-def test_create_harness_agent_rejects_bare_user_middleware() -> None:
-    """Harness middleware must be supplied as a sequence."""
+def test_create_harness_agent_rejects_generator_middleware() -> None:
+    """Harness middleware rejects iterables that are not sequences."""
     from agent_framework import AgentMiddleware
 
     class _CustomMiddleware(AgentMiddleware):
         async def process(self, context: Any, call_next: Any) -> None:
             await call_next()
 
+    middleware = (item for item in [_CustomMiddleware()])
+
     with pytest.raises(TypeError):
         create_harness_agent(
             client=_FakeChatClient(),  # type: ignore[arg-type]
             max_context_window_tokens=128_000,
             max_output_tokens=16_384,
-            middleware=cast("Any", _CustomMiddleware()),
+            middleware=cast("Any", middleware),
         )
 
 

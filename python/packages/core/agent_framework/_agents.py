@@ -31,6 +31,7 @@ from ._middleware import (
     FunctionInvocationContext,
     MiddlewareTypes,
     _as_middleware_list,  # pyright: ignore[reportPrivateUsage]
+    _copy_middleware_sequence,  # pyright: ignore[reportPrivateUsage]
     categorize_middleware,
 )
 from ._serialization import SerializationMixin
@@ -460,7 +461,9 @@ class BaseAgent(SerializationMixin):
         self.name = name
         self.description = description
         self.context_providers: list[ContextProvider] = list(context_providers or [])
-        self.middleware: list[MiddlewareTypes] | None = list(middleware) if middleware is not None else None
+        self.middleware: list[MiddlewareTypes] | None = (
+            _copy_middleware_sequence(middleware) if middleware is not None else None
+        )
         self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
 
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
