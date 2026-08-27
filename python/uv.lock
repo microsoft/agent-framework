@@ -124,7 +124,7 @@ wheels = [
 
 [[package]]
 name = "agent-framework"
-version = "1.15.0"
+version = "1.16.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-core", extra = ["all"] },
@@ -206,7 +206,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-ag-ui"
-version = "1.2.0"
+version = "1.2.1"
 source = { editable = "packages/ag-ui" }
 dependencies = [
     { name = "ag-ui-protocol" },
@@ -248,7 +248,7 @@ test = [{ name = "agent-framework-orchestrations", editable = "packages/orchestr
 
 [[package]]
 name = "agent-framework-anthropic"
-version = "1.0.0b260821"
+version = "1.0.0b260827"
 source = { editable = "packages/anthropic" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -263,7 +263,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-azure-ai-search"
-version = "1.0.0b260813"
+version = "1.0.0b260827"
 source = { editable = "packages/azure-ai-search" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -428,7 +428,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-core"
-version = "1.15.0"
+version = "1.16.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "msgspec" },
@@ -629,7 +629,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-foundry-hosting"
-version = "1.0.0b260821"
+version = "1.0.0b260827"
 source = { editable = "packages/foundry_hosting" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -669,7 +669,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-gemini"
-version = "1.0.0b260813"
+version = "1.0.0b260827"
 source = { editable = "packages/gemini" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -907,7 +907,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-mistral"
-version = "1.0.0b260813"
+version = "1.0.0b260827"
 source = { editable = "packages/mistral" }
 dependencies = [
     { name = "agent-framework-core" },
@@ -952,7 +952,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-framework-openai"
-version = "1.14.0"
+version = "1.14.1"
 source = { editable = "packages/openai" }
 dependencies = [
     { name = "agent-framework-core" },
