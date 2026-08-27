@@ -439,7 +439,7 @@ class BaseAgent(SerializationMixin):
         name: str | None = None,
         description: str | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
     ) -> None:
         """Initialize a BaseAgent instance.
@@ -450,10 +450,8 @@ class BaseAgent(SerializationMixin):
             name: The name of the agent, can be None.
             description: The description of the agent.
             context_providers: Context providers to include during agent invocation.
-            middleware: List of middleware, or a single middleware object (including a
-                ``MiddlewareBundle``) which is treated as a one-element list. The
-                constructor copies the sequence; assign to or mutate the
-                ``middleware`` attribute for post-construction changes.
+            middleware: List of middleware. The constructor copies the sequence; assign
+                to or mutate the ``middleware`` attribute for post-construction changes.
             additional_properties: Additional properties set on the agent.
         """
         if id is None:
@@ -462,12 +460,7 @@ class BaseAgent(SerializationMixin):
         self.name = name
         self.description = description
         self.context_providers: list[ContextProvider] = list(context_providers or [])
-        # Canonicalize storage: the bare-source rule (a single middleware object or a
-        # MiddlewareBundle is one element) is owned by _as_middleware_list; storing a
-        # normalized list keeps the declared attribute type honest.
-        self.middleware: list[MiddlewareTypes] | None = (
-            _as_middleware_list(middleware) if middleware is not None else None
-        )
+        self.middleware: list[MiddlewareTypes] | None = list(middleware) if middleware is not None else None
         self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
 
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
@@ -819,7 +812,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -838,8 +831,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             description: A brief description of the agent's purpose.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-                A single middleware object (including a ``MiddlewareBundle``) is
-                treated as a one-element list.
             require_per_service_call_history_persistence: When True (and a HistoryProvider is
                 present), the provider always persists history via per-service-call middleware,
                 regardless of whether the client stores history server-side. If the client does
@@ -1808,7 +1799,7 @@ class Agent(
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
@@ -1824,7 +1815,7 @@ class Agent(
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1840,7 +1831,7 @@ class Agent(
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1855,7 +1846,7 @@ class Agent(
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1893,7 +1884,7 @@ class Agent(
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         require_per_service_call_history_persistence: bool = False,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,

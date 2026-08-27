@@ -1425,7 +1425,7 @@ class AgentMiddlewareLayer:
     def __init__(
         self,
         *args: Any,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> None:
         middleware_list = categorize_middleware(middleware)
@@ -1456,7 +1456,7 @@ class AgentMiddlewareLayer:
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
@@ -1472,7 +1472,7 @@ class AgentMiddlewareLayer:
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1488,7 +1488,7 @@ class AgentMiddlewareLayer:
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1503,7 +1503,7 @@ class AgentMiddlewareLayer:
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        middleware: MiddlewareTypes | Sequence[MiddlewareTypes] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -1512,14 +1512,11 @@ class AgentMiddlewareLayer:
         client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """MiddlewareTypes-enabled unified run method."""
-        # Re-categorize self.middleware at runtime to support dynamic changes. The raw
-        # attribute is passed straight through: categorize_middleware owns the rule
-        # that a bare single source (one middleware object or a MiddlewareBundle
-        # assigned directly to the attribute) is one element — never silently dropped.
-        base_middleware_list = categorize_middleware(
-            cast("MiddlewareTypes | Sequence[MiddlewareTypes] | None", getattr(self, "middleware", None))
-        )
-        run_middleware_list = categorize_middleware(middleware)
+        # Copy the declared sequences so invalid singular values fail instead of becoming
+        # implicitly supported inputs.
+        base_middleware = cast("Sequence[MiddlewareTypes] | None", getattr(self, "middleware", None))
+        base_middleware_list = categorize_middleware(list(base_middleware) if base_middleware is not None else None)
+        run_middleware_list = categorize_middleware(list(middleware) if middleware is not None else None)
         pipeline = self._get_agent_middleware_pipeline([*base_middleware_list["agent"], *run_middleware_list["agent"]])
 
         # Combine base and run-level function/chat middleware for forwarding to chat client

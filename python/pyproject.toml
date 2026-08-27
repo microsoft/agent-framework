@@ -52,8 +52,7 @@ dev = [
 test = [
     "azure-monitor-opentelemetry",
     "mcp[ws]",
-    # Optional SDK behind core's `agent-hooks` extra; declared here (like mcp[ws]) so
-    # isolated source checks (dependency-pyright) can resolve its API.
+    # Optional SDK used by the agent-hooks tests and isolated source checks.
     "agent-hooks-sdk>=0.1.0a4,<0.2",
 ]
 

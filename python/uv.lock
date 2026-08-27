@@ -439,9 +439,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-agent-hooks = [
-    { name = "agent-hooks-sdk" },
-]
 all = [
     { name = "agent-framework-a2a" },
     { name = "agent-framework-ag-ui" },
@@ -513,7 +510,6 @@ requires-dist = [
     { name = "agent-framework-purview", marker = "extra == 'all'", editable = "packages/purview" },
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
     { name = "agent-framework-tools", marker = "extra == 'all'", editable = "packages/tools" },
-    { name = "agent-hooks-sdk", marker = "extra == 'agent-hooks'", specifier = ">=0.1.0a4,<0.2" },
     { name = "mcp", marker = "extra == 'all'", specifier = ">=1.24.0,<2" },
     { name = "msgspec", specifier = ">=0.20.0,<0.22" },
     { name = "opentelemetry-api", specifier = ">=1.39.0,<2" },
@@ -521,7 +517,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1,<2" },
     { name = "typing-extensions", specifier = ">=4.15.0,<5" },
 ]
-provides-extras = ["agent-hooks", "all"]
+provides-extras = ["all"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "azure-ai-agentserver-core", specifier = ">=2.0.0b7,<3" }]
