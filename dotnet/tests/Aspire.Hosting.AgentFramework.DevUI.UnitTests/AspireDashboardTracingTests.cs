@@ -74,6 +74,20 @@ public class AspireDashboardTracingTests
     }
 
     [Fact]
+    public void SseResponseIdCapture_NestedResponseIdTakesPriorityOverDirectFallback()
+    {
+        // Arrange
+        var capture = new SseResponseIdCapture();
+
+        // Act
+        capture.Append(Encoding.UTF8.GetBytes(
+            "data: {\"response\":{\"id\":\"resp_nested\"},\"id\":\"resp_direct\"}\n\n"));
+
+        // Assert
+        Assert.Equal("resp_nested", capture.ResponseId);
+    }
+
+    [Fact]
     public void SseResponseIdCapture_OversizedFragmentedResponseCreatedEvent_CapturesResponseId()
     {
         // Arrange

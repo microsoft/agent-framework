@@ -100,7 +100,8 @@ internal sealed class SseResponseIdCapture
             var pendingResponseObject = false;
             var pendingResponseId = false;
             var pendingDirectId = false;
-            string? candidateResponseId = null;
+            string? nestedResponseId = null;
+            string? directResponseId = null;
 
             while (reader.Read())
             {
@@ -124,15 +125,13 @@ internal sealed class SseResponseIdCapture
                 else if (reader.TokenType == JsonTokenType.String && (pendingResponseId || pendingDirectId))
                 {
                     var responseId = reader.GetString();
-                    if (pendingResponseId ||
-                        responseId?.StartsWith("resp_", StringComparison.Ordinal) == true)
+                    if (pendingResponseId)
                     {
-                        candidateResponseId = responseId;
-                        if (!isFinalBlock)
-                        {
-                            this.ResponseId = candidateResponseId;
-                            return;
-                        }
+                        nestedResponseId = responseId;
+                    }
+                    else if (responseId?.StartsWith("resp_", StringComparison.Ordinal) == true)
+                    {
+                        directResponseId = responseId;
                     }
                 }
 
@@ -141,7 +140,7 @@ internal sealed class SseResponseIdCapture
                 pendingDirectId = false;
             }
 
-            this.ResponseId = candidateResponseId;
+            this.ResponseId = nestedResponseId ?? directResponseId;
         }
         catch (JsonException)
         {
