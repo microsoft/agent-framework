@@ -630,6 +630,13 @@ class MCPTool:
     ) -> list[Content]:
         """Parse an MCP CallToolResult into a list of Content items.
 
+        When ``structuredContent`` is present it is preferred and returned alone.
+        Many MCP servers (including MS Learn and DeepWiki) also echo an equivalent
+        serialization in ``content``, and appending both duplicates tokens for the
+        agent. Preferring structured output matches the more deterministic payload
+        and avoids that duplication (#7866). Plain ``content`` is used only when
+        ``structuredContent`` is absent.
+
         If the server attached a ``_meta`` payload to the tool result (e.g. for
         Information Flow Control labels under the ``ifc`` key), a copy of that
         payload is stamped onto each produced :class:`Content` instance under
@@ -646,6 +653,14 @@ class MCPTool:
         # Stamp the server ``_meta`` payload directly via additional_properties on
         # each newly constructed Content; empty when the server provided no meta.
         additional_kwargs: dict[str, Any] = {"additional_properties": {"_meta": meta}} if meta else {}
+
+        if mcp_type.structuredContent is not None:
+            return [
+                Content.from_text(
+                    json.dumps(mcp_type.structuredContent, default=str),
+                    **additional_kwargs,
+                )
+            ]
 
         result: list[Content] = []
         for item in mcp_type.content:
@@ -687,9 +702,6 @@ class MCPTool:
                             )
                 case _:
                     result.append(Content.from_text(str(item), **additional_kwargs))
-
-        if mcp_type.structuredContent is not None:
-            result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str)))
 
         if not result:
             result.append(Content.from_text("null", **additional_kwargs))
