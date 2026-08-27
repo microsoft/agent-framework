@@ -675,6 +675,12 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
     async def _build_input_text(self, state: Any, arguments: dict[str, Any], messages_expr: Any) -> str:
         """Build input text from arguments and messages.
 
+        ``input.arguments`` are formatted as ``key: value`` lines (same shape as the
+        multi-value ``Workflow.Inputs`` fallback) and included in the text sent to
+        ``agent.run()``. Python's agent ``run()`` has no separate structured-inputs
+        channel, so arguments must be folded into this text rather than discarded
+        (#7902).
+
         Args:
             state: Workflow state for expression evaluation
             arguments: Input arguments to evaluate
@@ -683,55 +689,57 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         Returns:
             Input text for the agent
         """
-        # Evaluate arguments
         evaluated_args: dict[str, Any] = {}
         for key, value in arguments.items():
             evaluated_args[key] = state.eval_if_expression(value)
+        args_text = "\n".join(f"{k}: {v}" for k, v in evaluated_args.items()) if evaluated_args else ""
 
-        # Evaluate messages/input
+        messages_text = ""
         if messages_expr:
             evaluated_input: Any = state.eval_if_expression(messages_expr)
             if isinstance(evaluated_input, str):
-                return evaluated_input
-            if isinstance(evaluated_input, list) and evaluated_input:
+                messages_text = evaluated_input
+            elif isinstance(evaluated_input, list) and evaluated_input:
                 # Extract text from last message
                 last: Any = evaluated_input[-1]  # type: ignore
                 if isinstance(last, str):
-                    return last
-                if isinstance(last, dict):
+                    messages_text = last
+                elif isinstance(last, dict):
                     last_dict = cast(dict[str, Any], last)
                     content_val: Any = last_dict.get("content", last_dict.get("text", ""))
-                    return str(content_val) if content_val else ""
-                if last is not None and hasattr(last, "text"):  # type: ignore
-                    return str(getattr(last, "text", ""))  # type: ignore
-            if evaluated_input:
-                return str(cast(Any, evaluated_input))
-            return ""
+                    messages_text = str(content_val) if content_val else ""
+                elif last is not None and hasattr(last, "text"):  # type: ignore
+                    messages_text = str(getattr(last, "text", ""))  # type: ignore
+            elif evaluated_input:
+                messages_text = str(cast(Any, evaluated_input))
+        else:
+            # Fallback chain for implicit input (like .NET conversationId pattern):
+            # 1. Local.input / Local.userInput (explicit turn state)
+            # 2. System.LastMessage.Text (previous agent's response)
+            # 3. Workflow.Inputs (first agent gets workflow inputs)
+            messages_text = str(state.get("Local.input") or state.get("Local.userInput") or "")
+            if not messages_text:
+                # Try System.LastMessage.Text (used by external loop and agent chaining)
+                last_message: Any = state.get("System.LastMessage")
+                if isinstance(last_message, dict):
+                    last_msg_dict = cast(dict[str, Any], last_message)
+                    text_val: Any = last_msg_dict.get("Text", "")
+                    messages_text = str(text_val) if text_val else ""
+            if not messages_text:
+                # Fall back to workflow inputs (for first agent in chain)
+                inputs: Any = state.get("Workflow.Inputs")
+                if isinstance(inputs, dict):
+                    inputs_dict = cast(dict[str, Any], inputs)
+                    # If single input, use its value directly
+                    if len(inputs_dict) == 1:
+                        messages_text = str(next(iter(inputs_dict.values())))
+                    else:
+                        # Multiple inputs - format as key: value pairs
+                        messages_text = "\n".join(f"{k}: {v}" for k, v in inputs_dict.items())
 
-        # Fallback chain for implicit input (like .NET conversationId pattern):
-        # 1. Local.input / Local.userInput (explicit turn state)
-        # 2. System.LastMessage.Text (previous agent's response)
-        # 3. Workflow.Inputs (first agent gets workflow inputs)
-        input_text: str = str(state.get("Local.input") or state.get("Local.userInput") or "")
-        if not input_text:
-            # Try System.LastMessage.Text (used by external loop and agent chaining)
-            last_message: Any = state.get("System.LastMessage")
-            if isinstance(last_message, dict):
-                last_msg_dict = cast(dict[str, Any], last_message)
-                text_val: Any = last_msg_dict.get("Text", "")
-                input_text = str(text_val) if text_val else ""
-        if not input_text:
-            # Fall back to workflow inputs (for first agent in chain)
-            inputs: Any = state.get("Workflow.Inputs")
-            if isinstance(inputs, dict):
-                inputs_dict = cast(dict[str, Any], inputs)
-                # If single input, use its value directly
-                if len(inputs_dict) == 1:
-                    input_text = str(next(iter(inputs_dict.values())))
-                else:
-                    # Multiple inputs - format as key: value pairs
-                    input_text = "\n".join(f"{k}: {v}" for k, v in inputs_dict.items())
-        return input_text if input_text else ""
+        if args_text and messages_text:
+            return f"{args_text}\n{messages_text}"
+        return args_text or messages_text or ""
 
     def _get_agent(self, agent_name: str, ctx: WorkflowContext[Any, Any]) -> Any:
         """Get agent from registry (sync helper for response handler)."""
