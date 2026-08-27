@@ -1169,10 +1169,11 @@ async def test_apply_compaction_logs_changed_context_without_content(caplog: Any
     assert record.compaction_included_tokens_before is record.compaction_included_tokens_after is None
 
     caplog.clear()
-    await apply_compaction(
-        [Message(role="user", contents=["request"])],
-        strategy=TruncationStrategy(max_n=2, compact_to=1),
-    )
+    with caplog.at_level(logging.INFO, logger="agent_framework"):
+        await apply_compaction(
+            [Message(role="user", contents=["request"])],
+            strategy=TruncationStrategy(max_n=2, compact_to=1),
+        )
     assert caplog.messages == []
 
 
@@ -1914,7 +1915,7 @@ async def test_context_window_strategy_truncation_triggers_above_80_pct() -> Non
     assert len(projected) < 5
 
 
-async def test_context_window_strategy_can_preserve_first_user_group() -> None:
+async def test_context_window_strategy_can_preserve_first_user_group(caplog: Any) -> None:
     messages = [
         Message(role="user", contents=["original " * 400]),
         Message(role="assistant", contents=["old answer " * 400]),
@@ -1926,12 +1927,15 @@ async def test_context_window_strategy_can_preserve_first_user_group() -> None:
         preserve_first_user_group=True,
     )
 
-    changed = await strategy(messages)
+    with caplog.at_level(logging.WARNING, logger="agent_framework"):
+        changed = await strategy(messages)
 
     assert changed is True
     projected = included_messages(messages)
     assert any(message.text == "original " * 400 for message in projected)
     assert any(message.text == "latest " * 400 for message in projected)
+    warning = next(record for record in caplog.records if record.levelno == logging.WARNING)
+    assert warning.compaction_included_tokens_after > warning.compaction_input_budget_tokens
 
 
 async def test_context_window_strategy_keep_last_tool_call_groups_respected() -> None:

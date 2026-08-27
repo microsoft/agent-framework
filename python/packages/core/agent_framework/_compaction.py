@@ -802,8 +802,8 @@ class TruncationStrategy:
     - token count when ``tokenizer`` is provided
     - included message count when ``tokenizer`` is not provided
     Compaction triggers when the metric exceeds ``max_n`` and trims toward
-    ``compact_to``. The minimum retained group is never excluded, so the
-    result may remain above ``compact_to`` when that group alone exceeds it.
+    ``compact_to``. Protected groups are never excluded, so the result may
+    remain above ``compact_to`` when those groups alone exceed it.
     """
 
     def __init__(
@@ -1693,9 +1693,10 @@ class ContextWindowCompactionStrategy:
     2. **Truncation** — removes oldest non-system groups when included tokens
        exceed ``truncation_threshold`` of the input budget.
 
-    The class uses two independent :class:`TokenBudgetComposedStrategy`
-    instances — one per phase — so each fires only when its own threshold
-    is exceeded.
+    Each phase checks its threshold explicitly. Token counts are refreshed
+    after tool-result eviction before deciding whether destructive truncation
+    is necessary. If protected groups still exceed the input budget after
+    truncation, the strategy preserves them and emits a structured warning.
 
     Examples:
         .. code-block:: python
@@ -1801,6 +1802,16 @@ class ContextWindowCompactionStrategy:
 
         if included_token_count(messages) > self._truncation_tokens:
             changed = (await self._truncation(messages)) or changed
+        remaining_tokens = included_token_count(messages)
+        if remaining_tokens > self.input_budget_tokens:
+            logger.warning(
+                "Compaction could not fit protected messages within the input budget",
+                extra={
+                    "compaction_strategy": type(self).__name__,
+                    "compaction_included_tokens_after": remaining_tokens,
+                    "compaction_input_budget_tokens": self.input_budget_tokens,
+                },
+            )
         return changed
 
 

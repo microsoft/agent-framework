@@ -87,6 +87,7 @@ def _propagate_compaction_summaries(
     )
 
     source_message_ids = {message.message_id for message in source_messages if message.message_id}
+    candidates: list[tuple[Message, set[str]]] = []
     for message in working_messages:
         if id(message) in previous_message_ids:
             continue
@@ -96,30 +97,58 @@ def _propagate_compaction_summaries(
             continue
         annotation = cast("Mapping[str, Any]", annotation_value)
         summarized_message_ids: Any = annotation.get(SUMMARY_OF_MESSAGE_IDS_KEY)
-        summarized_id_set: set[str] = (
-            {value for value in cast("list[Any]", summarized_message_ids) if isinstance(value, str)}
-            if isinstance(summarized_message_ids, list)
-            else set()
+        if (
+            message.message_id
+            and isinstance(summarized_message_ids, list)
+            and summarized_message_ids
+            and all(isinstance(value, str) for value in cast("list[Any]", summarized_message_ids))
+        ):
+            candidates.append((message, set(cast("list[str]", summarized_message_ids))))
+
+    dependencies = {message.message_id: summary_ids for message, summary_ids in candidates if message.message_id}
+    supported_ids = set(source_message_ids)
+    pending_ids = set(dependencies)
+    while pending_ids:
+        newly_supported = {summary_id for summary_id in pending_ids if dependencies[summary_id].issubset(supported_ids)}
+        if not newly_supported:
+            break
+        supported_ids.update(newly_supported)
+        pending_ids.difference_update(newly_supported)
+
+    accepted_ids = set(dependencies).difference(pending_ids)
+    for message in [*source_messages, *(candidate for candidate, _ in candidates)]:
+        annotation_value = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+        if not isinstance(annotation_value, dict):
+            continue
+        annotation = cast("dict[str, Any]", annotation_value)
+        if annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY) not in pending_ids:
+            continue
+        annotation.pop(SUMMARIZED_BY_SUMMARY_ID_KEY, None)
+        message.additional_properties.pop(EXCLUDED_KEY, None)
+        message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
+
+    def source_dependencies(summary_id: str) -> set[str]:
+        expanded: set[str] = set()
+        for dependency_id in dependencies[summary_id]:
+            if dependency_id in source_message_ids:
+                expanded.add(dependency_id)
+            elif dependency_id in accepted_ids:
+                expanded.update(source_dependencies(dependency_id))
+        return expanded
+
+    for message, _ in candidates:
+        if message.message_id not in accepted_ids:
+            continue
+        summarized_source_ids = source_dependencies(message.message_id)
+        insertion_index = min(
+            (
+                index
+                for index, source_message in enumerate(source_messages)
+                if source_message.message_id in summarized_source_ids
+            ),
+            default=len(source_messages),
         )
-        linked_sources: list[tuple[int, Message, dict[str, Any]]] = []
-        for source_index, source_message in enumerate(source_messages):
-            source_annotation_value: Any = source_message.additional_properties.get(GROUP_ANNOTATION_KEY)
-            if not isinstance(source_annotation_value, dict):
-                continue
-            source_annotation = cast("dict[str, Any]", source_annotation_value)
-            if source_annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY) == message.message_id:
-                linked_sources.append((source_index, source_message, source_annotation))
-        if not linked_sources:
-            continue
-
-        if summarized_id_set and summarized_id_set.issubset(source_message_ids):
-            source_messages.insert(linked_sources[0][0], message)
-            continue
-
-        for _, source_message, source_annotation in linked_sources:
-            source_annotation.pop(SUMMARIZED_BY_SUMMARY_ID_KEY, None)
-            source_message.additional_properties.pop(EXCLUDED_KEY, None)
-            source_message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
+        source_messages.insert(insertion_index, message)
 
 
 class MiddlewareTermination(MiddlewareException):
@@ -1424,20 +1453,22 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
             kwargs=context_kwargs,
             function_invocation_kwargs=function_invocation_kwargs,
         )
+        source_messages = messages if isinstance(messages, list) else None
+        baseline_message_ids = {id(message) for message in messages}
 
         async def _execute() -> ChatResponse | ResponseStream[ChatResponseUpdate, ChatResponse] | None:
-            def _final_handler(
-                middleware_context: ChatContext,
-            ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-                return self._middleware_handler(
-                    middleware_context,
-                    source_messages=messages if isinstance(messages, list) else None,
+            try:
+                return await pipeline.execute(
+                    context=context,
+                    final_handler=self._middleware_handler,
                 )
-
-            return await pipeline.execute(
-                context=context,
-                final_handler=_final_handler,
-            )
+            finally:
+                if source_messages is not None:
+                    _propagate_compaction_summaries(
+                        source_messages,
+                        context.messages,
+                        baseline_message_ids,
+                    )
 
         if stream:
             # For streaming, wrap execution in ResponseStream.from_awaitable
@@ -1460,19 +1491,18 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         return _execute()  # type: ignore[return-value]
 
     def _middleware_handler(
-        self,
-        context: ChatContext,
-        *,
-        source_messages: list[Message] | None = None,
+        self, context: ChatContext
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Internal middleware handler to adapt to pipeline."""
         handler_kwargs = dict(context.kwargs)
         compaction_strategy = handler_kwargs.pop("compaction_strategy", None)
         tokenizer = handler_kwargs.pop("tokenizer", None)
-        result = cast(
+        working_messages = context.messages if isinstance(context.messages, list) else list(context.messages)
+        context.messages = working_messages
+        return cast(
             "Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]",
             super().get_response(  # type: ignore[misc]
-                messages=context.messages,
+                messages=working_messages,
                 stream=context.stream,
                 options=context.options or {},
                 compaction_strategy=compaction_strategy,
@@ -1481,38 +1511,6 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
                 client_kwargs=handler_kwargs,
             ),
         )
-        if source_messages is None:
-            return result
-
-        if isinstance(result, ResponseStream):
-            stream_result = cast("ResponseStream[ChatResponseUpdate, ChatResponse]", result)
-
-            async def _resolve_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse]:
-                previous_message_ids = {id(message) for message in context.messages}
-                try:
-                    await stream_result
-                finally:
-                    _propagate_compaction_summaries(
-                        source_messages,
-                        context.messages,
-                        previous_message_ids,
-                    )
-                return stream_result
-
-            return ResponseStream[ChatResponseUpdate, ChatResponse].from_awaitable(_resolve_stream())
-
-        async def _resolve_response() -> ChatResponse:
-            previous_message_ids = {id(message) for message in context.messages}
-            try:
-                return await result
-            finally:
-                _propagate_compaction_summaries(
-                    source_messages,
-                    context.messages,
-                    previous_message_ids,
-                )
-
-        return _resolve_response()
 
 
 class AgentMiddlewareLayer:
