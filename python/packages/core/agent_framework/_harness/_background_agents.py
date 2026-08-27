@@ -28,6 +28,16 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BACKGROUND_AGENTS_SOURCE_ID = "background_agents"
 
+#: Default upper bound, in seconds, for ``background_agents_wait_for_first_completion``.
+#: Chosen to be generous enough that healthy long-running child agents are never cut short,
+#: while still guaranteeing the parent's function-calling loop regains control.
+DEFAULT_BACKGROUND_AGENTS_WAIT_TIMEOUT_SECONDS = 300.0
+
+#: Upper bound, in seconds, on a single internal wait slice. The wait tool waits in slices of at
+#: most this length so that ``_refresh_task_state`` runs between slices and can promote a task
+#: whose runtime reference has disappeared to ``LOST`` well before the overall timeout elapses.
+_WAIT_SLICE_SECONDS = 5.0
+
 DEFAULT_BACKGROUND_AGENTS_INSTRUCTIONS = """\
 ## Background Agents
 
@@ -36,6 +46,9 @@ You have access to background agents that can perform work on your behalf.
 - Use the `background_agents_*` tools to start tasks on background agents and check their results.
 - Creating a background task does not block, and background tasks run concurrently.
 - Important: Always wait for outstanding tasks to finish before you finish processing.
+- `background_agents_wait_for_first_completion` is bounded by a timeout. If it reports that it timed \
+out, the tasks it lists as still running have not finished: wait again, or use \
+background_agents_get_all_tasks to check their status. Do not treat a timeout as completion.
 - Important: After retrieving results from a completed task, clear it with \
 background_agents_clear_completed_task to free memory, unless you plan to continue it with \
 background_agents_continue_task.
@@ -152,6 +165,30 @@ def _log_abandoned_background_task(task: asyncio.Task[Any]) -> None:
         logger.debug("Abandoned background task raised: %s", exception)
 
 
+def _validate_wait_timeout(timeout_seconds: float | None) -> float | None:
+    """Validate a wait timeout, returning it unchanged when acceptable.
+
+    Args:
+        timeout_seconds: Timeout in seconds, or ``None`` to wait without a bound.
+
+    Returns:
+        The validated timeout.
+
+    Raises:
+        ValueError: If the timeout is not a positive number.
+    """
+    if timeout_seconds is None:
+        return None
+    # bool is an int subclass, and a timeout of True/False is always a caller mistake.
+    if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+        raise ValueError(f"Background agent wait timeout must be a number or None; got {timeout_seconds!r}.")
+    if timeout_seconds != timeout_seconds:  # NaN never compares greater than 0.
+        raise ValueError("Background agent wait timeout must not be NaN.")
+    if timeout_seconds <= 0:
+        raise ValueError(f"Background agent wait timeout must be greater than 0; got {timeout_seconds!r}.")
+    return float(timeout_seconds)
+
+
 def _validate_and_build_agent_dict(agents: Sequence[SupportsAgentRun]) -> dict[str, SupportsAgentRun]:
     """Validate agents and build a case-insensitive lookup dict.
 
@@ -259,6 +296,53 @@ def _refresh_task_state(
     return tasks
 
 
+async def _wait_first_completed(
+    session: AgentSession,
+    state: dict[str, Any],
+    runtime: _RuntimeState,
+    waitable: list[tuple[int, asyncio.Task[AgentResponse[Any]]]],
+    *,
+    timeout: float | None,
+    source_id: str,
+) -> set[asyncio.Task[AgentResponse[Any]]]:
+    """Wait for the first of ``waitable`` to finish, bounded by ``timeout``.
+
+    The wait is performed in slices of at most ``_WAIT_SLICE_SECONDS``. Between slices
+    ``_refresh_task_state`` runs so that a task whose runtime reference has disappeared is promoted
+    to ``LOST``, ending the wait early rather than stalling for the whole timeout.
+
+    Returns:
+        The set of tasks that completed, which is empty when the timeout elapsed or every awaited
+        task stopped being tracked.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = None if timeout is None else loop.time() + timeout
+    pending_tasks = [task for _, task in waitable]
+    waited_ids = [task_id for task_id, _ in waitable]
+
+    while True:
+        slice_timeout = _WAIT_SLICE_SECONDS
+        if deadline is not None:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return set()
+            slice_timeout = min(slice_timeout, remaining)
+
+        done, _ = await asyncio.wait(
+            pending_tasks,
+            timeout=slice_timeout,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if done:
+            return done
+
+        # Nothing finished in this slice. Refresh so a vanished runtime reference becomes LOST,
+        # and stop waiting if none of the requested tasks is still considered running.
+        tasks = _refresh_task_state(session, state, runtime, source_id=source_id)
+        if not any(t.id in waited_ids and t.status == BackgroundTaskStatus.RUNNING for t in tasks):
+            return set()
+
+
 # ---------------------------------------------------------------------------
 # Provider class
 # ---------------------------------------------------------------------------
@@ -275,7 +359,8 @@ class BackgroundAgentsProvider(ContextProvider):
     This provider exposes the following tools to the agent:
 
     - ``background_agents_start_task`` — Start a background task on a named agent with text input.
-    - ``background_agents_wait_for_first_completion`` — Block until the first of the specified tasks completes.
+    - ``background_agents_wait_for_first_completion`` — Block until the first of the specified tasks
+      completes, or until ``wait_timeout_seconds`` elapses.
     - ``background_agents_get_task_results`` — Retrieve the text output of a completed background task.
     - ``background_agents_get_all_tasks`` — List all background tasks with their IDs, statuses, and descriptions.
     - ``background_agents_continue_task`` — Send follow-up input to a completed task's session to resume work.
@@ -297,6 +382,7 @@ class BackgroundAgentsProvider(ContextProvider):
         *,
         source_id: str = DEFAULT_BACKGROUND_AGENTS_SOURCE_ID,
         instructions: str | None = None,
+        wait_timeout_seconds: float | None = DEFAULT_BACKGROUND_AGENTS_WAIT_TIMEOUT_SECONDS,
     ) -> None:
         """Initialize the background agents provider.
 
@@ -312,13 +398,20 @@ class BackgroundAgentsProvider(ContextProvider):
             source_id: Unique source ID for serializable task state in session.
             instructions: Optional instruction override. May include ``{background_agents}``
                 placeholder which will be replaced with the agent listing.
+            wait_timeout_seconds: Default upper bound, in seconds, applied to
+                ``background_agents_wait_for_first_completion`` when the model does not supply its
+                own ``timeout_seconds``. Set to ``None`` to wait without a bound. Bounding the wait
+                keeps a child agent that never completes from suspending the parent's
+                function-calling loop indefinitely.
 
         Raises:
-            ValueError: If agents is empty, an agent has no name, or names are not unique.
+            ValueError: If agents is empty, an agent has no name, names are not unique, or
+                ``wait_timeout_seconds`` is not a positive number or ``None``.
         """
         super().__init__(source_id)
 
         self._agents = _validate_and_build_agent_dict(agents)
+        self._wait_timeout_seconds = _validate_wait_timeout(wait_timeout_seconds)
 
         # Build instructions with agent listing.
         base_instructions = instructions if instructions is not None else DEFAULT_BACKGROUND_AGENTS_INSTRUCTIONS
@@ -501,13 +594,30 @@ class BackgroundAgentsProvider(ContextProvider):
         background_agents_start_task._invoke_sync_on_event_loop = True  # pyright: ignore[reportPrivateUsage]
 
         @tool(name="background_agents_wait_for_first_completion", approval_mode="never_require")
-        async def background_agents_wait_for_first_completion(task_ids: list[int]) -> str:
-            """Block until the first of the specified background tasks completes. Returns the completed task's ID."""
+        async def background_agents_wait_for_first_completion(
+            task_ids: list[int], timeout_seconds: float | None = None
+        ) -> str:
+            """Block until the first of the specified background tasks completes, or the timeout elapses.
+
+            Returns the completed task's ID, or the current status of each task if the wait timed out.
+            Pass timeout_seconds to override the provider's default wait timeout.
+            """
             if runtime.closed:
                 return "Error: Session is being released; cannot wait for background tasks."
 
             if not task_ids:
                 return "Error: No task IDs provided."
+
+            # A model-supplied timeout is reported back as an error string rather than raised: this
+            # tool exists to keep the function-calling loop responsive, so a bad argument must not
+            # fail the tool invocation.
+            if timeout_seconds is None:
+                timeout = self._wait_timeout_seconds
+            else:
+                try:
+                    timeout = _validate_wait_timeout(timeout_seconds)
+                except ValueError as exc:
+                    return f"Error: {exc}"
 
             # Collect in-flight tasks matching the requested IDs.
             waitable: list[tuple[int, asyncio.Task[AgentResponse[Any]]]] = []
@@ -528,11 +638,27 @@ class BackgroundAgentsProvider(ContextProvider):
                     )
                 return "Error: None of the specified task IDs correspond to running tasks."
 
-            # Wait for the first one to complete.
-            done, _ = await asyncio.wait(
-                [t for _, t in waitable],
-                return_when=asyncio.FIRST_COMPLETED,
+            # Wait for the first one to complete, bounded by the effective timeout. The wait is
+            # sliced so _refresh_task_state runs between slices: a task whose runtime reference has
+            # disappeared is promoted to LOST there, which ends the wait early instead of stalling
+            # for the full timeout.
+            done = await _wait_first_completed(
+                session,
+                provider_state,
+                runtime,
+                waitable,
+                timeout=timeout,
+                source_id=source_id,
             )
+
+            if not done:
+                tasks = _refresh_task_state(session, provider_state, runtime, source_id=source_id)
+                statuses = ", ".join(f"task {t.id}: {t.status.value}" for t in tasks if t.id in task_ids)
+                return (
+                    f"Timed out after {timeout} seconds waiting for tasks {task_ids} to complete. "
+                    f"Current status: {statuses or 'unknown'}. "
+                    "The tasks may still be running; wait again or check their status."
+                )
 
             # Find which ID completed.
             completed_id: int | None = None
