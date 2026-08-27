@@ -589,7 +589,7 @@ class Content:
         self.consent_link = consent_link
 
     def __deepcopy__(self, memo: dict[int, Any]) -> Content:
-        """Create a deep copy, discarding non-empty ``_SHALLOW_COPY_FIELDS``.
+        """Create a deep copy, discarding non-``None`` ``_SHALLOW_COPY_FIELDS``.
 
         Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
         (e.g., proto/gRPC responses) that are not safe to deep-copy or share.
