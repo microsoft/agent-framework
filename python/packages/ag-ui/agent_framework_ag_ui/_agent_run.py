@@ -2541,6 +2541,11 @@ async def run_agent_stream(
 
     # Create session (with service session support)
     if config.use_service_session:
+        if isinstance(default_options, dict) and default_options.get("store") is False:
+            raise ValueError(
+                "use_service_session=True requires provider storage. Set agent default_options['store']=True "
+                "or disable use_service_session."
+            )
         if not config.service_session_id_from_thread_id and not snapshot_session.enabled:
             raise ValueError(
                 "use_service_session=True requires snapshot persistence unless service_session_id_from_thread_id=True."

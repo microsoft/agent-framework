@@ -2658,3 +2658,29 @@ async def test_provider_owned_service_session_requires_snapshot_persistence():
                 }
             )
         ]
+
+
+async def test_service_session_rejects_disabled_provider_storage():
+    """Service-session continuation cannot work when provider storage is disabled."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    agent = AgentFrameworkAgent(
+        agent=StubAgent(default_options={"store": False}),
+        use_service_session=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+
+    with pytest.raises(ValueError, match="requires provider storage"):
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "run-store-false",
+                    "__ag_ui_snapshot_scope": "test",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                }
+            )
+        ]
