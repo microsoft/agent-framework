@@ -82,7 +82,7 @@ internal sealed class Program
         OpenAIFileClient fileClient = aiProjectClient.GetProjectOpenAIClient().GetOpenAIFileClient();
 
         using FileStream fileStream = File.OpenRead(filePath);
-        OpenAIFile uploadedFile = await fileClient.UploadFileAsync(
+        OpenAIFile openAIFile = await fileClient.UploadFileAsync(
             fileStream,
             Path.GetFileName(filePath),
             FileUploadPurpose.Assistants).ConfigureAwait(false);
@@ -90,14 +90,14 @@ internal sealed class Program
         Console.ForegroundColor = ConsoleColor.Cyan;
         try
         {
-            Console.WriteLine($"FILE: {uploadedFile.Id}");
+            Console.WriteLine($"FILE: {openAIFile.Id}");
         }
         finally
         {
             Console.ResetColor();
         }
 
-        return new UploadedFile(fileClient, uploadedFile.Id);
+        return new UploadedFile(fileClient, openAIFile.Id);
     }
 
     private static ChatMessage CreateInputMessage(string fileId)
