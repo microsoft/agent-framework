@@ -43,8 +43,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_TOOLBOX_SCOPE = "https://ai.azure.com/.default"
 # Default timeout (seconds) for toolbox MCP requests.
 _DEFAULT_TIMEOUT = 120.0
-_DEFAULT_SAMPLING_MAX_TOKENS = 4096
-_DEFAULT_SAMPLING_MAX_REQUESTS = 25
 
 
 def _resolve_toolbox_endpoint() -> str:

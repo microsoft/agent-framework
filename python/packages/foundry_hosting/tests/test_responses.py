@@ -1360,7 +1360,7 @@ class TestStreaming:
                             "output_token_count": 2,
                             "total_token_count": 12,
                             "cache_read_input_token_count": 3,
-                            "cache_write_input_token_count": 4,
+                            "cache_creation_input_token_count": 4,
                             "reasoning_output_token_count": 1,
                         })
                     ],
@@ -1374,7 +1374,7 @@ class TestStreaming:
                             "output_token_count": 4,
                             "total_token_count": 9,
                             "cache_read_input_token_count": 2,
-                            "cache_write_input_token_count": 1,
+                            "cache_creation_input_token_count": 1,
                             "reasoning_output_token_count": 2,
                         })
                     ],

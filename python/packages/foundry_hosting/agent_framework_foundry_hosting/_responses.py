@@ -971,7 +971,7 @@ class _OutputItemTracker:
             input_tokens=input_tokens,
             input_tokens_details=ResponseUsageInputTokensDetails(
                 cached_tokens=int(self._usage_details.get("cache_read_input_token_count") or 0),
-                cache_write_tokens=int(self._usage_details.get("cache_write_input_token_count") or 0),
+                cache_write_tokens=int(self._usage_details.get("cache_creation_input_token_count") or 0),
             ),
             output_tokens=output_tokens,
             output_tokens_details=ResponseUsageOutputTokensDetails(
