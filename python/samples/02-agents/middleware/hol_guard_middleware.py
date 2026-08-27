@@ -10,15 +10,12 @@
 #   uv run samples/02-agents/middleware/hol_guard_middleware.py
 
 # Copyright (c) Microsoft. All rights reserved.
-
-
-
-
 """Official HOL Guard FunctionMiddleware example for protected tool calls (issue #7833).
 
 HOLGuardMiddleware evaluates the tool name and validated arguments in
-FunctionInvocationContext before call_next() and only proceeds on an explicit allow verdict
-from HOL Guard (https://github.com/hashgraph-online/hol-guard).
+FunctionInvocationContext before call_next() and only proceeds when HOL Guard's pattern check
+finds no known attack pattern. It does NOT proceed on a match, on Guard's own review-required
+signal, or when Guard is unavailable/errors.
 
 Unlike ATRValidationMiddleware in this folder, which raises MiddlewareTermination on a match,
 this sample raises MiddlewareFailure on deny, review-required, AND Guard-unavailable/error.
@@ -27,26 +24,37 @@ tool-call batch and propagates to the caller of Agent.run() rather than letting 
 continue -- matching the issue's "terminate before the wrapped tool executes" requirement for
 all three non-allow outcomes, not just an outright deny.
 
-The real HOL Guard engine is invoked locally through its CLI (`hol-guard command test <call>
---json`). That command is a PREVIEW-ONLY pattern check: its JSON response reports
-`status` ("no_match" or "review") and explicitly marks `policy_evaluation: "not_run"`. So an
-ALLOW from this sample means "no known attack pattern matched", not "HOL Guard's full org
-policy approved this call" -- the two are different guarantees. hol-guard is intentionally NOT
-listed as an importable Python dependency here; it is only shelled out to. Install it with
-`pipx install hol-guard` for the real engine. Without it on PATH, or if the call errors, the
-middleware fails closed by default. Pass offline_fallback=True only for local demo/dev use
-without the real engine installed; it applies a small built-in deny-list far weaker than actual
-HOL Guard.
+DESIGN NOTE, per clarification from a HOL Guard maintainer on #7833: `hol-guard command test
+<call> --json` is a PREVIEW/INSPECTION-ONLY pattern check. Its JSON response reports `status`
+("no_match" or "review") and explicitly marks `policy_evaluation: "not_run"`. A "no_match" from
+this command is NOT a HOL Guard policy approval -- it only means no known attack pattern was
+found; this sample treats it as "let the call proceed" for demonstration purposes but never
+describes it as "approved" or "policy allow". Two stronger alternatives exist and were
+deliberately not used here to keep this sample small:
+  - `hol-guard policy evaluate-command <policy.yml> --command "<call>" --json` (release/3.0)
+    evaluates an explicit policy document you supply -- see
+    https://github.com/hashgraph-online/hol-guard/blob/release/3.0/src/codex_plugin_scanner/guard/cli/commands_parser_policy.py
+    This is closer to real policy enforcement, but requires shipping a sample policy.yml as
+    input and is not itself the active harness/runtime policy either.
+  - The authoritative enforcement path is HOL Guard's supported runtime/harness integration,
+    where Guard mediates the actual command/tool execution under the live runtime
+    policy/approval context. That integration is out of scope for a CLI-wrapping
+    FunctionMiddleware sample like this one.
+A contributor extending this sample toward real enforcement should start from
+`policy evaluate-command` with an explicit policy file, not from `command test`.
 
-OPEN QUESTION (track on #7833): confirm with the HOL Guard maintainers whether a command exists
-that runs full policy evaluation (not just the pattern-preview `command test`), and use that
-instead once available.
+hol-guard is intentionally NOT listed as an importable Python dependency here; it is only
+shelled out to. Install it with `pipx install hol-guard` for the real engine. Without it on
+PATH, or if the call errors, the middleware fails closed by default. Pass offline_fallback=True
+only for local demo/dev use without the real engine installed; it applies a small built-in
+deny-list far weaker than actual HOL Guard, and is deliberately NOT the default in main() below
+-- shipping a fail-closed example that silently downgrades to a weaker check by default would
+misrepresent what it demonstrates.
 
 Provider imports (FoundryChatClient, AzureCliCredential) are deferred to main() rather than
 imported at module level, so HOLGuardMiddleware and evaluate_with_hol_guard stay importable
 and unit-testable without the agent-framework-foundry/azure-identity extras present.
 """
-
 
 import asyncio
 import json
@@ -147,7 +155,10 @@ async def evaluate_with_hol_guard(
         # here, so anything other than a clean no_match fails closed.
         status = payload.get("status")
         if status == "no_match":
-            return GuardDecision.ALLOW, "hol-guard: no attack pattern matched (preview check only)"
+            return (
+                GuardDecision.ALLOW,
+                "hol-guard: no known attack pattern found (pattern-preview check; not a policy decision)",
+            )
         if status == "review":
             return GuardDecision.REVIEW, payload.get("summary", "hol-guard flagged this call for review")
         return GuardDecision.ERROR, f"hol-guard returned an unrecognized response: {payload!r}"
@@ -191,7 +202,10 @@ class HOLGuardMiddleware(FunctionMiddleware):
             timeout_seconds=self._timeout_seconds,
         )
         if decision is GuardDecision.ALLOW:
-            logger.info("[HOLGuardMiddleware] Tool '%s' allowed by HOL Guard.", context.function.name)
+            logger.info(
+                "[HOLGuardMiddleware] Tool '%s': no known attack pattern found by HOL Guard; proceeding.",
+                context.function.name,
+            )
             await call_next()
             return
 
@@ -242,10 +256,13 @@ async def main() -> None:
             name="OpsAgent",
             instructions="You are a helpful assistant with access to weather and admin tools.",
             tools=[get_weather, delete_production_database],
-            # offline_fallback=True lets this demo run without the real hol-guard engine
-            # installed. In production, omit it (default False) so an unavailable Guard fails
-            # closed instead of falling back to the much weaker built-in deny-list.
-            middleware=[HOLGuardMiddleware(offline_fallback=True)],
+            # offline_fallback defaults to False: without the real hol-guard CLI installed,
+            # BOTH requests below will be blocked as UNAVAILABLE. That is the correct,
+            # honest behavior for a fail-closed example -- install hol-guard
+            # (`pipx install hol-guard`) to see the benign/dangerous split below. Pass
+            # offline_fallback=True yourself only if you want to see the much weaker
+            # built-in demo deny-list run instead, e.g. HOLGuardMiddleware(offline_fallback=True).
+            middleware=[HOLGuardMiddleware()],
         ) as agent,
     ):
         print("\n--- Benign request ---")
