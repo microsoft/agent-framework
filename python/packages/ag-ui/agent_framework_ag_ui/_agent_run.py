@@ -2109,7 +2109,12 @@ def _text_events_to_snapshot_messages(events: list[BaseEvent]) -> list[dict[str,
     return [message for message in messages if message.get("content")]
 
 
-def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThreadSnapshot | None) -> None:
+def _restore_session_continuation_state(
+    session: AgentSession,
+    snapshot: AGUIThreadSnapshot | None,
+    *,
+    restore_service_session_id: bool,
+) -> None:
     """Restore typed private state from trusted snapshot storage."""
     if snapshot is None or snapshot.session_state is None:
         return
@@ -2130,7 +2135,7 @@ def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThr
             session.session_id,
         )
         return
-    if service_session_id is not None:
+    if restore_service_session_id and service_session_id is not None:
         session.service_session_id = restored.service_session_id
     session.state.update(restored.state)
 
@@ -2184,6 +2189,7 @@ def _serialize_session_continuation_state(
     agent: SupportsAgentRun,
     *,
     shared_state_keys: set[str],
+    include_service_session_id: bool,
 ) -> dict[str, Any] | None:
     """Serialize server-owned state while preserving each AG-UI State Authority."""
     context_providers = cast(list[Any], getattr(agent, "context_providers", []))
@@ -2194,12 +2200,13 @@ def _serialize_session_continuation_state(
         *(provider.source_id for provider in context_providers if isinstance(provider, HistoryProvider)),
     }
     continuation_state = {key: value for key, value in session.state.items() if key not in excluded_keys}
-    if not continuation_state and session.service_session_id is None:
+    service_session_id = session.service_session_id if include_service_session_id else None
+    if not continuation_state and service_session_id is None:
         return None
 
     serialized_session = AgentSession(
         session_id=session.session_id,
-        service_session_id=session.service_session_id,
+        service_session_id=service_session_id,
     )
     serialized_session.state.update(continuation_state)
     serialized_payload = serialized_session.to_dict()
@@ -2214,6 +2221,7 @@ def _safe_serialize_session_continuation_state(
     agent: SupportsAgentRun,
     *,
     shared_state_keys: set[str],
+    include_service_session_id: bool,
 ) -> dict[str, Any] | None:
     """Return JSON-safe continuation state without failing a completed run."""
     try:
@@ -2221,6 +2229,7 @@ def _safe_serialize_session_continuation_state(
             session,
             agent,
             shared_state_keys=shared_state_keys,
+            include_service_session_id=include_service_session_id,
         )
         if serialized_state is None:
             return None
@@ -2557,7 +2566,11 @@ async def run_agent_stream(
             session = created_session
     else:
         session = AgentSession(session_id=thread_id)
-    _restore_session_continuation_state(session, stored_snapshot)
+    _restore_session_continuation_state(
+        session,
+        stored_snapshot,
+        restore_service_session_id=config.use_service_session,
+    )
     protected_session_state_keys = _request_state_protected_keys(agent)
     session.state.update(
         {
@@ -2693,6 +2706,7 @@ async def run_agent_stream(
                 session,
                 agent,
                 shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
+                include_service_session_id=config.use_service_session,
             ),
         )
         _save_tool_approval_state(session, approval_state_store, approval_thread_id)
@@ -3051,6 +3065,7 @@ async def run_agent_stream(
             session,
             agent,
             shared_state_keys=set(flow.current_state).difference(protected_session_state_keys),
+            include_service_session_id=config.use_service_session,
         ),
     )
     _save_tool_approval_state(session, approval_state_store, approval_thread_id)
