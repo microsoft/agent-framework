@@ -2501,13 +2501,13 @@ class _NonCopyableRaw:
 
 
 def test_content_deepcopy_discards_raw_representation(caplog: pytest.LogCaptureFixture) -> None:
-    """Test that deepcopy of Content discards raw_representation and logs a warning."""
+    """Test that deepcopy of Content discards raw_representation and logs at debug level."""
     import copy
 
     raw = _NonCopyableRaw()
     content = Content.from_text("hello", raw_representation=raw)
 
-    with caplog.at_level("WARNING", logger="agent_framework"):
+    with caplog.at_level("DEBUG", logger="agent_framework"):
         cloned = copy.deepcopy(content)
 
     assert cloned.text == "hello"
@@ -2619,14 +2619,14 @@ def test_nested_deepcopy_preserves_raw_representation():
     assert cloned.text == "hello"
 
 
-def test_content_deepcopy_does_not_warn_for_empty_shallow_copy_fields(caplog: pytest.LogCaptureFixture) -> None:
-    """Test that empty shallow-copy fields do not emit discard warnings."""
+def test_content_deepcopy_does_not_log_for_empty_shallow_copy_fields(caplog: pytest.LogCaptureFixture) -> None:
+    """Test that empty shallow-copy fields do not emit discard logs."""
     import copy
 
     content = Content.from_text("hello")
     content.additional_properties["key"] = "value"
 
-    with caplog.at_level("WARNING", logger="agent_framework"):
+    with caplog.at_level("DEBUG", logger="agent_framework"):
         cloned = copy.deepcopy(content)
 
     assert cloned.raw_representation is None

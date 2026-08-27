@@ -601,7 +601,7 @@ class Content:
         for k, v in self.__dict__.items():
             if k in shallow:
                 if v is not None:
-                    logger.warning("Discarding field '%s' while deep-copying Content.", k)
+                    logger.debug("Discarding field '%s' while deep-copying Content.", k)
                 object.__setattr__(result, k, None)
             else:
                 object.__setattr__(result, k, deepcopy(v, memo))
