@@ -114,7 +114,14 @@ internal sealed class Program
     {
         public async ValueTask DisposeAsync()
         {
-            await this.FileClient.DeleteFileAsync(this.FileId).ConfigureAwait(false);
+            try
+            {
+                await this.FileClient.DeleteFileAsync(this.FileId).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Unable to delete uploaded file {this.FileId}: {ex.Message}");
+            }
         }
     }
 }
