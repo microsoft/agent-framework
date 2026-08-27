@@ -97,3 +97,16 @@ To run the sampes from the command line:
     dotnet run c:/myworkflows/Marketing.yaml
     ```
    >  The sample will allow for interactive input in the absence of an input argument.
+
+### File-based input
+
+The `FileInput` sample demonstrates starting a declarative workflow with a `ChatMessage`
+that contains file bytes, not just text:
+
+```pwsh
+cd dotnet/samples/03-workflows/Declarative/FileInput
+dotnet run
+dotnet run "C:\path\to\document.pdf" "Summarize this document for an executive audience."
+```
+
+See [FileInput](./FileInput/) for details.
