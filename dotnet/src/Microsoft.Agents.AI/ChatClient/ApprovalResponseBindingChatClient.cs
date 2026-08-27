@@ -449,10 +449,10 @@ internal sealed partial class ApprovalResponseBindingChatClient : DelegatingChat
     }
 
     /// <summary>
-    /// Creates a snapshot of an approval request so a later mutation of the caller-visible instance
-    /// (for example changing the tool call arguments) cannot alter the recorded request used for binding.
+    /// Creates a deep snapshot of an approval request for durable storage or public enumeration so callers
+    /// cannot mutate the model-originated binding authority through shared <see cref="FunctionCallContent.Arguments"/>.
     /// </summary>
-    private static ToolApprovalRequestContent SnapshotRequest(ToolApprovalRequestContent request)
+    internal static ToolApprovalRequestContent SnapshotRequest(ToolApprovalRequestContent request)
     {
         if (request.ToolCall is FunctionCallContent functionCall)
         {

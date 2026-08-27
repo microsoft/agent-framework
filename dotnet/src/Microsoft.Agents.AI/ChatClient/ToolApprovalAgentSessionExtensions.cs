@@ -19,10 +19,11 @@ namespace Microsoft.Agents.AI;
 /// or drain them as explicit rejections before accepting a new normal user turn (#7862, #7872).
 /// </para>
 /// <para>
-/// Rejection helpers clear the pending bag and return response content the host should send on the next
-/// agent run so <see cref="FunctionInvokingChatClient"/> can emit terminal
-/// <see cref="FunctionResultContent"/> and close the tool lifecycle. Clearing without sending those
-/// responses leaves dangling <see cref="FunctionCallContent"/> in chat history.
+/// Rejection helpers return response content the host should send on the next agent run so
+/// <see cref="FunctionInvokingChatClient"/> can emit terminal <see cref="FunctionResultContent"/> and close
+/// the tool lifecycle. Pending bag entries stay until those responses are validated and consumed on that run;
+/// clearing the bag first would drop the only binding authority on restore paths where message history has a
+/// dangling <see cref="FunctionCallContent"/> without a matching approval request.
 /// </para>
 /// </remarks>
 public static class ToolApprovalAgentSessionExtensions
@@ -33,8 +34,8 @@ public static class ToolApprovalAgentSessionExtensions
     /// </summary>
     /// <param name="session">The agent session to read pending approval requests from.</param>
     /// <param name="requests">
-    /// When this method returns, contains the pending approval requests if any were found; otherwise,
-    /// <see langword="null"/>.
+    /// When this method returns, contains deep snapshots of the pending approval requests if any were found;
+    /// otherwise, <see langword="null"/>.
     /// </param>
     /// <returns>
     /// <see langword="true"/> if at least one pending approval request was found; otherwise,
@@ -52,8 +53,15 @@ public static class ToolApprovalAgentSessionExtensions
                 AgentJsonUtilities.DefaultOptions)
             && pending is { Count: > 0 })
         {
-            // Return a copy so callers cannot mutate the recorded binding authority.
-            requests = [.. pending];
+            // Deep-snapshot each request so hosts cannot mutate FunctionCallContent.Arguments on the
+            // model-originated binding authority retained in the session bag.
+            var snapshots = new List<ToolApprovalRequestContent>(pending.Count);
+            foreach (var request in pending)
+            {
+                snapshots.Add(ApprovalResponseBindingChatClient.SnapshotRequest(request));
+            }
+
+            requests = snapshots;
             return true;
         }
 
@@ -62,8 +70,7 @@ public static class ToolApprovalAgentSessionExtensions
     }
 
     /// <summary>
-    /// Creates rejection responses for every pending tool approval request on the session and clears the pending
-    /// bag.
+    /// Creates rejection responses for every pending tool approval request on the session.
     /// </summary>
     /// <param name="session">The agent session whose pending approvals should be closed.</param>
     /// <param name="reason">
@@ -71,7 +78,8 @@ public static class ToolApprovalAgentSessionExtensions
     /// </param>
     /// <returns>
     /// The rejection responses to send on the next agent run so the function loop can emit terminal
-    /// <see cref="FunctionResultContent"/>. Empty when nothing was pending.
+    /// <see cref="FunctionResultContent"/>. Empty when nothing was pending. Pending bag entries remain until
+    /// those responses are bound and consumed on that run.
     /// </returns>
     public static IReadOnlyList<ToolApprovalResponseContent> CreatePendingApprovalRejections(
         this AgentSession session,
@@ -90,7 +98,8 @@ public static class ToolApprovalAgentSessionExtensions
             responses.Add(request.CreateResponse(approved: false, reason));
         }
 
-        session.StateBag.TryRemoveValue(ApprovalResponseBindingChatClient.StateBagKey);
+        // Do not clear the bag here. On restore, history may only contain a dangling FunctionCallContent;
+        // ValidateInboundApprovalResponses needs these entries to honor the returned rejections.
         return responses;
     }
 
