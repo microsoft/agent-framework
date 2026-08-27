@@ -147,12 +147,12 @@ class RunnerImpl:
             try:
                 await iteration_task
             except Exception:
+                # Discard pending state writes from the failed superstep
+                self._state.discard()
                 # Make sure failure-related events (like ExecutorFailedEvent) are surfaced
                 if await self._ctx.has_events():
                     for event in await self._ctx.drain_events():
                         yield event
-                # Discard pending state writes from the failed superstep
-                self._state.discard()
                 raise
             self._iteration += 1
 
