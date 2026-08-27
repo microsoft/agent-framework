@@ -2,7 +2,7 @@
 
 """Tests for _agent_run.py helper functions and FlowState."""
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from ag_ui.core import (
@@ -2684,3 +2684,46 @@ async def test_service_session_rejects_disabled_provider_storage():
                 }
             )
         ]
+
+
+async def test_stateless_snapshot_excludes_only_provider_service_session_state():
+    """Stateless runs restore unrelated private state but not provider-owned continuation."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+
+    stub = StubAgent()
+    setattr(stub, "service_session_state_keys", frozenset({"provider_continuation"}))
+    observed_state: list[dict[str, Any]] = []
+    original_run = stub.run
+
+    def capture_state(*args: Any, **kwargs: Any) -> Any:
+        session = kwargs["session"]
+        observed_state.append(dict(session.state))
+        session.state["provider_continuation"] = "provider-session"
+        session.state["private"] = "preserved"
+        return original_run(*args, **kwargs)
+
+    stub.run = capture_state  # type: ignore[assignment, method-assign]  # ty: ignore[invalid-assignment]
+    store = InMemoryAGUIThreadSnapshotStore()
+    agent = AgentFrameworkAgent(agent=stub, snapshot_store=store)
+    payload = {
+        "thread_id": "frontend-thread",
+        "__ag_ui_snapshot_scope": "test",
+        "messages": [{"role": "user", "content": "Hello"}],
+        "state": {
+            "provider_continuation": "client-injected",
+            "client_value": "available",
+        },
+    }
+
+    _ = [event async for event in agent.run(payload)]
+    first_snapshot = await store.get(scope="test", thread_id="frontend-thread")
+    assert first_snapshot is not None
+    _ = [event async for event in agent.run(payload)]
+
+    assert first_snapshot.session_state == {"private": "preserved"}
+    assert observed_state == [
+        {"client_value": "available"},
+        {"private": "preserved", "client_value": "available"},
+    ]

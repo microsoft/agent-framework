@@ -2935,6 +2935,61 @@ def test_parse_and_replay_preserves_real_assistant_logprobs() -> None:
     assert replayed["logprobs"] == logprobs
 
 
+def test_streaming_parse_and_replay_preserves_all_real_assistant_logprobs() -> None:
+    """Streamed token logprobs accumulate on assistant content for direct replay."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    first_logprob = {
+        "token": "hel",
+        "bytes": [104, 101, 108],
+        "logprob": -0.1,
+        "top_logprobs": [],
+    }
+    second_logprob = {
+        "token": "lo",
+        "bytes": [108, 111],
+        "logprob": -0.2,
+        "top_logprobs": [],
+    }
+    events = [
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="msg-1",
+            output_index=0,
+            sequence_number=1,
+            logprobs=[first_logprob],  # type: ignore[list-item]
+            delta="hel",
+        ),
+        ResponseTextDeltaEvent(
+            type="response.output_text.delta",
+            content_index=0,
+            item_id="msg-1",
+            output_index=0,
+            sequence_number=2,
+            logprobs=[second_logprob],  # type: ignore[list-item]
+            delta="lo",
+        ),
+    ]
+    accumulated_logprobs: dict[str, list[Any]] = {}
+    updates = [
+        client._parse_chunk_from_openai(
+            event,
+            options={},
+            function_call_ids={},
+            output_text_logprobs=accumulated_logprobs,
+        )
+        for event in events
+    ]
+
+    response = ChatResponse.from_updates(updates)
+    text_content = response.messages[0].contents[0]
+    replayed = client._prepare_content_for_openai("assistant", text_content)
+
+    assert text_content.text == "hello"
+    assert text_content.additional_properties["logprobs"] == [first_logprob, second_logprob]
+    assert replayed["logprobs"] == [first_logprob, second_logprob]
+
+
 def test_prepare_messages_for_openai_assistant_history_uses_output_text_with_annotations() -> None:
     """Assistant history should be output_text and include required annotations."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

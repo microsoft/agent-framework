@@ -292,12 +292,21 @@ class RawFoundryChatClient(
         options: dict[str, Any],
         function_call_ids: dict[int, tuple[str, str]],
         seen_reasoning_delta_item_ids: set[str] | None = None,
+        output_text_logprobs: dict[str, list[Any]] | None = None,
     ) -> ChatResponseUpdate:
         """Parse streaming event, intercepting oauth_consent_request items."""
         update = try_parse_oauth_consent_event(event, self.model)
         if update is not None:
             return update
-        return super()._parse_chunk_from_openai(event, options, function_call_ids, seen_reasoning_delta_item_ids)
+        if output_text_logprobs is None:
+            return super()._parse_chunk_from_openai(event, options, function_call_ids, seen_reasoning_delta_item_ids)
+        return super()._parse_chunk_from_openai(
+            event,
+            options,
+            function_call_ids,
+            seen_reasoning_delta_item_ids,
+            output_text_logprobs,
+        )
 
     async def configure_azure_monitor(
         self,

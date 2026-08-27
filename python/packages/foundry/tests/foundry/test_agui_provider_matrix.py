@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import Agent, AgentSession, Message
+from agent_framework.exceptions import ChatClientException
 from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
 from azure.ai.projects import models as projects_models
 from azure.ai.projects.aio import AIProjectClient
@@ -33,21 +34,6 @@ _Mode = Literal["stateless", "conversation", "previous_response"]
 _PROVIDER_SESSION_KEY = "__ag_ui_provider_service_session_id"
 _MODES = [
     pytest.param("stateless", False, id="stateless-snapshot-replay"),
-    pytest.param("conversation", True, id="conversation"),
-    pytest.param("previous_response", True, id="previous-response-id"),
-]
-_HOSTED_AGENT_MODES = [
-    # TODO: Remove this strict xfail when Foundry Hosted Agents accept standard
-    # output_text replay without requiring fabricated logprobs.
-    pytest.param(
-        "stateless",
-        False,
-        id="stateless-snapshot-replay",
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="Foundry Hosted Agent rejects output_text replay when logprobs are absent",
-        ),
-    ),
     pytest.param("conversation", True, id="conversation"),
     pytest.param("previous_response", True, id="previous-response-id"),
 ]
@@ -83,13 +69,19 @@ class _ConversationCapturingAgent(_CapturingAgent):
         return self._agent.get_session(conversation.id, session_id=session_id)
 
 
-async def _exercise_agui_case(agent: Any, mode: _Mode) -> None:
+async def _exercise_agui_case(
+    agent: Any,
+    mode: _Mode,
+    *,
+    expect_hosted_stateless_failure: bool = False,
+) -> None:
     marker = f"AF-AGUI-{uuid4().hex}"
     follow_up = "Return only the exact marker from my previous message."
     thread_id = f"agui-thread-{uuid4().hex}"
     scope = f"agui-scope-{uuid4().hex}"
     snapshot_store = InMemoryAGUIThreadSnapshotStore()
     capturing = _ConversationCapturingAgent(agent) if mode == "conversation" else _CapturingAgent(agent)
+    provider_id: str | None = None
 
     runner = AgentFrameworkAgent(
         agent=cast(Any, capturing),
@@ -119,39 +111,61 @@ async def _exercise_agui_case(agent: Any, mode: _Mode) -> None:
         replay_messages = cast(list[dict[str, Any]], first_snapshot.model_dump(by_alias=True)["messages"])
         first_stored = await snapshot_store.get(scope=scope, thread_id=thread_id)
         assert first_stored is not None
-
-        second_events = [
-            event
-            async for event in runner.run({
-                "threadId": thread_id,
-                "runId": f"run-2-{uuid4().hex}",
-                "__ag_ui_snapshot_scope": scope,
-                "messages": [*replay_messages, {"role": "user", "content": follow_up}],
-            })
-        ]
-
-        assert not [event for event in second_events if getattr(event, "type", None) == "RUN_ERROR"]
-        assert [[message.role for message in messages] for messages in capturing.inputs[:1]] == [["user"]]
+        assert [[message.role for message in messages] for messages in capturing.inputs] == [["user"]]
         if mode == "stateless":
-            assert [message.role for message in capturing.inputs[1]] == ["user", "assistant", "user"]
-            assert capturing.service_session_ids == [None, None]
+            assert capturing.service_session_ids == [None]
             assert first_stored.session_state is None
         else:
-            assert [(message.role, message.text) for message in capturing.inputs[1]] == [("user", follow_up)]
             assert first_stored.session_state is not None
             provider_id = first_stored.session_state[_PROVIDER_SESSION_KEY]
             assert isinstance(provider_id, str)
             assert provider_id != thread_id
-            assert capturing.service_session_ids[1] == provider_id
             assert provider_id not in json.dumps(first_stored.messages)
             if mode == "conversation":
                 assert provider_id.startswith("conv_")
-                assert capturing.service_session_ids == [provider_id, provider_id]
+                assert capturing.service_session_ids == [provider_id]
                 assert capturing.created_conversation_ids == [provider_id]
             else:
                 assert provider_id.startswith(("resp_", "caresp_"))
-                assert capturing.service_session_ids[0] is None
+                assert capturing.service_session_ids == [None]
                 assert not capturing.created_conversation_ids
+
+        try:
+            second_events = [
+                event
+                async for event in runner.run({
+                    "threadId": thread_id,
+                    "runId": f"run-2-{uuid4().hex}",
+                    "__ag_ui_snapshot_scope": scope,
+                    "messages": [*replay_messages, {"role": "user", "content": follow_up}],
+                })
+            ]
+        except ChatClientException as exc:
+            if not expect_hosted_stateless_failure:
+                raise
+            error = str(exc)
+            assert "request body failed schema validation" in error
+            assert "Expected one of: string, array; got array" in error
+            assert "'param': '$.input'" in error
+            # TODO: Remove this expected-failure branch when Foundry Hosted Agents
+            # accept standard output_text replay without fabricated logprobs.
+            pytest.xfail("Foundry Hosted Agent rejects output_text replay when logprobs are absent")
+
+        if expect_hosted_stateless_failure:
+            pytest.fail("Foundry Hosted Agent replay now works; remove the expected-failure branch")
+
+        assert not [event for event in second_events if getattr(event, "type", None) == "RUN_ERROR"]
+        if mode == "stateless":
+            assert [message.role for message in capturing.inputs[1]] == ["user", "assistant", "user"]
+            assert capturing.service_session_ids == [None, None]
+        else:
+            assert [(message.role, message.text) for message in capturing.inputs[1]] == [("user", follow_up)]
+            assert provider_id is not None
+            assert capturing.service_session_ids[1] == provider_id
+            if mode == "conversation":
+                assert capturing.service_session_ids == [provider_id, provider_id]
+            else:
+                assert capturing.service_session_ids[0] is None
 
         assert marker in capturing.inputs[0][0].text
         assert capturing.inputs[1][-1].text == follow_up
@@ -228,7 +242,7 @@ async def test_foundry_prompt_agent_agui_provider_matrix(mode: _Mode, store: boo
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_foundry_hosted_agent_integration_tests_disabled
-@pytest.mark.parametrize(("mode", "store"), _HOSTED_AGENT_MODES)
+@pytest.mark.parametrize(("mode", "store"), _MODES)
 async def test_foundry_hosted_agent_agui_provider_matrix(mode: _Mode, store: bool) -> None:
     credential = AzureCliCredential()
     hosted_agent = FoundryAgent(
@@ -237,7 +251,11 @@ async def test_foundry_hosted_agent_agui_provider_matrix(mode: _Mode, store: boo
         default_options=cast(Any, {"store": store}),
     )
     try:
-        await _exercise_agui_case(hosted_agent, mode)
+        await _exercise_agui_case(
+            hosted_agent,
+            mode,
+            expect_hosted_stateless_failure=mode == "stateless",
+        )
     finally:
         await cast(Any, hosted_agent.client).client.close()
         await cast(Any, hosted_agent.client).close()

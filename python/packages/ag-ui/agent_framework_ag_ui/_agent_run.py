@@ -2114,12 +2114,15 @@ def _restore_session_continuation_state(
     snapshot: AGUIThreadSnapshot | None,
     *,
     restore_service_session_id: bool,
+    excluded_state_keys: set[str],
 ) -> None:
     """Restore typed private state from trusted snapshot storage."""
     if snapshot is None or snapshot.session_state is None:
         return
     serialized_state = copy.deepcopy(snapshot.session_state)
     service_session_id = serialized_state.pop(_PROVIDER_SERVICE_SESSION_ID_STATE_KEY, None)
+    for key in excluded_state_keys:
+        serialized_state.pop(key, None)
     try:
         restored = AgentSession.from_dict(
             {
@@ -2181,7 +2184,16 @@ def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
         InMemoryHistoryProvider.DEFAULT_SOURCE_ID,
         MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY,
         *(provider.source_id for provider in context_providers),
+        *_provider_service_session_state_keys(agent),
     }
+
+
+def _provider_service_session_state_keys(agent: SupportsAgentRun) -> set[str]:
+    """Return provider-owned session-state keys that must not cross stateless runs."""
+    keys = getattr(agent, "service_session_state_keys", ())
+    if not isinstance(keys, (list, tuple, set, frozenset)):
+        return set()
+    return {key for key in keys if isinstance(key, str)}
 
 
 def _serialize_session_continuation_state(
@@ -2199,6 +2211,8 @@ def _serialize_session_continuation_state(
         _PROVIDER_SERVICE_SESSION_ID_STATE_KEY,
         *(provider.source_id for provider in context_providers if isinstance(provider, HistoryProvider)),
     }
+    if not include_service_session_id:
+        excluded_keys.update(_provider_service_session_state_keys(agent))
     continuation_state = {key: value for key, value in session.state.items() if key not in excluded_keys}
     service_session_id = session.service_session_id if include_service_session_id else None
     if not continuation_state and service_session_id is None:
@@ -2575,6 +2589,7 @@ async def run_agent_stream(
         session,
         stored_snapshot,
         restore_service_session_id=config.use_service_session,
+        excluded_state_keys=set() if config.use_service_session else _provider_service_session_state_keys(agent),
     )
     protected_session_state_keys = _request_state_protected_keys(agent)
     session.state.update(

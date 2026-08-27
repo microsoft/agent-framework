@@ -710,6 +710,7 @@ class RawOpenAIChatClient(
         if stream:
             function_call_ids: dict[int, tuple[str, str]] = {}
             seen_reasoning_delta_item_ids: set[str] = set()
+            output_text_logprobs: dict[str, list[Any]] = {}
             validated_options: dict[str, Any] | None = None
             # Captured once request options are validated/prepared so the streaming finalizer can
             # still parse the aggregated response into structured output after the stream completes.
@@ -748,6 +749,7 @@ class RawOpenAIChatClient(
                                     options=validated_options,
                                     function_call_ids=function_call_ids,
                                     seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                    output_text_logprobs=output_text_logprobs,
                                 )
                                 if served_model is not None:
                                     update.model = served_model
@@ -778,6 +780,7 @@ class RawOpenAIChatClient(
                                         options=validated_options,
                                         function_call_ids=function_call_ids,
                                         seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                        output_text_logprobs=output_text_logprobs,
                                     )
                         else:
                             raw_create_response = await client.responses.with_raw_response.create(
@@ -792,6 +795,7 @@ class RawOpenAIChatClient(
                                         options=validated_options,
                                         function_call_ids=function_call_ids,
                                         seen_reasoning_delta_item_ids=seen_reasoning_delta_item_ids,
+                                        output_text_logprobs=output_text_logprobs,
                                     )
                                     if served_model is not None:
                                         update.model = served_model
@@ -2619,7 +2623,7 @@ class RawOpenAIChatClient(
                     for message_content in item.content:  # type: ignore[reportMissingTypeArgument]
                         match message_content.type:
                             case "output_text":
-                                logprobs = getattr(message_content, "logprobs", None)
+                                logprobs = getattr(cast(Any, message_content), "logprobs", None)
                                 text_content = Content.from_text(
                                     text=message_content.text,
                                     additional_properties=(
@@ -2903,6 +2907,7 @@ class RawOpenAIChatClient(
         options: dict[str, Any],
         function_call_ids: dict[int, tuple[str, str]],
         seen_reasoning_delta_item_ids: set[str] | None = None,
+        output_text_logprobs: dict[str, list[Any]] | None = None,
     ) -> ChatResponseUpdate:
         """Parse an OpenAI Responses API streaming event into a ChatResponseUpdate."""
         metadata: dict[str, Any] = {}
@@ -2914,6 +2919,20 @@ class RawOpenAIChatClient(
         continuation_token: OpenAIContinuationToken | None = None
         finish_reason: FinishReason | None = None
         model = self.model
+
+        def output_text_properties(output: Any, item_id: str) -> dict[str, Any] | None:
+            logprobs = getattr(output, "logprobs", None)
+            if logprobs is None:
+                return None
+            serialized = self._serialize_provider_payload(logprobs)
+            if not isinstance(serialized, list):
+                return None
+            if output_text_logprobs is None:
+                return {"logprobs": serialized}
+            accumulated = output_text_logprobs.setdefault(item_id, [])
+            accumulated.extend(cast(list[Any], serialized))
+            return {"logprobs": accumulated}
+
         match event.type:
             # types:
             # ResponseAudioDeltaEvent,
@@ -2973,14 +2992,32 @@ class RawOpenAIChatClient(
                 event_part = event.part
                 match event_part.type:
                     case "output_text":
-                        contents.append(Content.from_text(text=event_part.text, raw_representation=event))
+                        contents.append(
+                            Content.from_text(
+                                text=event_part.text,
+                                additional_properties=output_text_properties(
+                                    cast(Any, event_part),
+                                    cast(Any, event).item_id,
+                                ),
+                                raw_representation=event,
+                            )
+                        )
                         metadata.update(self._get_metadata_from_response(event_part))
                     case "refusal":
                         contents.append(Content.from_text(text=event_part.refusal, raw_representation=event))
                     case _:
                         pass
             case "response.output_text.delta":
-                contents.append(Content.from_text(text=event.delta, raw_representation=event))
+                contents.append(
+                    Content.from_text(
+                        text=event.delta,
+                        additional_properties=output_text_properties(
+                            cast(Any, event),
+                            cast(Any, event).item_id,
+                        ),
+                        raw_representation=event,
+                    )
+                )
                 metadata.update(self._get_metadata_from_response(event))
             case "response.reasoning_text.delta":
                 if seen_reasoning_delta_item_ids is not None:
