@@ -692,6 +692,30 @@ async def test_parse_finish_reason_model_length() -> None:
     assert response.finish_reason == "length"
 
 
+async def test_parse_finish_reason_unmapped_is_preserved() -> None:
+    """A Mistral finish reason with no framework equivalent is passed through unchanged."""
+    client, _ = make_client(json_response(make_response_payload(content="x", finish_reason="error")))
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.finish_reason == "error"
+
+
+async def test_parse_finish_reason_absent() -> None:
+    """A response without a finish reason still reports no finish reason."""
+    client, _ = make_client(
+        json_response(
+            make_response_payload(
+                choices=[{"index": 0, "message": {"role": "assistant", "content": "x"}}],
+            )
+        )
+    )
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.finish_reason is None
+
+
 async def test_function_invocation_loop() -> None:
     client, server = make_client(
         json_response(
@@ -753,6 +777,17 @@ async def test_streaming_response() -> None:
         "cache_read_input_token_count": 2,
     }
     assert server.last_request["stream"] is True
+
+
+async def test_streaming_finish_reason_unmapped_is_preserved() -> None:
+    """A streamed Mistral finish reason with no framework equivalent is passed through unchanged."""
+    client, _ = make_client(stream_response(make_chunk_payload(content="partial", finish_reason="error")))
+
+    stream = client.get_response([Message("user", ["hi"])], stream=True)
+    updates = [update async for update in stream]
+
+    assert [u.finish_reason for u in updates] == ["error"]
+    assert (await stream.get_final_response()).finish_reason == "error"
 
 
 async def test_streaming_tool_calls() -> None:

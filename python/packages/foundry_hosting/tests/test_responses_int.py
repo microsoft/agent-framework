@@ -402,6 +402,49 @@ class TestMultiTurn:
     @pytest.mark.flaky
     @pytest.mark.integration
     @skip_if_foundry_hosting_integration_tests_disabled
+    async def test_explicit_agent_framework_message_conversation(self) -> None:
+        """Agent Framework Message and Content primitives preserve explicit conversation history."""
+        agent = Agent(
+            client=FoundryChatClient(credential=AzureCliCredential()),  # ty: ignore[invalid-argument-type]
+            instructions="You are a concise assistant. Keep answers very short.",
+        )
+
+        response = await agent.run([
+            Message(role="user", contents=[Content.from_text("My favorite color is blue.")]),
+            Message(role="assistant", contents=[Content.from_text("Your favorite color is blue.")]),
+            Message(role="user", contents=[Content.from_text("What is my favorite color?")]),
+        ])
+
+        assert response.text is not None
+        assert "blue" in response.text.lower()
+
+    @pytest.mark.flaky
+    @pytest.mark.integration
+    @skip_if_foundry_hosting_integration_tests_disabled
+    async def test_explicit_user_assistant_user_conversation(self, server: ResponsesHostServer) -> None:
+        """Explicit user, assistant, and follow-up user messages form one conversation."""
+        resp = await _post_json(
+            server,
+            {
+                "input": [
+                    {"type": "message", "role": "user", "content": "My favorite color is blue."},
+                    {"type": "message", "role": "assistant", "content": "Your favorite color is blue."},
+                    {"type": "message", "role": "user", "content": "What is my favorite color?"},
+                ],
+                "stream": False,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        output_messages = [item for item in body["output"] if item["type"] == "message"]
+        assert len(output_messages) == 1
+        assert "blue" in output_messages[0]["content"][0]["text"].lower()
+
+    @pytest.mark.flaky
+    @pytest.mark.integration
+    @skip_if_foundry_hosting_integration_tests_disabled
     async def test_two_turn_conversation(self, server: ResponsesHostServer) -> None:
         """Turn 1: introduce context. Turn 2: ask about it using previous_response_id."""
         # Turn 1

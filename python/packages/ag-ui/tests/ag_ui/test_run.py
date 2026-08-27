@@ -2568,7 +2568,11 @@ async def test_session_id_matches_thread_id_with_service_session():
     from agent_framework_ag_ui import AgentFrameworkAgent
 
     stub = StubAgent()
-    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+    )
 
     payload = {
         "thread_id": "service-thread-789",
@@ -2615,7 +2619,11 @@ async def test_service_session_no_thread_id_generates_uuid():
     from agent_framework_ag_ui import AgentFrameworkAgent
 
     stub = StubAgent()
-    agent = AgentFrameworkAgent(agent=stub, use_service_session=True)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+    )
 
     payload = {
         "run_id": "run-5",
@@ -2629,3 +2637,24 @@ async def test_service_session_no_thread_id_generates_uuid():
     uuid.UUID(stub.last_session.session_id)
     # service_session_id should be None since no thread_id was supplied
     assert stub.last_session.service_session_id is None
+
+
+async def test_provider_owned_service_session_requires_snapshot_persistence():
+    """Provider-owned continuation needs private snapshot storage across AG-UI requests."""
+    from conftest import StubAgent  # pyrefly: ignore[missing-import] # pyright: ignore[reportMissingImports]
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    agent = AgentFrameworkAgent(agent=StubAgent(), use_service_session=True)
+
+    with pytest.raises(ValueError, match="requires snapshot persistence"):
+        _ = [
+            event
+            async for event in agent.run(
+                {
+                    "thread_id": "frontend-thread",
+                    "run_id": "run-6",
+                    "messages": [{"role": "user", "content": "Hello"}],
+                }
+            )
+        ]

@@ -1207,6 +1207,12 @@ def _canonical_snapshot_message(message: dict[str, Any]) -> dict[str, Any]:
 
     normalized_message = agui_messages_to_snapshot_format([copy.deepcopy(message)])[0]
     normalized_message.pop("id", None)
+    if "toolCalls" in normalized_message:
+        normalized_message["tool_calls"] = normalized_message.pop("toolCalls")
+    if "toolCallId" in normalized_message:
+        normalized_message["tool_call_id"] = normalized_message.pop("toolCallId")
+    if "encryptedValue" in normalized_message:
+        normalized_message["encrypted_value"] = normalized_message.pop("encryptedValue")
     return cast(dict[str, Any], make_json_safe(normalized_message))
 
 
@@ -1215,8 +1221,29 @@ def _snapshot_messages_match(stored_message: dict[str, Any], incoming_message: d
     stored_id = stored_message.get("id")
     incoming_id = incoming_message.get("id")
     if stored_id and incoming_id:
-        return str(stored_id) == str(incoming_id)
+        if str(stored_id) == str(incoming_id):
+            return True
+        if normalize_agui_role(stored_message.get("role", "user")) != "assistant":
+            return False
     return _canonical_snapshot_message(stored_message) == _canonical_snapshot_message(incoming_message)
+
+
+def _snapshot_overlap_length(
+    stored_messages: list[dict[str, Any]],
+    incoming_messages: list[dict[str, Any]],
+    *,
+    start: int,
+) -> int:
+    """Return the contiguous incoming prefix matching stored history at ``start``."""
+    compared_count = min(len(stored_messages) - start, len(incoming_messages))
+    return next(
+        (
+            offset
+            for offset, (stored_message, incoming_message) in enumerate(zip(stored_messages[start:], incoming_messages))
+            if not _snapshot_messages_match(stored_message, incoming_message)
+        ),
+        compared_count,
+    )
 
 
 def _latest_user_message_index(messages: list[dict[str, Any]]) -> int | None:
@@ -1231,17 +1258,24 @@ def _known_tool_call_ids(
     stored_messages: list[dict[str, Any]],
     stored_interrupt: list[dict[str, Any]] | None,
 ) -> set[str]:
-    """Collect tool call ids the backend previously issued for this thread."""
+    """Collect unanswered tool call ids the backend previously issued for this thread."""
     known_ids: set[str] = set()
+    completed_ids: set[str] = set()
     for message in stored_messages:
         tool_calls = message.get("tool_calls") or message.get("toolCalls") or []
         if not isinstance(tool_calls, list):
-            continue
+            tool_calls = []
         for tool_call in cast(list[Any], tool_calls):
-            if isinstance(tool_call, dict):
-                tool_call_id = cast(dict[str, Any], tool_call).get("id")
-                if tool_call_id:
-                    known_ids.add(str(tool_call_id))
+            if not isinstance(tool_call, dict):
+                continue
+            tool_call_id = cast(dict[str, Any], tool_call).get("id")
+            if tool_call_id:
+                known_ids.add(str(tool_call_id))
+        if normalize_agui_role(message.get("role", "user")) == "tool":
+            tool_call_id = message.get("toolCallId") or message.get("tool_call_id") or message.get("actionExecutionId")
+            if tool_call_id:
+                completed_ids.add(str(tool_call_id))
+    known_ids.difference_update(completed_ids)
     for interrupt in stored_interrupt or []:
         interrupt_id = interrupt.get("id")
         if interrupt_id:
@@ -1295,17 +1329,36 @@ def _reconstruct_messages_from_thread_snapshot(
     if not stored_messages or not incoming_messages:
         return incoming_messages
 
-    incoming_suffix: list[dict[str, Any]]
-    if len(incoming_messages) >= len(stored_messages) and all(
-        _snapshot_messages_match(stored_message, incoming_message)
-        for stored_message, incoming_message in zip(stored_messages, incoming_messages)
+    overlap_candidates = [
+        (start, _snapshot_overlap_length(stored_messages, incoming_messages, start=start))
+        for start, stored_message in enumerate(stored_messages)
+        if _snapshot_messages_match(stored_message, incoming_messages[0])
+    ]
+    matched_count = max(
+        (
+            overlap
+            for start, overlap in overlap_candidates
+            if overlap >= 2
+            or (
+                stored_messages[start].get("id")
+                and incoming_messages[0].get("id")
+                and str(stored_messages[start]["id"]) == str(incoming_messages[0]["id"])
+            )
+        ),
+        default=0,
+    )
+    if (
+        matched_count == len(incoming_messages)
+        and matched_count
+        and normalize_agui_role(incoming_messages[-1].get("role", "user")) == "user"
+        and not incoming_messages[-1].get("id")
     ):
-        incoming_suffix = incoming_messages[len(stored_messages) :]
+        matched_count -= 1
+    if matched_count:
+        incoming_suffix = incoming_messages[matched_count:]
     else:
         latest_user_index = _latest_user_message_index(incoming_messages)
-        if latest_user_index is None:
-            return incoming_messages
-        incoming_suffix = incoming_messages[latest_user_index:]
+        incoming_suffix = incoming_messages if latest_user_index is None else incoming_messages[latest_user_index:]
 
     incoming_suffix = _filter_untrusted_suffix(
         incoming_suffix,

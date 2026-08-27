@@ -47,6 +47,8 @@ from agent_framework import (
     executor,
     tool,
 )
+from agent_framework.ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
+from agent_framework.openai import OpenAIChatClient
 from azure.ai.agentserver.core import get_request_context
 from azure.ai.agentserver.responses import (
     FileResponseStore,
@@ -59,6 +61,7 @@ from azure.ai.agentserver.responses.models import CreateResponse, Item, OutputIt
 from azure.ai.agentserver.responses.streaming._checkpoint import ResponseCheckpointEvent
 from mcp import McpError
 from mcp.types import ErrorData
+from openai import AsyncOpenAI
 from typing_extensions import Any
 
 from agent_framework_foundry_hosting import ResponsesHostServer
@@ -285,6 +288,19 @@ def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
     return server
 
 
+class _CapturingASGITransport(httpx.AsyncBaseTransport):
+    def __init__(self, app: Any) -> None:
+        self._transport = httpx.ASGITransport(app=app)
+        self.payloads: list[dict[str, Any]] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        self.payloads.append(json.loads(await request.aread()))
+        return await self._transport.handle_async_request(request)
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
+
+
 async def _post(
     server: ResponsesHostServer,
     *,
@@ -340,6 +356,199 @@ def _parse_sse_events(body: str) -> list[dict[str, Any]]:
             current_data_lines = []
 
     return events
+
+
+async def test_agui_service_storage_conversation_mode_sends_only_incremental_provider_input() -> None:
+    """A provider conversation stays authoritative while AG-UI snapshots retain full history."""
+    hosted_agent_backend = _make_agent(
+        response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ACK")])])
+    )
+    local_hosted_agent_api = _make_server(hosted_agent_backend)
+    transport = _CapturingASGITransport(local_hosted_agent_api)
+    responses_client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="http://test",
+        http_client=httpx.AsyncClient(transport=transport),
+        max_retries=0,
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    hosted_agent_client = Agent(client=OpenAIChatClient(model="test-model", async_client=responses_client))
+    runner = AgentFrameworkAgent(
+        agent=hosted_agent_client,
+        use_service_session=True,
+        service_session_id_from_thread_id=True,
+        snapshot_store=store,
+    )
+    thread_id = "conv_agui_service_storage"
+
+    try:
+        first_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [{"role": "user", "content": "first"}],
+            })
+        ]
+        first_snapshot = next(
+            event.model_dump(by_alias=True)["messages"]
+            for event in reversed(first_events)
+            if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+        )
+        second_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [*first_snapshot, {"role": "user", "content": "second"}],
+            })
+        ]
+    finally:
+        await responses_client.close()
+
+    provider_inputs = [
+        [item for item in payload["input"] if item.get("type") == "message"] for payload in transport.payloads
+    ]
+    assert [[item["role"] for item in items] for items in provider_inputs] == [["user"], ["user"]]
+    assert [items[0]["content"][0]["text"] for items in provider_inputs] == ["first", "second"]
+    assert [payload["conversation"] for payload in transport.payloads] == [thread_id, thread_id]
+    assert all("previous_response_id" not in payload for payload in transport.payloads)
+    assert hosted_agent_backend.run.call_count == 2
+    hosted_turns = [call.kwargs["messages"] for call in hosted_agent_backend.run.call_args_list]
+    assert [turn[-1].text for turn in hosted_turns] == ["first", "second"]
+
+    second_snapshot = next(
+        event.model_dump(by_alias=True)["messages"]
+        for event in reversed(second_events)
+        if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+    )
+    assert [message["role"] for message in second_snapshot] == ["user", "assistant", "user", "assistant"]
+
+
+async def test_agui_service_storage_native_uuid_uses_backend_created_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A backend conversation factory maps a native AG-UI UUID to a provider conversation."""
+    hosted_agent_backend = _make_agent(
+        response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ACK")])])
+    )
+    transport = _CapturingASGITransport(_make_server(hosted_agent_backend))
+    responses_client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="http://test",
+        http_client=httpx.AsyncClient(transport=transport),
+        max_retries=0,
+    )
+    hosted_agent_client = Agent(client=OpenAIChatClient(model="test-model", async_client=responses_client))
+
+    async def create_conversation(*, session_id: str) -> AgentSession:
+        return AgentSession(session_id=session_id, service_session_id="conv_backend_created")
+
+    monkeypatch.setattr(hosted_agent_client, "create_conversation", create_conversation, raising=False)
+    runner = AgentFrameworkAgent(
+        agent=hosted_agent_client,
+        use_service_session=True,
+        snapshot_store=InMemoryAGUIThreadSnapshotStore(),
+    )
+    thread_id = "86052504-791b-47d8-a405-60ce167ac93a"
+
+    try:
+        first_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [{"role": "user", "content": "first"}],
+            })
+        ]
+        first_snapshot = next(
+            event.model_dump(by_alias=True)["messages"]
+            for event in reversed(first_events)
+            if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+        )
+        _ = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [*first_snapshot, {"role": "user", "content": "second"}],
+            })
+        ]
+    finally:
+        await responses_client.close()
+
+    assert [payload["conversation"] for payload in transport.payloads] == [
+        "conv_backend_created",
+        "conv_backend_created",
+    ]
+    assert all("previous_response_id" not in payload for payload in transport.payloads)
+    provider_inputs = [
+        [item for item in payload["input"] if item.get("type") == "message"] for payload in transport.payloads
+    ]
+    assert [items[0]["content"][0]["text"] for items in provider_inputs] == ["first", "second"]
+    assert hosted_agent_backend.run.call_count == 2
+
+
+async def test_agui_service_storage_response_mode_persists_provider_continuation_for_uuid_thread() -> None:
+    """A native AG-UI UUID stays separate from the provider-issued Responses continuation."""
+    hosted_agent_backend = _make_agent(
+        response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ACK")])])
+    )
+    transport = _CapturingASGITransport(_make_server(hosted_agent_backend))
+    responses_client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="http://test",
+        http_client=httpx.AsyncClient(transport=transport),
+        max_retries=0,
+    )
+    store = InMemoryAGUIThreadSnapshotStore()
+    runner = AgentFrameworkAgent(
+        agent=Agent(client=OpenAIChatClient(model="test-model", async_client=responses_client)),
+        use_service_session=True,
+        snapshot_store=store,
+    )
+    thread_id = "86052504-791b-47d8-a405-60ce167ac93a"
+
+    try:
+        first_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [{"role": "user", "content": "first"}],
+            })
+        ]
+        first_snapshot = next(
+            event.model_dump(by_alias=True)["messages"]
+            for event in reversed(first_events)
+            if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+        )
+        second_events = [
+            event
+            async for event in runner.run({
+                "thread_id": thread_id,
+                "__ag_ui_snapshot_scope": "test",
+                "messages": [*first_snapshot, {"role": "user", "content": "second"}],
+            })
+        ]
+    finally:
+        await responses_client.close()
+
+    assert "previous_response_id" not in transport.payloads[0]
+    assert "conversation" not in transport.payloads[0]
+    assert transport.payloads[1]["previous_response_id"] != thread_id
+    assert transport.payloads[1]["previous_response_id"].startswith(("resp_", "caresp_", "response_"))
+    assert hosted_agent_backend.run.call_count == 2
+
+    stored = await store.get(scope="test", thread_id=thread_id)
+    assert stored is not None
+    assert stored.session_state is not None
+    second_snapshot = next(
+        event.model_dump(by_alias=True)["messages"]
+        for event in reversed(second_events)
+        if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+    )
+    assert [message["role"] for message in second_snapshot] == ["user", "assistant", "user", "assistant"]
 
 
 def _sse_event_types(events: list[dict[str, Any]]) -> list[str]:
