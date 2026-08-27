@@ -6,10 +6,9 @@ import json
 import os
 import re
 import stat
-import subprocess
-import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,6 +28,7 @@ from agent_framework import (
     Message,
     SupportsChatGetResponse,
 )
+from agent_framework._filesystem import is_link_or_reparse_point
 from agent_framework._harness import _file_access as _file_access_module
 from agent_framework._harness._file_access import (
     DEFAULT_FILE_ACCESS_INSTRUCTIONS,
@@ -37,6 +37,8 @@ from agent_framework._harness._file_access import (
     _normalize_relative_path,
     _run_search_with_timeout,
 )
+
+from .conftest import create_junction_or_skip
 
 
 async def _list_files(store: AgentFileStore, directory: str = "") -> list[str]:
@@ -60,29 +62,6 @@ def _tool_by_name(tools: list[object], name: str) -> FunctionTool:
 def _text(content: Content) -> str:
     assert content.text is not None
     return content.text
-
-
-def _create_junction_or_skip(*, link: Path, target: Path) -> None:
-    if sys.platform != "win32":
-        pytest.skip("Windows directory junctions are only available on Windows")
-
-    result = subprocess.run(
-        [os.environ.get("COMSPEC", "cmd"), "/c", "mklink", "/J", str(link), str(target)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        pytest.skip(f"Could not create Windows directory junction: {result.stderr or result.stdout}")
-
-    is_junction = getattr(link, "is_junction", None)
-    is_reparse_point = bool(
-        getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-        and getattr(link.lstat(), "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    )
-    if not (callable(is_junction) and is_junction()) and not is_reparse_point:
-        link.rmdir()
-        pytest.skip("Created junction was not reported as a reparse point")
 
 
 def test_normalize_relative_path_collapses_and_validates() -> None:
@@ -457,7 +436,7 @@ async def test_filesystem_store_search_and_list_skip_junctioned_directories(tmp_
     root.mkdir()
     (root / "inside.md").write_text("ERROR inside", encoding="utf-8")
     junction = root / "linked"
-    _create_junction_or_skip(link=junction, target=outside)
+    create_junction_or_skip(link=junction, target=outside)
 
     try:
         store = FileSystemAgentFileStore(root)
@@ -841,6 +820,21 @@ async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
 
     with pytest.raises(ValueError, match=r"'same/same'"):
         await store.read("same/same/ok.txt")
+
+
+def test_link_probe_detects_windows_reparse_attribute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Python 3.10/3.11 Windows fallback should detect the reparse-point file attribute."""
+    path = tmp_path / "entry"
+    path.write_text("content", encoding="utf-8")
+    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    assert reparse_attribute
+
+    def fake_lstat(self: Path) -> SimpleNamespace:
+        return SimpleNamespace(st_mode=stat.S_IFREG, st_file_attributes=reparse_attribute)
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+
+    assert is_link_or_reparse_point(path) is True
 
 
 def test_file_access_harness_classes_are_marked_experimental() -> None:

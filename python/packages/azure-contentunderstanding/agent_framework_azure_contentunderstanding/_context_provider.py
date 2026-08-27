@@ -762,7 +762,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
             result,
             include_markdown="markdown" in self.output_sections,
             include_fields="fields" in self.output_sections,
-            metadata={"source": filename},
+            custom_metadata={"source": filename},
         )
 
     # ------------------------------------------------------------------

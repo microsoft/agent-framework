@@ -163,6 +163,10 @@ public sealed class LoopAgent : DelegatingAIAgent
         // followed by that iteration's response messages. Unused when only the final response is returned.
         List<ChatMessage> transcript = [];
 
+        // Accumulates usage across every inner invocation so the returned response reports the token cost of the
+        // whole run rather than only its final iteration. Aggregated even when only the last response is returned.
+        UsageDetails? aggregatedUsage = null;
+
         // The loop-synthesized on-behalf-of messages that drive the current iteration (none for the first iteration).
         IReadOnlyList<ChatMessage> currentSurfaced = [];
 
@@ -173,6 +177,8 @@ public sealed class LoopAgent : DelegatingAIAgent
             AgentSession activeSession = context?.Session ?? session;
             AgentResponse response = await this.InnerAgent.RunAsync(currentMessages, activeSession, options, cancellationToken).ConfigureAwait(false);
             iteration++;
+
+            UsageAggregator.Accumulate(ref aggregatedUsage, response.Usage);
 
             // Record this iteration's on-behalf-of input (before the response it elicited) and the response itself.
             transcript.AddRange(currentSurfaced);
@@ -189,21 +195,21 @@ public sealed class LoopAgent : DelegatingAIAgent
             // Stop and surface the response when the agent is waiting for a tool approval.
             if (HasPendingApprovalRequests(response))
             {
-                return this.BuildResult(response, transcript);
+                return this.BuildResult(response, transcript, aggregatedUsage);
             }
 
             // Enforce the global safety cap regardless of what the evaluators want.
             if (iteration >= this._maxIterations)
             {
                 this.LogMaxIterationsReached(iteration);
-                return this.BuildResult(response, transcript);
+                return this.BuildResult(response, transcript, aggregatedUsage);
             }
 
             // Ask the evaluators whether to continue; stop when none of them request a re-invocation.
             LoopNextStep step = await this.EvaluateAndBuildNextAsync(context, feedbackLog, initialSessionSnapshot, cancellationToken).ConfigureAwait(false);
             if (!step.ShouldContinue)
             {
-                return this.BuildResult(response, transcript);
+                return this.BuildResult(response, transcript, aggregatedUsage);
             }
 
             currentMessages = step.Messages;
@@ -446,27 +452,14 @@ public sealed class LoopAgent : DelegatingAIAgent
     }
 
     /// <summary>
-    /// Produces the non-streaming run result: either the final iteration's response (when configured) or an
-    /// aggregated response carrying the full transcript with the final response's metadata.
+    /// Produces the non-streaming run result from the final iteration's response, which carries either its own
+    /// messages (when configured) or the full transcript of the run. In both cases the usage reported is
+    /// <paramref name="aggregatedUsage"/>, covering every iteration of the run.
     /// </summary>
-    private AgentResponse BuildResult(AgentResponse lastResponse, List<ChatMessage> transcript)
-    {
-        if (this._nonStreamingReturnsLastResponseOnly)
-        {
-            return lastResponse;
-        }
-
-        return new AgentResponse(transcript)
-        {
-            AgentId = lastResponse.AgentId,
-            ResponseId = lastResponse.ResponseId,
-            CreatedAt = lastResponse.CreatedAt,
-            FinishReason = lastResponse.FinishReason,
-            Usage = lastResponse.Usage,
-            AdditionalProperties = lastResponse.AdditionalProperties,
-            ContinuationToken = lastResponse.ContinuationToken,
-        };
-    }
+    private AgentResponse BuildResult(AgentResponse lastResponse, List<ChatMessage> transcript, UsageDetails? aggregatedUsage)
+        => this._nonStreamingReturnsLastResponseOnly
+            ? lastResponse.ApplyAggregatedUsage(aggregatedUsage)
+            : lastResponse.ApplyAggregatedUsage(aggregatedUsage, transcript);
 
     private static bool HasPendingApprovalRequests(AgentResponse response)
     {

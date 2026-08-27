@@ -10,6 +10,7 @@ import re
 import sys
 from asyncio import iscoroutine
 from collections.abc import (
+    AsyncGenerator,
     AsyncIterable,
     AsyncIterator,
     Awaitable,
@@ -27,6 +28,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewTyp
 
 from typing_extensions import TypedDict
 
+from ._feature_stage import ExperimentalFeature, experimental
 from ._serialization import SerializationMixin
 from .exceptions import AdditionItemMismatch, ContentError
 
@@ -587,10 +589,10 @@ class Content:
         self.consent_link = consent_link
 
     def __deepcopy__(self, memo: dict[int, Any]) -> Content:
-        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+        """Create a deep copy, discarding non-``None`` ``_SHALLOW_COPY_FIELDS``.
 
         Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
-        (e.g., proto/gRPC responses) that are not safe to deep-copy.
+        (e.g., proto/gRPC responses) that are not safe to deep-copy or share.
         """
         cls = type(self)
         result = cls.__new__(cls)
@@ -598,7 +600,9 @@ class Content:
         shallow = cls._SHALLOW_COPY_FIELDS
         for k, v in self.__dict__.items():
             if k in shallow:
-                object.__setattr__(result, k, v)
+                if v is not None:
+                    logger.debug("Discarding field '%s' while deep-copying Content.", k)
+                object.__setattr__(result, k, None)
             else:
                 object.__setattr__(result, k, deepcopy(v, memo))
         return result
@@ -1302,7 +1306,7 @@ class Content:
         """Create function approval response content."""
         return cls(
             "function_approval_response",
-            approved=approved,
+            approved=approved if type(approved) is bool else False,
             id=id,
             function_call=function_call,
             annotations=annotations,
@@ -1454,6 +1458,9 @@ class Content:
         # Handle nested Content objects (e.g., function_call in function_approval_request)
         if (function_call := remaining.get("function_call")) and isinstance(function_call, dict):
             remaining["function_call"] = cls.from_dict(function_call)  # type: ignore[reportUnknownArgumentType]
+
+        if content_type == "function_approval_response" and type(remaining.get("approved")) is not bool:
+            remaining["approved"] = False
 
         # Handle list of Content objects (e.g., inputs in code_interpreter_tool_call)
         if (input_items := remaining.get("inputs")) and isinstance(input_items, list):
@@ -3223,6 +3230,60 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         stream._wrap_inner = True
         return stream
 
+    @classmethod
+    @experimental(feature_id=ExperimentalFeature.AGENT_HOOKS)
+    def buffered_and_gated(
+        cls,
+        consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+        gate: Callable[[list[UpdateT], FinalT], Awaitable[tuple[FinalT, bool]]],
+        rederive: Callable[[FinalT], Sequence[UpdateT]],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Create a fully buffered stream whose content is finalized by a gate.
+
+        This combinator exists for egress-gating middleware (e.g. policy enforcement)
+        that must apply a verdict to a run's *complete* content before anything is
+        released, and it states the hook-ordering contract in one place:
+
+        1. On the first pull, ``consume`` runs and produces the buffered updates and
+           the finalized result. Nothing has egressed yet.
+        2. Every transform/result/cleanup hook registered on the *returned* stream so
+           far (for example hooks attached by middleware pipelines after they unwind)
+           is applied to the buffered updates and result now — **before** the gate —
+           so the gate's verdict covers their effect. The hooks are consumed: they are
+           not applied again during replay. Because they run ahead of the verdict,
+           these hooks also *see* pre-verdict content: they are rewriters inside the
+           enforcement boundary. A host-facing observer must consume the released
+           stream instead of registering a hook here.
+        3. ``gate`` receives the post-hook updates and the post-hook result. It
+           returns the result to release and whether it transformed that result (it
+           may raise to block egress entirely).
+        4. The combinator owns the no-divergence rule: whenever pending hooks were
+           applied or the gate reports a transform, the released updates are
+           re-derived from the gated result via ``rederive``, so streamed egress can
+           never diverge from the verdicted content. Otherwise the buffered updates
+           are replayed as-is.
+        5. The stream is then sealed: the released updates and result are replayed
+           verbatim, and registering further transform or result hooks raises
+           ``RuntimeError`` — nothing can rewrite content past the gate.
+
+        Args:
+            consume: Produces the buffered updates and finalized result. Runs inside
+                the caller's context (the caller owns any context-variable scoping).
+            gate: Receives ``(updates, final)`` after pending hooks are applied;
+                returns ``(final, transformed)`` — the result to release and whether
+                the gate changed it.
+            rederive: Rebuilds the released updates from the gated result; applied by
+                the combinator whenever hooks ran or the gate transformed, so no
+                caller can accidentally egress un-verdicted updates.
+
+        Returns:
+            A sealed, fully buffered ResponseStream.
+        """
+        return cast(
+            "ResponseStream[UpdateT, FinalT]",
+            cast(Any, _GatedResponseStream).create_buffered_and_gated(consume, gate, rederive),
+        )
+
     async def _get_stream(self) -> AsyncIterable[UpdateT]:
         if self._stream is None:
             if hasattr(self._stream_source, "__aiter__"):
@@ -3479,6 +3540,103 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
     @property
     def updates(self) -> Sequence[UpdateT]:
         return self._updates
+
+
+class _GatedResponseStream(ResponseStream[UpdateT, FinalT]):
+    """ResponseStream whose content is sealed once its gate has run.
+
+    Created by :meth:`ResponseStream.buffered_and_gated`. Hooks registered before
+    the gate runs are applied to the buffered content ahead of the gate; once the
+    gate has run, registering transform or result hooks raises so nothing can
+    rewrite content past the gate. (Cleanup hooks remain allowed: they cannot
+    influence content.)
+    """
+
+    _gate_sealed: bool = False
+
+    def with_transform_hook(
+        self,
+        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a transform hook; rejected once the stream's gate has run."""
+        if self._gate_sealed:
+            raise RuntimeError(
+                "Cannot register a transform hook on a gated ResponseStream after its gate has "
+                "run: content is sealed by the gate's verdict."
+            )
+        return super().with_transform_hook(hook)
+
+    def with_result_hook(
+        self,
+        hook: Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None],
+    ) -> ResponseStream[UpdateT, FinalT]:
+        """Register a result hook; rejected once the stream's gate has run."""
+        if self._gate_sealed:
+            raise RuntimeError(
+                "Cannot register a result hook on a gated ResponseStream after its gate has "
+                "run: content is sealed by the gate's verdict."
+            )
+        return super().with_result_hook(hook)
+
+    @classmethod
+    def create_buffered_and_gated(
+        cls,
+        consume: Callable[[], Awaitable[tuple[Sequence[UpdateT], FinalT]]],
+        gate: Callable[[list[UpdateT], FinalT], Awaitable[tuple[FinalT, bool]]],
+        rederive: Callable[[FinalT], Sequence[UpdateT]],
+    ) -> _GatedResponseStream[UpdateT, FinalT]:
+        """Build the gated stream for :meth:`ResponseStream.buffered_and_gated`."""
+        holder: dict[str, Any] = {}
+
+        async def _materialize() -> AsyncGenerator[UpdateT]:
+            stream = cast(_GatedResponseStream[UpdateT, FinalT], holder["stream"])
+            updates, final = await consume()
+            # Drain the hooks registered on the gated stream so far and apply them to
+            # the buffered content before the gate (contract step 2). Draining also
+            # means _record_update applies nothing during replay.
+            transform_hooks = list(stream._transform_hooks)
+            stream._transform_hooks.clear()
+            result_hooks = list(stream._result_hooks)
+            stream._result_hooks.clear()
+            cleanup_hooks = list(stream._cleanup_hooks)
+            stream._cleanup_hooks.clear()
+            hooked_updates: list[UpdateT] = []
+            for update in updates:
+                hooked_update = update
+                for hook in transform_hooks:
+                    hooked = hook(hooked_update)
+                    if isawaitable(hooked):
+                        hooked = await hooked
+                    if hooked is not None:
+                        hooked_update = cast(UpdateT, hooked)
+                hooked_updates.append(hooked_update)
+            for result_hook in result_hooks:
+                hooked_final = result_hook(final)
+                if isawaitable(hooked_final):
+                    hooked_final = await hooked_final
+                if hooked_final is not None:
+                    final = cast(FinalT, hooked_final)
+            for cleanup_hook in cleanup_hooks:
+                cleanup_result = cleanup_hook()
+                if isawaitable(cleanup_result):
+                    await cleanup_result
+            gated_final, gate_transformed = await gate(hooked_updates, final)
+            holder["final"] = gated_final
+            stream._gate_sealed = True
+            # No-divergence rule (contract step 4), owned here: hooks or a gate
+            # transform mean the buffered updates may no longer match the verdicted
+            # result, so the released updates are re-derived from it.
+            hooks_applied = bool(transform_hooks or result_hooks)
+            released = rederive(gated_final) if (hooks_applied or gate_transformed) else hooked_updates
+            for update in released:
+                yield update
+
+        def _finalizer(_: Sequence[UpdateT]) -> FinalT:
+            return cast(FinalT, holder["final"])
+
+        stream: _GatedResponseStream[UpdateT, FinalT] = cls(_materialize(), finalizer=_finalizer)
+        holder["stream"] = stream
+        return stream
 
 
 # region ChatOptions
@@ -3761,6 +3919,38 @@ def validate_tool_mode(
     return tool_choice
 
 
+def _append_instructions(
+    base: str | Mapping[str, Any] | Sequence[Any] | None,
+    addition: str | Mapping[str, Any] | Sequence[Any] | None,
+) -> str | Mapping[str, Any] | Sequence[Any] | None:
+    """Append instructions to existing instructions without discarding their structure.
+
+    ``instructions`` is declared as ``str`` on :class:`ChatOptions`, but chat clients may widen it to a
+    provider-native structured form, such as a sequence of typed instruction blocks. Combining such a
+    value with string formatting would coerce it to its ``repr``, silently turning structured metadata
+    into literal text, so a non-string base is extended element-wise instead.
+
+    The addition is always placed after the existing instructions, so the leading portion stays
+    unchanged for providers that treat it as a stable, structure-sensitive prefix.
+
+    Args:
+        base: The existing instructions, if any.
+        addition: The instructions to append, if any.
+
+    Returns:
+        The combined instructions, preserving the structure of ``base`` when it is not a string.
+    """
+    if not base:
+        return addition
+    if not addition:
+        return base
+    if isinstance(base, str) and isinstance(addition, str):
+        return f"{base}\n{addition}"
+    combined: list[Any] = [base] if isinstance(base, (str, Mapping)) else list(base)
+    combined.extend([addition] if isinstance(addition, (str, Mapping)) else addition)
+    return combined
+
+
 def merge_chat_options(
     base: dict[str, Any] | None,
     override: dict[str, Any] | None,
@@ -3810,12 +4000,8 @@ def merge_chat_options(
             continue
 
         if key == "instructions":
-            # Concatenate instructions
-            base_instructions = result.get("instructions")
-            if base_instructions:
-                result["instructions"] = f"{base_instructions}\n{value}"
-            else:
-                result["instructions"] = value
+            # Concatenate instructions, preserving provider-native structured values
+            result["instructions"] = _append_instructions(result.get("instructions"), value)
         elif key == "tools":
             # Merge tools lists
             base_tools = result.get("tools")

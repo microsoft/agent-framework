@@ -54,8 +54,9 @@ class CosmosCheckpointStorage:
 
     By default, checkpoint deserialization is restricted to a built-in set of safe
     Python types (primitives, datetime, uuid, ...) and all ``agent_framework``
-    internal types.  To allow additional application-specific types, pass them via
-    the ``allowed_checkpoint_types`` parameter using ``"module:qualname"`` format.
+    internal types. To allow additional application-specific types, register them
+    with ``register_checkpoint_type`` or pass them via the
+    ``allowed_checkpoint_types`` parameter using ``"module:qualname"`` format.
 
     Example:
 

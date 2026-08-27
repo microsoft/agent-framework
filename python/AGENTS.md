@@ -64,8 +64,9 @@ serialization, or transport result handling must follow
 [the function-calling loop specification](../docs/specs/004-python-function-calling-loop.md). This area requires
 extra validation because small changes can duplicate side effects, orphan call/result pairs, replay stale approval
 authority, or make streaming and non-streaming behavior diverge. Update the specification and its scenario-to-test
-mapping whenever coverage or behavior changes. External contributors must check with the Agent Framework core team
-before picking up issues in this area.
+mapping only when the documented contract, scenario inventory, or authoritative scenario-to-test mapping materially
+changes. Adding or modifying tests that preserve existing documented behavior does not require a specification update.
+External contributors must check with the Agent Framework core team before picking up issues in this area.
 
 ## Project Structure
 

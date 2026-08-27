@@ -846,6 +846,7 @@ public sealed class DefaultMcpToolHandlerTests
         uriContent.AdditionalProperties!["filename"].Should().Be("resource.bin");
     }
 
+#pragma warning disable MCP9005 // Verify compatibility mapping for deprecated sampling content blocks.
     [Fact]
     public void ConvertContentBlock_ToolUseContentBlock_ShouldReturnFunctionCallContent()
     {
@@ -911,6 +912,7 @@ public sealed class DefaultMcpToolHandlerTests
         functionResult.Exception.Should().NotBeNull();
         functionResult.RawRepresentation.Should().BeSameAs(block);
     }
+#pragma warning restore MCP9005
 
     [Fact]
     public void ConvertContentBlock_BlockWithMeta_ShouldPropagateToAdditionalProperties()

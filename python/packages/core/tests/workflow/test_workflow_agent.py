@@ -123,6 +123,27 @@ class RequestingExecutor(Executor):
         )
 
 
+class OAuthConsentRequestingExecutor(Executor):
+    """Executor that pauses for OAuth consent through a specialized request content."""
+
+    @handler
+    async def handle_message(self, _: list[Message], ctx: WorkflowContext) -> None:
+        await ctx.request_info(
+            Content.from_oauth_consent_request(consent_link="https://example.com/consent"),
+            Content,
+            request_id="oauth-consent",
+        )
+
+    @response_handler
+    async def handle_response(
+        self,
+        original_request: Content,
+        response: Content,
+        ctx: WorkflowContext,
+    ) -> None:
+        del original_request, response, ctx
+
+
 class ConversationHistoryCapturingExecutor(Executor):
     """Executor that captures the received conversation history for verification."""
 
@@ -304,6 +325,17 @@ class TestWorkflowAgent:
         pending_requests = await workflow._runner_context.get_pending_request_info_events()
         assert len(pending_requests) == 0
 
+    async def test_oauth_consent_request_remains_specialized_content(self) -> None:
+        """Workflow agents expose OAuth consent directly instead of wrapping it as a function call."""
+        workflow = WorkflowBuilder(start_executor=OAuthConsentRequestingExecutor(id="oauth")).build()
+        agent = workflow.as_agent(name="OAuth Workflow Agent")
+
+        response = await agent.run("Connect my account")
+
+        [request] = response.user_input_requests
+        assert request.type == "oauth_consent_request"
+        assert request.consent_link == "https://example.com/consent"
+
     def test_request_info_dataclass_arguments_are_serialized_when_content_is_created(self) -> None:
         """Test WorkflowAgent prepares request_info arguments before observability captures messages."""
         executor = SimpleExecutor(id="executor1", response_text="Response")
@@ -334,6 +366,32 @@ class TestWorkflowAgent:
         assert deserialized_args.request_event.type == "request_info"
         assert deserialized_args.request_event.data == HandoffRequest(target_agent="helper", reason="overflow")
         assert deserialized_args.request_event.response_type is str
+
+    def test_request_info_function_args_from_dict_accepts_explicit_allowed_types(self) -> None:
+        """Envelope reconstruction forwards exact trusted custom types."""
+
+        @dataclass
+        class ExplicitRequest:
+            prompt: str
+
+        serialized_name = f"{ExplicitRequest.__module__}.{ExplicitRequest.__qualname__}"
+        args = WorkflowAgent.RequestInfoFunctionArgs.from_dict(
+            {
+                "request_id": "request-123",
+                "request_event": {
+                    "type": "request_info",
+                    "data": ExplicitRequest(prompt="Approve?"),
+                    "request_id": "request-123",
+                    "source_executor_id": "review_gateway",
+                    "request_type": serialized_name,
+                    "response_type": "builtins.bool",
+                },
+            },
+            allowed_types={serialized_name: ExplicitRequest},
+        )
+
+        assert type(args.request_event.data) is ExplicitRequest
+        assert args.request_event.response_type is bool
 
     def test_process_request_info_event_passes_through_function_approval_request(self) -> None:
         """If the event data is already a function approval request, it is forwarded unchanged.

@@ -64,7 +64,18 @@ class WorkflowAgent(BaseAgent):
             return {"request_id": self.request_id, "request_event": self.request_event.to_dict()}
 
         @classmethod
-        def from_dict(cls, payload: dict[str, Any]) -> WorkflowAgent.RequestInfoFunctionArgs:
+        def from_dict(
+            cls,
+            payload: dict[str, Any],
+            *,
+            allowed_types: Mapping[str, type[Any]] | None = None,
+        ) -> WorkflowAgent.RequestInfoFunctionArgs:
+            """Create request-info function arguments from a dictionary.
+
+            Args:
+                payload: Serialized request-info function arguments.
+                allowed_types: Optional exact mapping of serialized names to trusted custom types.
+            """
             if "request_id" not in payload or "request_event" not in payload:
                 raise ValueError(
                     "Invalid payload for RequestInfoFunctionArgs. 'request_id' and 'request_event' are required."
@@ -74,7 +85,10 @@ class WorkflowAgent(BaseAgent):
 
             return cls(
                 request_id=payload.get("request_id", ""),
-                request_event=WorkflowEvent.from_dict(payload.get("request_event", {})),
+                request_event=WorkflowEvent.from_dict(
+                    payload.get("request_event", {}),
+                    allowed_types=allowed_types,
+                ),
             )
 
     def __init__(
@@ -688,20 +702,19 @@ class WorkflowAgent(BaseAgent):
         self,
         event: WorkflowEvent[Any],
     ) -> Content:
-        """Convert a request_info event to FunctionApprovalRequestContent.
+        """Convert a request_info event to caller-facing content.
 
         Args:
             event: A WorkflowEvent with type='request_info'.
 
         Returns:
-            A content object representing the request info. The content can be a `function_approval_request`
-            or a `function_call` depending on the structure of the event data.
+            Specialized user-input request content unchanged, or a `function_call` envelope for generic requests.
 
         Note:
-            If the event data is already a FunctionApprovalRequestContent, it will be returned as-is.
+            Text requests use the function-call envelope so callers can reply with a matching function result.
         """
-        if isinstance(event.data, Content) and event.data.user_input_request:
-            # Return the event data as-is if it's already a properly formed FunctionApprovalRequestContent
+        if isinstance(event.data, Content) and event.data.user_input_request and event.data.type != "text":
+            # Preserve specialized requests that callers already understand how to present.
             return event.data
 
         request_id = event.request_id

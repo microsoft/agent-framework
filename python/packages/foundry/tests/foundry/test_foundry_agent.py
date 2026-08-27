@@ -18,6 +18,7 @@ from agent_framework import (
     Agent,
     AgentExecutor,
     AgentResponse,
+    AgentResponseUpdate,
     AgentSession,
     ChatContext,
     ChatMiddleware,
@@ -30,6 +31,8 @@ from agent_framework import (
     WorkflowBuilder,
     tool,
 )
+from agent_framework.foundry import FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY
+from agent_framework_ag_ui import AgentFrameworkAgent, InMemoryAGUIThreadSnapshotStore
 from agent_framework_openai._chat_client import RawOpenAIChatClient
 from agent_framework_openai._feature_usage import FeatureIndex as OpenAIFeatureIndex
 from azure.ai.projects import models as projects_models
@@ -537,6 +540,33 @@ async def test_raw_foundry_agent_chat_client_prepare_options_no_tool_warning_whe
     assert not any("cannot be sent when an agent is specified" in record.message for record in caplog.records)
 
 
+async def test_raw_foundry_agent_chat_client_prepare_options_warns_for_deprecated_isolation_key() -> None:
+    """Test that isolation_key remains accepted as a deprecated no-op."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    with (
+        patch(
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
+            new_callable=AsyncMock,
+            return_value={"model": "gpt-4.1"},
+        ) as mock_prepare_options,
+        pytest.warns(DeprecationWarning, match="isolation_key.*no longer has any effect"),
+    ):
+        await client._prepare_options(
+            messages=[Message(role="user", contents="hi")],
+            options={"isolation_key": "tenant-123"},
+        )
+
+    assert mock_prepare_options.await_args
+    assert "isolation_key" not in mock_prepare_options.await_args.args[1]
+
+
 async def test_raw_foundry_agent_chat_client_prepare_options_strips_model_for_hosted_session() -> None:
     """Test that model is stripped when using a hosted agent session (not a PromptAgent)."""
 
@@ -555,15 +585,19 @@ async def test_raw_foundry_agent_chat_client_prepare_options_strips_model_for_ho
         return_value={
             "model": "gpt-4.1",
             "previous_response_id": "resp_abc",
+            "extra_body": {"agent_session_id": "agent-session-123"},
         },
     ):
         result = await client._prepare_options(
             messages=[Message(role="user", contents="hi")],
-            options={"conversation_id": "agent-session-123"},
+            options={
+                "conversation_id": "caresp_123",
+                "extra_body": {"agent_session_id": "agent-session-123"},
+            },
         )
 
     assert "model" not in result
-    assert "previous_response_id" not in result
+    assert result["previous_response_id"] == "resp_abc"
     assert result["extra_body"]["agent_session_id"] == "agent-session-123"
     assert result["extra_body"]["agent_reference"] == {"name": "test-agent", "type": "agent_reference"}
 
@@ -745,8 +779,8 @@ async def test_raw_foundry_agent_chat_client_prepare_options_preserves_model_for
     assert "extra_body" not in result or "agent_session_id" not in result.get("extra_body", {})
 
 
-async def test_raw_foundry_agent_chat_client_prepare_options_maps_agent_session_id_to_extra_body() -> None:
-    """Test that service_session_id is forwarded as agent_session_id for hosted sessions."""
+async def test_raw_foundry_agent_chat_client_prepare_options_preserves_both_session_ids() -> None:
+    """Test that response continuation and hosted-agent session IDs are both forwarded."""
 
     mock_project = MagicMock()
     mock_openai = MagicMock()
@@ -761,13 +795,16 @@ async def test_raw_foundry_agent_chat_client_prepare_options_maps_agent_session_
         "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
         new_callable=AsyncMock,
         return_value={
-            "extra_body": {"custom": "value"},
-            "previous_response_id": "should-be-removed",
+            "extra_body": {"custom": "value", "agent_session_id": "agent-session-123"},
+            "previous_response_id": "caresp_123",
         },
     ):
         result = await client._prepare_options(
             messages=[Message(role="user", contents="hi")],
-            options={"conversation_id": "agent-session-123", "isolation_key": "iso-key"},
+            options={
+                "conversation_id": "caresp_123",
+                "extra_body": {"agent_session_id": "agent-session-123"},
+            },
         )
 
     assert result["extra_body"] == {
@@ -775,13 +812,11 @@ async def test_raw_foundry_agent_chat_client_prepare_options_maps_agent_session_
         "agent_session_id": "agent-session-123",
         "agent_reference": {"name": "test-agent", "type": "agent_reference"},
     }
-    assert "previous_response_id" not in result
-    assert "conversation" not in result
-    assert "isolation_key" not in result
+    assert result["previous_response_id"] == "caresp_123"
 
 
-def test_raw_foundry_agent_chat_client_parse_response_suppresses_conversation_id_for_agent_sessions() -> None:
-    """Test that agent-session continuations do not overwrite session.service_session_id."""
+def test_raw_foundry_agent_chat_client_parse_response_preserves_conversation_and_agent_session_ids() -> None:
+    """Test that response continuation and hosted-agent session IDs remain separate."""
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
@@ -791,21 +826,23 @@ def test_raw_foundry_agent_chat_client_parse_response_suppresses_conversation_id
         agent_name="test-agent",
     )
 
-    parsed = ChatResponse(conversation_id="resp_123")
+    parsed = ChatResponse(conversation_id="caresp_123")
+    response = SimpleNamespace(agent_session_id="agent-session-123")
     with patch(
         "agent_framework_openai._chat_client.RawOpenAIChatClient._parse_response_from_openai",
         return_value=parsed,
     ):
         result = client._parse_response_from_openai(
-            response=MagicMock(),
-            options={"conversation_id": "agent-session-123"},
+            response=response,
+            options={},
         )
 
-    assert result.conversation_id is None
+    assert result.conversation_id == "caresp_123"
+    assert result.additional_properties["agent_session_id"] == "agent-session-123"
 
 
-def test_raw_foundry_agent_chat_client_parse_chunk_suppresses_conversation_id_for_agent_sessions() -> None:
-    """Test that agent-session stream updates do not overwrite session.service_session_id."""
+def test_raw_foundry_agent_chat_client_parse_chunk_preserves_conversation_and_agent_session_ids() -> None:
+    """Test that streaming continuation and hosted-agent session IDs remain separate."""
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
@@ -815,18 +852,23 @@ def test_raw_foundry_agent_chat_client_parse_chunk_suppresses_conversation_id_fo
         agent_name="test-agent",
     )
 
-    parsed = ChatResponseUpdate(conversation_id="resp_123")
+    parsed = ChatResponseUpdate(conversation_id="caresp_123")
     with patch(
         "agent_framework_openai._chat_client.RawOpenAIChatClient._parse_chunk_from_openai",
         return_value=parsed,
     ):
         result = client._parse_chunk_from_openai(
-            event=MagicMock(type="response.output_text.delta"),
-            options={"conversation_id": "agent-session-123"},
+            event=SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(agent_session_id="agent-session-123"),
+            ),
+            options={},
             function_call_ids={},
         )
 
-    assert result.conversation_id is None
+    assert result.conversation_id == "caresp_123"
+    assert result.additional_properties
+    assert result.additional_properties["agent_session_id"] == "agent-session-123"
 
 
 def test_raw_foundry_agent_chat_client_check_model_presence_is_noop() -> None:
@@ -1051,25 +1093,18 @@ def test_raw_foundry_agent_init_with_function_tools() -> None:
     assert agent.default_options.get("tools") is not None
 
 
-async def test_raw_foundry_agent_prepare_run_context_creates_service_session_from_isolation_key() -> None:
-    """Test that RawFoundryAgent lazily creates a hosted session and stores it on service_session_id."""
+async def test_raw_foundry_agent_prepare_run_context_injects_agent_session_id_from_state() -> None:
+    """Test that hosted-agent session state is sent separately from response continuation."""
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
-    mock_project.agents = SimpleNamespace()
-    mock_project.beta = SimpleNamespace(
-        agents=SimpleNamespace(
-            create_session=AsyncMock(return_value=SimpleNamespace(agent_session_id="agent-session-123"))
-        )
-    )
-
     agent = RawFoundryAgent(
         project_client=mock_project,
         agent_name="test-agent",
-        agent_version="1.0",
-        allow_preview=True,
+        default_options={"extra_body": {"default": "value"}},
     )
-    session = AgentSession()
+    session = AgentSession(service_session_id="caresp_123")
+    session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = "agent-session-123"
 
     with patch(
         "agent_framework._agents.RawAgent._prepare_run_context",
@@ -1079,7 +1114,7 @@ async def test_raw_foundry_agent_prepare_run_context_creates_service_session_fro
             messages="hi",
             session=session,
             tools=None,
-            options={"isolation_key": "iso-key"},
+            options={"extra_body": {"runtime": "value"}},
             compaction_strategy=None,
             tokenizer=None,
             function_invocation_kwargs=None,
@@ -1087,63 +1122,76 @@ async def test_raw_foundry_agent_prepare_run_context_creates_service_session_fro
         )
 
     assert result == {"ok": True}
-    assert session.service_session_id == "agent-session-123"
-    mock_project.beta.agents.create_session.assert_awaited_once()
-    create_session_kwargs = mock_project.beta.agents.create_session.await_args.kwargs
-    assert create_session_kwargs["agent_name"] == "test-agent"
-    assert create_session_kwargs["isolation_key"] == "iso-key"
-    assert "version_indicator" in create_session_kwargs
-    mock_prepare_run_context.assert_awaited_once()
+    assert session.service_session_id == "caresp_123"
+    assert mock_prepare_run_context.await_args
+    assert mock_prepare_run_context.await_args.kwargs["options"]["extra_body"] == {
+        "default": "value",
+        "runtime": "value",
+        "agent_session_id": "agent-session-123",
+    }
 
 
-async def test_raw_foundry_agent_create_service_session_uses_stable_agents_operations() -> None:
-    """Test that hosted sessions use the stable agents operations when available."""
-
-    create_session = AsyncMock(return_value=SimpleNamespace(agent_session_id="agent-session-123"))
-    mock_project = MagicMock()
-    mock_project.get_openai_client.return_value = MagicMock()
-    mock_project.agents = SimpleNamespace(create_session=create_session)
-
-    agent = RawFoundryAgent(
-        project_client=mock_project,
-        agent_name="test-agent",
-        agent_version="1.0",
-        allow_preview=True,
-    )
-
-    result = await agent._create_service_session_id(isolation_key="iso-key")
-
-    assert result == "agent-session-123"
-    create_session.assert_awaited_once()
-    assert create_session.await_args is not None
-    create_session_kwargs = create_session.await_args.kwargs
-    assert create_session_kwargs["agent_name"] == "test-agent"
-    assert create_session_kwargs["isolation_key"] == "iso-key"
-    assert "version_indicator" in create_session_kwargs
-
-
-async def test_raw_foundry_agent_prepare_run_context_requires_preview_for_hosted_sessions() -> None:
-    """Test that hosted-agent sessions require allow_preview=True."""
+def test_foundry_agent_updates_session_from_response_ids() -> None:
+    """Test that response and hosted-agent session IDs persist independently."""
 
     mock_project = MagicMock()
     mock_project.get_openai_client.return_value = MagicMock()
-
     agent = RawFoundryAgent(
         project_client=mock_project,
         agent_name="test-agent",
     )
+    session = AgentSession()
+    response = ChatResponse(
+        conversation_id="caresp_123",
+        additional_properties={"agent_session_id": "agent-session-123"},
+    )
 
-    with pytest.raises(RuntimeError, match="allow_preview=True"):
-        await agent._prepare_run_context(
-            messages="hi",
-            session=AgentSession(),
-            tools=None,
-            options={"isolation_key": "iso-key"},
-            compaction_strategy=None,
-            tokenizer=None,
-            function_invocation_kwargs=None,
-            client_kwargs=None,
-        )
+    agent._update_session_from_chat_response(session, response)
+
+    assert session.service_session_id == "caresp_123"
+    assert session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] == "agent-session-123"
+
+
+def test_foundry_agent_updates_session_from_streaming_agent_session_id() -> None:
+    """Test that streaming chat metadata is translated to hosted-agent session state."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+    agent = RawFoundryAgent(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+    session = AgentSession()
+    update = AgentResponseUpdate(additional_properties={"agent_session_id": "agent-session-123"})
+
+    agent._update_session_from_chat_response_update(session, update)
+
+    assert session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] == "agent-session-123"
+
+
+def test_foundry_chat_client_updates_function_loop_continuation_state() -> None:
+    """Test that a service-created agent session is reused within a function loop."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = _FoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+    session = AgentSession()
+    response = ChatResponse(
+        conversation_id="caresp_123",
+        additional_properties={"agent_session_id": "agent-session-123"},
+    )
+    options: dict[str, Any] = {}
+
+    client._update_function_invocation_continuation_state({}, response, session=session, options=options)
+
+    assert session.service_session_id == "caresp_123"
+    assert session.state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] == "agent-session-123"
+    assert options["conversation_id"] == "caresp_123"
+    assert options["extra_body"]["agent_session_id"] == "agent-session-123"
 
 
 async def test_foundry_agent_create_conversation_returns_agent_session() -> None:
@@ -1476,6 +1524,98 @@ async def test_foundry_agent_basic_run() -> None:
     assert isinstance(response, AgentResponse)
     assert response.text is not None
     assert "response test" in response.text.lower()
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_foundry_agent_integration_tests_disabled
+@pytest.mark.parametrize("continuation_mode", ["conversation", "native_agui"])
+async def test_foundry_agent_ag_ui_service_session_continues_without_history_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    continuation_mode: str,
+) -> None:
+    """AG-UI supports Foundry conversation and response continuation without history replay."""
+    marker = f"AF-AGUI-{uuid4().hex}"
+    scope = f"foundry-{continuation_mode}-session-{uuid4().hex}"
+    store = InMemoryAGUIThreadSnapshotStore()
+
+    async with FoundryAgent(credential=cast(Any, AzureCliCredential()), allow_preview=True) as foundry_agent:
+        if continuation_mode == "conversation":
+            conversation = await foundry_agent.create_conversation()
+            thread_id = cast(str, conversation.service_session_id)
+        else:
+            thread_id = str(uuid4())
+        provider_inputs: list[list[Message]] = []
+        provider_session_ids: list[Any] = []
+        original_run = foundry_agent.run
+
+        def capture_provider_input(messages: Any = None, **kwargs: Any) -> Any:
+            provider_inputs.append(list(messages) if isinstance(messages, list) else [messages])
+            session = kwargs.get("session")
+            provider_session_ids.append(session.service_session_id if session is not None else None)
+            return original_run(messages, **kwargs)
+
+        monkeypatch.setattr(foundry_agent, "run", capture_provider_input)
+        runner = AgentFrameworkAgent(
+            agent=foundry_agent,
+            use_service_session=True,
+            service_session_id_from_thread_id=continuation_mode == "conversation",
+            snapshot_store=store,
+        )
+        first_events = [
+            event
+            async for event in runner.run({
+                "threadId": thread_id,
+                "runId": f"foundry-ag-ui-{continuation_mode}-first",
+                "__ag_ui_snapshot_scope": scope,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": f"Remember this exact marker for my next message: {marker}",
+                    }
+                ],
+            })
+        ]
+        first_snapshot = next(
+            event for event in reversed(first_events) if getattr(event, "type", None) == "MESSAGES_SNAPSHOT"
+        )
+        prior_messages = cast(list[dict[str, Any]], first_snapshot.model_dump(by_alias=True)["messages"])
+        follow_up = "Return only the exact marker I asked you to remember."
+
+        second_events = [
+            event
+            async for event in runner.run({
+                "threadId": thread_id,
+                "runId": f"foundry-ag-ui-{continuation_mode}-second",
+                "__ag_ui_snapshot_scope": scope,
+                "messages": [
+                    *prior_messages,
+                    {"role": "user", "content": follow_up},
+                ],
+            })
+        ]
+
+    assert not [event for event in second_events if getattr(event, "type", None) == "RUN_ERROR"]
+    assert len(provider_inputs) == 2
+    assert [(message.role, message.text) for message in provider_inputs[1]] == [("user", follow_up)]
+    if continuation_mode == "conversation":
+        assert provider_session_ids == [thread_id, thread_id]
+    else:
+        assert all(isinstance(service_session_id, str) for service_session_id in provider_session_ids)
+        assert provider_session_ids[0] == provider_session_ids[1]
+        assert provider_session_ids[0].startswith("conv_")
+        assert provider_session_ids[0] != thread_id
+    response_text = "".join(
+        str(getattr(event, "delta", ""))
+        for event in second_events
+        if getattr(event, "type", None) == "TEXT_MESSAGE_CONTENT"
+    )
+    assert marker in response_text
+    stored = await store.get(scope=scope, thread_id=thread_id)
+    assert stored is not None
+    assert sum(message.get("role") == "user" for message in stored.messages) == 2
+    assert sum(message.get("role") == "assistant" for message in stored.messages) >= 2
+    assert marker in json.dumps(stored.messages)
 
 
 @pytest.mark.flaky

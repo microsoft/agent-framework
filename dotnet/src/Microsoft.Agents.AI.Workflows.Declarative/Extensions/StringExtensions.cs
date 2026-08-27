@@ -2,29 +2,40 @@
 
 using System.Collections.Generic;
 using System.Globalization;
-using System.Text.RegularExpressions;
 using Microsoft.PowerFx.Types;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 
-internal static partial class StringExtensions
+internal static class StringExtensions
 {
-#if NET
-    [GeneratedRegex(@"^```(?:\w*)\s*([\s\S]*?)\s*```$", RegexOptions.Multiline)]
-    private static partial Regex TrimJsonDelimiterRegex();
-#else
-    private static Regex TrimJsonDelimiterRegex() => s_trimJsonDelimiterRegex;
-    private static readonly Regex s_trimJsonDelimiterRegex = new(@"^```(?:\w*)\s*([\s\S]*?)\s*```$", RegexOptions.Compiled | RegexOptions.Multiline);
-#endif
+    private const string JsonDelimiter = "```";
 
     public static string TrimJsonDelimiter(this string value)
     {
         value = value.Trim();
 
-        Match match = TrimJsonDelimiterRegex().Match(value);
-        return match.Success ?
-            match.Groups[1].Value.Trim() :
-            value;
+        // Scan linearly so malformed fenced input cannot trigger regex backtracking.
+        int openingDelimiterIndex = FindOpeningDelimiter(value);
+        if (openingDelimiterIndex < 0)
+        {
+            return value;
+        }
+
+        int contentIndex = openingDelimiterIndex + JsonDelimiter.Length;
+        while (contentIndex < value.Length && IsWordCharacter(value[contentIndex]))
+        {
+            contentIndex++;
+        }
+
+        while (contentIndex < value.Length && char.IsWhiteSpace(value[contentIndex]))
+        {
+            contentIndex++;
+        }
+
+        int closingDelimiterIndex = FindClosingDelimiter(value, contentIndex);
+        return closingDelimiterIndex < 0 ?
+            value :
+            value.Substring(contentIndex, closingDelimiterIndex - contentIndex).Trim();
     }
 
     public static FormulaValue ToFormula(this string? value) =>
@@ -33,6 +44,54 @@ internal static partial class StringExtensions
     public static string FormatType(this string identifier) => FormatIdentifier(identifier);
 
     public static string FormatName(this string identifier) => FormatIdentifier(identifier, skipFirst: true);
+
+    private static int FindOpeningDelimiter(string value)
+    {
+        for (int index = 0; index <= value.Length - JsonDelimiter.Length; index++)
+        {
+            if ((index == 0 || value[index - 1] == '\n') && IsDelimiterAt(value, index))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int FindClosingDelimiter(string value, int startIndex)
+    {
+        for (int index = startIndex; index <= value.Length - JsonDelimiter.Length; index++)
+        {
+            if (IsDelimiterAt(value, index) && IsLineEnd(value, index + JsonDelimiter.Length))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool IsDelimiterAt(string value, int index) =>
+        value[index] == '`' &&
+        value[index + 1] == '`' &&
+        value[index + 2] == '`';
+
+    private static bool IsLineEnd(string value, int index) =>
+        index == value.Length ||
+        value[index] == '\n' ||
+        (value[index] == '\r' && index + 1 < value.Length && value[index + 1] == '\n');
+
+    // Keep language qualifier handling compatible with .NET regex \w semantics.
+    private static bool IsWordCharacter(char value) =>
+        char.GetUnicodeCategory(value) is
+            UnicodeCategory.UppercaseLetter or
+            UnicodeCategory.LowercaseLetter or
+            UnicodeCategory.TitlecaseLetter or
+            UnicodeCategory.ModifierLetter or
+            UnicodeCategory.OtherLetter or
+            UnicodeCategory.NonSpacingMark or
+            UnicodeCategory.DecimalDigitNumber or
+            UnicodeCategory.ConnectorPunctuation;
 
     private static string FormatIdentifier(string identifier, bool skipFirst = false)
     {

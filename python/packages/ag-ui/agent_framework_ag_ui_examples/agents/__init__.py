@@ -2,6 +2,13 @@
 
 """Example agents for AG-UI demonstration."""
 
+from .a2ui_agents import (
+    A2UI_DEMO_CONFIG,
+    a2ui_advanced_agent,
+    a2ui_dynamic_schema_agent,
+    a2ui_fixed_schema_agent,
+    a2ui_recovery_agent,
+)
 from .document_writer_agent import document_writer_agent
 from .human_in_the_loop_agent import human_in_the_loop_agent
 from .recipe_agent import recipe_agent
@@ -14,6 +21,11 @@ from .ui_generator_agent import ui_generator_agent
 from .weather_agent import weather_agent
 
 __all__ = [
+    "A2UI_DEMO_CONFIG",
+    "a2ui_advanced_agent",
+    "a2ui_dynamic_schema_agent",
+    "a2ui_fixed_schema_agent",
+    "a2ui_recovery_agent",
     "document_writer_agent",
     "human_in_the_loop_agent",
     "recipe_agent",

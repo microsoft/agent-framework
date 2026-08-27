@@ -74,7 +74,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
     {
         this._aiProjectClient = aiProjectClient;
         this._metadata = new ChatClientMetadata("microsoft.foundry", defaultModelId: modelId);
-        TryRegisterAgentFrameworkUserAgentPolicy(this.InnerClient);
+        _ = FoundryUserAgentPolicies.Registration.TryRegister(this.InnerClient);
         TryRegisterServedModelPolicy(this.InnerClient);
     }
 
@@ -93,7 +93,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
         this._metadata = new ChatClientMetadata("microsoft.foundry", defaultModelId: defaultModelId);
         this._baseChatOptions = baseChatOptions;
         this.AgentName = agentReference.Name;
-        TryRegisterAgentFrameworkUserAgentPolicy(this.InnerClient);
+        _ = FoundryUserAgentPolicies.Registration.TryRegister(this.InnerClient);
         TryRegisterServedModelPolicy(this.InnerClient);
     }
 
@@ -159,7 +159,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
         this._aiProjectClient = inner.AIProjectClient;
         this.AgentName = inner.AgentName;
         this._metadata = new ChatClientMetadata("microsoft.foundry");
-        TryRegisterAgentFrameworkUserAgentPolicy(this.InnerClient);
+        _ = FoundryUserAgentPolicies.Registration.TryRegister(this.InnerClient);
         TryRegisterServedModelPolicy(this.InnerClient);
     }
 
@@ -211,6 +211,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
         var effectiveOptions = this._agentReference is not null
             ? this.GetAgentEnabledChatOptions(options)
             : options;
+        MarkRequestFeatures(effectiveOptions);
 
         var box = new StrongBox<string?>(null);
         var previous = ServedModelScope.Current;
@@ -239,6 +240,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
         var effectiveOptions = this._agentReference is not null
             ? this.GetAgentEnabledChatOptions(options)
             : options;
+        MarkRequestFeatures(effectiveOptions);
 
         var box = new StrongBox<string?>(null);
         var previous = ServedModelScope.Current;
@@ -288,6 +290,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
         // Use the Stream overload to honor cancellation; the (string, purpose) overload has no
         // CancellationToken parameter in the OpenAI SDK.
         using var stream = File.OpenRead(filePath);
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryChatClient);
         var result = await fileClient.UploadFileAsync(stream, Path.GetFileName(filePath), purpose, cancellationToken).ConfigureAwait(false);
         return result.Value;
     }
@@ -301,6 +304,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
     {
         Throw.IfNullOrWhitespace(fileId);
         var fileClient = this.GetOpenAIFileClient();
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryChatClient);
         var result = await fileClient.DeleteFileAsync(fileId, cancellationToken).ConfigureAwait(false);
         return result.Value;
     }
@@ -373,6 +377,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
         }
 
         var vectorStoreClient = this.GetVectorStoreClient();
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryChatClient);
         var createResult = await vectorStoreClient.CreateVectorStoreAsync(options, cancellationToken).ConfigureAwait(false);
         var created = createResult.Value;
 
@@ -445,6 +450,7 @@ public sealed class FoundryChatClient : DelegatingChatClient
     {
         Throw.IfNullOrWhitespace(vectorStoreId);
         var vectorStoreClient = this.GetVectorStoreClient();
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryChatClient);
         var result = await vectorStoreClient.DeleteVectorStoreAsync(vectorStoreId, cancellationToken).ConfigureAwait(false);
         return result.Value;
     }
@@ -464,6 +470,25 @@ public sealed class FoundryChatClient : DelegatingChatClient
     }
 
     #endregion
+
+    private static void MarkRequestFeatures(ChatOptions? options)
+    {
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryChatClient);
+
+        if (options?.Tools is null)
+        {
+            return;
+        }
+
+        foreach (AITool tool in options.Tools)
+        {
+            if (tool is HostedMcpToolboxAITool)
+            {
+                FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryToolbox);
+                return;
+            }
+        }
+    }
 
     /// <summary>
     /// Parses an agent endpoint URI of shape
@@ -644,24 +669,6 @@ public sealed class FoundryChatClient : DelegatingChatClient
 
         // Reuse the caller's AIProjectClient verbatim — no new pipeline is materialized.
         return new AgentEndpointInner(chatClient, aiProjectClient, agentName);
-    }
-
-    /// <summary>Best-effort registration of <see cref="AgentFrameworkUserAgentPolicy"/> via the MEAI <see cref="OpenAIRequestPolicies"/> hook with at-most-once dedup per pipeline.</summary>
-    private static void TryRegisterAgentFrameworkUserAgentPolicy(IChatClient? innerClient)
-    {
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-        if (innerClient?.GetService<OpenAIRequestPolicies>() is { } policies)
-        {
-            // OpenAIRequestPoliciesReflection.AddPolicyIfMissing performs a check-then-add against
-            // the private _entries collection on the OpenAIRequestPolicies instance, so the
-            // policy is registered at most once even when many FoundryChatClient instances share
-            // the same underlying chat client.
-            OpenAIRequestPoliciesReflection.AddPolicyIfMissing(
-                policies,
-                AgentFrameworkUserAgentPolicy.Instance,
-                PipelinePosition.PerCall);
-        }
-#pragma warning restore MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
     }
 
     /// <summary>

@@ -13,11 +13,11 @@ namespace Microsoft.Agents.AI.Hosting;
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers a <see cref="SessionIsolationKeyProvider"/> that uses claims from the current user's identity
-    /// to generate session isolation keys.
+    /// Registers an <see cref="AgentIsolationKeyProvider"/> that uses claims from the current user's identity
+    /// to generate isolation keys for agent-owned resources.
     /// </summary>
     /// <param name="services">The <see cref="IServiceCollection"/> to add services to.</param>
-    /// <param name="options"> Optional configuration for the claims-based session isolation key provider.</param>
+    /// <param name="options">Optional configuration for the claims-based isolation key provider.</param>
     /// <returns>The <see cref="IServiceCollection"/> so that additional calls can be chained.</returns>
     /// <remarks>
     /// <para>
@@ -31,24 +31,24 @@ public static class ServiceCollectionExtensions
     /// by the default JWT inbound claim mapping. Authentication schemes that do not project a unique
     /// identifier onto <see cref="ClaimTypes.NameIdentifier"/> (or hosts that require a different claim
     /// such as Entra's <c>oid</c>) should override
-    /// <see cref="ClaimsIdentitySessionIsolationKeyProviderOptions.ClaimType"/>; otherwise the key may be
-    /// absent, which causes strict-mode session stores to fail.
+    /// <see cref="ClaimsIdentityAgentIsolationKeyProviderOptions.ClaimType"/>; otherwise the key may be
+    /// absent, which causes strict-mode stores to fail.
     /// </para>
     /// <para>
     /// <strong>Security warning:</strong> If you override
-    /// <see cref="ClaimsIdentitySessionIsolationKeyProviderOptions.ClaimType"/>, the chosen claim must
+    /// <see cref="ClaimsIdentityAgentIsolationKeyProviderOptions.ClaimType"/>, the chosen claim must
     /// uniquely identify the principal within the served population. Display names, usernames, email
     /// aliases, and other mutable or non-unique claims are <strong>unsafe</strong> isolation keys unless
     /// the host can prove their uniqueness across all callers, because distinct principals that share the
-    /// same claim value would receive the same isolation key and could access one another's sessions.
+    /// same claim value would receive the same isolation key and could access one another's persisted data.
     /// </para>
     /// </remarks>
-    public static IServiceCollection UseClaimsBasedSessionIsolation(
+    public static IServiceCollection UseClaimsBasedAgentIsolation(
         this IServiceCollection services,
-        ClaimsIdentitySessionIsolationKeyProviderOptions? options = null)
+        ClaimsIdentityAgentIsolationKeyProviderOptions? options = null)
     {
         options ??= new();
-        ServiceDescriptor descriptor = new(typeof(SessionIsolationKeyProvider), CreateIsolationKeyProvider, ServiceLifetime.Singleton);
+        ServiceDescriptor descriptor = new(typeof(AgentIsolationKeyProvider), CreateIsolationKeyProvider, ServiceLifetime.Singleton);
         services.Add(descriptor);
 
         return services;
@@ -57,7 +57,7 @@ public static class ServiceCollectionExtensions
         {
             IHttpContextAccessor contextAccessor = serviceProvider.GetRequiredService<IHttpContextAccessor>();
 
-            return new ClaimsIdentitySessionIsolationKeyProvider(contextAccessor, options);
+            return new ClaimsIdentityAgentIsolationKeyProvider(contextAccessor, options);
         }
     }
 }

@@ -46,7 +46,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     public void RequiresInnerStore()
     {
         // Arrange
-        var provider = new TestSessionIsolationKeyProvider(TestIsolationKey);
+        var provider = new TestAgentIsolationKeyProvider(TestIsolationKey);
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>("innerStore", () =>
@@ -60,7 +60,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     public void UsesDefaultOptionsWhenNull()
     {
         // Arrange
-        var provider = new TestSessionIsolationKeyProvider(TestIsolationKey);
+        var provider = new TestAgentIsolationKeyProvider(TestIsolationKey);
 
         // Act & Assert - should not throw
         var store = new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, provider, options: null);
@@ -78,7 +78,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     public async Task GetSessionAsyncScopesConversationIdWithKeyAsync()
     {
         // Arrange
-        var provider = new TestSessionIsolationKeyProvider(TestIsolationKey);
+        var provider = new TestAgentIsolationKeyProvider(TestIsolationKey);
         var store = new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, provider);
 
         // Act
@@ -100,7 +100,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     public async Task GetSessionAsyncThrowsWhenKeyNullInStrictModeAsync()
     {
         // Arrange
-        var provider = new TestSessionIsolationKeyProvider(null);
+        var provider = new TestAgentIsolationKeyProvider(null);
         var store = new IsolationKeyScopedAgentSessionStore(
             this._innerStoreMock.Object,
             provider,
@@ -110,7 +110,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await store.GetSessionAsync(this._agentMock.Object, TestConversationId));
 
-        Assert.Contains("Session isolation key is required", exception.Message);
+        Assert.Contains("Agent isolation key is required", exception.Message);
     }
 
     /// <summary>
@@ -120,7 +120,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     public async Task GetSessionAsyncDoesNotThrowWhenKeyNullInNonStrictModeAsync()
     {
         // Arrange
-        var provider = new TestSessionIsolationKeyProvider(null);
+        var provider = new TestAgentIsolationKeyProvider(null);
         var store = new IsolationKeyScopedAgentSessionStore(
             this._innerStoreMock.Object,
             provider,
@@ -145,7 +145,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     public async Task GetSessionAsyncReturnsSessionFromInnerStoreAsync()
     {
         // Arrange
-        var provider = new TestSessionIsolationKeyProvider(TestIsolationKey);
+        var provider = new TestAgentIsolationKeyProvider(TestIsolationKey);
         var store = new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, provider);
 
         // Act
@@ -166,7 +166,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     public async Task SaveSessionAsyncScopesConversationIdWithKeyAsync()
     {
         // Arrange
-        var provider = new TestSessionIsolationKeyProvider(TestIsolationKey);
+        var provider = new TestAgentIsolationKeyProvider(TestIsolationKey);
         var store = new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, provider);
         var sessionToSave = new TestAgentSession();
 
@@ -190,7 +190,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     public async Task SaveSessionAsyncThrowsWhenKeyNullInStrictModeAsync()
     {
         // Arrange
-        var provider = new TestSessionIsolationKeyProvider(null);
+        var provider = new TestAgentIsolationKeyProvider(null);
         var store = new IsolationKeyScopedAgentSessionStore(
             this._innerStoreMock.Object,
             provider,
@@ -201,7 +201,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await store.SaveSessionAsync(this._agentMock.Object, TestConversationId, sessionToSave));
 
-        Assert.Contains("Session isolation key is required", exception.Message);
+        Assert.Contains("Agent isolation key is required", exception.Message);
     }
 
     /// <summary>
@@ -211,7 +211,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     public async Task SaveSessionAsyncDoesNotThrowWhenKeyNullInNonStrictModeAsync()
     {
         // Arrange
-        var provider = new TestSessionIsolationKeyProvider(null);
+        var provider = new TestAgentIsolationKeyProvider(null);
         var store = new IsolationKeyScopedAgentSessionStore(
             this._innerStoreMock.Object,
             provider,
@@ -243,7 +243,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     {
         // Arrange
         const string KeyWithColon = "key:with:colons";
-        var provider = new TestSessionIsolationKeyProvider(KeyWithColon);
+        var provider = new TestAgentIsolationKeyProvider(KeyWithColon);
         var store = new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, provider);
 
         // Act
@@ -266,7 +266,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     {
         // Arrange
         const string KeyWithBackslash = @"domain\key";
-        var provider = new TestSessionIsolationKeyProvider(KeyWithBackslash);
+        var provider = new TestAgentIsolationKeyProvider(KeyWithBackslash);
         var store = new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, provider);
 
         // Act
@@ -289,7 +289,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     {
         // Arrange
         const string KeyWithBoth = @"domain\key:role";
-        var provider = new TestSessionIsolationKeyProvider(KeyWithBoth);
+        var provider = new TestAgentIsolationKeyProvider(KeyWithBoth);
         var store = new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, provider);
 
         // Act
@@ -336,12 +336,12 @@ public class IsolationKeyScopedAgentSessionStoreTests
             .ReturnsAsync(this._testSession);
 
         // Act - Key 1
-        var provider1 = new TestSessionIsolationKeyProvider(Key1);
+        var provider1 = new TestAgentIsolationKeyProvider(Key1);
         var store1 = new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, provider1);
         await store1.GetSessionAsync(this._agentMock.Object, TestConversationId);
 
         // Act - Key 2
-        var provider2 = new TestSessionIsolationKeyProvider(Key2);
+        var provider2 = new TestAgentIsolationKeyProvider(Key2);
         var store2 = new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, provider2);
         await store2.GetSessionAsync(this._agentMock.Object, TestConversationId);
 
@@ -362,7 +362,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     public void GetServiceReturnsIsolationKeyScopedAgentSessionStore()
     {
         // Arrange
-        var provider = new TestSessionIsolationKeyProvider(TestIsolationKey);
+        var provider = new TestAgentIsolationKeyProvider(TestIsolationKey);
         var store = new IsolationKeyScopedAgentSessionStore(this._innerStoreMock.Object, provider);
 
         // Act
@@ -380,7 +380,7 @@ public class IsolationKeyScopedAgentSessionStoreTests
     {
         // Arrange
         var concreteInnerStore = new ConcreteAgentSessionStore();
-        var provider = new TestSessionIsolationKeyProvider(TestIsolationKey);
+        var provider = new TestAgentIsolationKeyProvider(TestIsolationKey);
         var store = new IsolationKeyScopedAgentSessionStore(concreteInnerStore, provider);
 
         // Act
@@ -395,18 +395,18 @@ public class IsolationKeyScopedAgentSessionStoreTests
     #region Helper Classes
 
     /// <summary>
-    /// Test implementation of <see cref="SessionIsolationKeyProvider"/> for testing purposes.
+    /// Test implementation of <see cref="AgentIsolationKeyProvider"/> for testing purposes.
     /// </summary>
-    private sealed class TestSessionIsolationKeyProvider : SessionIsolationKeyProvider
+    private sealed class TestAgentIsolationKeyProvider : AgentIsolationKeyProvider
     {
         private readonly string? _key;
 
-        public TestSessionIsolationKeyProvider(string? key)
+        public TestAgentIsolationKeyProvider(string? key)
         {
             this._key = key;
         }
 
-        public override ValueTask<string?> GetSessionIsolationKeyAsync(CancellationToken cancellationToken = default)
+        public override ValueTask<string?> GetIsolationKeyAsync(CancellationToken cancellationToken = default)
         {
             return new ValueTask<string?>(this._key);
         }

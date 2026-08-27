@@ -1,15 +1,16 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ComponentModel;
+using AGUI.Server;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.AI;
 using OpenAI.Chat;
 using RecipeAssistant;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-builder.Services.AddHttpClient().AddLogging();
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.TypeInfoResolverChain.Add(RecipeSerializerContext.Default));
 builder.Services.AddAGUIServer();
@@ -18,9 +19,9 @@ builder.Services.AddAGUIServer();
 builder.WebHost.UseUrls("http://localhost:8888");
 
 // WARNING: When adding session persistence (e.g., WithInMemorySessionStore), or running in production,
-// make sure to also register a SessionIsolationKeyProvider to scope sessions by principal in multi-user
+// make sure to also register an AgentIsolationKeyProvider to scope sessions by principal in multi-user
 // deployments, e.g.:
-// builder.Services.UseClaimsBasedSessionIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
+// builder.Services.UseClaimsBasedAgentIsolation(new() { ClaimType = ClaimTypes.NameIdentifier });
 
 WebApplication app = builder.Build();
 
@@ -29,10 +30,32 @@ string endpoint = builder.Configuration["AZURE_OPENAI_ENDPOINT"]
 string deploymentName = builder.Configuration["AZURE_OPENAI_DEPLOYMENT_NAME"]
     ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT_NAME is not set.");
 
-// Get JsonSerializerOptions
-var jsonOptions = app.Services.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>().Value;
+// The tool returns the complete recipe. The hosting layer turns each result into a STATE_SNAPSHOT
+// event via AGUIStreamOptions.MapResultAsStateSnapshot("generate_recipe") - no protocol content by hand.
+[Description("Generate or update the shared recipe and display it to the user.")]
+static RecipeResponse GenerateRecipe(
+    [Description("The complete recipe to display.")] Recipe recipe) => new() { Recipe = recipe };
 
-// Create base agent
+AITool generateRecipe = AIFunctionFactory.Create(
+    GenerateRecipe,
+    name: "generate_recipe",
+    description: "Generate or update the shared recipe and display it to the user.",
+    RecipeSerializerContext.Default.Options);
+
+const string SharedStateSystemPrompt =
+    """
+    You are a helpful recipe assistant that maintains a shared recipe state with the user.
+
+    IMPORTANT:
+    - When the user asks you to create, change, or improve a recipe, call the `generate_recipe`
+      tool with a COMPLETE recipe: a title, skill_level, cooking_time, special_preferences, the
+      full list of ingredients (each with an icon, name and amount) and the step-by-step
+      instructions.
+    - Always include every ingredient the recipe needs, keeping any the user already added.
+    - When the user only asks a question about the recipe, answer in plain text and do NOT call the tool.
+    """;
+
+// Create the AI agent with the recipe tool.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
@@ -41,26 +64,22 @@ ChatClient chatClient = new AzureOpenAIClient(
         new DefaultAzureCredential())
     .GetChatClient(deploymentName);
 
-AIAgent baseAgent = chatClient.AsAIAgent(
-    name: "RecipeAgent",
-    instructions: """
-        You are a helpful recipe assistant. When users ask you to create or suggest a recipe,
-        respond with a complete AgentState JSON object that includes:
-        - recipe.title: The recipe name
-        - recipe.cuisine: Type of cuisine (e.g., Italian, Mexican, Japanese)
-        - recipe.ingredients: Array of ingredient strings with quantities
-        - recipe.steps: Array of cooking instruction strings
-        - recipe.prep_time_minutes: Preparation time in minutes
-        - recipe.cook_time_minutes: Cooking time in minutes
-        - recipe.skill_level: One of "beginner", "intermediate", or "advanced"
+AIAgent baseAgent = chatClient.AsAIAgent(new ChatClientAgentOptions
+{
+    Name = "RecipeAgent",
+    Description = "An agent that maintains a shared recipe state with the user.",
+    ChatOptions = new ChatOptions
+    {
+        Instructions = SharedStateSystemPrompt,
+        Tools = [generateRecipe],
+    },
+});
 
-        Always include all fields in the response. Be creative and helpful.
-        """);
+// Wrap with a thin agent that injects the client's current recipe (input side of shared state).
+AIAgent agent = new RecipeStateAgent(baseAgent);
 
-// Wrap with state management middleware
-AIAgent agent = new SharedStateAgent(baseAgent, jsonOptions.SerializerOptions);
-
-// Map the AG-UI agent endpoint
-app.MapAGUIServer("/", agent);
+// Map the AG-UI endpoint. A generate_recipe result becomes a STATE_SNAPSHOT event (output side).
+app.MapAGUIServer("/", agent)
+    .WithMetadata(new AGUIStreamOptions().MapResultAsStateSnapshot("generate_recipe"));
 
 await app.RunAsync();

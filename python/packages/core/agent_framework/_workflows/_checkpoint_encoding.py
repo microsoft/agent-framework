@@ -57,6 +57,28 @@ from ..exceptions import WorkflowCheckpointException
 
 logger = logging.getLogger("agent_framework")
 
+# Application-defined types registered for all restricted checkpoint decoders.
+_REGISTERED_CHECKPOINT_TYPE_KEYS: set[str] = set()
+
+
+def register_checkpoint_type(cls: type[Any]) -> None:
+    """Register an application type for restricted checkpoint deserialization.
+
+    Registration applies process-wide to all checkpoint storage backends that
+    use :func:`decode_checkpoint_value` with a restricted allowlist, including
+    instances created before this function is called.
+
+    Args:
+        cls: The application type to permit during checkpoint deserialization.
+
+    Raises:
+        TypeError: If ``cls`` is not a class.
+    """
+    if not isinstance(cls, type):
+        raise TypeError("Checkpoint types must be classes.")
+    _REGISTERED_CHECKPOINT_TYPE_KEYS.add(_type_to_key(cls))
+
+
 # Marker to identify pickled values in serialized JSON
 _PICKLE_MARKER = "__pickled__"
 _TYPE_MARKER = "__type__"
@@ -277,6 +299,8 @@ def decode_checkpoint_value(value: Any, *, allowed_types: frozenset[str] | None 
             data is malformed, or if a disallowed type is encountered during
             restricted deserialization.
     """
+    if allowed_types is not None:
+        allowed_types = allowed_types | _REGISTERED_CHECKPOINT_TYPE_KEYS
     return _decode(value, allowed_types=allowed_types)
 
 

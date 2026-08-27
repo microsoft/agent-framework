@@ -41,6 +41,8 @@ internal sealed class ClientHeadersAgent : DelegatingAIAgent
         AgentRunOptions? options = null,
         CancellationToken cancellationToken = default)
     {
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryAgent);
+
         var snapshot = TrySnapshot(options);
         if (snapshot is not null)
         {
@@ -62,6 +64,8 @@ internal sealed class ClientHeadersAgent : DelegatingAIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        FoundryFeatureUsage.MarkUsed(FeatureIndex.FoundryAgent);
+
         var snapshot = TrySnapshot(options);
         if (snapshot is not null)
         {

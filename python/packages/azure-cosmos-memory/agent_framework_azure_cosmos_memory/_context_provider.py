@@ -435,13 +435,17 @@ class CosmosMemoryContextProvider(ContextProvider):
         user_id = self._resolve_user_id(state, session)
         thread_id = state.get("thread_id") or session.session_id or "default"
 
+        # TODO(atty57): The toolkit renamed add_cosmos -> upsert_memory (same kwargs); accept either
+        # until the declared azure-cosmos-agent-memory floor is past the rename, then inline it.
+        write_turn = getattr(self.memory_client, "upsert_memory", None) or self.memory_client.add_cosmos
+
         try:
             # Store input messages (skip empty/whitespace-only content to avoid junk turns)
             for msg in context.input_messages:
                 if hasattr(msg, "role") and hasattr(msg, "text") and msg.text and msg.text.strip():
                     role_value = getattr(msg.role, "value", None) or str(msg.role)
                     if role_value in {"user", "assistant", "system"}:
-                        await self.memory_client.add_cosmos(
+                        await write_turn(
                             user_id=user_id,
                             thread_id=thread_id,
                             role=self._ROLE_MAP.get(role_value, role_value),
@@ -454,7 +458,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                     if hasattr(msg, "role") and hasattr(msg, "text") and msg.text and msg.text.strip():
                         role_value = getattr(msg.role, "value", None) or str(msg.role)
                         if role_value in {"user", "assistant", "system"}:
-                            await self.memory_client.add_cosmos(
+                            await write_turn(
                                 user_id=user_id,
                                 thread_id=thread_id,
                                 role=self._ROLE_MAP.get(role_value, role_value),
@@ -462,7 +466,7 @@ class CosmosMemoryContextProvider(ContextProvider):
                             )
 
             # Auto-extraction and processing:
-            # When auto_extract is True (default), add_cosmos() schedules cadence-aware background
+            # When auto_extract is True (default), the turn write schedules cadence-aware background
             # processing (fact extraction, summaries, reconciliation) based on the configured
             # thresholds (FACT_EXTRACTION_EVERY_N, DEDUP_EVERY_N, etc.), so no explicit
             # process_now() call is needed. When auto_extract is False, those thresholds were

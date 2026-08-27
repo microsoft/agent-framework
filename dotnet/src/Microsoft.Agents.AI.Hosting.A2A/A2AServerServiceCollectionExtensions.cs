@@ -37,9 +37,9 @@ public static class A2AServerServiceCollectionExtensions
     /// so when a persistent store is registered any caller who knows or guesses another
     /// caller's <c>contextId</c> or <c>taskId</c> can access that other caller's data.
     /// Hosts that serve more than one user must compose a principal dimension into the
-    /// lookup key — typically by calling <c>UseClaimsBasedSessionIsolation(...)</c> from
+    /// lookup key — typically by calling <c>UseClaimsBasedAgentIsolation(...)</c> from
     /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c> (or by registering a custom
-    /// <see cref="SessionIsolationKeyProvider"/>). When a <see cref="SessionIsolationKeyProvider"/>
+    /// <see cref="AgentIsolationKeyProvider"/>). When an <see cref="AgentIsolationKeyProvider"/>
     /// is registered, both the session store and the task store are automatically wrapped
     /// with tenant-scoped isolation. When no isolation provider is registered, behavior
     /// is unchanged — the bare identifiers are used directly, which is appropriate for
@@ -68,8 +68,8 @@ public static class A2AServerServiceCollectionExtensions
     /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
     /// for guidance on multi-user hosts (the wire <c>contextId</c> and <c>taskId</c>
     /// are chain-resume identifiers, not authorization tokens; multi-user hosts must
-    /// compose a principal dimension via <c>UseClaimsBasedSessionIsolation(...)</c> or
-    /// a custom <see cref="SessionIsolationKeyProvider"/>).
+    /// compose a principal dimension via <c>UseClaimsBasedAgentIsolation(...)</c> or
+    /// a custom <see cref="AgentIsolationKeyProvider"/>).
     /// </remarks>
     public static IHostApplicationBuilder AddA2AServer(this IHostApplicationBuilder builder, string agentName, Action<A2AServerRegistrationOptions>? configureOptions = null)
     {
@@ -94,8 +94,8 @@ public static class A2AServerServiceCollectionExtensions
     /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
     /// for guidance on multi-user hosts (the wire <c>contextId</c> and <c>taskId</c>
     /// are chain-resume identifiers, not authorization tokens; multi-user hosts must
-    /// compose a principal dimension via <c>UseClaimsBasedSessionIsolation(...)</c> or
-    /// a custom <see cref="SessionIsolationKeyProvider"/>).
+    /// compose a principal dimension via <c>UseClaimsBasedAgentIsolation(...)</c> or
+    /// a custom <see cref="AgentIsolationKeyProvider"/>).
     /// </remarks>
     public static IHostApplicationBuilder AddA2AServer(this IHostApplicationBuilder builder, AIAgent agent, Action<A2AServerRegistrationOptions>? configureOptions = null)
     {
@@ -119,8 +119,8 @@ public static class A2AServerServiceCollectionExtensions
     /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
     /// for guidance on multi-user hosts (the wire <c>contextId</c> and <c>taskId</c>
     /// are chain-resume identifiers, not authorization tokens; multi-user hosts must
-    /// compose a principal dimension via <c>UseClaimsBasedSessionIsolation(...)</c> or
-    /// a custom <see cref="SessionIsolationKeyProvider"/>).
+    /// compose a principal dimension via <c>UseClaimsBasedAgentIsolation(...)</c> or
+    /// a custom <see cref="AgentIsolationKeyProvider"/>).
     /// </remarks>
     public static IServiceCollection AddA2AServer(this IServiceCollection services, string agentName, Action<A2AServerRegistrationOptions>? configureOptions = null)
     {
@@ -157,8 +157,8 @@ public static class A2AServerServiceCollectionExtensions
     /// See the trust-model remarks on <see cref="AddA2AServer(IHostedAgentBuilder, Action{A2AServerRegistrationOptions}?)"/>
     /// for guidance on multi-user hosts (the wire <c>contextId</c> and <c>taskId</c>
     /// are chain-resume identifiers, not authorization tokens; multi-user hosts must
-    /// compose a principal dimension via <c>UseClaimsBasedSessionIsolation(...)</c> or
-    /// a custom <see cref="SessionIsolationKeyProvider"/>).
+    /// compose a principal dimension via <c>UseClaimsBasedAgentIsolation(...)</c> or
+    /// a custom <see cref="AgentIsolationKeyProvider"/>).
     /// </remarks>
     public static IServiceCollection AddA2AServer(this IServiceCollection services, AIAgent agent, Action<A2AServerRegistrationOptions>? configureOptions = null)
     {
@@ -180,7 +180,7 @@ public static class A2AServerServiceCollectionExtensions
 
     private static A2AServer CreateA2AServer(IServiceProvider serviceProvider, AIAgent agent, A2AServerRegistrationOptions? options)
     {
-        var isolationKeyProvider = serviceProvider.GetService<SessionIsolationKeyProvider>();
+        var isolationKeyProvider = serviceProvider.GetService<AgentIsolationKeyProvider>();
 
         var agentHandler = serviceProvider.GetKeyedService<IAgentHandler>(agent.Name);
         if (agentHandler is null)

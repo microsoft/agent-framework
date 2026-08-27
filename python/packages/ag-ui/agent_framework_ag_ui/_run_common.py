@@ -374,22 +374,37 @@ def _json_schema_for_value(value: Any) -> dict[str, Any]:
 
 def _approval_response_schema(arguments: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Build the response schema generic AG-UI clients use to render approval input."""
+    reserved_properties = {"approved", "accepted", "editedArgs"}
     properties: dict[str, Any] = {
-        "accepted": {
+        "approved": {
             "type": "boolean",
             "description": "Whether the requested tool call is approved.",
-        }
+        },
+        "accepted": {
+            "type": "boolean",
+            "description": "Legacy alias for approved.",
+        },
     }
-    if arguments:
+    if arguments is not None:
+        edited_argument_properties: dict[str, Any] = {}
         for name, value in arguments.items():
             argument_schema = _json_schema_for_value(value)
             argument_schema["description"] = f"Optional edited value for the '{name}' tool argument."
-            properties[str(name)] = argument_schema
+            if str(name) not in reserved_properties:
+                properties[str(name)] = argument_schema
+            edited_argument_properties[str(name)] = _json_schema_for_value(value)
+        properties["editedArgs"] = {
+            "type": "object",
+            "description": "Full replacement of the tool arguments. Not merged.",
+            "properties": edited_argument_properties,
+            "required": list(edited_argument_properties),
+            "additionalProperties": False,
+        }
 
     return {
         "type": "object",
         "properties": properties,
-        "required": ["accepted"],
+        "anyOf": [{"required": ["approved"]}, {"required": ["accepted"]}],
         "additionalProperties": False,
     }
 
@@ -535,12 +550,28 @@ def _text_segment_for(flow: FlowState, message_id: str) -> dict[str, Any] | None
     return None
 
 
-def _track_tool_call_segment(flow: FlowState, tool_call_id: str) -> None:
-    """Record a tool call in the current tool segment, opening one if needed."""
+def _new_tool_call_segment_id(flow: FlowState) -> str:
+    """Allocate a snapshot ID, reusing a tool-only opening ID at most once."""
+    segment_ids = {segment.get("id") for segment in flow.snapshot_segments if segment.get("id")}
+    if flow.message_id and flow.message_id not in segment_ids:
+        return flow.message_id
+    message_id = generate_event_id()
+    while message_id in segment_ids:
+        message_id = generate_event_id()
+    return message_id
+
+
+def _track_tool_call_segment(flow: FlowState, tool_call_id: str) -> str:
+    """Record a tool call and return the message ID used by its stream events."""
+    segment: dict[str, Any]
     if flow.snapshot_segments and flow.snapshot_segments[-1]["kind"] == "tool_calls":
-        flow.snapshot_segments[-1]["call_ids"].append(tool_call_id)
+        segment = flow.snapshot_segments[-1]
+        segment.setdefault("id", _new_tool_call_segment_id(flow))
     else:
-        flow.snapshot_segments.append({"kind": "tool_calls", "call_ids": [tool_call_id]})
+        segment = {"kind": "tool_calls", "id": _new_tool_call_segment_id(flow), "call_ids": []}
+        flow.snapshot_segments.append(segment)
+    segment["call_ids"].append(tool_call_id)
+    return str(segment["id"])
 
 
 def _track_reasoning_segment(flow: FlowState, message_id: str) -> None:
@@ -569,6 +600,19 @@ def _emit_text(content: Content, flow: FlowState, skip_text: bool = False) -> li
         # Guard against full-message replay chunks that can appear after streaming deltas.
         logger.debug("Skipping duplicate full-text delta for message_id=%s", flow.message_id)
         return []
+
+    # A tool-only response may pre-open a message before its tool-call segment
+    # is tracked. If that segment claims the pre-opened ID, rotate to a fresh
+    # text message before recording the text so snapshot IDs stay unique.
+    current_message_id = flow.message_id
+    if current_message_id and any(
+        segment.get("kind") == "tool_calls" and segment.get("id") == current_message_id
+        for segment in flow.snapshot_segments
+    ):
+        flow.message_id = generate_event_id()
+        flow.accumulated_text = ""
+        events.append(TextMessageEndEvent(message_id=current_message_id))
+        events.append(TextMessageStartEvent(message_id=flow.message_id, role="assistant"))
 
     # The message may have been pre-opened by the tool-only path, which never
     # goes through this function, so the first text arriving later has no
@@ -599,11 +643,12 @@ def _emit_tool_call(
         if predictive_handler:
             predictive_handler.reset_streaming()
 
+        tool_message_id = _track_tool_call_segment(flow, tool_call_id)
         events.append(
             ToolCallStartEvent(
                 tool_call_id=tool_call_id,
                 tool_call_name=content.name,
-                parent_message_id=flow.message_id,
+                parent_message_id=tool_message_id,
             )
         )
 
@@ -614,7 +659,6 @@ def _emit_tool_call(
         }
         flow.pending_tool_calls.append(tool_entry)
         flow.tool_calls_by_id[tool_call_id] = tool_entry
-        _track_tool_call_segment(flow, tool_call_id)
 
     elif tool_call_id:
         flow.tool_call_id = tool_call_id
@@ -768,6 +812,7 @@ def _emit_tool_result_common(
     # in stream order instead of grouping B with A (moonbox3's replay concern).
     flow.snapshot_segments.append({"kind": "tool_results"})
 
+    had_pending_predictive_updates = bool(predictive_handler and predictive_handler.pending_state_updates)
     if predictive_handler:
         predictive_handler.apply_pending_updates()
 
@@ -780,7 +825,7 @@ def _emit_tool_result_common(
         )
 
     # Emit a single coalesced snapshot when either mechanism updated state.
-    if (predictive_handler or state_update) and flow.current_state:
+    if (had_pending_predictive_updates or state_update) and flow.current_state:
         events.append(StateSnapshotEvent(snapshot=flow.current_state))
 
     flow.tool_call_id = None
@@ -871,11 +916,12 @@ def _emit_approval_request(
 
     if require_confirmation:
         confirm_id = generate_event_id()
+        confirm_message_id = _track_tool_call_segment(flow, confirm_id)
         events.append(
             ToolCallStartEvent(
                 tool_call_id=confirm_id,
                 tool_call_name="confirm_changes",
-                parent_message_id=flow.message_id,
+                parent_message_id=confirm_message_id,
             )
         )
         args: dict[str, Any] = {
@@ -896,7 +942,6 @@ def _emit_approval_request(
         flow.pending_tool_calls.append(confirm_entry)
         flow.tool_calls_by_id[confirm_id] = confirm_entry
         flow.tool_calls_ended.add(confirm_id)
-        _track_tool_call_segment(flow, confirm_id)
 
     flow.waiting_for_approval = True
     return events
@@ -933,12 +978,13 @@ def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
     tool_name = content.tool_name or "mcp_tool"
 
     display_name = tool_name
+    tool_message_id = _track_tool_call_segment(flow, tool_call_id)
 
     events.append(
         ToolCallStartEvent(
             tool_call_id=tool_call_id,
             tool_call_name=display_name,
-            parent_message_id=flow.message_id,
+            parent_message_id=tool_message_id,
         )
     )
 
@@ -958,7 +1004,6 @@ def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
     }
     flow.pending_tool_calls.append(tool_entry)
     flow.tool_calls_by_id[tool_call_id] = tool_entry
-    _track_tool_call_segment(flow, tool_call_id)
 
     return events
 
@@ -1162,6 +1207,12 @@ def _canonical_snapshot_message(message: dict[str, Any]) -> dict[str, Any]:
 
     normalized_message = agui_messages_to_snapshot_format([copy.deepcopy(message)])[0]
     normalized_message.pop("id", None)
+    if "toolCalls" in normalized_message:
+        normalized_message["tool_calls"] = normalized_message.pop("toolCalls")
+    if "toolCallId" in normalized_message:
+        normalized_message["tool_call_id"] = normalized_message.pop("toolCallId")
+    if "encryptedValue" in normalized_message:
+        normalized_message["encrypted_value"] = normalized_message.pop("encryptedValue")
     return cast(dict[str, Any], make_json_safe(normalized_message))
 
 
@@ -1170,8 +1221,29 @@ def _snapshot_messages_match(stored_message: dict[str, Any], incoming_message: d
     stored_id = stored_message.get("id")
     incoming_id = incoming_message.get("id")
     if stored_id and incoming_id:
-        return str(stored_id) == str(incoming_id)
+        if str(stored_id) == str(incoming_id):
+            return True
+        if normalize_agui_role(stored_message.get("role", "user")) != "assistant":
+            return False
     return _canonical_snapshot_message(stored_message) == _canonical_snapshot_message(incoming_message)
+
+
+def _snapshot_overlap_length(
+    stored_messages: list[dict[str, Any]],
+    incoming_messages: list[dict[str, Any]],
+    *,
+    start: int,
+) -> int:
+    """Return the contiguous incoming prefix matching stored history at ``start``."""
+    compared_count = min(len(stored_messages) - start, len(incoming_messages))
+    return next(
+        (
+            offset
+            for offset, (stored_message, incoming_message) in enumerate(zip(stored_messages[start:], incoming_messages))
+            if not _snapshot_messages_match(stored_message, incoming_message)
+        ),
+        compared_count,
+    )
 
 
 def _latest_user_message_index(messages: list[dict[str, Any]]) -> int | None:
@@ -1186,17 +1258,24 @@ def _known_tool_call_ids(
     stored_messages: list[dict[str, Any]],
     stored_interrupt: list[dict[str, Any]] | None,
 ) -> set[str]:
-    """Collect tool call ids the backend previously issued for this thread."""
+    """Collect unanswered tool call ids the backend previously issued for this thread."""
     known_ids: set[str] = set()
+    completed_ids: set[str] = set()
     for message in stored_messages:
         tool_calls = message.get("tool_calls") or message.get("toolCalls") or []
         if not isinstance(tool_calls, list):
-            continue
+            tool_calls = []
         for tool_call in cast(list[Any], tool_calls):
-            if isinstance(tool_call, dict):
-                tool_call_id = cast(dict[str, Any], tool_call).get("id")
-                if tool_call_id:
-                    known_ids.add(str(tool_call_id))
+            if not isinstance(tool_call, dict):
+                continue
+            tool_call_id = cast(dict[str, Any], tool_call).get("id")
+            if tool_call_id:
+                known_ids.add(str(tool_call_id))
+        if normalize_agui_role(message.get("role", "user")) == "tool":
+            tool_call_id = message.get("toolCallId") or message.get("tool_call_id") or message.get("actionExecutionId")
+            if tool_call_id:
+                completed_ids.add(str(tool_call_id))
+    known_ids.difference_update(completed_ids)
     for interrupt in stored_interrupt or []:
         interrupt_id = interrupt.get("id")
         if interrupt_id:
@@ -1250,17 +1329,36 @@ def _reconstruct_messages_from_thread_snapshot(
     if not stored_messages or not incoming_messages:
         return incoming_messages
 
-    incoming_suffix: list[dict[str, Any]]
-    if len(incoming_messages) >= len(stored_messages) and all(
-        _snapshot_messages_match(stored_message, incoming_message)
-        for stored_message, incoming_message in zip(stored_messages, incoming_messages)
+    overlap_candidates = [
+        (start, _snapshot_overlap_length(stored_messages, incoming_messages, start=start))
+        for start, stored_message in enumerate(stored_messages)
+        if _snapshot_messages_match(stored_message, incoming_messages[0])
+    ]
+    matched_count = max(
+        (
+            overlap
+            for start, overlap in overlap_candidates
+            if overlap >= 2
+            or (
+                stored_messages[start].get("id")
+                and incoming_messages[0].get("id")
+                and str(stored_messages[start]["id"]) == str(incoming_messages[0]["id"])
+            )
+        ),
+        default=0,
+    )
+    if (
+        matched_count == len(incoming_messages)
+        and matched_count
+        and normalize_agui_role(incoming_messages[-1].get("role", "user")) == "user"
+        and not incoming_messages[-1].get("id")
     ):
-        incoming_suffix = incoming_messages[len(stored_messages) :]
+        matched_count -= 1
+    if matched_count:
+        incoming_suffix = incoming_messages[matched_count:]
     else:
         latest_user_index = _latest_user_message_index(incoming_messages)
-        if latest_user_index is None:
-            return incoming_messages
-        incoming_suffix = incoming_messages[latest_user_index:]
+        incoming_suffix = incoming_messages if latest_user_index is None else incoming_messages[latest_user_index:]
 
     incoming_suffix = _filter_untrusted_suffix(
         incoming_suffix,

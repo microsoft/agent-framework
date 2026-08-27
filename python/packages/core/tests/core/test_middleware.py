@@ -1728,3 +1728,42 @@ class TestCategorizeMiddleware:
         total_items = len(result["chat"]) + len(result["function"]) + len(result["agent"])
         assert total_items == 1
         assert result["agent"] == ["not_a_middleware"]
+
+    def test_categorize_middleware_supported_categories_skips_bare_with_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A bare middleware outside the supported categories is warned about, not installed."""
+        chat_mw = TestChatMiddleware()
+        agent_mw = TestAgentMiddleware()
+        with caplog.at_level("WARNING", logger="agent_framework._middleware"):
+            result = categorize_middleware([chat_mw, agent_mw], supported_categories=("chat", "function"))
+        assert result["chat"] == [chat_mw]
+        assert result["agent"] == []
+        assert "will not be executed" in caplog.text
+
+    @pytest.mark.filterwarnings("ignore::agent_framework._feature_stage.ExperimentalWarning")
+    def test_categorize_middleware_supported_categories_raises_for_bundle_members(self) -> None:
+        """A bundle member outside the supported categories raises: bundles are indivisible."""
+        from agent_framework import MiddlewareBundle
+        from agent_framework.exceptions import MiddlewareException
+
+        bundle = MiddlewareBundle([TestAgentMiddleware(), TestChatMiddleware(), TestFunctionMiddleware()])
+        with pytest.raises(MiddlewareException, match="cannot be partially installed"):
+            categorize_middleware([bundle], supported_categories=("chat", "function"))
+        # A bundle whose members all fit the supported categories expands normally.
+        chat_only = MiddlewareBundle([TestChatMiddleware(), TestFunctionMiddleware()])
+        result = categorize_middleware([chat_only], supported_categories=("chat", "function"))
+        assert len(result["chat"]) == 1
+        assert len(result["function"]) == 1
+
+    def test_as_middleware_list_owns_the_bare_source_rule(self) -> None:
+        """One owner for bare-source normalization, including the str/bytes exclusion."""
+        from agent_framework._middleware import _as_middleware_list
+
+        agent_mw = TestAgentMiddleware()
+        assert _as_middleware_list(None) == []
+        assert _as_middleware_list(agent_mw) == [agent_mw]
+        assert _as_middleware_list([agent_mw]) == [agent_mw]
+        assert _as_middleware_list((agent_mw,)) == [agent_mw]
+        # Strings are sequences but never element-ized into characters.
+        assert _as_middleware_list("bare-string") == ["bare-string"]  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]

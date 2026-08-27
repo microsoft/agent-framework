@@ -275,6 +275,66 @@ public class MessageMergerTests
         response.Messages[1].Role.Should().Be(ChatRole.Tool);
     }
 
+    /// <summary>
+    /// Verify that usage from merged response buckets is aggregated with distinct token values and additional counts.
+    /// </summary>
+    [Fact]
+    public void Test_MessageMerger_AggregatesUsageAndAdditionalCounts()
+    {
+        // Arrange
+        const string ResponseId1 = "response-1";
+        const string ResponseId2 = "response-2";
+        MessageMerger merger = new();
+
+        merger.AddUpdate(new AgentResponseUpdate(ChatRole.Assistant, "first")
+        {
+            ResponseId = ResponseId1,
+            MessageId = "message-1",
+        });
+        merger.AddUpdate(new AgentResponseUpdate(ChatRole.Assistant,
+            [new UsageContent(new UsageDetails
+            {
+                InputTokenCount = 2,
+                OutputTokenCount = 3,
+                TotalTokenCount = 5,
+                AdditionalCounts = new() { ["cached"] = 7, ["reasoning"] = 11 },
+            })])
+        {
+            ResponseId = ResponseId1,
+            MessageId = "message-1",
+        });
+        merger.AddUpdate(new AgentResponseUpdate(ChatRole.Assistant, "second")
+        {
+            ResponseId = ResponseId2,
+            MessageId = "message-2",
+        });
+        merger.AddUpdate(new AgentResponseUpdate(ChatRole.Assistant,
+            [new UsageContent(new UsageDetails
+            {
+                InputTokenCount = 29,
+                OutputTokenCount = 7,
+                TotalTokenCount = 36,
+                AdditionalCounts = new() { ["cached"] = 13, ["audio"] = 17 },
+            })])
+        {
+            ResponseId = ResponseId2,
+            MessageId = "message-2",
+        });
+
+        // Act
+        AgentResponse response = merger.ComputeMerged(ResponseId1);
+
+        // Assert
+        response.Usage.Should().NotBeNull();
+        response.Usage!.InputTokenCount.Should().Be(31);
+        response.Usage.OutputTokenCount.Should().Be(10);
+        response.Usage.TotalTokenCount.Should().Be(41);
+        response.Usage.AdditionalCounts.Should().NotBeNull();
+        response.Usage.AdditionalCounts!["cached"].Should().Be(20);
+        response.Usage.AdditionalCounts["reasoning"].Should().Be(11);
+        response.Usage.AdditionalCounts["audio"].Should().Be(17);
+    }
+
     private static void AddTextMessage(MessageMerger merger, string responseId, string text, DateTimeOffset? createdAt = null)
     {
         merger.AddUpdate(new AgentResponseUpdate

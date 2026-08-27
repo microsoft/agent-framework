@@ -42,6 +42,7 @@ $ErrorActionPreference = 'Stop'
 $Scenarios = @(
     'happy-path',
     'store-config',
+    'downstream-store',
     'tool-calling',
     'tool-calling-approval',
     'mcp-toolbox',
@@ -51,6 +52,9 @@ $Scenarios = @(
     'azure-search-rag',
     'session-files',
     'agent-skills',
+    'user-identity',
+    'resilient-workflow',
+    'steerable-long-running',
     'unsupported-protocol'
 )
 

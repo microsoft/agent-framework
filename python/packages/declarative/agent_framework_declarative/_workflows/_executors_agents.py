@@ -16,6 +16,7 @@ import contextlib
 import json
 import logging
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -35,6 +36,218 @@ from ._declarative_base import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CODE_FENCE = "```"
+_JSON_CODE_FENCE_QUALIFIER = "json"
+_MAX_JSON_DECODE_BUDGET_MULTIPLIER = 4
+_NO_JSON = object()
+
+
+def _iter_fenced_blocks(text: str, *, require_json_qualifier: bool) -> Iterator[str]:
+    """Yield non-overlapping fenced blocks in source order."""
+    search_start = 0
+    while True:
+        opening_index = text.find(_CODE_FENCE, search_start)
+        if opening_index < 0:
+            return
+
+        content_start = opening_index + len(_CODE_FENCE)
+        if require_json_qualifier:
+            if not text.startswith(_JSON_CODE_FENCE_QUALIFIER, content_start):
+                search_start = content_start
+                continue
+
+            qualifier_end = content_start + len(_JSON_CODE_FENCE_QUALIFIER)
+            if (
+                qualifier_end < len(text)
+                and not text[qualifier_end].isspace()
+                and text[qualifier_end] not in "{["
+                and not text.startswith(_CODE_FENCE, qualifier_end)
+            ):
+                search_start = content_start
+                continue
+            content_start = qualifier_end
+
+        while content_start < len(text) and text[content_start].isspace():
+            content_start += 1
+
+        closing_index = text.find(_CODE_FENCE, content_start)
+        if closing_index < 0:
+            return
+
+        yield text[content_start:closing_index].strip()
+        search_start = closing_index + len(_CODE_FENCE)
+
+
+def _index_escaped_quotes(text: str) -> bytearray:
+    """Index quote characters preceded by an odd-length backslash run."""
+    escaped_quotes = bytearray(len(text))
+    backslash_count = 0
+
+    for index, char in enumerate(text):
+        if char == "\\":
+            backslash_count += 1
+            continue
+
+        if char == '"' and backslash_count % 2 == 1:
+            escaped_quotes[index] = 1
+        backslash_count = 0
+
+    return escaped_quotes
+
+
+def _index_json_candidates_forward(text: str, escaped_quotes: bytearray) -> set[tuple[int, int]]:
+    """Index JSON candidate ranges from left to right."""
+    candidates: set[tuple[int, int]] = set()
+    object_openings: list[int] = []
+    array_openings: list[int] = []
+    in_string = False
+
+    for index, char in enumerate(text):
+        if not object_openings and not array_openings:
+            if char in "{[":
+                (object_openings if char == "{" else array_openings).append(index)
+            continue
+
+        if char == '"' and not escaped_quotes[index]:
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if char in "{[":
+            (object_openings if char == "{" else array_openings).append(index)
+        elif char == "}" and object_openings:
+            candidates.add((object_openings.pop(), index))
+        elif char == "]" and array_openings:
+            candidates.add((array_openings.pop(), index))
+
+    return candidates
+
+
+def _index_json_candidates_reverse(text: str, escaped_quotes: bytearray) -> set[tuple[int, int]]:
+    """Index JSON candidate ranges from right to left."""
+    candidates: set[tuple[int, int]] = set()
+    object_closings: list[int] = []
+    array_closings: list[int] = []
+    in_string = False
+
+    for index in range(len(text) - 1, -1, -1):
+        char = text[index]
+        if not object_closings and not array_closings:
+            if char in "}]":
+                (object_closings if char == "}" else array_closings).append(index)
+            continue
+
+        if char == '"' and not escaped_quotes[index]:
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if char in "}]":
+            (object_closings if char == "}" else array_closings).append(index)
+        elif char == "{" and object_closings:
+            candidates.add((index, object_closings.pop()))
+        elif char == "[" and array_closings:
+            candidates.add((index, array_closings.pop()))
+
+    return candidates
+
+
+def _find_last_decodable_json(text: str) -> Any:
+    """Find the last decodable JSON object or array within text."""
+    escaped_quotes = _index_escaped_quotes(text)
+    candidates = _index_json_candidates_forward(text, escaped_quotes)
+    candidates.update(_index_json_candidates_reverse(text, escaped_quotes))
+
+    candidate_groups: list[tuple[int, int, list[tuple[int, int]]]] = []
+    for candidate in sorted(candidates):
+        json_start, json_end = candidate
+        if not candidate_groups or json_start > candidate_groups[-1][1]:
+            candidate_groups.append((json_start, json_end, [candidate]))
+            continue
+
+        group_start, group_end, group_candidates = candidate_groups[-1]
+        group_candidates.append(candidate)
+        candidate_groups[-1] = (group_start, max(group_end, json_end), group_candidates)
+
+    for group_start, group_end, group_candidates in reversed(candidate_groups):
+        group_span = group_end - group_start + 1
+        primary_decode_budget = group_span * (_MAX_JSON_DECODE_BUDGET_MULTIPLIER // 2)
+        recovery_decode_budget = group_span * (
+            _MAX_JSON_DECODE_BUDGET_MULTIPLIER - (_MAX_JSON_DECODE_BUDGET_MULTIPLIER // 2)
+        )
+        attempted_candidates: set[tuple[int, int]] = set()
+        last_json: Any = _NO_JSON
+        consumed_end = -1
+        candidate_index = 0
+
+        while candidate_index < len(group_candidates) and primary_decode_budget > 0:
+            json_start, json_end = group_candidates[candidate_index]
+            candidate_index += 1
+            if json_start <= consumed_end:
+                continue
+
+            candidate_length = json_end - json_start + 1
+            if candidate_length > primary_decode_budget:
+                continue
+
+            primary_decode_budget -= candidate_length
+            attempted_candidates.add((json_start, json_end))
+            try:
+                last_json = json.loads(text[json_start : json_end + 1])
+            except json.JSONDecodeError:
+                continue
+
+            consumed_end = json_end
+            while candidate_index < len(group_candidates) and group_candidates[candidate_index][0] <= consumed_end:
+                candidate_index += 1
+
+        recovery_candidates = sorted(
+            group_candidates,
+            key=lambda candidate: (candidate[1] - candidate[0], -candidate[0]),
+        )
+        recovered_json: Any = _NO_JSON
+        recovered_range: tuple[int, int] | None = None
+        for json_start, json_end in recovery_candidates:
+            if recovery_decode_budget == 0:
+                break
+            if (json_start, json_end) in attempted_candidates or json_start <= consumed_end:
+                continue
+
+            candidate_length = json_end - json_start + 1
+            if candidate_length > recovery_decode_budget:
+                continue
+
+            recovery_decode_budget -= candidate_length
+            try:
+                candidate_json = json.loads(text[json_start : json_end + 1])
+            except json.JSONDecodeError:
+                continue
+
+            candidate_contains_recovered = (
+                recovered_range is not None and json_start <= recovered_range[0] and json_end >= recovered_range[1]
+            )
+            recovered_contains_candidate = (
+                recovered_range is not None and recovered_range[0] <= json_start and recovered_range[1] >= json_end
+            )
+            if (
+                recovered_range is None
+                or candidate_contains_recovered
+                or (not recovered_contains_candidate and json_start > recovered_range[0])
+            ):
+                recovered_json = candidate_json
+                recovered_range = (json_start, json_end)
+
+        if recovered_json is not _NO_JSON:
+            return recovered_json
+        if last_json is not _NO_JSON:
+            return last_json
+
+    raise json.JSONDecodeError("No valid JSON found in response", text, 0)
 
 
 def _extract_json_from_response(text: str) -> Any:
@@ -58,13 +271,11 @@ def _extract_json_from_response(text: str) -> Any:
         text: The raw text response from an agent
 
     Returns:
-        Parsed JSON as a Python dict/list, or None if parsing fails
+        Parsed JSON, or None if the response is empty.
 
     Raises:
         json.JSONDecodeError: If no valid JSON can be extracted
     """
-    import re
-
     if not text:
         return None
 
@@ -79,96 +290,18 @@ def _extract_json_from_response(text: str) -> Any:
     except json.JSONDecodeError:
         pass
 
-    # Try extracting from markdown code blocks: ```json ... ``` or ``` ... ```
-    # Use the last code block if there are multiple
-    code_block_patterns = [
-        r"```json\s*\n?(.*?)\n?```",  # ```json ... ```
-        r"```\s*\n?(.*?)\n?```",  # ``` ... ```
-    ]
-    for pattern in code_block_patterns:
-        matches = list(re.finditer(pattern, text, re.DOTALL))
-        if matches:
-            # Try the last match first (most likely to be the final result)
-            for match in reversed(matches):
-                try:
-                    return json.loads(match.group(1).strip())
-                except json.JSONDecodeError:
-                    continue
-
-    # Find ALL JSON objects {...} or arrays [...] in the text and return the last valid one
-    # This handles cases where agents stream multiple JSON objects (partial, then final)
-    all_json_objects: list[Any] = []
-
-    pos = 0
-    while pos < len(text):
-        # Find next { or [
-        json_start = -1
-        bracket_char = None
-        for i in range(pos, len(text)):
-            if text[i] == "{":
-                json_start = i
-                bracket_char = "{"
-                break
-            if text[i] == "[":
-                json_start = i
-                bracket_char = "["
-                break
-
-        if json_start < 0:
-            break  # No more JSON objects
-
-        # Find matching closing bracket
-        open_bracket = bracket_char
-        close_bracket = "}" if open_bracket == "{" else "]"
-        depth = 0
-        in_string = False
-        escape_next = False
-        found_end = False
-
-        for i in range(json_start, len(text)):
-            char = text[i]
-
-            if escape_next:
-                escape_next = False
+    # Exactly-qualified JSON fences take precedence over plain fences.
+    for require_json_qualifier in (True, False):
+        last_fenced_json: Any = _NO_JSON
+        for block in _iter_fenced_blocks(text, require_json_qualifier=require_json_qualifier):
+            try:
+                last_fenced_json = json.loads(block)
+            except json.JSONDecodeError:
                 continue
+        if last_fenced_json is not _NO_JSON:
+            return last_fenced_json
 
-            if char == "\\":
-                escape_next = True
-                continue
-
-            if char == '"' and not escape_next:
-                in_string = not in_string
-                continue
-
-            if in_string:
-                continue
-
-            if char == open_bracket:
-                depth += 1
-            elif char == close_bracket:
-                depth -= 1
-                if depth == 0:
-                    # Found the end
-                    potential_json = text[json_start : i + 1]
-                    try:
-                        parsed = json.loads(potential_json)
-                        all_json_objects.append(parsed)
-                    except json.JSONDecodeError:
-                        pass
-                    pos = i + 1
-                    found_end = True
-                    break
-
-        if not found_end:
-            # Malformed JSON, move past the start character
-            pos = json_start + 1
-
-    # Return the last valid JSON object (most likely to be the final/complete result)
-    if all_json_objects:
-        return all_json_objects[-1]
-
-    # Unable to extract JSON
-    raise json.JSONDecodeError("No valid JSON found in response", text, 0)
+    return _find_last_decodable_json(text)
 
 
 def _validate_conversation_history(messages: list[Message], agent_name: str) -> None:

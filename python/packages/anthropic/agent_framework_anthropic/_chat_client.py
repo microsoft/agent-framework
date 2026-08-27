@@ -16,6 +16,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FinishReason,
     FinishReasonLiteral,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -213,6 +214,18 @@ FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
     "refusal": "content_filter",
     "pause_turn": "stop",
 }
+
+
+def _map_finish_reason(stop_reason: str | None) -> FinishReason | None:
+    """Map an Anthropic stop reason onto a framework finish reason.
+
+    Stop reasons that are not in ``FINISH_REASON_MAP`` are passed through unchanged so that
+    values added by the Anthropic API, such as ``model_context_window_exceeded``, still reach
+    the caller instead of being reported as no finish reason at all.
+    """
+    if not stop_reason:
+        return None
+    return FinishReason(FINISH_REASON_MAP.get(stop_reason, stop_reason))
 
 
 class AnthropicSettings(TypedDict, total=False):
@@ -669,10 +682,25 @@ class RawAnthropicClient(
         messages: Sequence[Message],
         instructions: Any,
     ) -> Sequence[BetaTextBlockParam] | Sequence[Mapping[str, Any]]:
+        """Normalize structured instructions into Anthropic system blocks.
+
+        Plain strings are wrapped as text blocks, which is how instructions contributed later in a run
+        (by a context provider or per-run options) arrive alongside caller-supplied blocks.
+
+        Raises:
+            ValueError: If a leading system message is present, since that is a second, ambiguous
+                source of system content.
+        """
         if messages and isinstance(messages[0], Message) and messages[0].role == "system":
             raise ValueError("structured Anthropic instructions cannot be combined with a leading system message.")
 
-        return cast(Sequence[BetaTextBlockParam] | Sequence[Mapping[str, Any]], instructions)
+        raw_blocks: Sequence[Any] = (
+            [instructions] if isinstance(instructions, Mapping) else cast(Sequence[Any], instructions)
+        )
+        blocks: list[Any] = [
+            {"type": "text", "text": block} if isinstance(block, str) else block for block in raw_blocks
+        ]
+        return cast(Sequence[BetaTextBlockParam] | Sequence[Mapping[str, Any]], blocks)
 
     def _prepare_text_instructions_for_anthropic(self, messages: Sequence[Message], instructions: Any) -> str:
         if isinstance(instructions, str):
@@ -1080,7 +1108,7 @@ class RawAnthropicClient(
             ],
             usage_details=self._parse_usage_from_anthropic(message.usage),
             model=message.model,
-            finish_reason=FINISH_REASON_MAP.get(message.stop_reason) if message.stop_reason else None,
+            finish_reason=_map_finish_reason(message.stop_reason),
             response_format=options.get("response_format"),
             raw_representation=message,
         )
@@ -1116,9 +1144,7 @@ class RawAnthropicClient(
                         *usage_details,
                     ],
                     model=event.message.model,
-                    finish_reason=FINISH_REASON_MAP.get(event.message.stop_reason)
-                    if event.message.stop_reason
-                    else None,
+                    finish_reason=_map_finish_reason(event.message.stop_reason),
                     raw_representation=event,
                 )
             case "message_delta":
@@ -1132,7 +1158,7 @@ class RawAnthropicClient(
                     ]
                     if usage
                     else [],
-                    finish_reason=FINISH_REASON_MAP.get(event.delta.stop_reason) if event.delta.stop_reason else None,
+                    finish_reason=_map_finish_reason(event.delta.stop_reason),
                     raw_representation=event,
                 )
             case "message_stop":

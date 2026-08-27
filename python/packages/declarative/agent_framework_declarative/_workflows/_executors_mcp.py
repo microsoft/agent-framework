@@ -284,7 +284,7 @@ class InvokeMcpToolActionExecutor(DeclarativeActionExecutor):
         output_messages_path = _get_output_path(self._action_def, "messages")
         output_result_path = _get_output_path(self._action_def, "result")
 
-        if not response.approved:
+        if response.approved is not True:
             logger.info(
                 "%s: MCP tool '%s' rejected: %s",
                 self.__class__.__name__,

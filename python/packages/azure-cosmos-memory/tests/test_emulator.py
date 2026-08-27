@@ -183,7 +183,8 @@ class TestEmulatorVectorSearch:
         # embeddings client). This lands in the memories container under the quantizedFlat
         # vector index, without needing LLM extraction.
         assert provider.memory_client is not None
-        await provider.memory_client.add_cosmos(
+        seed = getattr(provider.memory_client, "upsert_memory", None) or provider.memory_client.add_cosmos
+        await seed(
             user_id=user_id,
             thread_id=thread_id,
             role="user",

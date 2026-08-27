@@ -46,6 +46,19 @@ class Mem0ContextProvider(ContextProvider):
 
     Integrates Mem0 for persistent semantic memory, searching and storing
     memories via the Mem0 API.
+
+    The provider keeps the storage scope and the retrieval scope separate:
+
+    * ``application_id`` / ``agent_id`` / ``user_id`` are the **storage scope**. They are
+      stamped onto every memory written by :meth:`after_run` and are never used to
+      retrieve memories.
+    * ``search_application_id`` / ``search_agent_id`` / ``search_user_id`` are the
+      **retrieval scope** used by :meth:`before_run`.
+
+    Retrieval scope values never inherit from the storage scope. If no ``search_*``
+    value is configured, no memories are retrieved. This prevents a memory written
+    under a shared ``agent_id`` from being read back by an unrelated user, since
+    agent-wide retrieval must be requested explicitly via ``search_agent_id``.
     """
 
     DEFAULT_CONTEXT_PROMPT = "## Memories\nConsider the following memories when answering user questions:"
@@ -59,6 +72,9 @@ class Mem0ContextProvider(ContextProvider):
         application_id: str | None = None,
         agent_id: str | None = None,
         user_id: str | None = None,
+        search_application_id: str | None = None,
+        search_agent_id: str | None = None,
+        search_user_id: str | None = None,
         *,
         context_prompt: str | None = None,
     ) -> None:
@@ -68,13 +84,23 @@ class Mem0ContextProvider(ContextProvider):
             source_id: Unique identifier for this provider instance.
             mem0_client: A pre-created Mem0 MemoryClient or None to create a default client.
             api_key: The API key for authenticating with the Mem0 API.
-            application_id: The application ID for scoping memories. Platform-only:
+            application_id: The application ID that stored memories are stamped with. Platform-only:
                 the OSS ``AsyncMemory`` client does not recognize an application
                 scope (it scopes only by user_id/agent_id in this provider), so
                 application_id cannot be used with an OSS client.
-            agent_id: The agent ID for scoping memories.
-            user_id: The user ID for scoping memories.
+            agent_id: The agent ID that stored memories are stamped with.
+            user_id: The user ID that stored memories are stamped with.
+            search_application_id: The application ID to retrieve memories for. Platform-only,
+                like ``application_id``.
+            search_agent_id: The agent ID to retrieve memories for. Setting this retrieves
+                memories stored by **any** user under that agent, so only set it for
+                agent-wide knowledge that is safe to share across users.
+            search_user_id: The user ID to retrieve memories for.
             context_prompt: The prompt to prepend to retrieved memories.
+
+        Remarks:
+            The ``search_*`` parameters do not default to their storage-scope counterparts.
+            When none of them are set, :meth:`before_run` retrieves nothing and logs a warning.
         """
         super().__init__(source_id)
         should_close_client = False
@@ -86,9 +112,13 @@ class Mem0ContextProvider(ContextProvider):
         self.application_id = application_id
         self.agent_id = agent_id
         self.user_id = user_id
+        self.search_application_id = search_application_id
+        self.search_agent_id = search_agent_id
+        self.search_user_id = search_user_id
         self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
         self.mem0_client = mem0_client
         self._should_close_client = should_close_client
+        self._warned_no_search_scope = False
 
     async def __aenter__(self) -> Self:
         """Async context manager entry."""
@@ -114,6 +144,15 @@ class Mem0ContextProvider(ContextProvider):
         """Search Mem0 for relevant memories and add to the session context."""
         mark_feature_used(FeatureIndex.MEM0)
         self._validate_filters()
+        if not (self.search_user_id or self.search_agent_id or self.search_application_id):
+            if not self._warned_no_search_scope:
+                self._warned_no_search_scope = True
+                logger.warning(
+                    "Mem0ContextProvider has no retrieval scope configured, so no memories will be retrieved. "
+                    "Set search_user_id, search_agent_id and/or search_application_id."
+                )
+            return
+
         input_text = "\n".join(msg.text for msg in context.input_messages if msg and msg.text and msg.text.strip())
         if not input_text.strip():
             return
@@ -123,18 +162,18 @@ class Mem0ContextProvider(ContextProvider):
         search_tasks: list[Awaitable[Any]] = []
 
         # 1. Query User partition independently
-        if self.user_id:
-            user_kwargs = self._build_search_kwargs(input_text, "user_id", self.user_id)
+        if self.search_user_id:
+            user_kwargs = self._build_search_kwargs(input_text, "user_id", self.search_user_id)
             search_tasks.append(self.mem0_client.search(**user_kwargs))  # type: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
         # 2. Query Agent partition independently
-        if self.agent_id:
-            agent_kwargs = self._build_search_kwargs(input_text, "agent_id", self.agent_id)
+        if self.search_agent_id:
+            agent_kwargs = self._build_search_kwargs(input_text, "agent_id", self.search_agent_id)
             search_tasks.append(self.mem0_client.search(**agent_kwargs))  # type: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
-        # Fall back to an app-scoped search when only application_id is configured.
-        if not search_tasks and self.application_id:
-            app_kwargs: dict[str, Any] = {"query": input_text, "filters": self._build_filters()}
+        # Fall back to an app-scoped search when only search_application_id is configured.
+        if not search_tasks and self.search_application_id:
+            app_kwargs: dict[str, Any] = {"query": input_text, "filters": {"app_id": self.search_application_id}}
             search_tasks.append(self.mem0_client.search(**app_kwargs))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
         if not search_tasks:
             return
@@ -239,7 +278,7 @@ class Mem0ContextProvider(ContextProvider):
         """Validates that at least one usable filter is provided for the configured client."""
         if not self.agent_id and not self.user_id and not self.application_id:
             raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
-        if isinstance(self.mem0_client, AsyncMemory) and self.application_id:
+        if isinstance(self.mem0_client, AsyncMemory) and (self.application_id or self.search_application_id):
             raise ValueError(
                 "application_id is not supported by the OSS AsyncMemory client, which scopes "
                 "memories only by user_id/agent_id. Remove application_id or use AsyncMemoryClient."
@@ -247,22 +286,23 @@ class Mem0ContextProvider(ContextProvider):
 
     def _build_search_kwargs(self, input_text: str, entity_key: str, entity_value: str) -> dict[str, Any]:
         """Build search keyword arguments formatted for OSS vs Platform clients."""
-        filters: dict[str, Any] = {"query": input_text}
+        kwargs: dict[str, Any] = {"query": input_text}
 
-        if self.application_id and isinstance(self.mem0_client, AsyncMemory):
+        if self.search_application_id and isinstance(self.mem0_client, AsyncMemory):
             raise ValueError(
                 "application_id is not supported by the OSS AsyncMemory client, which scopes "
                 "memories only by user_id/agent_id. Remove application_id or use AsyncMemoryClient."
             )
 
-        filters["filters"] = {entity_key: entity_value}
-        if self.application_id and not isinstance(self.mem0_client, AsyncMemory):
-            filters["filters"]["app_id"] = self.application_id
+        filters: dict[str, Any] = {entity_key: entity_value}
+        if self.search_application_id and not isinstance(self.mem0_client, AsyncMemory):
+            filters["app_id"] = self.search_application_id
+        kwargs["filters"] = filters
 
-        return filters
+        return kwargs
 
     def _build_filters(self) -> dict[str, Any]:
-        """Build identity filters from initialization parameters."""
+        """Build storage identity filters from initialization parameters."""
         filters: dict[str, Any] = {}
         if self.user_id:
             filters["user_id"] = self.user_id

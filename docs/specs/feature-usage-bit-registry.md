@@ -136,7 +136,8 @@ only to approved first-party endpoints.
 | 15 | `core.in_memory_skills_source` | In-memory / programmatic skills | `agent_framework.InMemorySkillsSource` |
 | 16 | `core.mcp_skills_source` | MCP-backed skills | `agent_framework.MCPSkillsSource` |
 | 17 | `core.session_store` | Agent session store | `agent_framework.SessionStore` / `FileSessionStore` |
-| 18–31 | _reserved_ | core growth | — |
+| 18 | `core.agent_hooks` | Agent Hooks middleware | `agent_framework.create_agent_hooks_middleware` |
+| 19–31 | _reserved_ | core growth | — |
 | 32 | `orchestration.sequential` | Sequential orchestration | `agent_framework_orchestrations.SequentialBuilder` |
 | 33 | `orchestration.concurrent` | Concurrent orchestration | `agent_framework_orchestrations.ConcurrentBuilder` |
 | 34 | `orchestration.group_chat` | Group-chat orchestration | `agent_framework_orchestrations.GroupChatBuilder` |

@@ -50,12 +50,25 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task GetSessionAsync_NoFileOnDisk_ReturnsFreshSessionFromAgentAsync()
+    public async Task GetSessionAsync_NoFileOnDisk_ReturnsNullAsync()
     {
         var store = new FileSystemAgentSessionStore(this._root);
         var agent = new TestAgent();
 
         var session = await store.GetSessionAsync(agent, "conv-1", userId: null);
+
+        Assert.Null(session);
+        Assert.Equal(0, agent.CreateCalls);
+        Assert.Equal(0, agent.DeserializeCalls);
+    }
+
+    [Fact]
+    public async Task GetOrCreateSessionAsync_NoFileOnDisk_ReturnsFreshSessionFromAgentAsync()
+    {
+        var store = new FileSystemAgentSessionStore(this._root);
+        var agent = new TestAgent();
+
+        var session = await store.GetOrCreateSessionAsync(agent, "conv-1", userId: null);
 
         Assert.NotNull(session);
         Assert.Equal(1, agent.CreateCalls);
@@ -63,7 +76,7 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task GetSessionAsync_EmptyFileOnDisk_ReturnsFreshSessionAsync()
+    public async Task GetSessionAsync_EmptyFileOnDisk_ReturnsNullAsync()
     {
         var store = new FileSystemAgentSessionStore(this._root);
         Directory.CreateDirectory(store.RootDirectory);
@@ -72,8 +85,8 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
         var agent = new TestAgent();
         var session = await store.GetSessionAsync(agent, "conv-empty", userId: null);
 
-        Assert.NotNull(session);
-        Assert.Equal(1, agent.CreateCalls);
+        Assert.Null(session);
+        Assert.Equal(0, agent.CreateCalls);
         Assert.Equal(0, agent.DeserializeCalls);
     }
 
@@ -245,7 +258,7 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
 
         var session = await store.GetSessionAsync(agent, "missing-id", userId: null);
 
-        Assert.NotNull(session);
+        Assert.Null(session);
         Assert.False(Directory.Exists(this._root), "Read miss must not create the root directory.");
     }
 
@@ -385,11 +398,11 @@ public sealed class FileSystemAgentSessionStoreTests : IDisposable
         await store.SaveSessionAsync(agent, "shared-conv", NewSession(), userId: "alice");
 
         // Bob requests the same conversationId. The per-user partition means Bob's path is distinct,
-        // so the store returns a fresh session (no leak), not Alice's persisted state.
+        // so the store returns null (no leak), not Alice's persisted state.
         var bobSession = await store.GetSessionAsync(agent, "shared-conv", userId: "bob");
 
-        Assert.NotNull(bobSession);
-        Assert.Equal(1, agent.CreateCalls);     // fresh session created for Bob
+        Assert.Null(bobSession);                 // no session for Bob under his partition
+        Assert.Equal(0, agent.CreateCalls);      // a plain lookup never creates
         Assert.Equal(0, agent.DeserializeCalls); // Alice's file never deserialized for Bob
     }
 

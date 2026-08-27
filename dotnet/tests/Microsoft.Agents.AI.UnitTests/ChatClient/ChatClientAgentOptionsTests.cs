@@ -24,6 +24,7 @@ public class ChatClientAgentOptionsTests
         Assert.Null(options.ChatHistoryProvider);
         Assert.Null(options.AIContextProviders);
         Assert.False(options.UseProvidedChatClientAsIs);
+        Assert.False(options.AllowConcurrentInvocation);
         Assert.True(options.ClearOnChatHistoryProviderConflict);
         Assert.True(options.WarnOnChatHistoryProviderConflict);
         Assert.True(options.ThrowOnChatHistoryProviderConflict);
@@ -131,10 +132,12 @@ public class ChatClientAgentOptionsTests
             ChatHistoryProvider = mockChatHistoryProvider,
             AIContextProviders = [mockAIContextProvider],
             UseProvidedChatClientAsIs = true,
+            AllowConcurrentInvocation = true,
             ClearOnChatHistoryProviderConflict = false,
             WarnOnChatHistoryProviderConflict = false,
             ThrowOnChatHistoryProviderConflict = false,
             DisableApprovalNotRequiredFunctionBypassing = true,
+            EnableInvocableFunctionBypassing = true,
         };
 
         // Act
@@ -148,10 +151,12 @@ public class ChatClientAgentOptionsTests
         Assert.Same(original.ChatHistoryProvider, clone.ChatHistoryProvider);
         Assert.Equal(original.AIContextProviders, clone.AIContextProviders);
         Assert.Equal(original.UseProvidedChatClientAsIs, clone.UseProvidedChatClientAsIs);
+        Assert.Equal(original.AllowConcurrentInvocation, clone.AllowConcurrentInvocation);
         Assert.Equal(original.ClearOnChatHistoryProviderConflict, clone.ClearOnChatHistoryProviderConflict);
         Assert.Equal(original.WarnOnChatHistoryProviderConflict, clone.WarnOnChatHistoryProviderConflict);
         Assert.Equal(original.ThrowOnChatHistoryProviderConflict, clone.ThrowOnChatHistoryProviderConflict);
         Assert.Equal(original.DisableApprovalNotRequiredFunctionBypassing, clone.DisableApprovalNotRequiredFunctionBypassing);
+        Assert.Equal(original.EnableInvocableFunctionBypassing, clone.EnableInvocableFunctionBypassing);
 
         // ChatOptions should be cloned, not the same reference
         Assert.NotSame(original.ChatOptions, clone.ChatOptions);

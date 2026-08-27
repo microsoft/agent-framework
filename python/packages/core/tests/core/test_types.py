@@ -36,6 +36,7 @@ from agent_framework._compaction import (
     GROUP_TOKEN_COUNT_KEY,
 )
 from agent_framework._types import (
+    _append_instructions,
     _get_data_bytes,
     _get_data_bytes_as_str,
     _parse_content_list,
@@ -1196,7 +1197,7 @@ def test_chat_response_updates_to_chat_response_multiple_multiple():
     assert len(chat_response.messages) == 1
     assert isinstance(chat_response.messages[0], Message)
     assert chat_response.messages[0].message_id == "1"
-    assert chat_response.messages[0].contents[0].raw_representation is not None
+    assert chat_response.messages[0].contents[0].raw_representation is None
 
     assert len(chat_response.messages[0].contents) == 3
     assert chat_response.messages[0].contents[0].type == "text"
@@ -1426,6 +1427,65 @@ def test_chat_options_merge(tool_tool, ai_tool) -> None:
     assert options3.get("tools") == [tool_tool, ai_tool]  # tools are combined
     assert options3.get("logit_bias") == {"x": 1}  # base value preserved
     assert options3.get("metadata") == {"a": "b"}  # base value preserved
+
+
+def test_append_instructions_combines_plain_strings() -> None:
+    """String instructions are concatenated with a newline."""
+    assert _append_instructions("Base.", "Added.") == "Base.\nAdded."
+
+
+def test_append_instructions_returns_the_populated_side_when_one_is_empty() -> None:
+    """An empty base or addition leaves the other side untouched."""
+    blocks = [{"type": "text", "text": "Base."}]
+
+    assert _append_instructions(None, "Added.") == "Added."
+    assert _append_instructions("Base.", None) == "Base."
+    assert _append_instructions([], "Added.") == "Added."
+    assert _append_instructions(blocks, "") == blocks
+
+
+def test_append_instructions_preserves_structured_instructions() -> None:
+    """A structured base is extended element-wise instead of being coerced to a string."""
+    blocks = [
+        {"type": "text", "text": "Stable.", "block_options": {"pinned": True}},
+        {"type": "text", "text": "Dynamic."},
+    ]
+
+    combined = _append_instructions(blocks, "Added.")
+
+    # The leading blocks must stay unchanged for providers that treat them as a stable prefix.
+    assert combined == [*blocks, "Added."]
+    assert blocks == [
+        {"type": "text", "text": "Stable.", "block_options": {"pinned": True}},
+        {"type": "text", "text": "Dynamic."},
+    ]
+
+
+def test_append_instructions_promotes_a_string_base_when_the_addition_is_structured() -> None:
+    """A string base becomes the first element when structured instructions are appended."""
+    assert _append_instructions("Base.", [{"type": "text", "text": "Added."}]) == [
+        "Base.",
+        {"type": "text", "text": "Added."},
+    ]
+
+
+def test_append_instructions_treats_a_single_mapping_as_one_element() -> None:
+    """A lone structured block is appended whole, not iterated into its keys."""
+    block = {"type": "text", "text": "Stable.", "block_options": {"pinned": True}}
+
+    assert _append_instructions(block, "Added.") == [block, "Added."]
+    assert _append_instructions("Base.", block) == ["Base.", block]
+
+
+def test_chat_options_merge_preserves_structured_instructions() -> None:
+    """merge_chat_options must not stringify provider-native structured instructions."""
+    blocks = [{"type": "text", "text": "Stable.", "block_options": {"pinned": True}}]
+    base: ChatOptions = {"instructions": blocks}  # type: ignore[typeddict-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+    override: ChatOptions = {"instructions": "Added."}
+
+    merged = merge_chat_options(base, override)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+    assert merged.get("instructions") == [*blocks, "Added."]
 
 
 def test_chat_options_and_tool_choice_override() -> None:
@@ -1736,17 +1796,17 @@ def test_response_update_propagates_fields_and_metadata():
     assert resp.messages[0].message_id == "mid"
 
 
-def test_text_coalescing_preserves_first_properties():
+def test_text_coalescing_preserves_first_serializable_properties():
     t1 = Content.from_text("A", raw_representation={"r": 1}, additional_properties={"p": 1})
     t2 = Content.from_text("B")
     upd1 = ChatResponseUpdate(contents=[t1], message_id="x")
     upd2 = ChatResponseUpdate(contents=[t2], message_id="x")
     resp = ChatResponse.from_updates([upd1, upd2])
-    # After coalescing there should be a single TextContent with merged text and preserved props from first
+    # After coalescing there should be a single TextContent with merged text and serializable props from first.
     items = [c for c in resp.messages[0].contents if c.type == "text"]
     assert len(items) >= 1
     assert items[0].text == "AB"
-    assert items[0].raw_representation == {"r": 1}
+    assert items[0].raw_representation is None
     assert items[0].additional_properties == {"p": 1}
 
 
@@ -2256,6 +2316,24 @@ def test_function_approval_response_content_serialization():
     assert response_dict["function_call"]["call_id"] == "call123"
 
 
+@pytest.mark.parametrize("approved", ["false", "no", 1, "0", 0, None])
+def test_function_approval_response_deserialization_rejects_non_boolean_decisions(approved: Any) -> None:
+    """Serialized non-boolean approval decisions must fail closed."""
+    response = Content.from_dict({
+        "type": "function_approval_response",
+        "id": "response123",
+        "approved": approved,
+        "function_call": {
+            "type": "function_call",
+            "call_id": "call123",
+            "name": "test_func",
+            "arguments": {},
+        },
+    })
+
+    assert response.approved is False
+
+
 def test_chat_response_complex_serialization():
     """Test ChatResponse from_dict and to_dict with complex nested objects."""
 
@@ -2422,18 +2500,20 @@ class _NonCopyableRaw:
         raise TypeError("Cannot deepcopy this object")
 
 
-def test_content_deepcopy_preserves_raw_representation():
-    """Test that deepcopy of Content keeps raw_representation by reference."""
+def test_content_deepcopy_discards_raw_representation(caplog: pytest.LogCaptureFixture) -> None:
+    """Test that deepcopy of Content discards raw_representation and logs at debug level."""
     import copy
 
     raw = _NonCopyableRaw()
     content = Content.from_text("hello", raw_representation=raw)
 
-    cloned = copy.deepcopy(content)
+    with caplog.at_level("DEBUG", logger="agent_framework"):
+        cloned = copy.deepcopy(content)
 
     assert cloned.text == "hello"
-    assert cloned.raw_representation is raw
+    assert cloned.raw_representation is None
     assert cloned.additional_properties is not content.additional_properties
+    assert caplog.messages == ["Discarding field 'raw_representation' while deep-copying Content."]
 
 
 def test_message_deepcopy_preserves_raw_representation():
@@ -2539,21 +2619,20 @@ def test_nested_deepcopy_preserves_raw_representation():
     assert cloned.text == "hello"
 
 
-def test_content_deepcopy_shallow_copy_fields_identity():
-    """Test that Content._SHALLOW_COPY_FIELDS fields are identity-preserved while others are deep-copied."""
+def test_content_deepcopy_does_not_log_for_empty_shallow_copy_fields(caplog: pytest.LogCaptureFixture) -> None:
+    """Test that empty shallow-copy fields do not emit discard logs."""
     import copy
 
-    raw = _NonCopyableRaw()
-    content = Content.from_text("hello", raw_representation=raw)
+    content = Content.from_text("hello")
     content.additional_properties["key"] = "value"
 
-    cloned = copy.deepcopy(content)
+    with caplog.at_level("DEBUG", logger="agent_framework"):
+        cloned = copy.deepcopy(content)
 
-    # _SHALLOW_COPY_FIELDS (raw_representation) should be same object
-    assert cloned.raw_representation is raw
-    # Non-shallow fields should be independent deep copies
+    assert cloned.raw_representation is None
     assert cloned.additional_properties is not content.additional_properties
     assert cloned.additional_properties == {"key": "value"}
+    assert caplog.messages == []
 
 
 def test_chat_response_deepcopy_deep_copies_additional_properties():

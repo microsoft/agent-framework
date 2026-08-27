@@ -44,7 +44,9 @@ def discover_projects(workspace_pyproject_file: Path) -> list[Path]:
     for project in projects:
         if "*" in project:
             globbed = glob.glob(str(project), root_dir=workspace_pyproject_file.parent)
-            globbed_paths = [Path(p) for p in globbed]
+            globbed_paths = [
+                Path(path) for path in globbed if (workspace_pyproject_file.parent / path / "pyproject.toml").is_file()
+            ]
             all_projects.extend(globbed_paths)
         else:
             all_projects.append(Path(project))

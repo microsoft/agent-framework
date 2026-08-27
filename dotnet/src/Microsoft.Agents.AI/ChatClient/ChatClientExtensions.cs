@@ -68,7 +68,7 @@ public static class ChatClientExtensions
         // ApprovalNotRequiredFunctionBypassingChatClient is registered before FunctionInvokingChatClient so that
         // it sits above FICC in the pipeline. ChatClientBuilder.Build applies factories in reverse order,
         // making the first Use() call outermost. By adding this decorator here, the resulting pipeline is:
-        //   [ApprovalResponseBindingChatClient] → ApprovalNotRequiredFunctionBypassingChatClient → FunctionInvokingChatClient
+        //   [ApprovalResponseBindingChatClient] → ApprovalNotRequiredFunctionBypassingChatClient → [InvocableFunctionBypassingChatClient] → FunctionInvokingChatClient
         //     → [MessageInjectingChatClient] → [PerServiceCallChatHistoryPersistingChatClient] → DeferredOpenTelemetryChatClient → leaf IChatClient
         // This allows the decorator to intercept FICC's responses and remove approval requests for tools
         // that don't actually require approval, storing them for automatic re-injection on the next request.
@@ -78,14 +78,34 @@ public static class ChatClientExtensions
                 new ApprovalNotRequiredFunctionBypassingChatClient(innerClient, services.GetService<ILoggerFactory>()));
         }
 
-        if (chatClient.GetService<FunctionInvokingChatClient>() is null)
+        // InvocableFunctionBypassingChatClient is opt-in via EnableInvocableFunctionBypassing. It is
+        // registered after the approval decorators and immediately before FunctionInvokingChatClient, so it
+        // sits directly above FICC (ChatClientBuilder.Build applies factories in reverse order). It intercepts
+        // FICC responses that contain both invocable (backend) and declaration-only (frontend) function calls,
+        // removes the invocable calls, stores them in the session, and re-injects them as pre-approved
+        // responses on the next request so FICC reconstructs and executes them.
+        if (options?.EnableInvocableFunctionBypassing is true)
+        {
+            chatBuilder.Use((innerClient, services) =>
+                new InvocableFunctionBypassingChatClient(innerClient, services.GetService<ILoggerFactory>()));
+        }
+
+        var functionInvokingChatClient = chatClient.GetService<FunctionInvokingChatClient>();
+        if (functionInvokingChatClient is null)
         {
             chatBuilder.Use((innerClient, services) =>
             {
                 var loggerFactory = services.GetService<ILoggerFactory>();
 
-                return new FunctionInvokingChatClient(innerClient, loggerFactory, services);
+                return new FunctionInvokingChatClient(innerClient, loggerFactory, services)
+                {
+                    AllowConcurrentInvocation = options?.AllowConcurrentInvocation is true,
+                };
             });
+        }
+        else if (options?.AllowConcurrentInvocation is true)
+        {
+            functionInvokingChatClient.AllowConcurrentInvocation = true;
         }
 
         // MessageInjectingChatClient is injected when EnableMessageInjection is enabled.

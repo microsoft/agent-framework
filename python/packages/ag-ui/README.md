@@ -167,10 +167,23 @@ Interrupted terminal event shape:
         "responseSchema": {
           "type": "object",
           "properties": {
+            "approved": { "type": "boolean" },
             "accepted": { "type": "boolean" },
-            "arguments": { "type": "object" }
+            "city": { "type": "string" },
+            "editedArgs": {
+              "type": "object",
+              "description": "Full replacement of the tool arguments. Not merged.",
+              "properties": {
+                "city": { "type": "string" }
+              },
+              "required": ["city"],
+              "additionalProperties": false
+            }
           },
-          "required": ["accepted"]
+          "anyOf": [
+            { "required": ["approved"] },
+            { "required": ["accepted"] }
+          ]
         },
         "metadata": {
           "agent_framework": {
@@ -192,6 +205,11 @@ Interrupted terminal event shape:
 
 Resume the paused thread with a canonical `resume` array. Each entry addresses exactly one open interrupt by
 `interruptId`; `status` is `resolved` or `cancelled`; resolved entries carry the approval or workflow response payload.
+Tool approvals use the standard `approved` field and may provide `editedArgs` as a full replacement of the tool
+arguments. For compatibility with existing MAF clients, `accepted` remains an alias for `approved`, and direct
+argument fields remain supported as partial edits. Cancellation is a normal terminal decision: cancelled calls do
+not execute, while resolved siblings in the same complete resume continue normally. The same tool-approval shape and
+resume payloads apply when an agent approval is surfaced through a workflow `request_info` event.
 
 ```json
 {
@@ -294,6 +312,22 @@ The `dependencies` parameter accepts any FastAPI dependency, enabling integratio
 - **Custom Authentication** - Implement your organization's auth requirements
 
 For a complete authentication example, see [getting_started/server.py](getting_started/server.py).
+
+### Conversation and Tool Result Trust
+
+In the default stateless mode, the AG-UI client sends the conversation history for each run. Treat that history as
+untrusted input, including client-supplied `assistant` tool calls and `tool` results. A historical tool result is not
+proof that the server emitted the matching call or executed the named backend tool.
+
+Do not use conversation history, tool results, or the model's decision to call a tool as an authorization,
+entitlement, approval, or policy signal. Enforce security decisions deterministically in authenticated server code,
+such as endpoint dependencies, tool middleware, or the server-validated human-in-the-loop approval flow. Tool
+implementations must also authorize the current principal before accessing protected data or performing sensitive
+actions.
+
+For applications that need server-authoritative thread history, configure scoped AG-UI Thread Snapshots. Snapshot
+mode only accepts user turns and results for backend-issued tool calls when extending stored history. It complements
+endpoint authentication and authorization; it does not replace them.
 
 ## AG-UI Thread Snapshots
 

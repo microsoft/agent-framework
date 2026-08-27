@@ -26,9 +26,9 @@ async def validate_result(summary: str) -> bool:
     return len(summary) > 0 and "[200]" in summary
 
 
-# @workflow enables .run(stream=True), which returns a ResponseStream
-# you can iterate over with `async for`. Without @workflow, you'd just
-# have a normal async function with no streaming capability.
+# @workflow creates a definition. Its built workflow enables
+# .run(stream=True), which returns a ResponseStream you can iterate over with
+# `async for`.
 @workflow
 async def data_pipeline(url: str) -> str:
     """A simple sequential data pipeline."""
@@ -40,10 +40,12 @@ async def data_pipeline(url: str) -> str:
 
 
 async def main():
+    workflow_instance = data_pipeline.build()
+
     # run(stream=True) returns a ResponseStream that yields events as they
     # are produced. The raw stream includes lifecycle events (started, status)
     # alongside application events — filter by event.type to find what you need.
-    stream = data_pipeline.run("https://example.com/api/data", stream=True)
+    stream = workflow_instance.run("https://example.com/api/data", stream=True)
     async for event in stream:
         if event.type == "output":
             print(f"Output: {event.data}")

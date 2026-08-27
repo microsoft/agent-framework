@@ -220,6 +220,50 @@ async def test_get_response_basic() -> None:
     assert server.last_request["messages"] == [{"role": "user", "content": "hi"}]
 
 
+async def test_get_response_includes_cached_input_tokens() -> None:
+    client, _ = make_client(
+        json_response(
+            make_response_payload(
+                content="hello",
+                usage={
+                    "prompt_tokens": 100,
+                    "completion_tokens": 7,
+                    "total_tokens": 107,
+                    "prompt_tokens_details": {"cached_tokens": 80},
+                },
+            )
+        )
+    )
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.usage_details is not None
+    assert response.usage_details["cache_read_input_token_count"] == 80
+
+
+@pytest.mark.parametrize("cached_tokens", ["80", 80.5, True, False])
+async def test_get_response_ignores_invalid_cached_input_tokens(cached_tokens: Any) -> None:
+    client, _ = make_client(
+        json_response(
+            make_response_payload(
+                content="hello",
+                usage={
+                    "prompt_tokens": 100,
+                    "completion_tokens": 7,
+                    "total_tokens": 107,
+                    "prompt_tokens_details": {"cached_tokens": cached_tokens},
+                },
+            )
+        )
+    )
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.usage_details is not None
+    assert "prompt/cached_tokens" not in response.usage_details
+    assert "cache_read_input_token_count" not in response.usage_details
+
+
 @pytest.mark.parametrize(
     ("status_code", "expected_exception"),
     [
@@ -648,6 +692,30 @@ async def test_parse_finish_reason_model_length() -> None:
     assert response.finish_reason == "length"
 
 
+async def test_parse_finish_reason_unmapped_is_preserved() -> None:
+    """A Mistral finish reason with no framework equivalent is passed through unchanged."""
+    client, _ = make_client(json_response(make_response_payload(content="x", finish_reason="error")))
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.finish_reason == "error"
+
+
+async def test_parse_finish_reason_absent() -> None:
+    """A response without a finish reason still reports no finish reason."""
+    client, _ = make_client(
+        json_response(
+            make_response_payload(
+                choices=[{"index": 0, "message": {"role": "assistant", "content": "x"}}],
+            )
+        )
+    )
+
+    response = await client.get_response([Message("user", ["hi"])])
+
+    assert response.finish_reason is None
+
+
 async def test_function_invocation_loop() -> None:
     client, server = make_client(
         json_response(
@@ -684,7 +752,12 @@ async def test_streaming_response() -> None:
             make_chunk_payload(content="lo"),
             make_chunk_payload(
                 finish_reason="stop",
-                usage={"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+                usage={
+                    "prompt_tokens": 3,
+                    "completion_tokens": 2,
+                    "total_tokens": 5,
+                    "prompt_tokens_details": {"cached_tokens": 2},
+                },
             ),
         )
     )
@@ -700,8 +773,21 @@ async def test_streaming_response() -> None:
         "input_token_count": 3,
         "output_token_count": 2,
         "total_token_count": 5,
+        "prompt/cached_tokens": 2,
+        "cache_read_input_token_count": 2,
     }
     assert server.last_request["stream"] is True
+
+
+async def test_streaming_finish_reason_unmapped_is_preserved() -> None:
+    """A streamed Mistral finish reason with no framework equivalent is passed through unchanged."""
+    client, _ = make_client(stream_response(make_chunk_payload(content="partial", finish_reason="error")))
+
+    stream = client.get_response([Message("user", ["hi"])], stream=True)
+    updates = [update async for update in stream]
+
+    assert [u.finish_reason for u in updates] == ["error"]
+    assert (await stream.get_final_response()).finish_reason == "error"
 
 
 async def test_streaming_tool_calls() -> None:

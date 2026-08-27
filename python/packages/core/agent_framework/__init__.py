@@ -41,6 +41,7 @@ from .exceptions import (
 )
 
 _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
+    "._agent_hooks": ("create_agent_hooks_middleware", "create_agent_hooks_middleware_from_emitter"),
     "._agents": ("Agent", "BaseAgent", "RawAgent", "SupportsAgentRun"),
     "._clients": (
         "BaseChatClient",
@@ -183,6 +184,8 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "FunctionInvocationContext",
         "FunctionMiddleware",
         "FunctionMiddlewareTypes",
+        "MiddlewareBundle",
+        "MiddlewareFailure",
         "MiddlewareTermination",
         "MiddlewareType",
         "MiddlewareTypes",
@@ -291,6 +294,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
         "InMemoryCheckpointStorage",
         "WorkflowCheckpoint",
     ),
+    "._workflows._checkpoint_encoding": ("register_checkpoint_type",),
     "._workflows._const": (
         "DEFAULT_MAX_ITERATIONS",
         "INTERNAL_SOURCE_ID",
@@ -319,6 +323,7 @@ _LAZY_MODULE_EXPORTS: Final[Mapping[str, tuple[str, ...]]] = {
     "._workflows._function_executor": ("FunctionExecutor", "executor"),
     "._workflows._functional": (
         "FunctionalWorkflow",
+        "FunctionalWorkflowDefinition",
         "FunctionalWorkflowAgent",
         "RunContext",
         "StepWrapper",
@@ -476,6 +481,7 @@ __all__ = [
     "FunctionTool",
     "FunctionalWorkflow",
     "FunctionalWorkflowAgent",
+    "FunctionalWorkflowDefinition",
     "GeneratedEmbeddings",
     "GraphConnectivityError",
     "HistoryProvider",
@@ -503,7 +509,9 @@ __all__ = [
     "MemoryTopicRecord",
     "Message",
     "MessageInjectionMiddleware",
+    "MiddlewareBundle",
     "MiddlewareException",
+    "MiddlewareFailure",
     "MiddlewareTermination",
     "MiddlewareType",
     "MiddlewareTypes",
@@ -599,6 +607,8 @@ __all__ = [
     "background_tasks_running",
     "background_tasks_running_message",
     "chat_middleware",
+    "create_agent_hooks_middleware",
+    "create_agent_hooks_middleware_from_emitter",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
     "create_edge_runner",
@@ -624,6 +634,7 @@ __all__ = [
     "normalize_tools",
     "prepend_agent_framework_to_user_agent",
     "prepend_instructions_to_messages",
+    "register_checkpoint_type",
     "register_state_type",
     "resolve_agent_id",
     "response_handler",

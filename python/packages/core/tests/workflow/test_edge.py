@@ -1191,6 +1191,92 @@ async def test_fan_in_edge_group_with_multiple_message_types_failed() -> None:
         )
 
 
+class TraceCapturingAggregator(Executor):
+    """Fan-in aggregator that captures the trace contexts received by its handler.
+
+    Captures the source trace data from the :class:`WorkflowContext` passed to
+    the handler rather than overriding :meth:`Executor.execute` (which is
+    documented as *do not override* — it owns locking, span creation, handler
+    dispatch, and context construction).
+    """
+
+    def __init__(self, *, id: str) -> None:
+        super().__init__(id=id)
+        self.captured_trace_contexts: list[dict[str, str]] | None = None
+        self.captured_source_span_ids: list[str] | None = None
+        self.call_count: int = 0
+
+    @handler
+    async def mock_aggregator_handler(self, message: list[MockMessage], ctx: WorkflowContext) -> None:
+        self.call_count += 1
+        self.captured_trace_contexts = list(ctx._trace_contexts)
+        self.captured_source_span_ids = list(ctx._source_span_ids)
+
+
+async def test_fan_in_preserves_multiple_trace_contexts_per_message() -> None:
+    """Fan-in must aggregate ALL trace contexts, not just the first per message.
+
+    Each incoming message may carry multiple trace_contexts (e.g. when it is
+    itself the product of a prior fan-in). The aggregated message must include
+    every trace context and source span ID from every source message; using the
+    singular backward-compat properties (trace_context / source_span_id) would
+    silently drop all but the first context per message.
+    """
+    source1 = MockExecutor(id="source_executor_1")
+    source2 = MockExecutor(id="source_executor_2")
+    target = TraceCapturingAggregator(id="target_executor")
+
+    executors: dict[str, Executor] = {source1.id: source1, source2.id: source2, target.id: target}
+    edge_group = FanInEdgeGroup(source_ids=[source1.id, source2.id], target_id=target.id)
+    edge_runner = create_edge_runner(edge_group, executors)
+
+    state = State()
+    ctx = InProcRunnerContext()
+    data = MockMessage(data="test")
+
+    # Source 1 carries TWO trace contexts (simulating a prior fan-in aggregation)
+    multi_contexts_1 = [
+        {"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
+        {"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-aaaaaaaaaaaaaaaa-01"},
+    ]
+    multi_span_ids_1 = ["00f067aa0ba902b7", "aaaaaaaaaaaaaaaa"]
+
+    # Source 2 carries a single trace context
+    single_contexts_2 = [
+        {"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b8-01"},
+    ]
+    single_span_ids_2 = ["00f067aa0ba902b8"]
+
+    # Send first message (buffered)
+    assert await edge_runner.send_message(
+        WorkflowMessage(
+            data=data, source_id=source1.id, trace_contexts=multi_contexts_1, source_span_ids=multi_span_ids_1
+        ),
+        state,
+        ctx,
+    )
+
+    # Send second message (triggers delivery)
+    assert await edge_runner.send_message(
+        WorkflowMessage(
+            data=data, source_id=source2.id, trace_contexts=single_contexts_2, source_span_ids=single_span_ids_2
+        ),
+        state,
+        ctx,
+    )
+
+    # The target executor should have received ALL 3 trace contexts (2 + 1),
+    # not just 2 (one per message via the singular property).
+    assert target.call_count == 1
+    assert target.captured_trace_contexts is not None
+    assert len(target.captured_trace_contexts) == 3
+    assert target.captured_trace_contexts == multi_contexts_1 + single_contexts_2
+
+    assert target.captured_source_span_ids is not None
+    assert len(target.captured_source_span_ids) == 3
+    assert target.captured_source_span_ids == multi_span_ids_1 + single_span_ids_2
+
+
 # endregion FanInEdgeGroup
 
 # region SwitchCaseEdgeGroup

@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import json
 import logging
 import sys
 import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
+from urllib.parse import urlparse
 
 from agent_framework import (
     AgentMiddlewareLayer,
@@ -51,8 +53,26 @@ else:
     from typing_extensions import TypeVar  # pragma: no cover
 
 try:
-    from copilot import CopilotClient, CopilotSession, RuntimeConnection
-    from copilot.generated.rpc import PermissionDecisionUserNotAvailable
+    from copilot import (
+        CopilotClient,
+        CopilotSession,
+        RuntimeConnection,
+        TelemetryConfig,
+    )
+    from copilot.generated.rpc import (
+        PermissionDecisionApproveForSession,
+        PermissionDecisionApproveForSessionApproval,
+        PermissionDecisionApproveForSessionApprovalCommands,
+        PermissionDecisionApproveForSessionApprovalCustomTool,
+        PermissionDecisionApproveForSessionApprovalExtensionManagement,
+        PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess,
+        PermissionDecisionApproveForSessionApprovalMCP,
+        PermissionDecisionApproveForSessionApprovalMemory,
+        PermissionDecisionApproveForSessionApprovalRead,
+        PermissionDecisionApproveForSessionApprovalWrite,
+        PermissionDecisionApproveOnce,
+        PermissionDecisionUserNotAvailable,
+    )
     from copilot.session import (
         Attachment,
         BlobAttachment,
@@ -64,7 +84,21 @@ try:
         SessionHooks,
         SystemMessageConfig,
     )
-    from copilot.session_events import AssistantUsageData, PermissionRequest, SessionEvent, SessionEventType
+    from copilot.session_events import (
+        AssistantUsageData,
+        PermissionRequest,
+        PermissionRequestCustomTool,
+        PermissionRequestExtensionManagement,
+        PermissionRequestExtensionPermissionAccess,
+        PermissionRequestMcp,
+        PermissionRequestMemory,
+        PermissionRequestRead,
+        PermissionRequestShell,
+        PermissionRequestUrl,
+        PermissionRequestWrite,
+        SessionEvent,
+        SessionEventType,
+    )
     from copilot.tools import Tool as CopilotTool
     from copilot.tools import ToolInvocation, ToolResult
 except ImportError as _copilot_import_error:
@@ -80,6 +114,9 @@ PermissionHandlerType = Callable[
     [PermissionRequest, dict[str, str]], "PermissionRequestResult | Awaitable[PermissionRequestResult]"
 ]
 """Type for permission request handlers. Supports both sync and async callbacks."""
+
+AsyncPermissionHandlerType = Callable[[PermissionRequest, dict[str, str]], "Awaitable[PermissionRequestResult]"]
+"""Type for permission request handlers that are always asynchronous."""
 
 
 FunctionApprovalCallback = Callable[[Content], "bool | Awaitable[bool]"]
@@ -140,6 +177,193 @@ def _deny_all_permissions(
     return PermissionDecisionUserNotAvailable()
 
 
+def _derive_session_approval(request: PermissionRequest) -> PermissionDecisionApproveForSessionApproval | None:
+    """Build the session-scoped approval implied by ``request``.
+
+    ``PermissionDecisionApproveForSession.approval`` describes *what* is being approved for
+    the remainder of the session. Its shape is dictated by the prompt that triggered it, so
+    it can be reconstructed from the request itself.
+
+    Args:
+        request: The permission request the decision is responding to.
+
+    Returns:
+        The approval covering ``request``, or ``None`` for request kinds that have no
+        session-scoped approval representation (such as ``hook`` prompts).
+    """
+    if isinstance(request, PermissionRequestShell):
+        return PermissionDecisionApproveForSessionApprovalCommands(
+            command_identifiers=[command.identifier for command in request.commands]
+        )
+    if isinstance(request, PermissionRequestRead):
+        return PermissionDecisionApproveForSessionApprovalRead()
+    if isinstance(request, PermissionRequestWrite):
+        return PermissionDecisionApproveForSessionApprovalWrite()
+    if isinstance(request, PermissionRequestMcp):
+        return PermissionDecisionApproveForSessionApprovalMCP(
+            server_name=request.server_name, tool_name=request.tool_name
+        )
+    if isinstance(request, PermissionRequestCustomTool):
+        return PermissionDecisionApproveForSessionApprovalCustomTool(tool_name=request.tool_name)
+    if isinstance(request, PermissionRequestMemory):
+        return PermissionDecisionApproveForSessionApprovalMemory()
+    if isinstance(request, PermissionRequestExtensionManagement):
+        return PermissionDecisionApproveForSessionApprovalExtensionManagement(operation=request.operation)
+    if isinstance(request, PermissionRequestExtensionPermissionAccess):
+        return PermissionDecisionApproveForSessionApprovalExtensionPermissionAccess(
+            extension_name=request.extension_name
+        )
+    return None
+
+
+# Characters the WHATWG URL parser (used by the Copilot CLI) treats specially for
+# special-scheme URLs in ways that can move the authority boundary: backslashes are
+# normalized to forward slashes, and tabs/newlines/carriage returns are stripped before
+# parsing. Python's ``urlparse`` does none of this, so a URL containing any of them may
+# resolve to a different host than the CLI actually contacts.
+_WHATWG_AMBIGUOUS_URL_CHARS = ("\\", "\t", "\n", "\r")
+
+
+def _derive_url_session_domain(url: str) -> str | None:
+    """Return the domain to persist for a URL prompt, or ``None`` when it is unsafe to.
+
+    The persisted domain must match the host the Copilot CLI actually contacts, but the CLI
+    parses URLs with WHATWG semantics while this runs on Python's ``urlparse``. The two
+    disagree on crafted authorities -- a backslash before the ``@`` in
+    ``https://example.com<backslash>@evil.com`` resolves to ``example.com`` under the CLI
+    but ``evil.com`` under ``urlparse`` -- so trusting ``urlparse`` here could persist a
+    session-wide approval for an unrelated, attacker-chosen domain.
+
+    To keep the "narrow, never widen" guarantee, the domain is only returned when the URL
+    contains none of the characters the two parsers handle differently; any ambiguity (or a
+    URL with no derivable host) yields ``None`` so the caller can approve the single request
+    without persisting a domain.
+
+    Args:
+        url: The URL from the permission request.
+
+    Returns:
+        The lower-cased host to approve for the session, or ``None`` when the URL is
+        parser-ambiguous or has no host.
+    """
+    if any(char in url for char in _WHATWG_AMBIGUOUS_URL_CHARS):
+        return None
+    return urlparse(url).hostname or None
+
+
+def _normalize_permission_decision(
+    decision: PermissionRequestResult,
+    request: PermissionRequest,
+) -> PermissionRequestResult:
+    """Fill in the missing scope of an under-specified ``approve-for-session`` decision.
+
+    ``PermissionDecisionApproveForSession`` carries an optional ``approval`` (tool prompts)
+    and an optional ``domain`` (URL prompts), so ``PermissionDecisionApproveForSession()``
+    is constructible with neither. That serializes to ``{"kind": "approve-for-session"}``,
+    which the Copilot CLI cannot interpret -- it crashes with ``Cannot read properties of
+    undefined (reading 'commandIdentifiers')``, taking the whole run down with it. This
+    reconstructs the intended scope from ``request``.
+
+    The decision is only ever narrowed, never widened: when the prompt does not offer
+    session-scoped approval, or the request kind has no session approval representation,
+    the decision is downgraded to a single-use approval.
+
+    Args:
+        decision: The decision returned by the caller's permission handler.
+        request: The permission request the decision is responding to.
+
+    Returns:
+        ``decision`` unchanged unless it is an ``approve-for-session`` decision missing both
+        ``approval`` and ``domain``, in which case an equivalent fully-scoped decision (or a
+        narrower single-use approval) is returned. The input is never mutated.
+    """
+    if not isinstance(decision, PermissionDecisionApproveForSession):
+        return decision
+    if decision.approval is not None or decision.domain is not None:
+        return decision
+
+    try:
+        if isinstance(request, PermissionRequestUrl):
+            domain = _derive_url_session_domain(request.url)
+            if domain:
+                return PermissionDecisionApproveForSession(domain=domain)
+            logger.warning(
+                "Permission handler returned an unscoped 'approve-for-session' decision for a URL prompt, "
+                "but no unambiguous domain could be derived from '%s'. Approving this request only. Return "
+                "PermissionDecisionApproveForSession(domain=...) to approve a domain for the session.",
+                request.url,
+            )
+            return PermissionDecisionApproveOnce()
+
+        # Only shell and write prompts advertise this; other kinds always allow session approval.
+        if not getattr(request, "can_offer_session_approval", True):
+            logger.warning(
+                "Permission handler returned an 'approve-for-session' decision for a '%s' prompt that does not "
+                "offer session-scoped approval. Approving this request only.",
+                request.kind,
+            )
+            return PermissionDecisionApproveOnce()
+
+        approval = _derive_session_approval(request)
+    except Exception:
+        logger.exception(
+            "Failed to derive the session approval for a '%s' permission prompt. Approving this request only.",
+            getattr(request, "kind", "unknown"),
+        )
+        return PermissionDecisionApproveOnce()
+
+    if approval is None:
+        logger.warning(
+            "Permission handler returned an unscoped 'approve-for-session' decision for a '%s' prompt, which has "
+            "no session-scoped approval. Approving this request only.",
+            request.kind,
+        )
+        return PermissionDecisionApproveOnce()
+    return PermissionDecisionApproveForSession(approval=approval)
+
+
+def _with_normalized_permission_decisions(handler: PermissionHandlerType) -> AsyncPermissionHandlerType:
+    """Wrap a permission handler so its decisions are normalized before reaching the SDK.
+
+    Exceptions raised by ``handler`` deliberately propagate: the SDK already catches them
+    and denies the request, and preserving that keeps the secure-by-default behavior.
+
+    Args:
+        handler: The caller-supplied permission handler. May be sync or async.
+
+    Returns:
+        An async handler delegating to ``handler`` and normalizing its result.
+    """
+
+    async def normalized_handler(request: PermissionRequest, invocation: dict[str, str]) -> PermissionRequestResult:
+        result = handler(request, invocation)
+        if inspect.isawaitable(result):
+            result = await result
+        return _normalize_permission_decision(result, request)
+
+    return normalized_handler
+
+
+def _parse_telemetry_config(raw: str) -> TelemetryConfig | None:
+    # GITHUB_COPILOT_TELEMETRY and matching .env values are read as plain strings while the
+    # Copilot SDK expects a mapping, so parse here before the value reaches CopilotClient.
+    # Malformed values are logged and ignored so a bad telemetry setting cannot prevent the
+    # agent from starting.
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning(
+            "Ignoring malformed GITHUB_COPILOT_TELEMETRY value; expected a JSON object with TelemetryConfig keys."
+        )
+        return None
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "Ignoring invalid GITHUB_COPILOT_TELEMETRY value; expected a JSON object with TelemetryConfig keys."
+        )
+        return None
+    return cast(TelemetryConfig, parsed)
+
+
 class GitHubCopilotSettings(TypedDict, total=False):
     """GitHub Copilot model settings.
 
@@ -161,6 +385,10 @@ class GitHubCopilotSettings(TypedDict, total=False):
             GITHUB_COPILOT_BASE_DIRECTORY. Defaults to ~/.copilot when not set.
             Only applicable when the SDK spawns the CLI process (ignored when
             connecting to an external server via a pre-configured client).
+        telemetry: OpenTelemetry configuration for the Copilot CLI process. This is
+            passed to the SDK client when it is created by the agent. Values coming
+            from GITHUB_COPILOT_TELEMETRY or a .env file arrive as a JSON string and
+            are parsed into a mapping before they reach the SDK.
     """
 
     cli_path: str | None
@@ -168,6 +396,7 @@ class GitHubCopilotSettings(TypedDict, total=False):
     timeout: float | None
     log_level: str | None
     base_directory: str | None
+    telemetry: dict[str, Any] | str | None
 
 
 class GitHubCopilotOptions(TypedDict, total=False):
@@ -246,6 +475,9 @@ class GitHubCopilotOptions(TypedDict, total=False):
     unless you opt in, so a session behaves the same way regardless of which checkout it
     runs in. Unrelated to the SDK callback hooks configured through ``on_pre_tool_use``.
     """
+
+    telemetry: TelemetryConfig
+    """OpenTelemetry configuration for the Copilot CLI process."""
 
     on_pre_tool_use: PreToolUseHandler
     """Pre-tool-use hook handler for the Copilot SDK.
@@ -384,6 +616,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         on_pre_tool_use: PreToolUseHandler | None = opts.pop("on_pre_tool_use", None)
         on_function_approval: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
         base_directory = opts.pop("base_directory", None)
+        telemetry = opts.pop("telemetry", None)
 
         if on_function_approval is not None and on_pre_tool_use is not None:
             raise ValueError(
@@ -410,6 +643,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             timeout=timeout,
             log_level=log_level,
             base_directory=base_directory,
+            telemetry=telemetry,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
@@ -450,6 +684,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             cli_path = self._settings.get("cli_path") or None
             log_level = self._settings.get("log_level") or None
             base_directory = self._settings.get("base_directory") or None
+            telemetry = self._settings.get("telemetry") or None
+            if isinstance(telemetry, str):
+                telemetry = _parse_telemetry_config(telemetry)
 
             client_kwargs: dict[str, Any] = {}
             if cli_path:
@@ -458,6 +695,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 client_kwargs["log_level"] = log_level
             if base_directory:
                 client_kwargs["base_directory"] = base_directory
+            if telemetry:
+                client_kwargs["telemetry"] = telemetry
             self._client = CopilotClient(**client_kwargs)
 
         try:
@@ -1210,9 +1449,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         dedicated mapping here (an unknown name surfaces as a ``TypeError`` from the
         SDK). A few keys are handled specially because they need a specific default
         (``on_permission_request`` defaults to denying all requests and
-        ``enable_file_hooks`` defaults to off) or transforming:
-        ``tools`` are merged with the agent's tools and converted to SDK tools, and
-        approval callbacks are turned into ``hooks``.
+        ``enable_file_hooks`` defaults to off, and is wrapped so
+        under-specified ``approve-for-session`` decisions are scoped to the request that
+        triggered them) or transforming: ``tools`` are merged with the agent's tools and
+        converted to SDK tools, and approval callbacks are turned into ``hooks``.
 
         Args:
             streaming: Whether to enable streaming for the session.
@@ -1236,7 +1476,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # back to the resolved setting (which carries the default_options / env model).
         if not kwargs.get("model"):
             kwargs["model"] = self._settings.get("model") or None
-        kwargs["on_permission_request"] = (
+        kwargs["on_permission_request"] = _with_normalized_permission_decisions(
             opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
         )
         # File hooks let the working directory's checked-in configuration influence what the
@@ -1249,7 +1489,15 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         # Strip agent-internal and client-level keys that are consumed here or in the
         # run methods (and settings) but are NOT valid create_session parameters, so
         # they don't leak through the passthrough layer and raise TypeError.
-        for key in ("on_pre_tool_use", "on_function_approval", "timeout", "cli_path", "log_level", "base_directory"):
+        for key in (
+            "on_pre_tool_use",
+            "on_function_approval",
+            "timeout",
+            "cli_path",
+            "log_level",
+            "base_directory",
+            "telemetry",
+        ):
             kwargs.pop(key, None)
 
         return kwargs

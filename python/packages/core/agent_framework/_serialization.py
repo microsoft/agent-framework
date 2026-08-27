@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import logging
@@ -568,7 +569,7 @@ class SerializationMixin:
                             and param_name in kwargs
                             and isinstance(kwargs[param_name], dict)
                         ):
-                            kwargs[param_name].update(param_value)
+                            kwargs[param_name] = {**kwargs[param_name], **param_value}
                         else:
                             kwargs[param_name] = param_value
             else:
@@ -580,7 +581,7 @@ class SerializationMixin:
                     )
                 # Handle dict parameters - merge if both are dicts
                 if isinstance(dep_value, dict) and dep_key in kwargs and isinstance(kwargs[dep_key], dict):
-                    kwargs[dep_key].update(dep_value)
+                    kwargs[dep_key] = {**kwargs[dep_key], **dep_value}
                 else:
                     kwargs[dep_key] = dep_value
 
@@ -649,8 +650,9 @@ def make_json_safe(obj: Any) -> Any:
     """Recursively convert an object to a JSON-serializable form.
 
     Handles dataclasses, Pydantic models, objects with ``to_dict``/``dict``/``__dict__``,
-    datetimes, lists, dicts, and primitives.  Falls back to ``str()`` for any remaining
-    non-serializable value so that ``json.dumps`` never raises a ``TypeError``.
+    datetimes, bytes (base64), lists, dicts, and primitives.  Falls back to ``str()`` for
+    any remaining non-serializable value so that ``json.dumps`` never raises a
+    ``TypeError``.
 
     Args:
         obj: Object to make JSON safe.
@@ -662,6 +664,8 @@ def make_json_safe(obj: Any) -> Any:
         return obj
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
+    if isinstance(obj, (bytes, bytearray)):
+        return base64.b64encode(bytes(obj)).decode("ascii")
     if is_dataclass(obj) and not isinstance(obj, type):
         return make_json_safe(asdict(obj))
     if type(obj) is dict:

@@ -83,6 +83,9 @@ internal static partial class AgentJsonUtilities
     // AgentModeProvider types
     [JsonSerializable(typeof(AgentModeState))]
 
+    // RoutePersistingRoutingChatClient types
+    [JsonSerializable(typeof(AgentSessionRoutingState))]
+
     // ToolApprovalAgent types
     [JsonSerializable(typeof(ToolApprovalState))]
     [JsonSerializable(typeof(ToolApprovalRule))]
