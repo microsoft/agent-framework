@@ -569,7 +569,7 @@ class SerializationMixin:
                             and param_name in kwargs
                             and isinstance(kwargs[param_name], dict)
                         ):
-                            kwargs[param_name].update(param_value)
+                            kwargs[param_name] = {**kwargs[param_name], **param_value}
                         else:
                             kwargs[param_name] = param_value
             else:
@@ -581,7 +581,7 @@ class SerializationMixin:
                     )
                 # Handle dict parameters - merge if both are dicts
                 if isinstance(dep_value, dict) and dep_key in kwargs and isinstance(kwargs[dep_key], dict):
-                    kwargs[dep_key].update(dep_value)
+                    kwargs[dep_key] = {**kwargs[dep_key], **dep_value}
                 else:
                     kwargs[dep_key] = dep_value
 
