@@ -31,9 +31,9 @@ if ($filesWithUnshippedApis.Count -eq 0) {
     exit 0
 }
 
-Write-Error 'Unshipped public APIs must be promoted before publishing released packages.'
+Write-Error 'Unshipped public APIs must be promoted before publishing released packages.' -ErrorAction Continue
 $filesWithUnshippedApis | ForEach-Object {
-    Write-Error "$($_.Path): $($_.Count) unshipped public API entr$(if ($_.Count -eq 1) { 'y' } else { 'ies' })"
+    Write-Error "$($_.Path): $($_.Count) unshipped public API entr$(if ($_.Count -eq 1) { 'y' } else { 'ies' })" -ErrorAction Continue
 }
 
 exit 1
