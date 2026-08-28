@@ -35,10 +35,10 @@ public class ListAgentToolsWithTasksTests
         ModelContextProtocol.Client.McpClient client = null!;
 
         // Act
-        Func<Task> act = async () => await client.ListAgentToolsWithTasksAsync();
+        async Task actAsync() => await client.ListAgentToolsWithTasksAsync();
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(act);
+        await Assert.ThrowsAsync<ArgumentNullException>(actAsync);
     }
 
     [Fact]
@@ -52,10 +52,10 @@ public class ListAgentToolsWithTasksTests
         var options = new McpTaskOptions { MaxConsecutiveStuckPolls = 0 };
 
         // Act
-        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+        async Task actAsync() => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(actAsync);
     }
 
     [Fact]
@@ -69,10 +69,10 @@ public class ListAgentToolsWithTasksTests
         var options = new McpTaskOptions { MaxTotalInputRequests = 0 };
 
         // Act
-        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+        async Task actAsync() => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(actAsync);
     }
 
     [Fact]
@@ -86,10 +86,10 @@ public class ListAgentToolsWithTasksTests
         var options = new McpTaskOptions { RemoteCancellationTimeout = TimeSpan.Zero };
 
         // Act
-        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+        async Task actAsync() => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(actAsync);
     }
 
     [Fact]
@@ -103,10 +103,10 @@ public class ListAgentToolsWithTasksTests
         var options = new McpTaskOptions { RemoteCancellationTimeout = TimeSpan.FromTicks(1) };
 
         // Act
-        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+        async Task actAsync() => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(actAsync);
     }
 
     [Fact]
@@ -124,10 +124,10 @@ public class ListAgentToolsWithTasksTests
         };
 
         // Act
-        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+        async Task actAsync() => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(actAsync);
     }
 
     [Fact]
@@ -145,10 +145,10 @@ public class ListAgentToolsWithTasksTests
         };
 
         // Act
-        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+        async Task actAsync() => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(actAsync);
     }
 
     [Fact]
@@ -165,9 +165,9 @@ public class ListAgentToolsWithTasksTests
         };
 
         // Act
-        Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
+        async Task actAsync() => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(actAsync);
     }
 }
