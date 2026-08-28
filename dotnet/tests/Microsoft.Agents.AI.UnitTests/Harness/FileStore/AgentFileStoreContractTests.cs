@@ -18,7 +18,6 @@ namespace Microsoft.Agents.AI.UnitTests.Harness.FileMemory;
 public class AgentFileStoreContractTests
 {
     private const string Needle = "keep me";
-    private const string Pathological = "(a+)+b";
 
     /// <summary>
     /// A store implementing only the mandatory members. Before the contract this could not exist:
@@ -75,74 +74,6 @@ public class AgentFileStoreContractTests
 
         protected override Task<IReadOnlyList<string>> FindMatchingFilesAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<string>>(this.Indexed.OrderBy(x => x, StringComparer.Ordinal).ToList());
-    }
-
-    /// <summary>Numbers lines with its own rule, disagreeing with the editor.</summary>
-    private class SkewedStore : ContentOnlyStore
-    {
-        public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<FileSearchResult>>(
-            [
-                new FileSearchResult
-                {
-                    FileName = "cfg.txt",
-                    Snippet = string.Empty,
-
-                    // Deliberately wrong: the match is on line 2.
-                    MatchingLines = [new FileSearchMatch { LineNumber = 1, Line = Needle }],
-                }
-            ]);
-    }
-
-    /// <summary>The skewed store, declaring alignment it does not have. Pins the documented hazard.</summary>
-    private sealed class LyingStore : SkewedStore
-    {
-        public override bool ReportsAlignedLineNumbers => true;
-    }
-
-    /// <summary>Reports a line number below the first line.</summary>
-    private sealed class ZeroLineStore : ContentOnlyStore
-    {
-        public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<FileSearchResult>>(
-            [
-                new FileSearchResult
-                {
-                    FileName = "cfg.txt",
-                    Snippet = string.Empty,
-                    MatchingLines = [new FileSearchMatch { LineNumber = 0, Line = Needle }],
-                }
-            ]);
-    }
-
-    /// <summary>Two results: the first line backtracks past the budget, the second is misnumbered.</summary>
-    private sealed class TrapThenSkewedStore : ContentOnlyStore
-    {
-        public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<FileSearchResult>>(
-            [
-                new FileSearchResult { FileName = "trap.txt", Snippet = string.Empty, MatchingLines = [new FileSearchMatch { LineNumber = 1, Line = string.Empty }] },
-                new FileSearchResult { FileName = "cfg.txt", Snippet = string.Empty, MatchingLines = [new FileSearchMatch { LineNumber = 1, Line = string.Empty }] },
-            ]);
-    }
-
-    /// <summary>Delegates to the base, then renumbers the results it was handed, in place.</summary>
-    private sealed class RenumberingStore : ContentOnlyStore
-    {
-        public override async Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
-        {
-            IReadOnlyList<FileSearchResult> results = await base.SearchAsync(directory, regexPattern, globPattern, recursive, cancellationToken);
-            foreach (FileSearchResult result in results)
-            {
-                foreach (FileSearchMatch match in result.MatchingLines)
-                {
-                    // Deliberately wrong: the match is on line 2. The list itself is not rebuilt.
-                    match.LineNumber = 1;
-                }
-            }
-
-            return results;
-        }
     }
 
     [Fact]
@@ -235,98 +166,6 @@ public class AgentFileStoreContractTests
     }
 
     [Fact]
-    public async Task ShippedStores_DeclareTheirLineNumbersAlignedAsync()
-    {
-        // Assert: both report through ScanContent, so neither is ever re-checked. Asserting only one
-        // of them would let the other's override be dropped with every test still green, silently
-        // doubling reads on every grep.
-        Assert.True(new InMemoryAgentFileStore().ReportsAlignedLineNumbers);
-        Assert.True(new FileSystemAgentFileStore(Path.GetTempPath()).ReportsAlignedLineNumbers);
-        Assert.False(new ContentOnlyStore().ReportsAlignedLineNumbers);
-
-        // And a store on the base path is recognised without declaring anything, because the base
-        // implementation tags the results it numbered.
-        var store = new ContentOnlyStore();
-        await store.WriteAsync("f.txt", Needle);
-        IReadOnlyList<FileSearchResult> results = await store.SearchAsync(string.Empty, Needle, recursive: true);
-        await SearchAlignment.ThrowIfMisalignedAsync(store, string.Empty, results, Needle, CancellationToken.None);
-    }
-
-    [Fact]
-    public async Task Alignment_RefusesAStoreWhoseLineNumbersAreSkewedAsync()
-    {
-        // Arrange: the match is on line 2, but the store reports line 1.
-        var store = new SkewedStore();
-        await store.WriteAsync("cfg.txt", $"alpha\n{Needle}\n");
-        IReadOnlyList<FileSearchResult> results = await store.SearchAsync(string.Empty, Needle, recursive: true);
-
-        // Act + Assert
-        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => SearchAlignment.ThrowIfMisalignedAsync(store, string.Empty, results, Needle, CancellationToken.None));
-        Assert.Contains("do not line up", error.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task Alignment_BelievesAStoreThatDeclaresItsNumbersAlignedAsync()
-    {
-        // Arrange: the same wrong numbers, but the store declares alignment.
-        var store = new LyingStore();
-        await store.WriteAsync("cfg.txt", $"alpha\n{Needle}\n");
-        IReadOnlyList<FileSearchResult> results = await store.SearchAsync(string.Empty, Needle, recursive: true);
-
-        // Act: no throw. The opt-out is a promise, not a hint.
-        await SearchAlignment.ThrowIfMisalignedAsync(store, string.Empty, results, Needle, CancellationToken.None);
-
-        // Assert
-        Assert.Equal(1, results[0].MatchingLines[0].LineNumber);
-    }
-
-    [Fact]
-    public async Task Alignment_RefusesBaseResultsRenumberedInPlaceAsync()
-    {
-        // Arrange: the store delegates to the base, then edits the numbers without rebuilding the list,
-        // so the tag it returns is genuinely the base's.
-        var store = new RenumberingStore();
-        await store.WriteAsync("cfg.txt", $"alpha\n{Needle}\n");
-        IReadOnlyList<FileSearchResult> results = await store.SearchAsync(string.Empty, Needle, recursive: true);
-
-        // Act + Assert: trust has to come from the snapshot, not from the tag surviving.
-        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => SearchAlignment.ThrowIfMisalignedAsync(store, string.Empty, results, Needle, CancellationToken.None));
-        Assert.Contains("do not line up", error.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task Alignment_RefusesANonPositiveLineNumberAsync()
-    {
-        // Arrange: line 0 is out of range downwards, which an upper-bound check alone lets through.
-        var store = new ZeroLineStore();
-        await store.WriteAsync("cfg.txt", $"alpha\n{Needle}\n");
-        IReadOnlyList<FileSearchResult> results = await store.SearchAsync(string.Empty, Needle, recursive: true);
-
-        // Act + Assert: the misalignment error, not a raw index error.
-        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => SearchAlignment.ThrowIfMisalignedAsync(store, string.Empty, results, Needle, CancellationToken.None));
-        Assert.Contains("do not line up", error.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task Alignment_KeepsCheckingAfterAMatchItCannotEvaluateAsync()
-    {
-        // Arrange: trap.txt backtracks past the budget, cfg.txt is skewed and evaluates instantly.
-        var store = new TrapThenSkewedStore();
-        await store.WriteAsync("trap.txt", new string('a', 30));
-        await store.WriteAsync("cfg.txt", "zzz\naab\n");
-        IReadOnlyList<FileSearchResult> results = await store.SearchAsync(string.Empty, Pathological, recursive: true);
-
-        // Act + Assert: giving up at the trap would let cfg.txt through unchecked.
-        InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => SearchAlignment.ThrowIfMisalignedAsync(
-                store, string.Empty, results, Pathological, CancellationToken.None, matchTimeout: TimeSpan.FromMilliseconds(1)));
-        Assert.Contains("do not line up", error.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void ApplyReplaceLines_ExpectedLineMatching_AppliesTheEdit()
     {
         // Act
@@ -370,47 +209,5 @@ public class AgentFileStoreContractTests
 
         // Assert
         Assert.Equal("ONE\ntwo\n", result);
-    }
-
-    /// <summary>Overrides SearchAsync but delegates to the base implementation some of the time.</summary>
-    private sealed class SometimesDelegatesStore : ContentOnlyStore
-    {
-        public bool Delegate { get; set; }
-
-        public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
-            => this.Delegate
-                ? base.SearchAsync(directory, regexPattern, globPattern, recursive, cancellationToken)
-                : Task.FromResult<IReadOnlyList<FileSearchResult>>(
-                [
-                    new FileSearchResult
-                    {
-                        FileName = "cfg.txt",
-                        Snippet = string.Empty,
-
-                        // Wrong: the match is on line 2.
-                        MatchingLines = [new FileSearchMatch { LineNumber = 1, Line = Needle }],
-                    }
-                ]);
-    }
-
-    [Fact]
-    public async Task Alignment_IsNotDisabledByAnEarlierDelegationToBaseSearchAsync()
-    {
-        // Arrange: a store that falls back to the base implementation sometimes -- an index
-        // warm-up, an unindexed directory. That must not buy permanent trust for the results
-        // it numbers itself.
-        var store = new SometimesDelegatesStore();
-        await store.WriteAsync("cfg.txt", $"alpha\n{Needle}\n");
-
-        store.Delegate = true;
-        _ = await store.SearchAsync(string.Empty, Needle, recursive: true);
-
-        // Act: now it serves its own, skewed numbering.
-        store.Delegate = false;
-        IReadOnlyList<FileSearchResult> skewed = await store.SearchAsync(string.Empty, Needle, recursive: true);
-
-        // Assert: still checked, still refused.
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => SearchAlignment.ThrowIfMisalignedAsync(store, string.Empty, skewed, Needle, CancellationToken.None));
     }
 }

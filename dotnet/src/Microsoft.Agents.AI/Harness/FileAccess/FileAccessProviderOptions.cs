@@ -59,18 +59,4 @@ public sealed class FileAccessProviderOptions
     /// tools that modify the store are not exposed in that case.
     /// </remarks>
     public bool DisableWriteToolApproval { get; set; }
-
-    /// <summary>
-    /// Gets or sets a value indicating whether to skip the check that a store's reported
-    /// <see cref="FileSearchMatch.LineNumber"/> values address the same lines the line editor acts on.
-    /// </summary>
-    /// <remarks>
-    /// The check only runs for a store that overrides <see cref="AgentFileStore.SearchAsync"/> without
-    /// declaring <see cref="AgentFileStore.ReportsAlignedLineNumbers"/>, and costs one extra read per
-    /// <em>matched</em> file. Turn it off only when the store's alignment is established some other
-    /// way: without it, a mis-numbered grep result reaches the model and an edit can land on the wrong
-    /// line silently. Prefer setting <see cref="AgentFileStore.ReportsAlignedLineNumbers"/> on the
-    /// store, which opts out one store rather than every store this provider is given.
-    /// </remarks>
-    public bool DisableSearchAlignmentCheck { get; set; }
 }

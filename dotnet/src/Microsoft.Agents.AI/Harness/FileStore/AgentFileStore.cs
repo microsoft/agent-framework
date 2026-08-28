@@ -95,6 +95,20 @@ public abstract class AgentFileStore
     /// A list of search results. Each result's <see cref="FileSearchResult.FileName"/> is the matching file's
     /// path relative to <paramref name="directory"/>.
     /// </returns>
+    /// <remarks>
+    /// <para>
+    /// Implementers overriding this method must report <see cref="FileSearchMatch.LineNumber"/> as a
+    /// 1-based coordinate into <see cref="SplitLines"/> of the same content <see cref="ReadAsync"/>
+    /// returns, and should report <see cref="FileSearchMatch.Line"/> verbatim, terminator included.
+    /// <see cref="ScanContent"/> produces both correctly and is the recommended way to build results.
+    /// </para>
+    /// <para>
+    /// Numbering against anything else — a different split rule, or content this store does not serve
+    /// through <see cref="ReadAsync"/> — is a bug with a silent failure mode: the search looks correct,
+    /// and the damage appears later when a line edit applies to a line the caller never saw. Cover it
+    /// with a test that greps and then edits by the reported number.
+    /// </para>
+    /// </remarks>
     public virtual async Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
     {
         // Compile with a match timeout to guard against catastrophic backtracking (ReDoS).
@@ -129,11 +143,7 @@ public abstract class AgentFileStore
             }
         }
 
-        // Tagged so the file-access tools can tell the base implementation numbered these results,
-        // without reflecting over the store's type (not trim-safe). Per call rather than per
-        // instance: a store that defers to base.SearchAsync only sometimes must not buy permanent
-        // trust for the results it numbers itself.
-        return new BaseSearchResults(results);
+        return results;
     }
 
     /// <summary>
@@ -152,7 +162,7 @@ public abstract class AgentFileStore
     /// The default implementation has no index to narrow with, so it walks
     /// <see cref="ListChildrenAsync"/> and returns every file in scope. Overriding
     /// <see cref="SearchAsync"/> instead is also supported, but then line numbering is the store's
-    /// responsibility (see <see cref="SplitLines"/>) and the file-access tools verify it.
+    /// responsibility (see <see cref="SplitLines"/>), and nothing checks it at runtime.
     /// </para>
     /// </remarks>
     /// <param name="directory">The relative directory being searched. Use an empty string for the root.</param>
@@ -267,26 +277,6 @@ public abstract class AgentFileStore
             ? null
             : new FileSearchResult { FileName = fileName, Snippet = firstSnippet!, MatchingLines = matchingLines };
     }
-
-    /// <summary>
-    /// Gets a value indicating whether this store guarantees its <see cref="FileSearchMatch.LineNumber"/>
-    /// values are coordinates in <see cref="SplitLines"/>.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Set by a store that overrides <see cref="SearchAsync"/> and numbers lines correctly — normally
-    /// because it reports through <see cref="ScanContent"/>. Declaring it opts the store out of the
-    /// alignment check the file-access tools otherwise run on every grep, which costs one extra read
-    /// per <em>matched</em> file. A store that does not override <see cref="SearchAsync"/> need not
-    /// set it: the base implementation is aligned by construction and is never checked.
-    /// </para>
-    /// <para>
-    /// This is a promise, not a hint. Declaring it while numbering lines differently reinstates
-    /// exactly the failure the check exists to catch — <c>replace_lines</c> silently editing the
-    /// wrong line — so only set it if a test pins the alignment.
-    /// </para>
-    /// </remarks>
-    public virtual bool ReportsAlignedLineNumbers => false;
 
     /// <summary>
     /// Ensures a directory exists, creating it if necessary.

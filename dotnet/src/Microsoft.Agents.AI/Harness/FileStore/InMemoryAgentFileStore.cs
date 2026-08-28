@@ -104,13 +104,6 @@ public sealed class InMemoryAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
-    /// <remarks>
-    /// This store reports through <see cref="AgentFileStore.ScanContent"/>, so its line numbers are
-    /// coordinates in <see cref="AgentFileStore.SplitLines"/> by construction.
-    /// </remarks>
-    public override bool ReportsAlignedLineNumbers => true;
-
-    /// <inheritdoc />
     public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
     {
         // Normalize the directory prefix for path matching.

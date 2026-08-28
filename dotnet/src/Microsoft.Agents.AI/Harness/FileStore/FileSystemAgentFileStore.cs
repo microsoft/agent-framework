@@ -162,13 +162,6 @@ public sealed class FileSystemAgentFileStore : AgentFileStore
     }
 
     /// <inheritdoc />
-    /// <remarks>
-    /// This store reports through <see cref="AgentFileStore.ScanContent"/>, so its line numbers are
-    /// coordinates in <see cref="AgentFileStore.SplitLines"/> by construction.
-    /// </remarks>
-    public override bool ReportsAlignedLineNumbers => true;
-
-    /// <inheritdoc />
     public override async Task<IReadOnlyList<FileSearchResult>> SearchAsync(
         string directory,
         string regexPattern,

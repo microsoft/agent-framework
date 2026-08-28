@@ -974,67 +974,7 @@ public class FileMemoryProviderTests
 
     #endregion
 
-    [Fact]
-    public async Task GrepRefusal_NamesMemoryToolsNotFileAccessToolsAsync()
-    {
-        // Arrange: the refusal reaches the model, and this provider registers no read_lines tool.
-        var store = new SkewedMemoryStore();
-        await store.WriteAsync("notes.md", "alpha\nkeep me\n");
-        var (tools, _, session) = await CreateToolsAsync(store);
-        var grep = GetTool(tools, "file_memory_grep");
-
-        // Act
-        Exception error = await Assert.ThrowsAnyAsync<Exception>(
-            () => InvokeWithRunContextAsync(grep, new AIFunctionArguments { ["regexPattern"] = "keep me" }, session));
-
-        // Assert
-        string message = (error.InnerException ?? error).Message;
-        Assert.Contains("file_memory_read", message, StringComparison.Ordinal);
-        Assert.DoesNotContain("file_access", message, StringComparison.Ordinal);
-    }
-
     #region Helper Methods
-
-    /// <summary>Numbers lines its own way, so the alignment check has something to catch.</summary>
-    private sealed class SkewedMemoryStore : AgentFileStore
-    {
-        private readonly Dictionary<string, string> _files = [];
-
-        public override Task WriteAsync(string path, string content, CancellationToken cancellationToken = default)
-        {
-            this._files[path] = content;
-            return Task.CompletedTask;
-        }
-
-        public override Task<string?> ReadAsync(string path, CancellationToken cancellationToken = default)
-            => Task.FromResult(this._files.TryGetValue(path, out string? value) ? value : null);
-
-        public override Task<bool> DeleteAsync(string path, CancellationToken cancellationToken = default)
-            => Task.FromResult(this._files.Remove(path));
-
-        public override Task<IReadOnlyList<FileStoreEntry>> ListChildrenAsync(string directory, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<FileStoreEntry>>(
-                this._files.Keys.Select(k => new FileStoreEntry(k, FileStoreEntry.File)).ToList());
-
-        public override Task<bool> FileExistsAsync(string path, CancellationToken cancellationToken = default)
-            => Task.FromResult(this._files.ContainsKey(path));
-
-        public override Task CreateDirectoryAsync(string path, CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
-
-        public override Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<FileSearchResult>>(
-            [
-                new FileSearchResult
-                {
-                    FileName = "notes.md",
-                    Snippet = string.Empty,
-
-                    // Deliberately wrong: the match is on line 2.
-                    MatchingLines = [new FileSearchMatch { LineNumber = 1, Line = regexPattern }],
-                }
-            ]);
-    }
 
     private static FileMemoryProvider CreateProvider(AgentFileStore? store = null, Func<AgentSession?, FileMemoryState>? stateInitializer = null)
     {
