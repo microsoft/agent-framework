@@ -93,7 +93,7 @@ public sealed class OpenAIResponseRequestInfoBuilderTests
     }
 
     [Fact]
-    public void ToRequestInfo_MapsFunctionToolToDeclaration()
+    public void ToRequestInfo_PreservesFunctionToolAsRawTool()
     {
         // Arrange
         CreateResponse request = new()
@@ -124,12 +124,12 @@ public sealed class OpenAIResponseRequestInfoBuilderTests
         OpenAIResponseRequestInfo info = request.ToRequestInfo();
 
         // Assert
-        Assert.Single(info.Tools!);
-        AIFunctionDeclaration function = Assert.IsAssignableFrom<AIFunctionDeclaration>(Assert.Single(info.FunctionTools!));
-        Assert.Equal("get_weather", function.Name);
-        Assert.Equal("Retrieves current weather.", function.Description);
-        Assert.True(function.JsonSchema.GetProperty("properties").TryGetProperty("location", out _));
-        Assert.True(Assert.IsType<bool>(function.AdditionalProperties["strict"]));
+        JsonElement function = Assert.Single(info.Tools!);
+        Assert.Equal("function", function.GetProperty("type").GetString());
+        Assert.Equal("get_weather", function.GetProperty("name").GetString());
+        Assert.Equal("Retrieves current weather.", function.GetProperty("description").GetString());
+        Assert.True(function.GetProperty("parameters").GetProperty("properties").TryGetProperty("location", out _));
+        Assert.True(function.GetProperty("strict").GetBoolean());
     }
 
     private static CreateResponse CreateRequestWithToolChoice(string toolChoiceJson)

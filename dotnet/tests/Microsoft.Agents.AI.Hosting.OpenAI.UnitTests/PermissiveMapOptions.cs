@@ -18,6 +18,9 @@ internal static class PermissiveMapOptions
 {
     public static OpenAIResponsesMapOptions Responses() => new()
     {
+#pragma warning disable MAAI001
+        DangerouslyAllowClientFunctionTools = new(OpenAIClientFunctionToolNameConflictBehavior.AllowOverride()),
+#pragma warning restore MAAI001
         RunOptionsFactory = static request =>
         {
             var chatOptions = new ChatOptions
@@ -28,7 +31,6 @@ internal static class PermissiveMapOptions
                 Instructions = request.Instructions,
                 ModelId = request.Model,
                 ToolMode = request.ToolChoice,
-                Tools = request.FunctionTools is { Count: > 0 } tools ? tools.ToList() : null,
             };
 
             return new ChatClientAgentRunOptions(chatOptions);

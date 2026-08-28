@@ -19,13 +19,16 @@ internal static class OpenAIResponseRequestInfoBuilder
         Instructions = request.Instructions,
         Model = request.Model,
         Tools = request.Tools is { Count: > 0 } tools ? new List<JsonElement>(tools) : null,
-        FunctionTools = request.Tools?.ToFunctionTools(),
         ToolChoice = request.ToolChoice?.ToChatToolMode(),
+        HasToolChoice = request.ToolChoice is not null,
     };
 
-    private static List<AITool>? ToFunctionTools(this IReadOnlyList<JsonElement> tools)
+    internal static List<AITool>? ExtractClientFunctionTools(
+        this IReadOnlyList<JsonElement> tools,
+        out List<JsonElement>? unsupportedTools)
     {
         List<AITool>? functionTools = null;
+        unsupportedTools = null;
 
         foreach (JsonElement tool in tools)
         {
@@ -33,12 +36,16 @@ internal static class OpenAIResponseRequestInfoBuilder
             {
                 (functionTools ??= []).Add(functionTool);
             }
+            else
+            {
+                (unsupportedTools ??= []).Add(tool);
+            }
         }
 
         return functionTools;
     }
 
-    private static AIFunctionDeclaration? ToFunctionTool(this JsonElement tool)
+    private static ClientAIFunctionDeclaration? ToFunctionTool(this JsonElement tool)
     {
         if (tool.ValueKind != JsonValueKind.Object ||
             !tool.TryGetProperty("type", out JsonElement type) ||
@@ -62,21 +69,19 @@ internal static class OpenAIResponseRequestInfoBuilder
                 : null;
 
         AIFunctionDeclaration function = AIFunctionFactory.CreateDeclaration(functionName, description, parameters);
+        bool? strict = tool.TryGetProperty("strict", out JsonElement requestStrict) &&
+            requestStrict.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? requestStrict.GetBoolean()
+                : null;
 
-        if (tool.TryGetProperty("strict", out JsonElement strict) &&
-            strict.ValueKind is JsonValueKind.True or JsonValueKind.False)
-        {
-            function = new ResponseAIFunctionDeclaration(function, strict.GetBoolean());
-        }
-
-        return function;
+        return new ClientAIFunctionDeclaration(function, strict);
     }
 
-    private sealed class ResponseAIFunctionDeclaration : AIFunctionDeclaration
+    internal sealed class ClientAIFunctionDeclaration : AIFunctionDeclaration
     {
         private readonly AIFunctionDeclaration _innerFunction;
 
-        public ResponseAIFunctionDeclaration(AIFunctionDeclaration innerFunction, bool strict)
+        public ClientAIFunctionDeclaration(AIFunctionDeclaration innerFunction, bool? strict)
         {
             this._innerFunction = innerFunction;
             var additionalProperties = new Dictionary<string, object?>();
@@ -85,7 +90,11 @@ internal static class OpenAIResponseRequestInfoBuilder
                 additionalProperties.Add(property.Key, property.Value);
             }
 
-            additionalProperties["strict"] = strict;
+            if (strict is not null)
+            {
+                additionalProperties["strict"] = strict;
+            }
+
             this.AdditionalProperties = additionalProperties;
         }
 
