@@ -579,7 +579,7 @@ internal sealed class WorkflowSession : AgentSession
                         ? executorException.Message
                         : "An error occurred while executing the workflow.";
 
-                    AgentResponseUpdate executorUpdate = this.CreateUpdate(this.LastResponseId, evt, executorFailed.ExecutorId, new ErrorContent(executorMessage));
+                    AgentResponseUpdate executorUpdate = this.CreateUpdate(this.LastResponseId, evt, parts: new ErrorContent(executorMessage));
                     yield return executorUpdate;
                     break;
 
