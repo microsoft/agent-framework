@@ -89,7 +89,7 @@ internal sealed class FakeTestAgentHost : IAsyncDisposable
                 {
                     ThreadId = runStarted.ThreadId,
                     ParentRunId = runStarted.RunId,
-                    Messages = new[] { secondMessage }.AsAGUIMessages().ToList(),
+                    Messages = new[] { secondMessage }.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList(),
                 },
             },
         };

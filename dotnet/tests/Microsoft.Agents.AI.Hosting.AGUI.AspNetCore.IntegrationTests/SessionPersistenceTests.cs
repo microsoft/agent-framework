@@ -68,7 +68,7 @@ public sealed class SessionPersistenceTests : IAsyncDisposable
                 {
                     ThreadId = threadId,
                     ParentRunId = previousRunId,
-                    Messages = new[] { secondUserMessage }.AsAGUIMessages().ToList(),
+                    Messages = new[] { secondUserMessage }.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList(),
                 },
             },
         };
