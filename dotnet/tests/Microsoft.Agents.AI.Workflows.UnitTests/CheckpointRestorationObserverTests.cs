@@ -107,9 +107,15 @@ public class CheckpointRestorationObserverTests
         ObservingJsonStore store = new();
         (Workflow workflow, CheckpointInfo checkpoint, CheckpointManager manager) = await RunAndCheckpointAsync(store);
         // The two-argument Replace is already ordinal, and is the overload available on every target framework.
-        store.MutateOnRetrieve = value => JsonDocument
-            .Parse(value.GetRawText().Replace("\"instantiatedExecutors\":[", "\"instantiatedExecutors\":[\"Ghost\","))
-            .RootElement.Clone();
+        const string ExecutorList = "\"instantiatedExecutors\":[";
+        bool mutationApplied = false;
+        store.MutateOnRetrieve = value =>
+        {
+            string json = value.GetRawText();
+            mutationApplied = json.Contains(ExecutorList);
+
+            return JsonDocument.Parse(json.Replace(ExecutorList, ExecutorList + "\"Ghost\",")).RootElement.Clone();
+        };
 
         // Act
         Func<Task> resume = () => ResumeAsync(workflow, checkpoint, manager);
@@ -118,6 +124,10 @@ public class CheckpointRestorationObserverTests
         await resume.Should().ThrowAsync<InvalidOperationException>()
                              .WithMessage("Executor with ID 'Ghost' is not registered.");
         store.RestorationsObserved.Should().BeEmpty();
+
+        // Reported rather than inferred, so that a checkpoint whose shape no longer carries this property fails
+        // here instead of quietly leaving the test asserting nothing.
+        mutationApplied.Should().BeTrue("the checkpoint must still serialize the runner's instantiated executors");
     }
 
     [Fact]
