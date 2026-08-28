@@ -9,6 +9,14 @@ on:
       - "python/scripts/workspace_poe_tasks.py"
       - ".github/scripts/python_check_coverage.py"
       - ".github/workflows/python-test-coverage.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "python/packages/**"
+      - "python/tests/unit/**"
+      - "python/scripts/workspace_poe_tasks.py"
+      - ".github/scripts/python_check_coverage.py"
+      - ".github/workflows/python-test-coverage.yml"
 env:
   # Configure a constant location for the uv cache
   UV_CACHE_DIR: /tmp/.uv-cache
@@ -50,7 +58,7 @@ jobs:
       - name: Check coverage threshold
         run: python ${{ github.workspace }}/.github/scripts/python_check_coverage.py python-coverage.xml ${{ env.COVERAGE_THRESHOLD }}
       - name: Upload coverage report to GitHub
-        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        if: github.actor != 'dependabot[bot]' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref_name == github.event.repository.default_branch))
         uses: actions/upload-code-coverage@d8e329117199404bba6fc81efe8093dc7c015e34 # v1.4.2
         with:
           file: python/python-coverage.xml
