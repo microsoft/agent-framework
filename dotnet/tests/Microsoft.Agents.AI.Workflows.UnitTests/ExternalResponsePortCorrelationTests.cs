@@ -2,7 +2,6 @@
 
 using System.Threading;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.InProc;
@@ -49,13 +48,15 @@ public class ExternalResponsePortCorrelationTests
 
         // Assert: validation fires when the queued delivery is drained.
         var act = async () => await runner.RunContext.AdvanceAsync(CancellationToken.None);
-        var exception = await act.Should().ThrowAsync<System.InvalidOperationException>();
+        var exception = await Assert.ThrowsAsync<System.InvalidOperationException>(act);
 
-        string message = exception.Which.Message;
-        message.Should().Contain($"'{PortBId}'").And.Contain(pending.RequestId).And.NotContain($"'{PortAId}'");
+        string message = exception.Message;
+        Assert.Contains($"'{PortBId}'", message);
+        Assert.Contains(pending.RequestId, message);
+        Assert.DoesNotContain($"'{PortAId}'", message);
 
         // Pending request survives the rejection so the legitimate responder can still complete it.
-        ((ISuperStepRunner)runner).HasUnservicedRequests.Should().BeTrue();
+        Assert.True(((ISuperStepRunner)runner).HasUnservicedRequests);
     }
 
     [Fact]
@@ -71,7 +72,7 @@ public class ExternalResponsePortCorrelationTests
         await runner.RunContext.AddExternalResponseAsync(forged);
 
         var rejectAct = async () => await runner.RunContext.AdvanceAsync(CancellationToken.None);
-        await rejectAct.Should().ThrowAsync<System.InvalidOperationException>();
+        await Assert.ThrowsAsync<System.InvalidOperationException>(rejectAct);
 
         // Legitimate responder retries with the correct PortInfo.
         ExternalResponse legitimate = pending.CreateResponse(42);
@@ -79,8 +80,8 @@ public class ExternalResponsePortCorrelationTests
 
         var legitimateAct = async () => await runner.RunContext.AdvanceAsync(CancellationToken.None);
 
-        await legitimateAct.Should().NotThrowAsync();
-        ((ISuperStepRunner)runner).HasUnservicedRequests.Should().BeFalse();
+        Assert.Null(await Record.ExceptionAsync(legitimateAct));
+        Assert.False(((ISuperStepRunner)runner).HasUnservicedRequests);
     }
 
     [Fact]
@@ -98,9 +99,9 @@ public class ExternalResponsePortCorrelationTests
         await runner.RunContext.AddExternalResponseAsync(legitimate);
 
         var act = async () => await runner.RunContext.AdvanceAsync(CancellationToken.None);
-        await act.Should().NotThrowAsync();
+        Assert.Null(await Record.ExceptionAsync(act));
 
-        ((ISuperStepRunner)runner).HasUnservicedRequests.Should().BeFalse();
+        Assert.False(((ISuperStepRunner)runner).HasUnservicedRequests);
     }
 
     [Fact]
@@ -115,7 +116,7 @@ public class ExternalResponsePortCorrelationTests
         await runner.RunContext.AddExternalResponseAsync(stray);
 
         var act = async () => await runner.RunContext.AdvanceAsync(CancellationToken.None);
-        var exception = await act.Should().ThrowAsync<System.InvalidOperationException>();
-        exception.Which.Message.Should().Contain("No pending request with ID no-such-request");
+        var exception = await Assert.ThrowsAsync<System.InvalidOperationException>(act);
+        Assert.Contains("No pending request with ID no-such-request", exception.Message);
     }
 }

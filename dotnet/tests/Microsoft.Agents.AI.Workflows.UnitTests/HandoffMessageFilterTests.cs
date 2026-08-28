@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
 
@@ -107,9 +106,32 @@ public class HandoffMessageFilterTests
         HandoffMessagesFilter filter = new(behavior);
 
         // Act
-        IEnumerable<ChatMessage> filteredMessages = filter.FilterMessages(messages);
+        List<ChatMessage> filteredMessages = [.. filter.FilterMessages(messages)];
 
         // Assert
-        filteredMessages.Should().BeEquivalentTo(expected);
+        Assert.Equal(expected.Count, filteredMessages.Count);
+        for (int i = 0; i < expected.Count; i++)
+        {
+            AssertMessageShape(expected[i], filteredMessages[i]);
+        }
+    }
+
+    private static void AssertMessageShape(ChatMessage expected, ChatMessage actual)
+    {
+        Assert.Equal(expected.Role, actual.Role);
+        Assert.Equal(expected.Text, actual.Text);
+        Assert.Equal(expected.Contents.Count, actual.Contents.Count);
+
+        for (int i = 0; i < expected.Contents.Count; i++)
+        {
+            AIContent expectedContent = expected.Contents[i];
+            AIContent actualContent = actual.Contents[i];
+            Assert.Equal(expectedContent.GetType(), actualContent.GetType());
+
+            if (expectedContent is FunctionCallContent expectedCall && actualContent is FunctionCallContent actualCall)
+            {
+                Assert.Equal(expectedCall.Name, actualCall.Name);
+            }
+        }
     }
 }

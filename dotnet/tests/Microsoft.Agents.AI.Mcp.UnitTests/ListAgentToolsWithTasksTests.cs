@@ -3,7 +3,6 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
-using FluentAssertions;
 using ModelContextProtocol.Server;
 
 namespace Microsoft.Agents.AI.Mcp.UnitTests;
@@ -24,9 +23,9 @@ public class ListAgentToolsWithTasksTests
         var result = await fixture.Client.ListAgentToolsWithTasksAsync();
 
         // Assert
-        result.Should().HaveCount(2);
-        result.Should().AllBeOfType<TaskAwareMcpClientAIFunction>();
-        result.Select(tool => tool.Name).Should().Equal("first", "second");
+        Assert.Equal(2, result.Count);
+        Assert.All(result, tool => Assert.IsType<TaskAwareMcpClientAIFunction>(tool));
+        Assert.Equal(["first", "second"], result.Select(tool => tool.Name));
     }
 
     [Fact]
@@ -39,7 +38,7 @@ public class ListAgentToolsWithTasksTests
         Func<Task> act = async () => await client.ListAgentToolsWithTasksAsync();
 
         // Assert
-        await act.Should().ThrowAsync<ArgumentNullException>();
+        await Assert.ThrowsAsync<ArgumentNullException>(act);
     }
 
     [Fact]
@@ -56,7 +55,7 @@ public class ListAgentToolsWithTasksTests
         Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
     }
 
     [Fact]
@@ -73,7 +72,7 @@ public class ListAgentToolsWithTasksTests
         Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
     }
 
     [Fact]
@@ -90,7 +89,7 @@ public class ListAgentToolsWithTasksTests
         Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
     }
 
     [Fact]
@@ -107,7 +106,7 @@ public class ListAgentToolsWithTasksTests
         Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
     }
 
     [Fact]
@@ -128,7 +127,7 @@ public class ListAgentToolsWithTasksTests
         Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
     }
 
     [Fact]
@@ -149,7 +148,7 @@ public class ListAgentToolsWithTasksTests
         Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
     }
 
     [Fact]
@@ -169,6 +168,6 @@ public class ListAgentToolsWithTasksTests
         Func<Task> act = async () => await fixture.Client.ListAgentToolsWithTasksAsync(options);
 
         // Assert
-        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(act);
     }
 }

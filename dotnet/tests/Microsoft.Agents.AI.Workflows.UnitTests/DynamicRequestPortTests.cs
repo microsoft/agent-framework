@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
-using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 
@@ -41,9 +40,8 @@ public class DynamicRequestPortTests
 
             if (validate)
             {
-                result.ExternalRequestContext
-                      .ExternalRequests.Should().HaveCount(1)
-                                   .And.AllSatisfy(request => request.PortInfo.Should().Be(result.PortBinding.Port.ToPortInfo()));
+                Assert.Single(result.ExternalRequestContext.ExternalRequests);
+                Assert.All(result.ExternalRequestContext.ExternalRequests, request => Assert.Equal(result.PortBinding.Port.ToPortInfo(), request.PortInfo));
             }
 
             return result;
@@ -78,10 +76,10 @@ public class DynamicRequestPortTests
         await context.InvokeExecutorWithResponseAsync(request.CreateResponse(13));
 
         string portId = request.PortInfo.PortId;
-        context.Executor.ReceivedResponses.Should().HaveCount(1)
-                                               .And.ContainKey(portId);
-        context.Executor.ReceivedResponses[portId].Should().HaveCount(1);
-        context.Executor.ReceivedResponses[portId].First().Should().Be(13);
+        Assert.Single(context.Executor.ReceivedResponses);
+        Assert.Contains(portId, context.Executor.ReceivedResponses!);
+        Assert.Single(context.Executor.ReceivedResponses[portId]);
+        Assert.Equal(13, context.Executor.ReceivedResponses[portId].First());
     }
 
     [Fact]
@@ -93,7 +91,7 @@ public class DynamicRequestPortTests
         ExternalRequest fakeRequest = new(RequestPort.Create<string, int>("port2").ToPortInfo(), request.RequestId, request.Data);
 
         Func<Task> act = async () => await context.InvokeExecutorWithResponseAsync(fakeRequest.CreateResponse(13));
-        (await act.Should().ThrowAsync<TargetInvocationException>())
-                           .WithInnerException<InvalidOperationException>();
+        TargetInvocationException exception = await Assert.ThrowsAsync<TargetInvocationException>(act);
+        Assert.IsType<InvalidOperationException>(exception.InnerException);
     }
 }
