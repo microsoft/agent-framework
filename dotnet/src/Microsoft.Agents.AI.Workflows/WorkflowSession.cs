@@ -172,18 +172,18 @@ internal sealed class WorkflowSession : AgentSession
         return marshaller.Marshal(info);
     }
 
-    public AgentResponseUpdate CreateUpdate(string responseId, object raw, string? executorId = default, params AIContent[] parts)
+    public AgentResponseUpdate CreateUpdate(string responseId, object raw, params AIContent[] parts)
     {
         Throw.IfNullOrEmpty(parts);
 
-        return SetExecutorId(new(ChatRole.Assistant, parts)
+        return new(ChatRole.Assistant, parts)
         {
             CreatedAt = DateTimeOffset.UtcNow,
             MessageId = Guid.NewGuid().ToString("N"),
             Role = ChatRole.Assistant,
             ResponseId = responseId,
             RawRepresentation = raw
-        }, executorId);
+        };
     }
 
     public AgentResponseUpdate CreateUpdate(string responseId, object raw, ChatMessage message, string? executorId = default)
@@ -540,7 +540,7 @@ internal sealed class WorkflowSession : AgentSession
                     // External callers respond using the workflow-facing request ID, which is always RequestId.
                     this.AddPendingRequest(requestInfo.Request.RequestId, requestInfo.Request);
 
-                    AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, parts: requestContent);
+                    AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, requestContent);
                     yield return update;
                     break;
 
@@ -558,7 +558,7 @@ internal sealed class WorkflowSession : AgentSession
                                        : "An error occurred while executing the workflow.";
 
                         ErrorContent errorContent = new(message);
-                        yield return this.CreateUpdate(this.LastResponseId, evt, parts: errorContent);
+                        yield return this.CreateUpdate(this.LastResponseId, evt, errorContent);
                     }
 
                     break;
@@ -579,7 +579,7 @@ internal sealed class WorkflowSession : AgentSession
                         ? executorException.Message
                         : "An error occurred while executing the workflow.";
 
-                    AgentResponseUpdate executorUpdate = this.CreateUpdate(this.LastResponseId, evt, parts: new ErrorContent(executorMessage));
+                    AgentResponseUpdate executorUpdate = this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
                     yield return executorUpdate;
                     break;
 
@@ -672,7 +672,7 @@ internal sealed class WorkflowSession : AgentSession
                         AIContent[] contents = [.. updateContents];
                         if (contents.Length > 0)
                         {
-                            yield return this.CreateUpdate(this.LastResponseId, evt, parts: contents);
+                            yield return this.CreateUpdate(this.LastResponseId, evt, contents);
                         }
                     }
                     break;
