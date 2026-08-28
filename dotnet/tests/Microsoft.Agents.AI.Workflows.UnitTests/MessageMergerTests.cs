@@ -88,7 +88,12 @@ public class MessageMergerTests
         AgentResponse response = merger.ComputeMerged(responseId);
 
         // Assert
-        Assert.Equal("first", response.Messages[0].Text);
+        Assert.Collection(
+            response.Messages,
+            message => Assert.Equal("first", message.Text),
+            message => Assert.Equal("second", message.Text),
+            message => Assert.Equal("third", message.Text),
+            message => Assert.Equal("fourth", message.Text));
         Assert.Equal(now.AddMinutes(1), response.Messages[0].CreatedAt);
         Assert.Equal(now.AddMinutes(-1), response.Messages[2].CreatedAt);
     }
