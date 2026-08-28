@@ -353,7 +353,7 @@ jobs:
         with:
           reports: "./TestResults/Coverage/**/*.cobertura.xml"
           targetdir: "./TestResults/Reports"
-          reporttypes: "HtmlInline;JsonSummary"
+          reporttypes: "HtmlInline;JsonSummary;Cobertura"
 
       - name: Upload coverage report artifact
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
