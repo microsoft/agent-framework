@@ -15,6 +15,11 @@ env:
   # Coverage threshold percentage for enforced modules
   COVERAGE_THRESHOLD: 85
 
+permissions:
+  contents: read
+  code-quality: write
+  pull-requests: read
+
 jobs:
   python-tests-coverage:
     runs-on: ubuntu-latest
@@ -44,6 +49,13 @@ jobs:
         run: uv run poe test -A -C --cov-report=xml:python-coverage.xml -q --junitxml=pytest.xml
       - name: Check coverage threshold
         run: python ${{ github.workspace }}/.github/scripts/python_check_coverage.py python-coverage.xml ${{ env.COVERAGE_THRESHOLD }}
+      - name: Upload coverage report to GitHub
+        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        uses: actions/upload-code-coverage@d8e329117199404bba6fc81efe8093dc7c015e34 # v1.4.2
+        with:
+          file: python/python-coverage.xml
+          language: Python
+          label: code-coverage/python
       - name: Upload coverage report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

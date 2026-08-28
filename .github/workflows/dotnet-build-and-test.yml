@@ -26,7 +26,9 @@ concurrency:
 
 permissions:
   contents: read
+  code-quality: write
   id-token: "write"
+  pull-requests: read
 
 jobs:
   paths-filter:
@@ -359,6 +361,14 @@ jobs:
         with:
           name: CoverageReport-${{ matrix.os }}-${{ matrix.targetFramework }}-${{ matrix.configuration }} # Artifact name
           path: ./TestResults/Reports # Directory containing files to upload
+
+      - name: Upload coverage report to GitHub
+        if: matrix.targetFramework == env.COVERAGE_FRAMEWORK && github.event_name != 'merge_group' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') || (github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch))
+        uses: actions/upload-code-coverage@d8e329117199404bba6fc81efe8093dc7c015e34 # v1.4.2
+        with:
+          file: ./TestResults/Reports/Cobertura.xml
+          language: CSharp
+          label: code-coverage/dotnet
 
       - name: Check coverage
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
