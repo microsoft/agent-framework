@@ -103,6 +103,63 @@ name = "agent_framework_provider"
     assert root_plan.python_version == "3.10"
 
 
+def test_release_probe_repeats_internal_prerelease_requirements_at_the_probe_root(tmp_path: Path) -> None:
+    _write_project(
+        tmp_path,
+        """
+[project]
+name = "agent-framework"
+version = "1.2.0"
+requires-python = ">=3.10"
+dependencies = ["agent-framework-core[all]==1.2.0"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.flit.module]
+name = "agent_framework_meta"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/core",
+        """
+[project]
+name = "agent-framework-core"
+version = "1.2.0"
+requires-python = ">=3.10"
+dependencies = ["pydantic>=2,<3"]
+
+[project.optional-dependencies]
+all = ["agent-framework-hosting"]
+dev = ["preview-only-dev>=1.0.0b1"]
+
+[tool.flit.module]
+name = "agent_framework"
+""",
+    )
+    _write_project(
+        tmp_path / "packages/hosting",
+        """
+[project]
+name = "agent-framework-hosting"
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = ["agent-framework-core>=1,<2", "server-responses>=2.2.0b1,<3", "httpx>=0.28,<1"]
+
+[tool.flit.module]
+name = "agent_framework_hosting"
+""",
+    )
+
+    projects = _build_release_project_map(tmp_path)
+    plan = _build_release_probe_plan(tmp_path, projects["agent-framework"], projects)
+
+    assert plan.prerelease_requirements == ("server-responses<3,>=2.2.0b1",)
+
+    command = _build_release_probe_command(plan, resolution="highest")
+    assert command[command.index("--with") + 1] == "server-responses<3,>=2.2.0b1"
+
+
 def test_release_probe_command_is_lock_independent_and_uses_bound_resolution(tmp_path: Path) -> None:
     plan = ReleaseProbePlan(
         project_path=Path("packages/openai"),
@@ -120,6 +177,7 @@ def test_release_probe_command_is_lock_independent_and_uses_bound_resolution(tmp
     assert command[command.index("--python") + 1] == "3.11"
     assert command[command.index("--prerelease") + 1] == "if-necessary-or-explicit"
     assert command.count("--with-editable") == 2
+    assert "--with" not in command
     assert "pytest" not in command
     assert "pyright" not in command
 
