@@ -99,6 +99,28 @@ public class CheckpointRestorationObserverTests
     }
 
     [Fact]
+    public async Task Restore_StateImportFails_DoesNotNotifyTheStoreAsync()
+    {
+        // Arrange: the checkpoint reads back and matches the workflow, but its runner state names an executor the
+        // workflow does not contain, so importing that state throws. The workflow section is left untouched, so the
+        // failure happens in RunContext.ImportStateAsync rather than in the compatibility check before it.
+        ObservingJsonStore store = new();
+        (Workflow workflow, CheckpointInfo checkpoint, CheckpointManager manager) = await RunAndCheckpointAsync(store);
+        // The two-argument Replace is already ordinal, and is the overload available on every target framework.
+        store.MutateOnRetrieve = value => JsonDocument
+            .Parse(value.GetRawText().Replace("\"instantiatedExecutors\":[", "\"instantiatedExecutors\":[\"Ghost\","))
+            .RootElement.Clone();
+
+        // Act
+        Func<Task> resume = () => ResumeAsync(workflow, checkpoint, manager);
+
+        // Assert: the import itself is what fails, not the compatibility check that runs before it.
+        await resume.Should().ThrowAsync<InvalidOperationException>()
+                             .WithMessage("Executor with ID 'Ghost' is not registered.");
+        store.RestorationsObserved.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Restore_ExecutorRestoreHookFails_DoesNotNotifyTheStoreAsync()
     {
         // Arrange: the checkpoint reads back fine and matches the workflow, but an executor refuses the restore.
@@ -164,6 +186,23 @@ public class CheckpointRestorationObserverTests
     }
 
     [Fact]
+    public async Task Restore_IndexEnumerationFailsAfterRestore_KeepsTheCheckpointsAlreadyListedAsync()
+    {
+        // Arrange: RetrieveIndexAsync hands back an IEnumerable a store may enumerate lazily, so the post-restore
+        // re-read can fail partway rather than when it is awaited. The restore has already succeeded by then, so the
+        // run must keep the checkpoints it had rather than be left with an empty or half-rebuilt list.
+        ObservingJsonStore store = new() { FailIndexEnumerationAfterRestore = true };
+        (Workflow workflow, CheckpointInfo checkpoint, CheckpointManager manager) = await RunAndCheckpointAsync(store);
+
+        // Act
+        IReadOnlyList<CheckpointInfo> reported = await ResumeAsync(workflow, checkpoint, manager);
+
+        // Assert: the resume survives, and Checkpoints still lists everything the store holds.
+        reported.Should().Contain(checkpoint);
+        reported.Count.Should().BeGreaterThan(1, "a failed re-read must not shrink the list the run already had");
+    }
+
+    [Fact]
     public async Task Restore_StoreDoesNotObserveRestorations_StillSucceedsAsync()
     {
         // Arrange: implementing the interface is optional, so a store that does not is simply never notified.
@@ -181,11 +220,8 @@ public class CheckpointRestorationObserverTests
     /// <summary>
     /// Builds the workflow the tests checkpoint and resume. The echo executor starts the run, so it is instantiated
     /// and therefore takes part in the restore, which is what lets a test fail the restore from inside an executor.
-    /// </summary>
-    /// <summary>
-    /// Builds the workflow the tests checkpoint and resume. The chain is three executors long so the run takes
-    /// several supersteps and therefore commits several checkpoints, which is what gives a pruning store an
-    /// ancestry to delete.
+    /// The chain is three executors long so the run takes several supersteps and therefore commits several
+    /// checkpoints, which is what gives a pruning store an ancestry to delete.
     /// </summary>
     private static Workflow BuildWorkflow(EchoExecutor echo)
     {
@@ -248,6 +284,9 @@ public class CheckpointRestorationObserverTests
         /// </summary>
         public bool PruneAncestryOnRestore { get; init; }
 
+        /// <summary>Makes the post-restore index read fail while it is being enumerated, not when it is awaited.</summary>
+        public bool FailIndexEnumerationAfterRestore { get; init; }
+
         public override ValueTask<CheckpointInfo> CreateCheckpointAsync(string sessionId, JsonElement value, CheckpointInfo? parent = null)
         {
             CheckpointInfo key = new(sessionId);
@@ -268,7 +307,23 @@ public class CheckpointRestorationObserverTests
         }
 
         public override ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null)
-            => new(this._index.ToArray());
+            => new(this.FailIndexEnumerationAfterRestore && this.RestorationsObserved.Count > 0
+                    ? ThrowPartWayThrough(this._index)
+                    : this._index.ToArray());
+
+        /// <summary>
+        /// Yields the first entry and then throws, modelling a store whose index is enumerated lazily and fails
+        /// partway. The runner must not have emptied its own list before finding that out.
+        /// </summary>
+        private static IEnumerable<CheckpointInfo> ThrowPartWayThrough(List<CheckpointInfo> index)
+        {
+            foreach (CheckpointInfo entry in index)
+            {
+                yield return entry;
+
+                throw new InvalidOperationException("index enumeration failed partway");
+            }
+        }
 
         public ValueTask OnRestorationCompletedAsync(string sessionId, CheckpointInfo checkpoint, CancellationToken cancellationToken = default)
         {

@@ -466,10 +466,11 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
         async ValueTask UpdateCheckpointIndexAsync()
         {
-            IEnumerable<CheckpointInfo> index = await this.CheckpointManager!.RetrieveIndexAsync(this.SessionId).ConfigureAwait(false);
+            // Materialized before the list is touched, not merely awaited: RetrieveIndexAsync hands back an
+            // IEnumerable a store is free to enumerate lazily, so enumerating it after Clear could fail partway and
+            // leave Checkpoints empty or half rebuilt on a run that is already live.
+            List<CheckpointInfo> index = [.. await this.CheckpointManager!.RetrieveIndexAsync(this.SessionId).ConfigureAwait(false)];
 
-            // Replaced in one go: Checkpoints is readable throughout, and clearing before the await would leave it
-            // empty for the duration of the call on a run that is already live.
             this._checkpoints.Clear();
             this._checkpoints.AddRange(index);
         }
