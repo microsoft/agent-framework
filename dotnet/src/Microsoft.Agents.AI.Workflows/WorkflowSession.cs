@@ -508,15 +508,15 @@ internal sealed class WorkflowSession : AgentSession
             await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
         }
 
-        AgentResponseUpdate CreateObservabilityUpdate(WorkflowEvent evt)
-            => new(ChatRole.Assistant, [])
+        AgentResponseUpdate CreateObservabilityUpdate(WorkflowEvent evt, string? executorId = default)
+            => SetExecutorId(new(ChatRole.Assistant, [])
             {
                 CreatedAt = DateTimeOffset.UtcNow,
                 MessageId = Guid.NewGuid().ToString("N"),
                 Role = ChatRole.Assistant,
                 ResponseId = this.LastResponseId,
                 RawRepresentation = evt
-            };
+            }, executorId);
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
                                                .ConfigureAwait(false)
@@ -595,7 +595,7 @@ internal sealed class WorkflowSession : AgentSession
                     // the legacy default, keep today's behavior — gated by the include flag.
                     if (!Futures.EnableAgentResponseOutputTaggingAndFiltering && !this._includeWorkflowOutputsInResponse)
                     {
-                        yield return CreateObservabilityUpdate(evt);
+                        yield return CreateObservabilityUpdate(evt, agentResponse.ExecutorId);
                         break;
                     }
 
@@ -625,7 +625,7 @@ internal sealed class WorkflowSession : AgentSession
                     {
                         // Preserve the completion event for observability after its correlated
                         // streamed content has already been forwarded.
-                        yield return CreateObservabilityUpdate(evt);
+                        yield return CreateObservabilityUpdate(evt, agentResponse.ExecutorId);
                     }
                     break;
 

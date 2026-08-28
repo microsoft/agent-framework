@@ -1249,8 +1249,13 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
             List<AgentResponseUpdate> updates =
                 await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
 
+            updates.Count(u => u.Text == FinalText).Should().Be(0,
+                "the completed response message should be suppressed after the matching message was already streamed");
+
             AgentResponseUpdate update = updates.Should().ContainSingle(u =>
-                u.MessageId == MessageId).Subject;
+                u.RawRepresentation is AgentResponseEvent && u.Contents.Count == 0).Subject;
+            update.MessageId.Should().NotBe(MessageId,
+                "the observability update should be distinct from the already-streamed content update");
             update.AdditionalProperties.Should().NotBeNull();
             update.AdditionalProperties.Should().ContainKey(WorkflowAgentAdditionalProperties.ExecutorId)
                 .WhoseValue.Should().Be(ExecutorId);
