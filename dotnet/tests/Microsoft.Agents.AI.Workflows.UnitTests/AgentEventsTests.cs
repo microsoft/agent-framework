@@ -73,6 +73,35 @@ public class AgentEventsTests
     }
 
     /// <summary>
+    /// Verifies that AgentResponseUpdateEvent annotates updates with the authoritative workflow executor identifier.
+    /// </summary>
+    [Fact]
+    public void AgentResponseUpdateEvent_OverwritesExecutorIdAdditionalProperty()
+    {
+        // Arrange
+        const string ExecutorId = "executor1";
+        const string ProviderExecutorId = "provider-controlled-executor";
+        const string ExistingMetadataKey = "provider-metadata";
+        AgentResponseUpdate update = new(ChatRole.Assistant, "test")
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                [ExistingMetadataKey] = "provider metadata",
+                [WorkflowAgentAdditionalProperties.ExecutorId] = ProviderExecutorId,
+            },
+        };
+
+        // Act
+        AgentResponseUpdateEvent evt = new(ExecutorId, update);
+
+        // Assert
+        Assert.Same(update, evt.Update);
+        Assert.NotNull(update.AdditionalProperties);
+        Assert.Equal("provider metadata", update.AdditionalProperties[ExistingMetadataKey]);
+        Assert.Equal(ExecutorId, update.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
+    }
+
+    /// <summary>
     /// Verifies that AgentResponseEvent inherits from WorkflowOutputEvent.
     /// </summary>
     [Fact]
@@ -89,6 +118,35 @@ public class AgentEventsTests
         Assert.Equal("executor1", evt.ExecutorId);
         Assert.Same(response, evt.Response);
         Assert.Same(response, evt.Data);
+    }
+
+    /// <summary>
+    /// Verifies that AgentResponseEvent annotates responses with the authoritative workflow executor identifier.
+    /// </summary>
+    [Fact]
+    public void AgentResponseEvent_OverwritesExecutorIdAdditionalProperty()
+    {
+        // Arrange
+        const string ExecutorId = "executor1";
+        const string ProviderExecutorId = "provider-controlled-executor";
+        const string ExistingMetadataKey = "provider-metadata";
+        AgentResponse response = new(new List<ChatMessage> { new(ChatRole.Assistant, "test") })
+        {
+            AdditionalProperties = new AdditionalPropertiesDictionary
+            {
+                [ExistingMetadataKey] = "provider metadata",
+                [WorkflowAgentAdditionalProperties.ExecutorId] = ProviderExecutorId,
+            },
+        };
+
+        // Act
+        AgentResponseEvent evt = new(ExecutorId, response);
+
+        // Assert
+        Assert.Same(response, evt.Response);
+        Assert.NotNull(response.AdditionalProperties);
+        Assert.Equal("provider metadata", response.AdditionalProperties[ExistingMetadataKey]);
+        Assert.Equal(ExecutorId, response.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId]);
     }
 
     /// <summary>
