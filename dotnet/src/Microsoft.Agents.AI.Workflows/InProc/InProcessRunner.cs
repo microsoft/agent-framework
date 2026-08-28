@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -425,10 +426,52 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this._lastCheckpointInfo = checkpointInfo;
         this.StepTracer.Reload(this.StepTracer.StepNumber);
 
+        // The restore is complete and the workflow is live from here on. Only now is it safe for a store to act on
+        // the resume, such as by deleting the checkpoints this one supersedes: had that happened while the
+        // checkpoint was being read, an incompatible workflow, malformed checkpoint data or a failing state import
+        // would have destroyed the state the caller could otherwise still have recovered from.
+        //
+        // The flag starts true because a store that threw may still have got far enough to remove checkpoints. Only a
+        // clean "no observer here" answer proves the index read earlier in this method is still accurate.
+        bool storeMayHaveChangedTheIndex = true;
+        try
+        {
+            storeMayHaveChangedTheIndex = await this.CheckpointManager.NotifyCheckpointRestoredAsync(this.SessionId, checkpointInfo, cancellationToken)
+                                                                      .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Housekeeping is not allowed to fail a restore that has already succeeded. It is recorded on the active
+            // span rather than rethrown, and without failing that span, because the restore itself did not fail. The
+            // store is the only component that knows what its cleanup was for, so reporting it properly is the
+            // store's job; see ICheckpointRestorationObserver.
+            Activity.Current?.AddException(ex);
+        }
+
+        if (storeMayHaveChangedTheIndex)
+        {
+            try
+            {
+                // Observing the restore may have removed checkpoints, which would leave the index read above listing
+                // checkpoints that are no longer retrievable. Read it again so Checkpoints only offers ones that exist.
+                await UpdateCheckpointIndexAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Same reasoning as above: the workflow is already live, so a store that cannot be listed right now
+                // leaves Checkpoints showing what it showed before rather than failing the restore.
+                Activity.Current?.AddException(ex);
+            }
+        }
+
         async ValueTask UpdateCheckpointIndexAsync()
         {
+            IEnumerable<CheckpointInfo> index = await this.CheckpointManager!.RetrieveIndexAsync(this.SessionId).ConfigureAwait(false);
+
+            // Replaced in one go: Checkpoints is readable throughout, and clearing before the await would leave it
+            // empty for the duration of the call on a run that is already live.
             this._checkpoints.Clear();
-            this._checkpoints.AddRange(await this.CheckpointManager!.RetrieveIndexAsync(this.SessionId).ConfigureAwait(false));
+            this._checkpoints.AddRange(index);
         }
     }
 

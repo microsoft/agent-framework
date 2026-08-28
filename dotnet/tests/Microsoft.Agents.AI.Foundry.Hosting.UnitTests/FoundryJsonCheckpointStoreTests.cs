@@ -248,7 +248,86 @@ public sealed class FoundryJsonCheckpointStoreTests
     }
 
     [Fact]
-    public async Task RetrieveCheckpointAsync_DeletesPredecessorsOfTheResumeTargetAsync()
+    public async Task RetrieveCheckpointAsync_DoesNotDeleteAnythingAsync()
+    {
+        // Arrange: reading a checkpoint is not a resume. The caller still has to match it against the
+        // workflow and import its state, and either of those can fail, so nothing may be discarded yet.
+        var backing = new FakeCheckpointStateStore();
+        var store = NewStore(backing);
+        var first = await store.CreateCheckpointAsync("session-1", Json("{\"step\":1}"));
+        var second = await store.CreateCheckpointAsync("session-1", Json("{\"step\":2}"), parent: first);
+        var third = await store.CreateCheckpointAsync("session-1", Json("{\"step\":3}"), parent: second);
+
+        // Act
+        var resumed = await store.RetrieveCheckpointAsync("session-1", third);
+
+        // Assert: the checkpoint is returned and the whole ancestry is still recoverable.
+        Assert.Equal("{\"step\":3}", resumed.GetRawText());
+        Assert.Equal([first, second, third], (await store.RetrieveIndexAsync("session-1")).ToList());
+        Assert.True(backing.Items.ContainsKey(FoundryJsonCheckpointStore.BuildCheckpointKey("session-1", first.CheckpointId)));
+        Assert.True(backing.Items.ContainsKey(FoundryJsonCheckpointStore.BuildCheckpointKey("session-1", second.CheckpointId)));
+    }
+
+    [Fact]
+    public async Task RetrieveCheckpointAsync_RepeatedReads_LeaveTheAncestryIntactAsync()
+    {
+        // Arrange: a caller retrying a restore that keeps failing must not erode the ancestry a
+        // little further on every attempt.
+        var backing = new FakeCheckpointStateStore();
+        var store = NewStore(backing);
+        var first = await store.CreateCheckpointAsync("session-1", Json("{\"step\":1}"));
+        var second = await store.CreateCheckpointAsync("session-1", Json("{\"step\":2}"), parent: first);
+
+        // Act
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            await store.RetrieveCheckpointAsync("session-1", second);
+        }
+
+        // Assert
+        Assert.Equal([first, second], (await store.RetrieveIndexAsync("session-1")).ToList());
+    }
+
+    [Fact]
+    public async Task OnRestorationCompletedAsync_NullSession_ThrowsAsync()
+    {
+        // Arrange
+        var store = NewStore(new FakeCheckpointStateStore());
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            async () => await store.OnRestorationCompletedAsync(null!, new CheckpointInfo("session-1", "abc")));
+    }
+
+    [Fact]
+    public async Task OnRestorationCompletedAsync_NullCheckpoint_ThrowsAsync()
+    {
+        // Arrange
+        var store = NewStore(new FakeCheckpointStateStore());
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            async () => await store.OnRestorationCompletedAsync("session-1", null!));
+    }
+
+    [Fact]
+    public async Task OnRestorationCompletedAsync_CheckpointThatWasNeverIndexed_DoesNothingAsync()
+    {
+        // Arrange: a checkpoint the session does not list gives pruning no lineage to work from.
+        var backing = new FakeCheckpointStateStore();
+        var store = NewStore(backing);
+        var first = await store.CreateCheckpointAsync("session-1", Json("{\"step\":1}"));
+        var second = await store.CreateCheckpointAsync("session-1", Json("{\"step\":2}"), parent: first);
+
+        // Act
+        await store.OnRestorationCompletedAsync("session-1", new CheckpointInfo("session-1", "never-stored"));
+
+        // Assert
+        Assert.Equal([first, second], (await store.RetrieveIndexAsync("session-1")).ToList());
+    }
+
+    [Fact]
+    public async Task OnRestorationCompletedAsync_DeletesPredecessorsOfTheResumeTargetAsync()
     {
         // Arrange: a session that ran three supersteps, so it holds three checkpoints.
         var backing = new FakeCheckpointStateStore();
@@ -257,8 +336,9 @@ public sealed class FoundryJsonCheckpointStoreTests
         var second = await store.CreateCheckpointAsync("session-1", Json("{\"step\":2}"), parent: first);
         var third = await store.CreateCheckpointAsync("session-1", Json("{\"step\":3}"), parent: second);
 
-        // Act: resuming reads the latest checkpoint back.
+        // Act: resuming reads the latest checkpoint back, then reports that the restore succeeded.
         var resumed = await store.RetrieveCheckpointAsync("session-1", third);
+        await store.OnRestorationCompletedAsync("session-1", third);
 
         // Assert: the resumed checkpoint is returned, and it is the only one left.
         Assert.Equal("{\"step\":3}", resumed.GetRawText());
@@ -269,7 +349,7 @@ public sealed class FoundryJsonCheckpointStoreTests
     }
 
     [Fact]
-    public async Task RetrieveCheckpointAsync_RetainsCheckpointsCommittedAfterTheResumeTargetAsync()
+    public async Task OnRestorationCompletedAsync_RetainsCheckpointsCommittedAfterTheResumeTargetAsync()
     {
         // Arrange: the third checkpoint models another request committing after this request chose
         // the second checkpoint as its resume target.
@@ -280,7 +360,7 @@ public sealed class FoundryJsonCheckpointStoreTests
         var third = await store.CreateCheckpointAsync("session-1", Json("{\"step\":3}"), parent: second);
 
         // Act
-        await store.RetrieveCheckpointAsync("session-1", second);
+        await store.OnRestorationCompletedAsync("session-1", second);
 
         // Assert: only predecessors are obsolete. The concurrent request's later checkpoint remains.
         Assert.Equal([second, third], (await store.RetrieveIndexAsync("session-1")).ToList());
@@ -290,7 +370,7 @@ public sealed class FoundryJsonCheckpointStoreTests
     }
 
     [Fact]
-    public async Task RetrieveCheckpointAsync_RetainsEarlierSiblingBranchAsync()
+    public async Task OnRestorationCompletedAsync_RetainsEarlierSiblingBranchAsync()
     {
         // Arrange: two branches share the same root, and either branch may still be referenced by a
         // persisted workflow session.
@@ -301,7 +381,7 @@ public sealed class FoundryJsonCheckpointStoreTests
         var secondBranch = await store.CreateCheckpointAsync("session-1", Json("{\"branch\":2}"), parent: root);
 
         // Act
-        await store.RetrieveCheckpointAsync("session-1", secondBranch);
+        await store.OnRestorationCompletedAsync("session-1", secondBranch);
         JsonElement firstBranchValue = await store.RetrieveCheckpointAsync("session-1", firstBranch);
 
         // Assert: the shared ancestor is obsolete, but the earlier sibling remains resumable.
@@ -311,7 +391,7 @@ public sealed class FoundryJsonCheckpointStoreTests
     }
 
     [Fact]
-    public async Task RetrieveCheckpointAsync_ParentlessEntriesStillUseCommitOrderAsync()
+    public async Task OnRestorationCompletedAsync_ParentlessEntriesStillUseCommitOrderAsync()
     {
         // Arrange: parentless checkpoints provide no branch relationship, so commit order remains
         // the compatibility signal for deciding which earlier entries are obsolete.
@@ -321,7 +401,7 @@ public sealed class FoundryJsonCheckpointStoreTests
         var secondRoot = await store.CreateCheckpointAsync("session-1", Json("{\"root\":2}"));
 
         // Act
-        await store.RetrieveCheckpointAsync("session-1", secondRoot);
+        await store.OnRestorationCompletedAsync("session-1", secondRoot);
 
         // Assert
         Assert.Equal([secondRoot], (await store.RetrieveIndexAsync("session-1")).ToList());
@@ -329,7 +409,7 @@ public sealed class FoundryJsonCheckpointStoreTests
     }
 
     [Fact]
-    public async Task RetrieveCheckpointAsync_LegacyEntriesStillUseCommitOrderAsync()
+    public async Task OnRestorationCompletedAsync_LegacyEntriesStillUseCommitOrderAsync()
     {
         // Arrange: old indexes did not record parent metadata, so ordering remains the only
         // compatibility signal available for pruning them.
@@ -340,7 +420,7 @@ public sealed class FoundryJsonCheckpointStoreTests
         backing.ReplaceIndexWithLegacyEntries("session-1", first, second);
 
         // Act
-        await store.RetrieveCheckpointAsync("session-1", second);
+        await store.OnRestorationCompletedAsync("session-1", second);
 
         // Assert
         Assert.Equal([second], (await store.RetrieveIndexAsync("session-1")).ToList());
@@ -348,7 +428,7 @@ public sealed class FoundryJsonCheckpointStoreTests
     }
 
     [Fact]
-    public async Task RetrieveCheckpointAsync_LeavesOtherSessionsAloneAsync()
+    public async Task OnRestorationCompletedAsync_LeavesOtherSessionsAloneAsync()
     {
         // Arrange: two sessions, each holding checkpoints of its own.
         var backing = new FakeCheckpointStateStore();
@@ -359,16 +439,16 @@ public sealed class FoundryJsonCheckpointStoreTests
         var resumeTarget = await store.CreateCheckpointAsync("session-1", Json("{\"step\":2}"));
 
         // Act
-        await store.RetrieveCheckpointAsync("session-1", resumeTarget);
+        await store.OnRestorationCompletedAsync("session-1", resumeTarget);
 
         // Assert: pruning is scoped to the session that resumed.
         Assert.Equal([otherFirst, otherSecond], (await store.RetrieveIndexAsync("session-2")).ToList());
     }
 
     [Fact]
-    public async Task RetrieveCheckpointAsync_PruningFails_StillReturnsTheCheckpointAsync()
+    public async Task OnRestorationCompletedAsync_PruningFails_DoesNotThrowAsync()
     {
-        // Arrange: housekeeping is refused, which must not break a conversation that is resuming.
+        // Arrange: housekeeping is refused, which must not break a conversation that has resumed.
         var backing = new FakeCheckpointStateStore();
         var store = NewStore(backing);
         var first = await store.CreateCheckpointAsync("session-1", Json("{\"step\":1}"));
@@ -376,14 +456,15 @@ public sealed class FoundryJsonCheckpointStoreTests
         backing.FailNextIndexWrites = 1;
 
         // Act
-        var resumed = await store.RetrieveCheckpointAsync("session-1", resumeTarget);
+        await store.OnRestorationCompletedAsync("session-1", resumeTarget);
 
-        // Assert
+        // Assert: the checkpoint the workflow resumed from is still readable.
+        var resumed = await store.RetrieveCheckpointAsync("session-1", resumeTarget);
         Assert.Equal("{\"step\":2}", resumed.GetRawText());
     }
 
     [Fact]
-    public async Task RetrieveCheckpointAsync_PruningFailsForARealReason_ReportsItAndStillReturnsTheCheckpointAsync()
+    public async Task OnRestorationCompletedAsync_PruningFailsForARealReason_ReportsItAndDoesNotThrowAsync()
     {
         // Arrange: the store refuses the index write for a reason that is not a lost race, which is
         // how a credential or network problem would show up. That must be traceable, because
@@ -396,9 +477,10 @@ public sealed class FoundryJsonCheckpointStoreTests
         backing.FailNextIndexWritesAuthentically = 1;
 
         // Act
-        var resumed = await store.RetrieveCheckpointAsync("session-1", resumeTarget);
+        await store.OnRestorationCompletedAsync("session-1", resumeTarget);
 
-        // Assert: the resume succeeds, and the failure is reported rather than swallowed.
+        // Assert: the resume is unaffected, and the failure is reported rather than swallowed.
+        var resumed = await store.RetrieveCheckpointAsync("session-1", resumeTarget);
         Assert.Equal("{\"step\":2}", resumed.GetRawText());
         var warning = Assert.Single(logs.Entries, entry => entry.Level == LogLevel.Warning);
         Assert.Contains("session-1", warning.Message, StringComparison.Ordinal);
@@ -406,7 +488,7 @@ public sealed class FoundryJsonCheckpointStoreTests
     }
 
     [Fact]
-    public async Task RetrieveCheckpointAsync_PruningLosesARace_DoesNotWarnAsync()
+    public async Task OnRestorationCompletedAsync_PruningLosesARace_DoesNotWarnAsync()
     {
         // Arrange: losing to another writer is expected under concurrency and is not a problem, so
         // it must not be reported as one.
@@ -418,7 +500,7 @@ public sealed class FoundryJsonCheckpointStoreTests
         backing.FailNextIndexWrites = 1;
 
         // Act
-        await store.RetrieveCheckpointAsync("session-1", resumeTarget);
+        await store.OnRestorationCompletedAsync("session-1", resumeTarget);
 
         // Assert
         Assert.DoesNotContain(logs.Entries, entry => entry.Level >= LogLevel.Warning);

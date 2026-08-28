@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.Checkpointing;
@@ -63,4 +64,11 @@ internal sealed class InMemoryCheckpointManager : ICheckpointManager
 
     public ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null)
         => new(this.GetSessionStore(sessionId).CheckpointIndex.AsReadOnly());
+
+    /// <summary>
+    /// Does nothing. This manager holds every checkpoint in memory for the lifetime of the process and never
+    /// discards one, so it has no work to defer until a restore succeeds.
+    /// </summary>
+    public ValueTask<bool> NotifyCheckpointRestoredAsync(string sessionId, CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
+        => new(false);
 }
