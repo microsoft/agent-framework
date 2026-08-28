@@ -41,7 +41,7 @@ public sealed class AgentResponseUpdateEvent : WorkflowOutputEvent
         if (!string.IsNullOrEmpty(executorId))
         {
             this.Update.AdditionalProperties ??= [];
-            this.Update.AdditionalProperties.TryAdd(WorkflowAgentAdditionalProperties.ExecutorId, executorId);
+            this.Update.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId] = executorId;
         }
     }
 
