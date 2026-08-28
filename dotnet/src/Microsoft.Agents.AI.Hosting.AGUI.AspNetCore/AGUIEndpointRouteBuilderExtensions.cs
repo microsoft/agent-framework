@@ -207,45 +207,24 @@ public static class AGUIEndpointRouteBuilderExtensions
         List<ChatMessage> incomingMessages,
         List<ChatMessage> storedMessages)
     {
-        string? lastStoredMessageId = storedMessages[^1].MessageId;
-        if (string.IsNullOrEmpty(lastStoredMessageId))
+        if (incomingMessages.Count <= storedMessages.Count)
         {
             return incomingMessages;
         }
 
-        // Leave at least one incoming message as the new turn, then match the preceding
-        // history backwards against the end of the stored conversation.
-        for (int historyEnd = incomingMessages.Count - 2; historyEnd >= 0; historyEnd--)
+        // AG-UI sends the complete conversation in chronological order. Only remove
+        // stored history when it is an exact prefix of the incoming transcript.
+        for (int i = storedMessages.Count - 1; i >= 0; i--)
         {
-            if (!string.Equals(lastStoredMessageId, incomingMessages[historyEnd].MessageId, StringComparison.Ordinal))
+            string? storedMessageId = storedMessages[i].MessageId;
+            if (string.IsNullOrEmpty(storedMessageId) ||
+                !string.Equals(storedMessageId, incomingMessages[i].MessageId, StringComparison.Ordinal))
             {
-                continue;
-            }
-
-            int incomingIndex = historyEnd;
-            int storedIndex = storedMessages.Count - 1;
-            while (incomingIndex >= 0 && storedIndex >= 0)
-            {
-                string? storedMessageId = storedMessages[storedIndex].MessageId;
-                string? incomingMessageId = incomingMessages[incomingIndex].MessageId;
-                if (string.IsNullOrEmpty(storedMessageId) ||
-                    !string.Equals(storedMessageId, incomingMessageId, StringComparison.Ordinal))
-                {
-                    break;
-                }
-
-                incomingIndex--;
-                storedIndex--;
-            }
-
-            if (incomingIndex < 0)
-            {
-                int newMessagesStart = historyEnd + 1;
-                return incomingMessages.GetRange(newMessagesStart, incomingMessages.Count - newMessagesStart);
+                return incomingMessages;
             }
         }
 
-        return incomingMessages;
+        return incomingMessages.GetRange(storedMessages.Count, incomingMessages.Count - storedMessages.Count);
     }
 
     private static List<ChatMessage> GetCurrentTurnMessages(List<ChatMessage> incomingMessages)

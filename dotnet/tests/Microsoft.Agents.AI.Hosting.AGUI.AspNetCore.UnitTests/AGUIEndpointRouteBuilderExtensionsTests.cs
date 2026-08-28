@@ -252,7 +252,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     }
 
     [Fact]
-    public async Task GetMessagesForRun_WithTruncatedStoredHistoryOverlap_ReturnsOnlyNewMessagesAsync()
+    public async Task GetMessagesForRun_WithNonPrefixHistory_ReturnsMessagesUnchangedAsync()
     {
         // Arrange
         ChatClientAgent agent = new(new Mock<IChatClient>().Object);
@@ -275,8 +275,7 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
             incomingMessages);
 
         // Assert
-        ChatMessage message = Assert.Single(messages);
-        Assert.Equal("user-2", message.MessageId);
+        Assert.Same(incomingMessages, messages);
     }
 
     [Fact]
