@@ -70,6 +70,7 @@ public class FileAccessProviderTests
 
         // Assert — read-only tools are bare functions; store-modifying tools still require approval.
         AssertRequiresApproval(tools, FileAccessProvider.ReadFileToolName, expected: false);
+        AssertRequiresApproval(tools, FileAccessProvider.ReadLinesToolName, expected: false);
         AssertRequiresApproval(tools, FileAccessProvider.LsToolName, expected: false);
         AssertRequiresApproval(tools, FileAccessProvider.GrepToolName, expected: false);
         AssertRequiresApproval(tools, FileAccessProvider.WriteToolName, expected: true);
@@ -86,6 +87,7 @@ public class FileAccessProviderTests
 
         // Assert — store-modifying tools are bare functions; read-only tools still require approval.
         AssertRequiresApproval(tools, FileAccessProvider.ReadFileToolName, expected: true);
+        AssertRequiresApproval(tools, FileAccessProvider.ReadLinesToolName, expected: true);
         AssertRequiresApproval(tools, FileAccessProvider.LsToolName, expected: true);
         AssertRequiresApproval(tools, FileAccessProvider.GrepToolName, expected: true);
         AssertRequiresApproval(tools, FileAccessProvider.WriteToolName, expected: false);
