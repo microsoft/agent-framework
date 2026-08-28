@@ -14,7 +14,7 @@ permissions:
 jobs:
   python-test-coverage-report:
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
     continue-on-error: false
     defaults:
       run:
