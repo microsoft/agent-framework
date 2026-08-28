@@ -64,7 +64,16 @@
     <!-- SourceLink allows step-through debugging for source hosted on GitHub. -->
     <!-- https://github.com/dotnet/sourcelink -->
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" PrivateAssets="All" Condition="'$(IsReleased)' == 'true'">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <AdditionalFiles Include="PublicAPI\$(TargetFramework)\PublicAPI.Shipped.txt" Condition="'$(IsReleased)' == 'true' AND Exists('$(MSBuildProjectDirectory)\PublicAPI\$(TargetFramework)\PublicAPI.Shipped.txt')" />
+    <AdditionalFiles Include="PublicAPI\$(TargetFramework)\PublicAPI.Unshipped.txt" Condition="'$(IsReleased)' == 'true' AND Exists('$(MSBuildProjectDirectory)\PublicAPI\$(TargetFramework)\PublicAPI.Unshipped.txt')" />
   </ItemGroup>
+
+  <Target Name="ValidateNoUnshippedPublicApis" BeforeTargets="Pack" Condition="'$(IsReleased)' == 'true' AND '$(Configuration)' == 'Publish'">
+    <Exec Command="pwsh &quot;$(RepoRoot)\dotnet\eng\scripts\test-unshipped-public-apis.ps1&quot; -Path &quot;$(MSBuildProjectDirectory)&quot;" />
+  </Target>
 
   <ItemGroup>
     <!-- Include icon.png and NUGET.md in the project. -->
