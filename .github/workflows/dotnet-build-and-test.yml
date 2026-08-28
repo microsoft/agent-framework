@@ -26,9 +26,6 @@ concurrency:
 
 permissions:
   contents: read
-  code-quality: write
-  id-token: "write"
-  pull-requests: read
 
 jobs:
   paths-filter:
@@ -177,6 +174,9 @@ jobs:
   dotnet-test:
     needs: paths-filter
     if: needs.paths-filter.outputs.dotnetChanges == 'true'
+    permissions:
+      contents: read
+      id-token: "write"
     strategy:
       fail-fast: false
       matrix:
@@ -362,14 +362,6 @@ jobs:
           name: CoverageReport-${{ matrix.os }}-${{ matrix.targetFramework }}-${{ matrix.configuration }} # Artifact name
           path: ./TestResults/Reports # Directory containing files to upload
 
-      - name: Upload coverage report to GitHub
-        if: matrix.targetFramework == env.COVERAGE_FRAMEWORK && github.event_name != 'merge_group' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') || (github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch))
-        uses: actions/upload-code-coverage@d8e329117199404bba6fc81efe8093dc7c015e34 # v1.4.2
-        with:
-          file: ./TestResults/Reports/Cobertura.xml
-          language: CSharp
-          label: code-coverage/dotnet
-
       - name: Check coverage
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
         shell: pwsh
@@ -383,6 +375,29 @@ jobs:
           path: IntegrationTestResults/**/*.junit
           if-no-files-found: ignore
 
+  dotnet-upload-coverage:
+    needs: [paths-filter, dotnet-test]
+    if: needs.paths-filter.outputs.dotnetChanges == 'true' && github.event_name != 'merge_group' && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') || (github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch))
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      code-quality: write
+      pull-requests: read
+    steps:
+      - name: Download coverage report artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: CoverageReport-ubuntu-latest-${{ env.COVERAGE_FRAMEWORK }}-Release
+          path: ./TestResults/Reports
+      - name: Upload coverage report to GitHub
+        uses: actions/upload-code-coverage@d8e329117199404bba6fc81efe8093dc7c015e34 # v1.4.2
+        with:
+          file: ./TestResults/Reports/Cobertura.xml
+          language: CSharp
+          label: code-coverage/dotnet
+          fail-on-error: false
+
   # The Foundry hosted-agent IT is costly (it builds a container, pushes to ACR, and provisions
   # live agents on a separate Foundry project). Running it in its own job keeps the overall
   # workflow time roughly flat: it executes in parallel to dotnet-build and dotnet-test and is
@@ -390,6 +405,9 @@ jobs:
   dotnet-foundry-hosted-it:
     needs: paths-filter
     if: github.event_name != 'pull_request' && needs.paths-filter.outputs.foundryHostingChanges == 'true'
+    permissions:
+      contents: read
+      id-token: "write"
     runs-on: ubuntu-latest
     environment: integration
     env:
