@@ -1504,7 +1504,9 @@ async def test_response_schema_option_wins_over_pydantic_response_format() -> No
 
     await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("Hi")])],
-        options={"response_format": Reply, "response_schema": explicit},
+        # response_format binds the options TypedDict to Reply while response_schema only
+        # exists on GeminiChatOptions[None]; no get_response overload accepts the combination.
+        options=cast(Any, {"response_format": Reply, "response_schema": explicit}),
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
