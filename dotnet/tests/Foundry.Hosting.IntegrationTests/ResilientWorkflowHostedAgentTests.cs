@@ -67,7 +67,7 @@ public sealed class ResilientWorkflowHostedAgentTests(ResilientWorkflowHostedAge
         ResponseWaitResult waitResult = await WaitForTerminalAsync(responses, accepted.Id, s_completionTimeout);
 
         // Assert: this token is emitted only after a new process observes the crash marker written
-        // immediately before Environment.Exit.
+        // before Environment.Exit.
         Assert.True(accepted.Status is ResponseStatus.Queued or ResponseStatus.InProgress);
         Assert.True(
             waitResult.SawSessionNotReady
@@ -260,7 +260,7 @@ public sealed class ResilientWorkflowHostedAgentTests(ResilientWorkflowHostedAge
     }
 
     private static bool IsTransientRecoveryStatus(int status) =>
-        status is 404 or 424 or 500 or 502 or 503;
+        status is 404 or 409 or 424 or 500 or 502 or 503;
 
     private static int CountCountdownUpdates(IEnumerable<string> texts) =>
         texts.Count(text => text != "Countdown complete.");
@@ -293,6 +293,13 @@ public sealed class ResilientWorkflowHostedAgentTests(ResilientWorkflowHostedAge
             {
                 longestPollDuration = Max(longestPollDuration, pollStopwatch.Elapsed);
                 sawResponseNotFound = true;
+                await Task.Delay(TimeSpan.FromSeconds(2));
+                continue;
+            }
+            catch (ClientResultException ex) when (ex.Status == 409)
+            {
+                longestPollDuration = Max(longestPollDuration, pollStopwatch.Elapsed);
+                sawSessionNotReady = true;
                 await Task.Delay(TimeSpan.FromSeconds(2));
                 continue;
             }
