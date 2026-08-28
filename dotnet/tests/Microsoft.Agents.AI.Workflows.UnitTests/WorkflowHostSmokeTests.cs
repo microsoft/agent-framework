@@ -1215,6 +1215,47 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                 .Should().BeTrue("only the correlated message in a multi-message response should be suppressed");
         }
 
+        [Fact]
+        public async Task Test_WorkflowHostAgent_AgentResponseEventMessagesIncludeWorkflowExecutorIdAdditionalPropertyAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            const string ExecutorId = "response-only-executor";
+            Workflow workflow = new WorkflowBuilder(new ResponseOnlyExecutor(ExecutorId)).Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            AgentResponseUpdate update = updates.Should().ContainSingle(u => u.Text == FinalText).Subject;
+            update.RawRepresentation.Should().BeOfType<AgentResponseEvent>();
+            update.AdditionalProperties.Should().NotBeNull();
+            update.AdditionalProperties.Should().ContainKey(WorkflowAgentAdditionalProperties.ExecutorId)
+                .WhoseValue.Should().Be(ExecutorId);
+        }
+
+        [Fact]
+        public async Task Test_WorkflowHostAgent_AgentResponseEventObservabilityUpdateIncludesWorkflowExecutorIdAdditionalPropertyAsync()
+        {
+            using Futures.FuturesScope _ = new(enabled: false);
+            const string ExecutorId = "stream-then-complete";
+            const string MessageId = "shared-message";
+            Workflow workflow =
+                new WorkflowBuilder(
+                    new StreamThenCompleteExecutor(
+                        useSameResponseId: true,
+                        streamedMessageId: MessageId,
+                        completedMessageId: MessageId))
+                .Build();
+
+            List<AgentResponseUpdate> updates =
+                await RunStreamingAsync(workflow, includeWorkflowOutputsInResponse: true);
+
+            AgentResponseUpdate update = updates.Should().ContainSingle(u =>
+                u.MessageId == MessageId).Subject;
+            update.AdditionalProperties.Should().NotBeNull();
+            update.AdditionalProperties.Should().ContainKey(WorkflowAgentAdditionalProperties.ExecutorId)
+                .WhoseValue.Should().Be(ExecutorId);
+        }
+
         private sealed class StreamThenCompleteExecutor(
             bool useSameResponseId = false,
             string streamedMessageId = "streamed-message",
@@ -1302,6 +1343,34 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
                         MessageId = "completed-only-message",
                     };
                 return new AgentResponse([streamedMessage, completedOnlyMessage]) { ResponseId = ResponseId };
+            }
+        }
+
+        private sealed class ResponseOnlyExecutor(string id) : Executor(id)
+        {
+            protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+                protocolBuilder.ConfigureRoutes(
+                    routeBuilder =>
+                        routeBuilder
+                            .AddHandler<IEnumerable<ChatMessage>>(this.HandleMessagesAsync)
+                            .AddHandler<TurnToken, AgentResponse>(this.HandleTurnAsync));
+
+            private ValueTask HandleMessagesAsync(
+                IEnumerable<ChatMessage> messages,
+                IWorkflowContext context,
+                CancellationToken cancellationToken) => default;
+
+            private ValueTask<AgentResponse> HandleTurnAsync(
+                TurnToken turnToken,
+                IWorkflowContext context,
+                CancellationToken cancellationToken)
+            {
+                ChatMessage message = new(ChatRole.Assistant, FinalText)
+                {
+                    MessageId = "response-only-message",
+                };
+
+                return new(new AgentResponse([message]) { ResponseId = "response-only-response" });
             }
         }
     }

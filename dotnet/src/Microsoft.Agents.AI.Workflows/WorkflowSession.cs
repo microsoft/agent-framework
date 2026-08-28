@@ -172,32 +172,41 @@ internal sealed class WorkflowSession : AgentSession
         return marshaller.Marshal(info);
     }
 
-    public AgentResponseUpdate CreateUpdate(string responseId, object raw, params AIContent[] parts)
+    public AgentResponseUpdate CreateUpdate(string responseId, object raw, string? executorId = default, params AIContent[] parts)
     {
         Throw.IfNullOrEmpty(parts);
 
-        return new(ChatRole.Assistant, parts)
+        return SetExecutorId(new(ChatRole.Assistant, parts)
         {
             CreatedAt = DateTimeOffset.UtcNow,
             MessageId = Guid.NewGuid().ToString("N"),
             Role = ChatRole.Assistant,
             ResponseId = responseId,
             RawRepresentation = raw
-        };
+        }, executorId);
     }
 
-    public AgentResponseUpdate CreateUpdate(string responseId, object raw, ChatMessage message)
+    public AgentResponseUpdate CreateUpdate(string responseId, object raw, ChatMessage message, string? executorId = default)
     {
         Throw.IfNull(message);
 
-        return new(message.Role, message.Contents)
+        return SetExecutorId(new(message.Role, message.Contents)
         {
             AuthorName = message.AuthorName,
             CreatedAt = message.CreatedAt ?? DateTimeOffset.UtcNow,
             MessageId = message.MessageId ?? Guid.NewGuid().ToString("N"),
             ResponseId = responseId,
             RawRepresentation = raw
-        };
+        }, executorId);
+    }
+    private static AgentResponseUpdate SetExecutorId(AgentResponseUpdate update, string? executorId)
+    {
+        if (!string.IsNullOrEmpty(executorId))
+        {
+            update.AdditionalProperties ??= [];
+            update.AdditionalProperties[WorkflowAgentAdditionalProperties.ExecutorId] = executorId;
+        }
+        return update;
     }
 
     private async ValueTask<ResumeRunResult> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
@@ -531,7 +540,7 @@ internal sealed class WorkflowSession : AgentSession
                     // External callers respond using the workflow-facing request ID, which is always RequestId.
                     this.AddPendingRequest(requestInfo.Request.RequestId, requestInfo.Request);
 
-                    AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, requestContent);
+                    AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, parts: requestContent);
                     yield return update;
                     break;
 
@@ -549,7 +558,7 @@ internal sealed class WorkflowSession : AgentSession
                                        : "An error occurred while executing the workflow.";
 
                         ErrorContent errorContent = new(message);
-                        yield return this.CreateUpdate(this.LastResponseId, evt, errorContent);
+                        yield return this.CreateUpdate(this.LastResponseId, evt, parts: errorContent);
                     }
 
                     break;
@@ -570,7 +579,7 @@ internal sealed class WorkflowSession : AgentSession
                         ? executorException.Message
                         : "An error occurred while executing the workflow.";
 
-                    AgentResponseUpdate executorUpdate = this.CreateUpdate(this.LastResponseId, evt, new ErrorContent(executorMessage));
+                    AgentResponseUpdate executorUpdate = this.CreateUpdate(this.LastResponseId, evt, executorFailed.ExecutorId, new ErrorContent(executorMessage));
                     yield return executorUpdate;
                     break;
 
@@ -610,7 +619,7 @@ internal sealed class WorkflowSession : AgentSession
                         }
 
                         emittedMessage = true;
-                        yield return this.CreateUpdate(this.LastResponseId, evt, message);
+                        yield return this.CreateUpdate(this.LastResponseId, evt, message, agentResponse.ExecutorId);
                     }
                     if (!emittedMessage && suppressedStreamedMessage)
                     {
@@ -663,7 +672,7 @@ internal sealed class WorkflowSession : AgentSession
                         AIContent[] contents = [.. updateContents];
                         if (contents.Length > 0)
                         {
-                            yield return this.CreateUpdate(this.LastResponseId, evt, contents);
+                            yield return this.CreateUpdate(this.LastResponseId, evt, parts: contents);
                         }
                     }
                     break;
