@@ -1,4 +1,6 @@
-﻿using Microsoft.Agents.AI.Workflows.Declarative.Events;
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 

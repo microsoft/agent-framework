@@ -402,7 +402,15 @@ public class HandoffOrchestrationTests
 
         // Assert
         Assert.Equal(2, initialAgentInvocationCount);
-        Assert.Single(GetMessageSequence(response.Messages), message => message == "call:call1");
+        Assert.Equal(
+            [
+                "call:call1",
+                "result:call1",
+                "call:call2",
+                "result:call2",
+                "text:Final response",
+            ],
+            GetMessageSequence(response.Messages));
     }
 
     [Fact]

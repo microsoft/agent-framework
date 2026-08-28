@@ -553,7 +553,7 @@ public class SampleSmokeTest
             ? tie.InnerException
             : error;
 
-        Assert.True((actualError) is InvalidOperationException);
+        Assert.IsType<InvalidOperationException>(actualError);
     }
 }
 

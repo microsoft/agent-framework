@@ -113,7 +113,7 @@ public class ChatForwardingExecutorTests
         TestWorkflowContext testContext = await this.RunForwardMessageTestAsync(executor, testMessage);
 
         // Assert
-        Assert.Single(testContext.SentMessages);
+        Assert.Same(testMessage, Assert.Single(testContext.SentMessages));
     }
 
     [Theory]
@@ -133,7 +133,7 @@ public class ChatForwardingExecutorTests
             : await this.RunForwardMessageTestAsync(executor, testMessages);
 
         // Assert
-        Assert.Single(testContext.SentMessages);
+        Assert.Same(testMessages, Assert.Single(testContext.SentMessages));
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public class ChatForwardingExecutorTests
         TestWorkflowContext testContext = await this.RunForwardMessageTestAsync(executor, testMessages);
 
         // Assert
-        Assert.Single(testContext.SentMessages);
+        Assert.Same(testMessages, Assert.Single(testContext.SentMessages));
     }
 
     [Fact]

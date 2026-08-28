@@ -166,8 +166,8 @@ public partial class PolymorphicOutputTests
         Assert.Single(outputEvents);
 
         WorkflowOutputEvent outputEvent = outputEvents.Single();
-        Assert.True((outputEvent.Data) is DerivedOutput);
-        Assert.Equal("DerivedOutput", ((DerivedOutput)outputEvent.Data!).Name);
+        DerivedOutput derivedOutput = Assert.IsType<DerivedOutput>(outputEvent.Data);
+        Assert.Equal("DerivedOutput", derivedOutput.Name);
 
         // Verify no error events
         List<WorkflowErrorEvent> errorEvents = events.OfType<WorkflowErrorEvent>().ToList();
@@ -200,8 +200,8 @@ public partial class PolymorphicOutputTests
         Assert.Single(outputEvents);
 
         WorkflowOutputEvent outputEvent = outputEvents.Single();
-        Assert.True((outputEvent.Data) is GrandchildOutput);
-        Assert.Equal("GrandchildOutput", ((GrandchildOutput)outputEvent.Data!).Name);
+        GrandchildOutput grandchildOutput = Assert.IsType<GrandchildOutput>(outputEvent.Data);
+        Assert.Equal("GrandchildOutput", grandchildOutput.Name);
 
         // Verify no error events
         List<WorkflowErrorEvent> errorEvents = events.OfType<WorkflowErrorEvent>().ToList();
@@ -264,7 +264,7 @@ public partial class PolymorphicOutputTests
         Assert.Single(outputEvents);
 
         WorkflowOutputEvent outputEvent = outputEvents.Single();
-        Assert.True((outputEvent.Data) is BaseOutput);
+        Assert.IsType<BaseOutput>(outputEvent.Data);
 
         // Verify no error events
         List<WorkflowErrorEvent> errorEvents = events.OfType<WorkflowErrorEvent>().ToList();

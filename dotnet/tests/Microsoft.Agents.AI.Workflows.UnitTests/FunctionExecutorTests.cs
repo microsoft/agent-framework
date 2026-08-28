@@ -57,7 +57,7 @@ public class ExecutorTestsBase
         Assert.Contains(result.Context.EmittedEvents, evt => evt is ExecutorInvokedEvent invoked
                                && MatchesExpected(invoked.Data, expectedInput));
         Assert.Contains(result.Context.EmittedEvents, evt => evt is ExecutorCompletedEvent completed
-                               && MatchesExpected(completed.Data, expectedCallResult));
+                               && ReferenceEquals(completed.Data, result.CallResult));
     }
 
     internal static void CheckInvoked<TMessage, TOutput>(ExecutorTestResult result, TMessage expectedInput, TOutput expectedCallResult)
@@ -69,16 +69,13 @@ public class ExecutorTestsBase
         Assert.Contains(result.Context.EmittedEvents, evt => evt is ExecutorInvokedEvent invoked
                                && MatchesExpected(invoked.Data, expectedInput));
         Assert.Contains(result.Context.EmittedEvents, evt => evt is ExecutorCompletedEvent completed
-                               && MatchesExpected(completed.Data, expectedCallResult));
+                               && ReferenceEquals(completed.Data, result.CallResult));
     }
 
-    private static bool MatchesExpected(object? actual, object? expected)
+    private static bool MatchesExpected<TExpected>(object? actual, TExpected expected)
+        where TExpected : class
     {
-        object? normalizedActual = actual is PortableValue portableValue && expected is not null
-            ? portableValue.AsType(expected.GetType())
-            : actual;
-
-        return Equals(expected, normalizedActual);
+        return actual as TExpected == expected;
     }
 
     internal TestWorkflowContext CreateWorkflowContext(Executor executor) => new(executor.Id);

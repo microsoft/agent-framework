@@ -137,7 +137,7 @@ public class ChatProtocolExecutorTests
         await executor.TakeTurnAsync(new TurnToken(emitEvents: false), context);
 
         Assert.Equal(4, executor.ReceivedMessages.Count);
-        Assert.Equal("Message 1", executor.ReceivedMessages[0].Text);
+        Assert.Equal(["Message 1", "Message 2", "Message 3", "Message 4"], executor.ReceivedMessages.Select(m => m.Text));
         Assert.Equal(1, executor.TurnCount);
 
         executor.ReceivedMessages.Clear();

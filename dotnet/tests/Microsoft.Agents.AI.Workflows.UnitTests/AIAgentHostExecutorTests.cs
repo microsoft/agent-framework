@@ -87,7 +87,7 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         // Assert
         AgentResponseUpdateEvent[] updateEvents = testContext.Events.OfType<AgentResponseUpdateEvent>().ToArray();
         Assert.Equal(3, updateEvents.Length);
-        Assert.True(string.IsNullOrEmpty(updateEvents[0].Update.MessageId));
+        Assert.Equal(string.Empty, updateEvents[0].Update.MessageId);
 
         string? messageId = updateEvents[1].Update.MessageId;
         Assert.False(string.IsNullOrEmpty(messageId));
@@ -271,7 +271,6 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         // Assert 2
         // Since we are not finished, we expect the agent to not have produced a final response (="Remaining: 1")
         List<AgentResponseEvent> agentResponseEvents = testContext.Events.OfType<AgentResponseEvent>().ToList();
-        agentResponseEvents = testContext.Events.OfType<AgentResponseEvent>().ToList();
         Assert.NotEmpty(agentResponseEvents);
         AgentResponseEvent lastResponseEvent = agentResponseEvents.Last();
 

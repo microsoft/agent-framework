@@ -29,8 +29,9 @@ public class EdgeMapSmokeTests
         Assert.NotNull(mapping);
 
         List<MessageDelivery> deliveries = mapping.Deliveries.ToList();
-        Assert.All(deliveries, delivery => Assert.Equal(executor.Id, delivery.TargetId));
-        Assert.Equal(responseMessage, deliveries[0].Envelope.Message);
+        MessageDelivery delivery = Assert.Single(deliveries);
+        Assert.Equal(executor.Id, delivery.TargetId);
+        Assert.Equal(responseMessage, delivery.Envelope.Message);
     }
 
     [Fact]
@@ -55,8 +56,9 @@ public class EdgeMapSmokeTests
             Assert.NotNull(mapping);
 
             List<MessageDelivery> deliveries = mapping.Deliveries.ToList();
-            Assert.All(deliveries, delivery => Assert.Equal(executor.Id, delivery.TargetId));
-            Assert.Equal(responseMessage, deliveries[0].Envelope.Message);
+            MessageDelivery delivery = Assert.Single(deliveries);
+            Assert.Equal(executor.Id, delivery.TargetId);
+            Assert.Equal(responseMessage, delivery.Envelope.Message);
         }
     }
 

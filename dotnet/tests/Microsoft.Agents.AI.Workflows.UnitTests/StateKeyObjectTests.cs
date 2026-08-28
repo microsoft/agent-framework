@@ -1,4 +1,6 @@
-﻿using Microsoft.Agents.AI.Workflows.Execution;
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using Microsoft.Agents.AI.Workflows.Execution;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 

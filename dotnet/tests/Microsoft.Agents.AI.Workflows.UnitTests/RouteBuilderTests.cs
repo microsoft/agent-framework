@@ -357,8 +357,8 @@ public sealed class RouteBuilderTests
         CallResult? result = await router.RouteMessageAsync(response, context, cancellationToken: cancellationToken);
 
         // Assert
-        Assert.Single(externalRequestContext.RegisteredPorts);
-        Assert.Single(externalRequestContext.PostedRequests);
+        Assert.Equal("port", Assert.Single(externalRequestContext.RegisteredPorts).Id);
+        Assert.Equal("req-1", Assert.Single(externalRequestContext.PostedRequests).RequestId);
         Assert.NotNull(result);
         Assert.True(result!.IsSuccess);
         Assert.Same(response, result.Result);
@@ -384,8 +384,8 @@ public sealed class RouteBuilderTests
         // Assert
         Assert.NotNull(result);
         Assert.False(result!.IsSuccess);
-        Assert.True((result.Exception) is InvalidOperationException);
-        Assert.Contains("Unknown port", result.Exception!.Message);
+        InvalidOperationException exception = Assert.IsType<InvalidOperationException>(result.Exception);
+        Assert.Contains("Unknown port", exception.Message);
     }
 
     private static void RegisterVoidHandler(RouteBuilder routeBuilder, HandlerInvocation invocation, HandlerOverload overload)
