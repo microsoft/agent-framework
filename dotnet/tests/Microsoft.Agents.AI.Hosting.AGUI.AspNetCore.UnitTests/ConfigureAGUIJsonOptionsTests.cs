@@ -20,7 +20,7 @@ public sealed class ConfigureAGUIJsonOptionsTests
 
         // The AG-UI wire context must be in the resolver chain (needed on the net10
         // TypedResults.ServerSentEvents path, which serializes events through these options).
-        Assert.Null(Record.Exception(()=>options.GetTypeInfo(typeof(RunStartedEvent))));
+        Assert.Null(Record.Exception(() => options.GetTypeInfo(typeof(RunStartedEvent))));
     }
 
     [Fact]
@@ -29,7 +29,7 @@ public sealed class ConfigureAGUIJsonOptionsTests
         JsonSerializerOptions options = BuildConfiguredSerializerOptions();
 
         // The Agent Framework abstractions resolver must also be present so M.E.AI types resolve.
-        Assert.Null(Record.Exception(()=>options.GetTypeInfo(typeof(ChatMessage))));
+        Assert.Null(Record.Exception(() => options.GetTypeInfo(typeof(ChatMessage))));
     }
 
     private static JsonSerializerOptions BuildConfiguredSerializerOptions()
