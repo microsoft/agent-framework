@@ -1700,8 +1700,8 @@ class RawOpenAIChatClient(
         # local-shell-call IDs) must not be re-sent inline when the request carries
         # previous_response_id / conversation_id / conversation: the server already has them via
         # the prior response and rejects duplicates with "Duplicate item found with id ...".
-        # function_result keeps its call_id and the server pairs it to the prior function_call via
-        # that key. See microsoft/agent-framework#3295. The strip is gated on the request-level
+        # function_result keeps its call_id when present and the server pairs it to the prior
+        # function_call via that key. See microsoft/agent-framework#3295. The strip is gated on the request-level
         # flag, not a message-level one: HistoryProvider-attributed messages
         # (replays_local_storage) still need stripping when the request also carries a continuation
         # marker, since the server-stored items would otherwise duplicate the inline ones. Without
@@ -1984,7 +1984,6 @@ class RawOpenAIChatClient(
                         "type": OPENAI_SHELL_OUTPUT_TYPE_LOCAL_SHELL_CALL,
                         "output": self._to_local_shell_output_payload(content),
                     }
-                # call_id for the result needs to be the same as the call_id for the function call
                 output: str | list[dict[str, Any]] = content.result or ""
                 if (
                     self.SUPPORTS_RICH_FUNCTION_OUTPUT
@@ -2001,11 +2000,13 @@ class RawOpenAIChatClient(
                                 output_parts.append(part)
                     if output_parts:
                         output = output_parts
-                return {
-                    "call_id": content.call_id,
+                function_call_output: dict[str, Any] = {
                     "type": "function_call_output",
                     "output": output,
                 }
+                if content.call_id is not None:
+                    function_call_output["call_id"] = content.call_id
+                return function_call_output
             case "function_approval_request":
                 return {
                     "type": "mcp_approval_request",

@@ -5601,6 +5601,19 @@ def test_prepare_content_for_openai_function_result_without_items() -> None:
     assert result["output"] == "Simple result"
 
 
+def test_prepare_content_for_openai_function_result_without_call_id() -> None:
+    """Test Responses API function output omits an optional call ID."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    content = Content.from_function_result(result="Simple result")
+
+    result = client._prepare_content_for_openai("user", content)
+
+    assert result == {
+        "type": "function_call_output",
+        "output": "Simple result",
+    }
+
+
 def test_parse_chunk_from_openai_code_interpreter() -> None:
     """Test _parse_chunk_from_openai with code_interpreter_call."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")

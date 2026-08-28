@@ -856,7 +856,7 @@ class Content:
     @classmethod
     def from_function_result(
         cls: type[ContentT],
-        call_id: str,
+        call_id: str | None = None,
         *,
         result: Any = None,
         exception: str | None = None,
@@ -871,7 +871,7 @@ class Content:
         text from text items for backwards compatibility.
 
         Args:
-            call_id: The ID of the function call this result corresponds to.
+            call_id: The optional ID of the function call this result corresponds to.
 
         Keyword Args:
             result: The tool output.  Accepts a ``list[Content]`` (the canonical

@@ -3220,6 +3220,15 @@ def test_from_function_result_with_string():
     assert result.items[0].text == "just text"
 
 
+def test_from_function_result_without_call_id():
+    """Test Content.from_function_result accepts results without a call ID."""
+    result = Content.from_function_result(result="just text")
+
+    assert result.type == "function_result"
+    assert result.call_id is None
+    assert result.result == "just text"
+
+
 def test_content_from_function_result_items_in_to_dict():
     """Test that items are included in to_dict serialization."""
     content_list = [
