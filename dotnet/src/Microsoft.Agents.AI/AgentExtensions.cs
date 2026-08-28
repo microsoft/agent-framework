@@ -2,10 +2,12 @@
 
 using System;
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -96,12 +98,13 @@ public static partial class AIAgentExtensions
     /// <param name="session">
     /// Optional <see cref="AgentSession"/> to use for every request made through the returned client. If not provided,
     /// each request is made without a session and the caller is responsible for supplying the conversation history.
+    /// The agent would also not be able to retain any state or memories across invocations.
     /// </param>
     /// <param name="conversationId">
-    /// Optional conversation id for the returned client to report on its responses when it cannot report a
-    /// service-managed one. May only be supplied together with a <paramref name="session"/>, and must not be empty or
-    /// whitespace; if omitted, an id unique to the returned client is generated. Supply one when the id has to be
-    /// recognizable outside the process, for example when it is persisted or routed on.
+    /// Optional conversation id for the returned client to report on its responses, representing the active session.
+    /// May only be supplied together with a <paramref name="session"/>, and must not be empty or whitespace; if
+    /// omitted, but a session is supplied, an id unique to the returned client is generated. Supply one when the id
+    /// has to be recognizable outside the process, for example when it is persisted or routed on.
     /// </param>
     /// <returns>
     /// An <see cref="IChatClient"/> that can be used anywhere the <see cref="IChatClient"/> abstraction is consumed,
@@ -109,10 +112,8 @@ public static partial class AIAgentExtensions
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="agent"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">
-    /// <paramref name="conversationId"/> is non-<see langword="null"/> and either <paramref name="session"/> is
-    /// <see langword="null"/> — without a session nothing stores the history, so there is no conversation to name — or
-    /// <paramref name="conversationId"/> is empty, consists only of whitespace, or is a value the framework reserves
-    /// for internal use.
+    /// <paramref name="conversationId"/> is non-<see langword="null"/> and no <paramref name="session"/> is supplied,
+    /// or <paramref name="conversationId"/> is empty, whitespace, or a framework reserved value.
     /// </exception>
     /// <remarks>
     /// <para>
@@ -127,24 +128,13 @@ public static partial class AIAgentExtensions
     /// what a non-null <see cref="ChatResponse.ConversationId"/> signals under the <see cref="IChatClient"/> contract,
     /// so the returned client reports one on every response. Callers should follow it: send only the new messages on
     /// each subsequent call, along with the reported id, rather than resending a history the session is already
-    /// accumulating. The reported id is the service-managed one once the <paramref name="session"/> holds one, and
-    /// otherwise an id belonging to the returned client itself. Echoing back any id the client has reported is
-    /// accepted: it is stripped before the agent sees it, which restores the as-if-absent semantics of the first turn,
-    /// and a fixed bound session cannot fork, so the conversation simply continues. Acceptance spans the client's own
-    /// id, the session's current service conversation id, and the id most recently reported — the last because a
-    /// service that forks the conversation each turn advances the session's id after one has already been handed out.
-    /// A conversation id naming none of those is rejected with an <see cref="InvalidOperationException"/>, which for
-    /// <see cref="IChatClient.GetStreamingResponseAsync"/> surfaces from the call itself rather than when the returned
-    /// sequence is enumerated. Whichever id is reported is therefore always one the next call accepts.
-    /// </para>
-    /// <para>
-    /// The streaming and non-streaming entry points can report different ids for the same call whenever the service
-    /// mints or advances an id during the run: streaming re-checks the <paramref name="session"/> as each update goes
-    /// out, so updates streamed before the session adopts the service id carry the client's own id, while the
-    /// identical non-streaming call reports the adopted id throughout. Against a service that forks per turn this
-    /// happens on every turn, not merely the first, and streaming may report an id the session has superseded by the
-    /// time the caller replies. Echoing that id back is accepted and resolved transparently to the current
-    /// conversation, so a caller that returns what it was given is unaffected.
+    /// accumulating. The reported id is <paramref name="conversationId"/>, or the generated one when that was omitted,
+    /// and it never changes for the life of the client — the same value on every response and every streamed update,
+    /// from both entry points, whatever the underlying service does with its own ids. Echoing it back is accepted: it
+    /// is stripped before the agent sees it, which restores the as-if-absent semantics of the first turn, and a fixed
+    /// bound session cannot fork, so the conversation simply continues. Any other conversation id is rejected with an
+    /// <see cref="InvalidOperationException"/>, which for <see cref="IChatClient.GetStreamingResponseAsync"/> surfaces
+    /// from the call itself rather than when the returned sequence is enumerated.
     /// </para>
     /// <para>
     /// So that the conversation id is reported even when there is nothing else to report, a session-bound stream that
@@ -159,13 +149,12 @@ public static partial class AIAgentExtensions
     /// unsupported, and every caller appends to and reads from the same conversation, so history bleeds across them.
     /// </para>
     /// <para>
-    /// The service-managed conversation id is read from the <paramref name="session"/>, and only a
-    /// <see cref="ChatClientAgentSession"/> is recognized. A session belonging to some other agent type that tracks a
-    /// service conversation internally is not detected, and the returned client reports its own id instead. An id that
-    /// appears on a response without the session standing behind it is likewise not reported, since passing it on would
-    /// promise a conversation the next call would have to reject. In both cases the reported id still identifies the
-    /// conversation correctly for callers that simply echo it back; it is only opaque to anything that expects the
-    /// service's own identifier.
+    /// Service-side conversation ids are not surfaced in this mode at all. A response or streamed update that arrives
+    /// carrying one is copied and re-stamped with the client's id, so the id the service minted is replaced rather than
+    /// forwarded, and the <paramref name="session"/>'s own id is not reported either. The service's id is consequently
+    /// not accepted as input: only the id this client hands out is. The <paramref name="session"/> tracks the service
+    /// conversation internally, so callers that need to address a specific service conversation should bind a session
+    /// obtained from <see cref="ChatClientAgent.CreateSessionAsync(string, CancellationToken)"/>.
     /// </para>
     /// <para>
     /// Any <see cref="ChatOptions"/> supplied to the returned client are passed to the agent as
@@ -213,6 +202,7 @@ public static partial class AIAgentExtensions
     /// disposing it does not dispose either of them.
     /// </para>
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public static IChatClient AsIChatClient(this AIAgent agent, AgentSession? session = null, string? conversationId = null)
     {
         Throw.IfNull(agent);
