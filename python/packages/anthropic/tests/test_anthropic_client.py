@@ -31,9 +31,6 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
 )
 from agent_framework.observability import ChatTelemetryLayer
-from agent_framework_anthropic import AnthropicChatOptions, AnthropicClient, RawAnthropicClient
-from agent_framework_anthropic._chat_client import AnthropicSettings
-from agent_framework_anthropic._feature_usage import FeatureIndex
 from anthropic.types.beta import (
     BetaMessage,
     BetaMessageDeltaUsage,
@@ -42,6 +39,10 @@ from anthropic.types.beta import (
     BetaUsage,
 )
 from pydantic import BaseModel, Field
+
+from agent_framework_anthropic import AnthropicChatOptions, AnthropicClient, RawAnthropicClient
+from agent_framework_anthropic._chat_client import AnthropicSettings
+from agent_framework_anthropic._feature_usage import FeatureIndex
 
 # Test constants
 VALID_PNG_BASE64 = b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
@@ -1817,36 +1818,27 @@ def _anthropic_status_error(
 
 
 @pytest.mark.parametrize(
-    ("sdk_exception", "status_code", "expected_exception"),
+    ("sdk_exception", "expected_exception"),
     [
-        (
-            anthropic_sdk.AuthenticationError,
-            401,
-            ChatClientInvalidAuthException,
-        ),
-        (
-            anthropic_sdk.BadRequestError,
-            400,
-            ChatClientInvalidRequestException,
-        ),
-        (
-            anthropic_sdk.InternalServerError,
-            500,
-            ChatClientException,
-        ),
+        (_anthropic_status_error(anthropic_sdk.AuthenticationError, 401, "boom"), ChatClientInvalidAuthException),
+        (_anthropic_status_error(anthropic_sdk.PermissionDeniedError, 403, "boom"), ChatClientInvalidAuthException),
+        (_anthropic_status_error(anthropic_sdk.BadRequestError, 400, "boom"), ChatClientInvalidRequestException),
+        (_anthropic_status_error(anthropic_sdk.InternalServerError, 500, "boom"), ChatClientException),
+        # Not an anthropic APIError at all (connection reset, timeout, unexpected SDK bug):
+        # must still be wrapped so ``except ChatClientException`` callers never see it raw.
+        (RuntimeError("connection reset"), ChatClientException),
     ],
 )
 async def test_inner_get_response_wraps_sdk_errors(
     mock_anthropic_client: MagicMock,
-    sdk_exception: type[anthropic_sdk.APIStatusError],
-    status_code: int,
+    sdk_exception: Exception,
     expected_exception: type[Exception],
 ) -> None:
     """Non-streaming _inner_get_response must translate raw Anthropic SDK errors into
     the framework's ChatClientException hierarchy, matching every other provider
     (OpenAI, Mistral, Ollama, Bedrock)."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    mock_anthropic_client.beta.messages.create.side_effect = _anthropic_status_error(sdk_exception, status_code, "boom")
+    mock_anthropic_client.beta.messages.create.side_effect = sdk_exception
 
     messages = [Message(role="user", contents=["Hi"])]
     chat_options = ChatOptions(max_tokens=10)
@@ -1858,16 +1850,32 @@ async def test_inner_get_response_wraps_sdk_errors(
 
 
 async def test_inner_get_response_streaming_wraps_sdk_errors(mock_anthropic_client: MagicMock) -> None:
-    """Streaming _inner_get_response must translate raw Anthropic SDK errors into
-    the framework's ChatClientException hierarchy too, not just the non-streaming path."""
+    """Streaming _inner_get_response must translate raw Anthropic SDK errors into the
+    framework's ChatClientException hierarchy too, both when the create() call fails and
+    when the failure happens partway through iterating the stream."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    mock_anthropic_client.beta.messages.create.side_effect = _anthropic_status_error(
-        anthropic_sdk.AuthenticationError, 401, "invalid api key"
-    )
-
     messages = [Message(role="user", contents=["Hi"])]
     chat_options = ChatOptions(max_tokens=10)
 
+    # 1. Failure raised by the create() call itself.
+    mock_anthropic_client.beta.messages.create.side_effect = _anthropic_status_error(
+        anthropic_sdk.AuthenticationError, 401, "invalid api key"
+    )
+    with pytest.raises(ChatClientInvalidAuthException, match="Anthropic"):
+        async for _ in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
+            messages=messages, options=chat_options, stream=True
+        ):
+            pass
+
+    # 2. Failure raised mid-stream, after at least one event has been yielded.
+    async def _raise_after_first_event() -> Any:
+        event = MagicMock()
+        event.type = "message_stop"
+        yield event
+        raise _anthropic_status_error(anthropic_sdk.PermissionDeniedError, 403, "permission denied")
+
+    mock_anthropic_client.beta.messages.create.side_effect = None
+    mock_anthropic_client.beta.messages.create.return_value = _raise_after_first_event()
     with pytest.raises(ChatClientInvalidAuthException, match="Anthropic"):
         async for _ in client._inner_get_response(  # type: ignore[attr-defined] # ty: ignore[not-iterable]
             messages=messages, options=chat_options, stream=True

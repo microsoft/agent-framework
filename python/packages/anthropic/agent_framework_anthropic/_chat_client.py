@@ -32,6 +32,7 @@ from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE, normalize_tools
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.exceptions import (
+    AgentFrameworkException,
     ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
@@ -41,6 +42,7 @@ from anthropic import APIError as AnthropicAPIError
 from anthropic import AsyncAnthropic, AsyncAnthropicFoundry
 from anthropic import AuthenticationError as AnthropicAuthenticationError
 from anthropic import BadRequestError as AnthropicBadRequestError
+from anthropic import PermissionDeniedError as AnthropicPermissionDeniedError
 from anthropic.lib.bedrock import AsyncAnthropicBedrock
 from anthropic.lib.vertex import AsyncAnthropicVertex
 from anthropic.types.beta import (
@@ -93,6 +95,23 @@ BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
+
+
+def _wrap_anthropic_error(ex: Exception) -> ChatClientException:
+    """Translate a raw anthropic-sdk failure into the framework's ChatClientException hierarchy.
+
+    ``APIError`` instances are classified by HTTP status (401/403 -> auth, other 4xx ->
+    invalid request), matching the Mistral client. Anything else - connection errors,
+    timeouts, unexpected SDK exceptions - is still wrapped as a generic ``ChatClientException``
+    so callers catching that base type never see a raw provider exception leak through.
+    """
+    if isinstance(ex, AnthropicAPIError):
+        status = getattr(ex, "status_code", None)
+        if isinstance(ex, (AnthropicAuthenticationError, AnthropicPermissionDeniedError)) or status in (401, 403):
+            return ChatClientInvalidAuthException(f"Anthropic authentication failed: {ex}", inner_exception=ex)
+        if isinstance(ex, AnthropicBadRequestError) or (isinstance(status, int) and 400 <= status < 500):
+            return ChatClientInvalidRequestException(f"Invalid Anthropic request: {ex}", inner_exception=ex)
+    return ChatClientException(f"Anthropic chat request failed: {ex}", inner_exception=ex)
 
 
 # region Anthropic Chat Options TypedDict
@@ -566,16 +585,10 @@ class RawAnthropicClient(
                         parsed_chunk = self._process_stream_event(chunk, emitted_usage)
                         if parsed_chunk:
                             yield parsed_chunk
-                except AnthropicAuthenticationError as ex:
-                    raise ChatClientInvalidAuthException(
-                        f"Anthropic authentication failed: {ex}", inner_exception=ex
-                    ) from ex
-                except AnthropicBadRequestError as ex:
-                    raise ChatClientInvalidRequestException(
-                        f"Invalid Anthropic request: {ex}", inner_exception=ex
-                    ) from ex
-                except AnthropicAPIError as ex:
-                    raise ChatClientException(f"Anthropic chat request failed: {ex}", inner_exception=ex) from ex
+                except AgentFrameworkException:
+                    raise
+                except Exception as ex:
+                    raise _wrap_anthropic_error(ex) from ex
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
@@ -584,14 +597,10 @@ class RawAnthropicClient(
             mark_feature_used(FeatureIndex.ANTHROPIC)
             try:
                 message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
-            except AnthropicAuthenticationError as ex:
-                raise ChatClientInvalidAuthException(
-                    f"Anthropic authentication failed: {ex}", inner_exception=ex
-                ) from ex
-            except AnthropicBadRequestError as ex:
-                raise ChatClientInvalidRequestException(f"Invalid Anthropic request: {ex}", inner_exception=ex) from ex
-            except AnthropicAPIError as ex:
-                raise ChatClientException(f"Anthropic chat request failed: {ex}", inner_exception=ex) from ex
+            except AgentFrameworkException:
+                raise
+            except Exception as ex:
+                raise _wrap_anthropic_error(ex) from ex
             return self._process_message(message, options)
 
         return _get_response()
