@@ -148,6 +148,8 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
             throw new InvalidOperationException("This Magentic orchestration has already terminated. To process new messages, create a new workflow instance.");
         }
 
+        this._currentTurnRunOptions = context.GetAgentRunOptions(this._currentTurnRunOptions);
+
         if (response.IsApproved)
         {
             await this.DelegateToTeamAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);

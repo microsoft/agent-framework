@@ -115,6 +115,108 @@ public class MagenticOrchestrationTests
             .Should().NotBeEmpty().And.OnlyContain(options => ReferenceEquals(options, recoveryRunOptions));
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task Magentic_AsAgent_PlanReviewContinuationUsesCurrentRunOptionsAsync(bool approvePlan, bool serializeSession)
+    {
+        // Arrange
+        List<List<ChatMessage>> managerResponses =
+        [
+            CreatePlanResponse("Initial facts"),
+            CreatePlanResponse("Initial plan"),
+        ];
+        if (approvePlan)
+        {
+            managerResponses.Add(CreateProgressLedgerResponse(
+                isRequestSatisfied: false,
+                isInLoop: false,
+                isProgressBeingMade: true,
+                nextSpeaker: "Worker",
+                instructionOrQuestion: "Complete the task"));
+            managerResponses.Add(CreateProgressLedgerResponse(
+                isRequestSatisfied: true,
+                isInLoop: false,
+                isProgressBeingMade: true,
+                nextSpeaker: "Worker",
+                instructionOrQuestion: "The task is complete"));
+            managerResponses.Add(CreateFinalAnswerResponse("Task completed successfully!"));
+        }
+        else
+        {
+            managerResponses.Add(CreatePlanResponse("Revised facts"));
+            managerResponses.Add(CreatePlanResponse("Revised plan"));
+        }
+
+        RecordingReplayAgent manager = new(managerResponses, name: "Manager");
+        RecordingEchoAgent worker = new(name: "Worker");
+        InProcessExecutionEnvironment environment =
+            InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory());
+        AIAgent workflowAgent = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(true)
+            .Build()
+            .AsAIAgent(executionEnvironment: environment);
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+        AgentRunOptions firstRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "first" } };
+        AgentRunOptions continuationRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "continuation" } };
+
+        List<AgentResponseUpdate> firstUpdates = await workflowAgent
+            .RunStreamingAsync("Do the task", session, firstRunOptions)
+            .ToListAsync();
+        RequestInfoEvent requestEvent = firstUpdates
+            .Select(update => update.RawRepresentation)
+            .OfType<RequestInfoEvent>()
+            .Should().ContainSingle().Subject;
+        MagenticPlanReviewRequest reviewRequest = requestEvent.Request.Data.As<MagenticPlanReviewRequest>()
+            ?? throw new InvalidOperationException("The plan review request was not available.");
+        FunctionCallContent functionCall = firstUpdates
+            .SelectMany(update => update.Contents)
+            .OfType<FunctionCallContent>()
+            .Should().ContainSingle().Subject;
+        int managerCallsBeforeContinuation = manager.RecordedRunOptions.Count;
+
+        if (serializeSession)
+        {
+            JsonElement serializedSession = await workflowAgent.SerializeSessionAsync(session);
+            session = await workflowAgent.DeserializeSessionAsync(serializedSession);
+        }
+
+        MagenticPlanReviewResponse reviewResponse = approvePlan
+            ? reviewRequest.Approve()
+            : reviewRequest.Revise("Please revise the plan");
+        ChatMessage responseMessage = new(
+            ChatRole.Tool,
+            [new FunctionResultContent(functionCall.CallId, reviewResponse)]);
+
+        // Act
+        List<AgentResponseUpdate> continuationUpdates = await workflowAgent
+            .RunStreamingAsync(responseMessage, session, continuationRunOptions)
+            .ToListAsync();
+
+        // Assert
+        continuationUpdates.SelectMany(update => update.Contents.OfType<ErrorContent>()).Should().BeEmpty();
+        manager.RecordedRunOptions.Take(managerCallsBeforeContinuation)
+            .Should().OnlyContain(options => ReferenceEquals(options, firstRunOptions));
+        manager.RecordedRunOptions.Skip(managerCallsBeforeContinuation)
+            .Should().NotBeEmpty().And.OnlyContain(options => ReferenceEquals(options, continuationRunOptions));
+
+        if (approvePlan)
+        {
+            worker.RecordedRunOptions
+                .Should().NotBeEmpty().And.OnlyContain(options => ReferenceEquals(options, continuationRunOptions));
+        }
+        else
+        {
+            continuationUpdates
+                .Select(update => update.RawRepresentation)
+                .OfType<RequestInfoEvent>()
+                .Should().ContainSingle();
+        }
+    }
+
     [Fact]
     public async Task Task_Completes_When_RequestSatisfiedAsync()
     {
