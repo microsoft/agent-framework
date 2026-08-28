@@ -120,6 +120,7 @@ logger = logging.getLogger(__name__)
 # Keys that are internal to AG-UI orchestration and should not be passed to chat clients
 AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state", "forwarded_props"}
 _COLLECTED_APPROVAL_RESPONSES_KEY = "collected_approval_responses"
+_PROVIDER_SERVICE_SESSION_ID_STATE_KEY = "__ag_ui_provider_service_session_id"
 
 
 @dataclass
@@ -2112,12 +2113,15 @@ def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThr
     """Restore typed private state from trusted snapshot storage."""
     if snapshot is None or snapshot.session_state is None:
         return
+    serialized_state = copy.deepcopy(snapshot.session_state)
+    service_session_id = serialized_state.pop(_PROVIDER_SERVICE_SESSION_ID_STATE_KEY, None)
     try:
         restored = AgentSession.from_dict(
             {
                 "type": "session",
                 "session_id": session.session_id,
-                "state": snapshot.session_state,
+                "service_session_id": service_session_id,
+                "state": serialized_state,
             }
         )
     except Exception:
@@ -2126,6 +2130,8 @@ def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThr
             session.session_id,
         )
         return
+    if service_session_id is not None:
+        session.service_session_id = restored.service_session_id
     session.state.update(restored.state)
 
 
@@ -2184,15 +2190,23 @@ def _serialize_session_continuation_state(
     excluded_keys = {
         *shared_state_keys,
         _TOOL_APPROVAL_STATE_KEY,
+        _PROVIDER_SERVICE_SESSION_ID_STATE_KEY,
         *(provider.source_id for provider in context_providers if isinstance(provider, HistoryProvider)),
     }
     continuation_state = {key: value for key, value in session.state.items() if key not in excluded_keys}
-    if not continuation_state:
+    if not continuation_state and session.service_session_id is None:
         return None
 
-    serialized_session = AgentSession(session_id=session.session_id)
+    serialized_session = AgentSession(
+        session_id=session.session_id,
+        service_session_id=session.service_session_id,
+    )
     serialized_session.state.update(continuation_state)
-    return cast(dict[str, Any], serialized_session.to_dict()["state"])
+    serialized_payload = serialized_session.to_dict()
+    serialized_state = cast(dict[str, Any], serialized_payload["state"])
+    if serialized_service_session_id := serialized_payload.get("service_session_id"):
+        serialized_state[_PROVIDER_SERVICE_SESSION_ID_STATE_KEY] = serialized_service_session_id
+    return serialized_state
 
 
 def _safe_serialize_session_continuation_state(
@@ -2223,6 +2237,23 @@ def _safe_serialize_session_continuation_state(
             session.session_id,
         )
     return None
+
+
+def _split_service_session_input(
+    stored_snapshot_messages: list[dict[str, Any]],
+    current_turn_messages: list[dict[str, Any]],
+    stored_interrupt: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return the validated new suffix and backend-authoritative snapshot history."""
+    if not current_turn_messages:
+        snapshot_messages = copy.deepcopy(stored_snapshot_messages)
+    else:
+        snapshot_messages = _reconstruct_messages_from_thread_snapshot(
+            stored_messages=stored_snapshot_messages,
+            incoming_messages=current_turn_messages,
+            stored_interrupt=stored_interrupt,
+        )
+    return snapshot_messages[len(stored_snapshot_messages) :], snapshot_messages
 
 
 async def run_agent_stream(
@@ -2296,16 +2327,34 @@ async def run_agent_stream(
             yield event
         return
 
+    snapshot_seed_messages: list[dict[str, Any]] | None = None
+
     if stored_snapshot is not None:
         if resume_payload is not None and stored_pending_approval_interrupt_ids:
-            raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
             seeded_resume_from_snapshot = True
-        else:
+
+            if not config.use_service_session:
+                raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
+            else:
+                provider_suffix, snapshot_seed_messages = _split_service_session_input(
+                    stored_snapshot_messages=stored_snapshot.messages,
+                    current_turn_messages=raw_messages,
+                    stored_interrupt=stored_snapshot.interrupt,
+                )
+                raw_messages = provider_suffix
+        elif not config.use_service_session:
             raw_messages = _reconstruct_messages_from_thread_snapshot(
                 stored_messages=stored_snapshot.messages,
                 incoming_messages=raw_messages,
                 stored_interrupt=stored_snapshot.interrupt,
             )
+        else:
+            provider_suffix, snapshot_seed_messages = _split_service_session_input(
+                stored_snapshot_messages=stored_snapshot.messages,
+                current_turn_messages=raw_messages,
+                stored_interrupt=stored_snapshot.interrupt,
+            )
+            raw_messages = provider_suffix
 
     # Initialize flow state with stored state plus request-provided overrides;
     # endpoint-deferred defaults apply only to keys missing from both.
@@ -2393,9 +2442,13 @@ async def run_agent_stream(
     if approval_resume_messages:
         logger.info(f"Appending {len(approval_resume_messages)} synthesized approval resume message(s).")
         raw_messages.extend(approval_resume_messages)
+        if snapshot_seed_messages is not None:
+            snapshot_seed_messages.extend(copy.deepcopy(approval_resume_messages))
     if resume_messages:
         logger.info(f"Appending {len(resume_messages)} synthesized resume message(s) to AG-UI input.")
         raw_messages.extend(resume_messages)
+        if snapshot_seed_messages is not None:
+            snapshot_seed_messages.extend(copy.deepcopy(resume_messages))
     if retained_approval_results and not raw_messages:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         for event in _make_approval_tool_result_events(retained_approval_results):
@@ -2405,9 +2458,15 @@ async def run_agent_stream(
     protected_tool_call_ids = _approval_state_tool_call_ids(approval_state_store, approval_thread_id)
     messages, snapshot_messages = normalize_agui_input_messages(
         raw_messages,
+        sanitize_tool_history=not (config.use_service_session and stored_snapshot is not None),
         protected_tool_call_ids=protected_tool_call_ids,
     )
 
+    if snapshot_seed_messages is not None:
+        _, snapshot_messages = normalize_agui_input_messages(
+            snapshot_seed_messages,
+            protected_tool_call_ids=protected_tool_call_ids,
+        )
     # Check for structured output mode (skip text content)
     skip_text = False
     response_format: type[Any] | None = None
@@ -2473,7 +2532,29 @@ async def run_agent_stream(
 
     # Create session (with service session support)
     if config.use_service_session:
-        session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
+        if not config.service_session_id_from_thread_id and not snapshot_session.enabled:
+            raise ValueError(
+                "use_service_session=True requires snapshot persistence unless service_session_id_from_thread_id=True."
+            )
+        service_session_id = supplied_thread_id if config.service_session_id_from_thread_id else None
+        session = AgentSession(session_id=thread_id, service_session_id=service_session_id)
+        stored_service_session_id = (
+            stored_snapshot.session_state.get(_PROVIDER_SERVICE_SESSION_ID_STATE_KEY)
+            if stored_snapshot is not None and stored_snapshot.session_state is not None
+            else None
+        )
+        create_conversation = getattr(agent, "create_conversation", None)
+        if (
+            not config.service_session_id_from_thread_id
+            and stored_service_session_id is None
+            and callable(create_conversation)
+        ):
+            created_session = create_conversation(session_id=thread_id)
+            if isinstance(created_session, Awaitable):
+                created_session = await created_session
+            if not isinstance(created_session, AgentSession):
+                raise TypeError("agent.create_conversation() must return AgentSession")
+            session = created_session
     else:
         session = AgentSession(session_id=thread_id)
     _restore_session_continuation_state(session, stored_snapshot)
@@ -2600,7 +2681,7 @@ async def run_agent_stream(
         # Persist the completed confirmation turn with interrupt=None so hydration
         # does not replay the stale pending interrupt after the user responded.
         persisted_messages = snapshot_messages + _text_events_to_snapshot_messages(confirmation_events)
-        if resume_payload is not None and not seeded_resume_from_snapshot:
+        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
             # Generic resume requests carry only the synthesized response, so prepend
             # stored history unless this run already seeded raw messages from it.
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
@@ -2958,7 +3039,7 @@ async def run_agent_stream(
             yield snapshot_event
 
     persisted_messages = latest_messages_snapshot
-    if resume_payload is not None and not seeded_resume_from_snapshot:
+    if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
         # Generic resume requests carry only the synthesized response, so prepend
         # stored history unless this run already seeded raw messages from it.
         persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
