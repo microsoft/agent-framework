@@ -652,6 +652,35 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     assert attributes[OtelAttr.TOOL_CALL_ID] == "test_call_id"
 
 
+@pytest.mark.parametrize("enable_sensitive_data", [True], indirect=True)
+async def test_tool_invoke_telemetry_omits_tool_call_attrs_under_baseline_semconv(span_exporter: InMemorySpanExporter):
+    """gen_ai.tool.call.arguments/result were introduced above v1.36.0; omit them under the baseline semconv."""
+    import agent_framework.observability as observability
+
+    observability.OBSERVABILITY_SETTINGS.otel_semconv_stability_opt_in = ""
+
+    @tool(
+        name="telemetry_test_tool",
+        description="A test tool for telemetry",
+    )
+    def telemetry_test_tool(x: int, y: int) -> int:
+        """A function that adds two numbers for telemetry testing."""
+        return x + y
+
+    span_exporter.clear()
+    result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
+
+    assert isinstance(result, list)
+    assert result[0].text == "3"
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes is not None
+    assert OtelAttr.TOOL_ARGUMENTS not in span.attributes
+    assert OtelAttr.TOOL_RESULT not in span.attributes
+
+
 async def test_tool_invoke_rejects_unexpected_runtime_kwargs() -> None:
     """Ensure invoke() requires runtime data to flow through FunctionInvocationContext."""
 

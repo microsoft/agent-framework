@@ -3,8 +3,11 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Numerics;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Observability;
@@ -13,6 +16,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
+
+[CollectionDefinition("DeclarativeWorkflowOptionsTest", DisableParallelization = true)]
+public sealed class DeclarativeWorkflowOptionsTestScope;
 
 /// <summary>
 /// Tests for <see cref="DeclarativeWorkflowOptions"/> telemetry configuration.
@@ -49,7 +55,7 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
             ShouldListenTo = source =>
                 source.Name == DefaultTelemetrySourceName ||
                 source.Name == "TestSource",
-            Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
+            Sample = (ref options) => ActivitySamplingResult.AllData,
             ActivityStarted = activity => this._capturedActivities.Add(activity),
         };
         ActivitySource.AddActivityListener(this._activityListener);
@@ -244,6 +250,60 @@ public sealed class DeclarativeWorkflowOptionsTest : IDisposable
 
         Assert.Empty(capturedActivities);
     }
+
+    [Fact]
+    public void BuildWorkflow_MarksDeclarativeWorkflowAfterSuccessfulBuild()
+    {
+        // Arrange
+        ResetFeatureUsage();
+        DeclarativeWorkflowOptions options = new(CreateMockProvider().Object);
+
+        // Act
+        using StringReader reader = new(SimpleWorkflowYaml);
+        _ = DeclarativeWorkflowBuilder.Build<string>(reader, options);
+
+        // Assert
+        BigInteger declarativeWorkflow = BigInteger.One << (int)FeatureIndex.DeclarativeWorkflow;
+        Assert.NotEqual(BigInteger.Zero, GetFeatureMask() & declarativeWorkflow);
+    }
+
+    [Fact]
+    public void BuildWorkflow_WhenDefinitionIsInvalid_DoesNotMarkDeclarativeWorkflow()
+    {
+        // Arrange
+        ResetFeatureUsage();
+        DeclarativeWorkflowOptions options = new(CreateMockProvider().Object);
+
+        // Act
+        using StringReader reader = new(string.Empty);
+        void build() => DeclarativeWorkflowBuilder.Build<string>(reader, options);
+
+        // Assert
+        Assert.Throws<ArgumentException>(build);
+        Assert.Equal(BigInteger.Zero, GetFeatureMask());
+    }
+
+    private static BigInteger GetFeatureMask()
+    {
+#pragma warning disable MAAI001
+        string userAgent = FeatureUsage.ApplyToUserAgent("test");
+#pragma warning restore MAAI001
+        const string Prefix = "test (feat=v1.";
+        if (userAgent == "test")
+        {
+            return BigInteger.Zero;
+        }
+
+        Assert.StartsWith(Prefix, userAgent);
+        Assert.EndsWith(")", userAgent);
+        string mask = userAgent.Substring(Prefix.Length, userAgent.Length - Prefix.Length - 1);
+        return BigInteger.Parse($"0{mask}", NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture);
+    }
+
+    private static void ResetFeatureUsage()
+        => typeof(FeatureUsage)
+            .GetMethod("ResetStateForTests", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, null);
 
     private static Mock<ResponseAgentProvider> CreateMockProvider()
     {

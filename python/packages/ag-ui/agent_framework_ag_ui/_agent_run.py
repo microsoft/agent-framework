@@ -54,6 +54,7 @@ from agent_framework.observability import (
     _use_telemetry_conversation_id,  # pyright: ignore[reportPrivateUsage]
 )
 
+from ._a2ui._state import build_ag_ui_context_slice, read_inject_a2ui_flag
 from ._approval_lifecycle import (
     ApprovalExecutionOwner,
     ApprovalLifecycle,
@@ -119,6 +120,7 @@ logger = logging.getLogger(__name__)
 # Keys that are internal to AG-UI orchestration and should not be passed to chat clients
 AG_UI_INTERNAL_METADATA_KEYS = {"ag_ui_thread_id", "ag_ui_run_id", "current_state", "forwarded_props"}
 _COLLECTED_APPROVAL_RESPONSES_KEY = "collected_approval_responses"
+_PROVIDER_SERVICE_SESSION_ID_STATE_KEY = "__ag_ui_provider_service_session_id"
 
 
 @dataclass
@@ -2111,12 +2113,15 @@ def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThr
     """Restore typed private state from trusted snapshot storage."""
     if snapshot is None or snapshot.session_state is None:
         return
+    serialized_state = copy.deepcopy(snapshot.session_state)
+    service_session_id = serialized_state.pop(_PROVIDER_SERVICE_SESSION_ID_STATE_KEY, None)
     try:
         restored = AgentSession.from_dict(
             {
                 "type": "session",
                 "session_id": session.session_id,
-                "state": snapshot.session_state,
+                "service_session_id": service_session_id,
+                "state": serialized_state,
             }
         )
     except Exception:
@@ -2125,7 +2130,42 @@ def _restore_session_continuation_state(session: AgentSession, snapshot: AGUIThr
             session.session_id,
         )
         return
+    if service_session_id is not None:
+        session.service_session_id = restored.service_session_id
     session.state.update(restored.state)
+
+
+def _is_a2ui_runner(agent: Any) -> bool:
+    """True when ``agent`` is an A2UI runner (auto-injected or hand-wired).
+
+    Thin wrapper over the A2UI module's ``is_a2ui_runner`` that lets the terminal-snapshot
+    suppression recognize A2UI runs. Imported lazily so this module stays importable
+    without the optional ag-ui-a2ui-toolkit.
+    """
+    try:
+        from ._a2ui import is_a2ui_runner
+    except ImportError:
+        return False
+    return is_a2ui_runner(agent)
+
+
+def _a2ui_existing_tool_names(agent: SupportsAgentRun, tools: list[Any] | None) -> list[str]:
+    """Tool names already visible for this run, for the A2UI no-double-injection check.
+
+    Combines the merged runtime ``tools`` with the agent's own default tools
+    (``agent.default_options["tools"]``). Without the latter, an agent constructed with
+    its own ``generate_a2ui`` but called with no runtime tools would look empty, so
+    auto-injection would add a second declaration and the core tool merge would raise
+    ``Duplicate tool name`` before the provider call.
+    """
+    names: set[str] = {name for name in (getattr(t, "name", None) for t in (tools or [])) if name}
+    default_options = getattr(agent, "default_options", None)
+    if isinstance(default_options, dict):
+        for tool in default_options.get("tools") or []:
+            name = getattr(tool, "name", None)
+            if name:
+                names.add(name)
+    return list(names)
 
 
 def _request_state_protected_keys(agent: SupportsAgentRun) -> set[str]:
@@ -2150,15 +2190,23 @@ def _serialize_session_continuation_state(
     excluded_keys = {
         *shared_state_keys,
         _TOOL_APPROVAL_STATE_KEY,
+        _PROVIDER_SERVICE_SESSION_ID_STATE_KEY,
         *(provider.source_id for provider in context_providers if isinstance(provider, HistoryProvider)),
     }
     continuation_state = {key: value for key, value in session.state.items() if key not in excluded_keys}
-    if not continuation_state:
+    if not continuation_state and session.service_session_id is None:
         return None
 
-    serialized_session = AgentSession(session_id=session.session_id)
+    serialized_session = AgentSession(
+        session_id=session.session_id,
+        service_session_id=session.service_session_id,
+    )
     serialized_session.state.update(continuation_state)
-    return cast(dict[str, Any], serialized_session.to_dict()["state"])
+    serialized_payload = serialized_session.to_dict()
+    serialized_state = cast(dict[str, Any], serialized_payload["state"])
+    if serialized_service_session_id := serialized_payload.get("service_session_id"):
+        serialized_state[_PROVIDER_SERVICE_SESSION_ID_STATE_KEY] = serialized_service_session_id
+    return serialized_state
 
 
 def _safe_serialize_session_continuation_state(
@@ -2189,6 +2237,23 @@ def _safe_serialize_session_continuation_state(
             session.session_id,
         )
     return None
+
+
+def _split_service_session_input(
+    stored_snapshot_messages: list[dict[str, Any]],
+    current_turn_messages: list[dict[str, Any]],
+    stored_interrupt: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return the validated new suffix and backend-authoritative snapshot history."""
+    if not current_turn_messages:
+        snapshot_messages = copy.deepcopy(stored_snapshot_messages)
+    else:
+        snapshot_messages = _reconstruct_messages_from_thread_snapshot(
+            stored_messages=stored_snapshot_messages,
+            incoming_messages=current_turn_messages,
+            stored_interrupt=stored_interrupt,
+        )
+    return snapshot_messages[len(stored_snapshot_messages) :], snapshot_messages
 
 
 async def run_agent_stream(
@@ -2262,16 +2327,34 @@ async def run_agent_stream(
             yield event
         return
 
+    snapshot_seed_messages: list[dict[str, Any]] | None = None
+
     if stored_snapshot is not None:
         if resume_payload is not None and stored_pending_approval_interrupt_ids:
-            raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
             seeded_resume_from_snapshot = True
-        else:
+
+            if not config.use_service_session:
+                raw_messages = snapshot_session.resume_seeded_messages(raw_messages)
+            else:
+                provider_suffix, snapshot_seed_messages = _split_service_session_input(
+                    stored_snapshot_messages=stored_snapshot.messages,
+                    current_turn_messages=raw_messages,
+                    stored_interrupt=stored_snapshot.interrupt,
+                )
+                raw_messages = provider_suffix
+        elif not config.use_service_session:
             raw_messages = _reconstruct_messages_from_thread_snapshot(
                 stored_messages=stored_snapshot.messages,
                 incoming_messages=raw_messages,
                 stored_interrupt=stored_snapshot.interrupt,
             )
+        else:
+            provider_suffix, snapshot_seed_messages = _split_service_session_input(
+                stored_snapshot_messages=stored_snapshot.messages,
+                current_turn_messages=raw_messages,
+                stored_interrupt=stored_snapshot.interrupt,
+            )
+            raw_messages = provider_suffix
 
     # Initialize flow state with stored state plus request-provided overrides;
     # endpoint-deferred defaults apply only to keys missing from both.
@@ -2359,9 +2442,13 @@ async def run_agent_stream(
     if approval_resume_messages:
         logger.info(f"Appending {len(approval_resume_messages)} synthesized approval resume message(s).")
         raw_messages.extend(approval_resume_messages)
+        if snapshot_seed_messages is not None:
+            snapshot_seed_messages.extend(copy.deepcopy(approval_resume_messages))
     if resume_messages:
         logger.info(f"Appending {len(resume_messages)} synthesized resume message(s) to AG-UI input.")
         raw_messages.extend(resume_messages)
+        if snapshot_seed_messages is not None:
+            snapshot_seed_messages.extend(copy.deepcopy(resume_messages))
     if retained_approval_results and not raw_messages:
         yield RunStartedEvent(run_id=run_id, thread_id=thread_id)
         for event in _make_approval_tool_result_events(retained_approval_results):
@@ -2371,9 +2458,15 @@ async def run_agent_stream(
     protected_tool_call_ids = _approval_state_tool_call_ids(approval_state_store, approval_thread_id)
     messages, snapshot_messages = normalize_agui_input_messages(
         raw_messages,
+        sanitize_tool_history=not (config.use_service_session and stored_snapshot is not None),
         protected_tool_call_ids=protected_tool_call_ids,
     )
 
+    if snapshot_seed_messages is not None:
+        _, snapshot_messages = normalize_agui_input_messages(
+            snapshot_seed_messages,
+            protected_tool_call_ids=protected_tool_call_ids,
+        )
     # Check for structured output mode (skip text content)
     skip_text = False
     response_format: type[Any] | None = None
@@ -2390,9 +2483,78 @@ async def run_agent_stream(
         yield _build_run_finished_event(run_id=run_id, thread_id=thread_id)
         return
 
+    # A2UI auto-injection: CopilotKit's runtime composes forwardedProps; the AG-UI
+    # a2ui-middleware sets injectA2UITool there. When set (or a backend
+    # config["inject_a2ui_tool"] opt-in is — nullish fallback, so an explicit runtime
+    # false still wins), the run is driven through an A2UI runner that adds surface
+    # generation and strips the middleware-injected render tool from the planner's list.
+    #
+    # The runner wraps the agent ONLY for the stream call below; ``agent`` itself is NOT
+    # rebound, so protected-state-key computation, approval resolution, and continuation
+    # serialization keep reading the real agent's context_providers and client. The
+    # forwarded AG-UI context is handed to the runner directly (not stamped onto run
+    # option additional_properties), so a non-A2UI run that supplies context is never
+    # affected. plan_a2ui_injection is imported lazily so this hosting path stays
+    # importable without the optional ag-ui-a2ui-toolkit.
+    _forwarded = input_data.get("forwarded_props") or input_data.get("forwardedProps")
+    _a2ui_config = getattr(config, "a2ui_config", None)
+    _a2ui_flag = read_inject_a2ui_flag(_forwarded)
+    if _a2ui_flag is None and _a2ui_config:
+        _a2ui_flag = _a2ui_config.get("inject_a2ui_tool")
+    a2ui_runner: Any | None = None
+    if _a2ui_flag:
+        try:
+            from ._a2ui import plan_a2ui_injection
+        except ImportError as exc:
+            # A2UI was explicitly requested; failing loud beats limping on with the
+            # render tool advertised but no executor (which strands an unanswered tool
+            # call). Tell the caller exactly how to fix it.
+            raise RuntimeError(
+                "A2UI was requested (injectA2UITool / a2ui_config) but the A2UI support "
+                "package is not installed. Install the optional extra: "
+                "pip install 'agent-framework-ag-ui[a2ui]'."
+            ) from exc
+        a2ui_runner = plan_a2ui_injection(
+            agent=agent,
+            forwarded_props=_forwarded,
+            existing_tool_names=_a2ui_existing_tool_names(agent, tools),
+            config=_a2ui_config,
+            context_slice=build_ag_ui_context_slice(input_data.get("context")),
+        )
+        if a2ui_runner is not None and tools:
+            drop = set(a2ui_runner.drop_tool_names)
+            tools = [t for t in tools if getattr(t, "name", None) not in drop]
+
+    # A2UI drove this run when it auto-injected a runner OR the developer hand-wired one
+    # via enable_a2ui(). Recognizing both keeps the terminal-snapshot suppression correct
+    # for the manual path too. The A2UI module owns this check (is_a2ui_runner).
+    a2ui_active = _is_a2ui_runner(a2ui_runner or agent)
+
     # Create session (with service session support)
     if config.use_service_session:
-        session = AgentSession(session_id=thread_id, service_session_id=supplied_thread_id)
+        if not config.service_session_id_from_thread_id and not snapshot_session.enabled:
+            raise ValueError(
+                "use_service_session=True requires snapshot persistence unless service_session_id_from_thread_id=True."
+            )
+        service_session_id = supplied_thread_id if config.service_session_id_from_thread_id else None
+        session = AgentSession(session_id=thread_id, service_session_id=service_session_id)
+        stored_service_session_id = (
+            stored_snapshot.session_state.get(_PROVIDER_SERVICE_SESSION_ID_STATE_KEY)
+            if stored_snapshot is not None and stored_snapshot.session_state is not None
+            else None
+        )
+        create_conversation = getattr(agent, "create_conversation", None)
+        if (
+            not config.service_session_id_from_thread_id
+            and stored_service_session_id is None
+            and callable(create_conversation)
+        ):
+            created_session = create_conversation(session_id=thread_id)
+            if isinstance(created_session, Awaitable):
+                created_session = await created_session
+            if not isinstance(created_session, AgentSession):
+                raise TypeError("agent.create_conversation() must return AgentSession")
+            session = created_session
     else:
         session = AgentSession(session_id=thread_id)
     _restore_session_continuation_state(session, stored_snapshot)
@@ -2423,6 +2585,12 @@ async def run_agent_stream(
     run_kwargs: dict[str, Any] = {"session": session}
     if tools:
         run_kwargs["tools"] = tools
+    # Hand the forwarded AG-UI context to the A2UI runner PER REQUEST (not just at
+    # construction), so a reused manually enable_a2ui()-wrapped runner never serves stale
+    # catalog/guidelines. Only when A2UI actually drives the run — a plain agent's run()
+    # would reject the unknown kwarg.
+    if a2ui_active:
+        run_kwargs["a2ui_context"] = build_ag_ui_context_slice(input_data.get("context"))
     # Filter out AG-UI internal metadata keys before passing to chat client
     # These are used internally for orchestration and should not be sent to the LLM provider
     session_metadata = cast(dict[str, Any], getattr(session, "metadata", None) or {})
@@ -2432,6 +2600,12 @@ async def run_agent_stream(
     safe_metadata = _build_safe_metadata(client_metadata) if client_metadata else {}
     if safe_metadata:
         run_kwargs["options"] = {"metadata": safe_metadata, "store": True}
+
+    # NOTE: the forwarded AG-UI context (A2UI component catalog + guidelines) is no
+    # longer stamped onto run-option additional_properties. It is handed to the A2UI
+    # runner directly (see the gate above / _a2ui.plan_a2ui_injection). Stamping it here
+    # leaked the slice to the provider SDK as an unknown request option on any run that
+    # supplied AG-UI context, including non-A2UI runs where no wrapper stripped it back.
 
     # Resolve approval responses (execute approved tools, replace approvals with results)
     # This must happen before running the agent so it sees the tool results
@@ -2507,7 +2681,7 @@ async def run_agent_stream(
         # Persist the completed confirmation turn with interrupt=None so hydration
         # does not replay the stale pending interrupt after the user responded.
         persisted_messages = snapshot_messages + _text_events_to_snapshot_messages(confirmation_events)
-        if resume_payload is not None and not seeded_resume_from_snapshot:
+        if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
             # Generic resume requests carry only the synthesized response, so prepend
             # stored history unless this run already seeded raw messages from it.
             persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)
@@ -2539,12 +2713,14 @@ async def run_agent_stream(
     )
     # Agent middleware can defer the inner run until streaming begins, so the
     # telemetry override must cover construction, stream resolution, and every pull.
+    # Drive the A2UI runner when one is active (see the gate above); the original agent
+    # stays bound for all other reads.
     telemetry_conversation_id = str(supplied_thread_id) if supplied_thread_id is not None else None
     telemetry_context = partial(_use_telemetry_conversation_id, telemetry_conversation_id)
     stream_completed = False
     try:
         with telemetry_context():
-            response_stream = agent.run(messages, stream=True, **run_kwargs)
+            response_stream = (a2ui_runner or agent).run(messages, stream=True, **run_kwargs)
             stream = await _normalize_response_stream(response_stream)
 
         async for update in _iterate_with_context(stream, telemetry_context):
@@ -2847,13 +3023,23 @@ async def run_agent_stream(
             last_result = flow.tool_results[-1]
             last_call_id = last_result.get("toolCallId")
             last_tool_name = flow.get_tool_name(last_call_id)
-        if not _should_suppress_intermediate_snapshot(
+        # A2UI surfaces stream as activities in emission order (tool card -> surface ->
+        # narration). A terminal MessagesSnapshotEvent makes the client re-render from
+        # the reconciled message list, which drops that order — the injected
+        # generate_a2ui tool card re-positions BELOW the surface and text. Other AG-UI
+        # frameworks emit no terminal snapshot here, so skip it for A2UI runs; the next
+        # turn's history is still reconstructable from the streamed events. Keyed off
+        # whether A2UI actually drove this run (a2ui_active), NOT the literal tool names,
+        # so an unrelated user tool named "generate_a2ui" keeps its snapshot.
+        if a2ui_active:
+            logger.info("Suppressing terminal MessagesSnapshotEvent for A2UI run to preserve streamed message order.")
+        if not a2ui_active and not _should_suppress_intermediate_snapshot(
             last_tool_name, predict_state_config, config.require_confirmation
         ):
             yield snapshot_event
 
     persisted_messages = latest_messages_snapshot
-    if resume_payload is not None and not seeded_resume_from_snapshot:
+    if resume_payload is not None and not seeded_resume_from_snapshot and snapshot_seed_messages is None:
         # Generic resume requests carry only the synthesized response, so prepend
         # stored history unless this run already seeded raw messages from it.
         persisted_messages = snapshot_session.resume_seeded_messages(persisted_messages)

@@ -127,6 +127,10 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.CoreFileMemoryProvider);
+#pragma warning restore MAAI001
+
         FileMemoryState state = this._sessionState.GetOrInitializeState(context.Session);
 
         // Ensure the working folder exists in the store.
@@ -448,8 +452,8 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
             .ToList();
 
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("# Memory Index");
-        sb.AppendLine();
+        sb.AppendLine("# Memory Index")
+            .AppendLine();
 
         int count = 0;
         foreach (string file in sortedFiles)
@@ -511,7 +515,7 @@ public sealed class FileMemoryProvider : AIContextProvider, IDisposable
     /// File memory is a flat namespace within the working folder, so nested names are rejected up front.
     /// </summary>
     private static bool IsNestedPath(string normalizedFileName) =>
-        normalizedFileName.IndexOf('/') >= 0;
+        normalizedFileName.Contains('/');
 
     /// <summary>
     /// Validates that a normalized memory file name is acceptable for write operations,

@@ -122,7 +122,7 @@ public static class AGUIEndpointRouteBuilderExtensions
 
         var hostAgent = new AIHostAgent(aiAgent, agentSessionStore);
 
-        return endpoints.MapPost(pattern, async (
+        IEndpointConventionBuilder endpoint = endpoints.MapPost(pattern, async (
             [FromBody] RunAgentInput? input,
             [FromServices] IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
             HttpContext context,
@@ -170,6 +170,16 @@ public static class AGUIEndpointRouteBuilderExtensions
             return new AGUIServerSentEventsResult(eventsWithSessionSave, sseLogger);
 #endif
         });
+
+        MarkFeatureUsed();
+        return endpoint;
+    }
+
+    private static void MarkFeatureUsed()
+    {
+#pragma warning disable MAAI001
+        FeatureUsage.MarkUsed((int)FeatureIndex.HostingAGUI);
+#pragma warning restore MAAI001
     }
 
     private static async IAsyncEnumerable<BaseEvent> SaveSessionAfterStreamingAsync(

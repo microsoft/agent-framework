@@ -167,6 +167,18 @@ Each language has its own dev setup guide, coding standards, and build scripts:
     - Integration tests: `dotnet test --filter-query "/*IntegrationTests*/*/*/*"` (requires API keys/endpoints)
     - Linting (auto-fix): `dotnet format`
 
+#### Microsoft Internal Feed Proxy for GitHub Copilot SDK (.NET)
+
+Microsoft contributors can route GitHub Copilot SDK npm downloads through the internal proxy without passing extra `dotnet` arguments:
+
+1. Create `dotnet/Directory.Build.rsp` with:
+
+   ```text
+   -p:CopilotNpmRegistryUrl=https://packagefeedproxy.microsoft.io/npm/
+   ```
+
+When running `dotnet build` (or other `dotnet` commands) from the `./dotnet` directory, this property is applied automatically.
+
 ### PR - CI Process
 
 The continuous integration (CI) system will automatically perform the required

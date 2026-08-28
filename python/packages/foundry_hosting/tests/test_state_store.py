@@ -81,7 +81,7 @@ async def test_save_uses_context_scoped_store() -> None:
         result = await FoundryCheckpointStore("context-1", _platform_context()).save(checkpoint)
 
     assert result == "checkpoint-1"
-    get_or_create.assert_awaited_once_with("checkpoints/context-1", user_isolation=True, user_id="user-1")
+    get_or_create.assert_awaited_once_with("checkpoints/context-1", user_isolation=True)
     store.set_item.assert_awaited_once_with("checkpoint-1", checkpoint.to_dict(), call_id="call-1")
 
 
@@ -235,7 +235,7 @@ async def test_save_and_load_function_approval_request() -> None:
         loaded = await storage.load_approval_request("approval-1")
 
     assert get_or_create.await_count == 2
-    get_or_create.assert_awaited_with("function_approvals", user_isolation=True, user_id="user-1")
+    get_or_create.assert_awaited_with("function_approvals", user_isolation=True)
     store.create_item.assert_awaited_once_with("approval-1", request.to_dict(), call_id="call-1")
     store.get_item.assert_awaited_once_with("approval-1", call_id="call-1")
     assert loaded == request
@@ -311,7 +311,7 @@ async def test_set_agent_session_uses_scoped_store() -> None:
     ) as get_or_create:
         await FoundryAgentSessionStore(_platform_context()).set("storage-session-1", session)
 
-    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True, user_id="user-1")
+    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True)
     store.set_item.assert_awaited_once_with("storage-session-1", session.to_dict(), call_id="call-1")
 
 
@@ -330,7 +330,7 @@ async def test_get_agent_session_returns_deserialized_session() -> None:
     assert result is not None
     assert result.to_dict() == session.to_dict()
     assert result is not session
-    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True, user_id="user-1")
+    get_or_create.assert_awaited_once_with("agent_sessions", user_isolation=True)
     store.get_item.assert_awaited_once_with("storage-session-1", call_id="call-1")
 
 
