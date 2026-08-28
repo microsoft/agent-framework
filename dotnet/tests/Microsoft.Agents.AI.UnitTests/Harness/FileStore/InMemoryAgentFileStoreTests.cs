@@ -284,21 +284,27 @@ public class InMemoryAgentFileStoreTests
         Assert.Equal(2, results[0].MatchingLines[0].LineNumber);
     }
 
-    [Fact]
-    public async Task SearchFiles_SnippetIsAnchoredAtTheMatchAsync()
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\r")]
+    [InlineData("\r\n")]
+    public async Task SearchFiles_SnippetIsAnchoredAtTheMatchAsync(string terminator)
     {
         // Arrange — the leading line is long enough that the ±50 char snippet window is not clamped to
-        // the start of the file, so an off-by-one in the per-line offset would shift the snippet.
+        // the start of the file, so an off-by-one in the per-line offset would shift the snippet. Every
+        // terminator length is covered: advancing by content length plus one would pass LF and CR but
+        // fall a character short on CRLF.
         var store = new InMemoryAgentFileStore();
         string padding = new('x', 60);
-        await store.WriteAsync("folder/notes.md", $"{padding}\nneedle\n");
+        await store.WriteAsync("folder/notes.md", $"{padding}{terminator}needle{terminator}");
 
         // Act
         var results = await store.SearchAsync("folder", "needle");
 
-        // Assert — the match starts at index 61, so the snippet starts at index 11.
+        // Assert — the snippet starts 50 characters before the match, which lands that many characters
+        // into the padding minus the terminator the match sits behind.
         Assert.Single(results);
-        Assert.Equal($"{new string('x', 49)}\nneedle\n", results[0].Snippet);
+        Assert.Equal($"{new string('x', 50 - terminator.Length)}{terminator}needle{terminator}", results[0].Snippet);
     }
 
     [Fact]

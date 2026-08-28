@@ -293,9 +293,9 @@ public sealed class FileSystemAgentFileStoreTests : IDisposable
         Assert.Contains("error", results[0].Snippet);
     }
 
-    // This store carries its own copy of the search loop, so the line, terminator and snippet-offset
-    // behaviour is pinned here as well as in InMemoryAgentFileStoreTests. A regression in one copy
-    // would otherwise pass on the strength of the other's coverage.
+    // Both stores number through AgentFileStore.ScanContent, so the line, terminator and snippet-offset
+    // rules are pinned once in AgentFileStoreContractTests. These cover the same ground against real
+    // files, where content arrives through a decoded read rather than an in-memory string.
 
     [Fact]
     public async Task SearchFilesAsync_ReportsLinesVerbatimAsync()
