@@ -85,7 +85,7 @@ public sealed class SharedStateTests : IAsyncDisposable
         Assert.NotNull(stateUpdate);
 
         ChatResponseUpdate chatUpdate = stateUpdate!.AsChatResponseUpdate();
-        Assert.True((chatUpdate.RawRepresentation) is StateSnapshotEvent);
+        Assert.True(chatUpdate.RawRepresentation is StateSnapshotEvent);
         Assert.Null(chatUpdate.ConversationId);
         Assert.Equal(ChatRole.Assistant, chatUpdate.Role);
     }
