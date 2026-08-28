@@ -51,6 +51,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// a property rather than a constant so that the value is read at run time: a consumer that upgrades the package
     /// picks up the current source name without recompiling.
     /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
     public static string DefaultSourceName => OpenTelemetryConsts.DefaultSourceName;
 
     /// <summary>The <see cref="OpenTelemetryChatClient"/> providing the bulk of the telemetry.</summary>

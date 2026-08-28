@@ -126,7 +126,8 @@ The implementation is validated through:
 
 The name passed to `TracerProviderBuilder.AddSource` must match the source name the agent emits under, otherwise the
 provider silently receives no agent spans. When no source name is supplied to `UseOpenTelemetry`, the agent emits under
-`OpenTelemetryAgent.DefaultSourceName`, so that is the value to register:
+`OpenTelemetryAgent.DefaultSourceName`, so that is the value to register. That property is marked
+`[Experimental("MAAI001")]`; suppress that diagnostic in your csproj to use it.
 
 ```csharp
 // Create TracerProvider
