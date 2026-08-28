@@ -31,5 +31,3 @@ jobs:
           language: Python
           label: code-coverage/python
           fail-on-error: false
-      - name: Summarize GitHub coverage report
-        run: echo "Python coverage is uploaded to GitHub's integrated coverage report with label \`code-coverage/python\`." >> "$GITHUB_STEP_SUMMARY"
