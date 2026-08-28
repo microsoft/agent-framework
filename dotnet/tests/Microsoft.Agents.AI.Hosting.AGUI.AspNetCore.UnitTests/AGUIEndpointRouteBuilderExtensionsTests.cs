@@ -305,6 +305,52 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     }
 
     [Fact]
+    public async Task GetMessagesForRun_WithStoredToolCalls_ReturnsAllNewClientToolResultsAsync()
+    {
+        // Arrange
+        ChatClientAgent agent = new(new Mock<IChatClient>().Object);
+        AgentSession session = await agent.CreateSessionAsync();
+        session.SetInMemoryChatHistory(
+        [
+            new ChatMessage(ChatRole.User, "Call tools") { MessageId = "user-1" },
+            new ChatMessage(
+                ChatRole.Assistant,
+                [
+                    new FunctionCallContent("call-1", "tool1"),
+                    new FunctionCallContent("call-2", "tool2"),
+                ])
+            {
+                MessageId = "assistant-1",
+            },
+        ]);
+        List<ChatMessage> incomingMessages =
+        [
+            new ChatMessage(ChatRole.User, "Call tools") { MessageId = "user-1" },
+            new ChatMessage(
+                ChatRole.Assistant,
+                [
+                    new FunctionCallContent("call-1", "tool1"),
+                    new FunctionCallContent("call-2", "tool2"),
+                ])
+            {
+                MessageId = "assistant-1",
+            },
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("call-1", "result-1")]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("call-2", "result-2")]),
+        ];
+
+        // Act
+        IReadOnlyList<ChatMessage> messages = AGUIEndpointRouteBuilderExtensions.GetMessagesForRun(
+            agent,
+            session,
+            incomingMessages);
+
+        // Assert
+        Assert.Equal(2, messages.Count);
+        Assert.All(messages, message => Assert.Equal(ChatRole.Tool, message.Role));
+    }
+
+    [Fact]
     public async Task GetMessagesForRun_WithProviderConversation_ReturnsCurrentTurnMessagesAsync()
     {
         // Arrange
