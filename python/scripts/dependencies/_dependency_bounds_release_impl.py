@@ -50,6 +50,7 @@ class ReleaseProbePlan:
     import_modules: tuple[str, ...]
     reported_distributions: tuple[str, ...]
     python_version: str
+    prerelease_requirements: tuple[str, ...] = ()
 
 
 def _utc_now() -> str:
@@ -232,6 +233,33 @@ def _minimum_python_version(projects: list[ReleaseProject]) -> str:
     return python_version
 
 
+def _prerelease_requirements(
+    projects: dict[str, ReleaseProject],
+    requested_extras: dict[str, set[str]],
+) -> tuple[str, ...]:
+    """Collect external requirements in the closure that carry a pre-release specifier.
+
+    ``uv`` enables pre-releases for a package only when a *direct* requirement carries a
+    pre-release specifier. Internal packages resolved as editables contribute their own
+    requirements transitively, so a pre-release floor declared by one of them would otherwise
+    be ignored. Re-declaring those requirements at the probe root keeps them explicit.
+    """
+    collected: set[str] = set()
+    for package_name, extras in requested_extras.items():
+        project = projects[package_name]
+        for requirement_text in _requirements_for_extras(project, extras):
+            try:
+                requirement = Requirement(requirement_text)
+            except InvalidRequirement:
+                continue
+            if canonicalize_name(requirement.name) in projects:
+                continue
+            if not requirement.specifier.prereleases:
+                continue
+            collected.add(str(requirement))
+    return tuple(sorted(collected))
+
+
 def _build_release_probe_plan(
     workspace_root: Path,
     target: ReleaseProject,
@@ -295,6 +323,7 @@ def _build_release_probe_plan(
         import_modules=target.import_modules,
         reported_distributions=tuple(sorted(reported_distributions)),
         python_version=_minimum_python_version([projects[package_name] for package_name in requested_extras]),
+        prerelease_requirements=_prerelease_requirements(projects, requested_extras),
     )
 
 
@@ -337,6 +366,8 @@ print({_PROBE_RESULT_PREFIX!r} + json.dumps({{"imports": modules, "versions": ve
     ]
     for editable_spec in plan.editable_specs:
         command.extend(["--with-editable", editable_spec])
+    for requirement in plan.prerelease_requirements:
+        command.extend(["--with", requirement])
     command.extend(["python", "-c", probe_script])
     return command
 
