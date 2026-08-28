@@ -43,7 +43,16 @@ internal sealed class GroupChatHost(
         => base.ConfigureProtocol(protocolBuilder).YieldsOutput<List<ChatMessage>>();
 
     protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
+        => await this.TakeTurnAsync(messages, context, new TurnToken(emitEvents), cancellationToken).ConfigureAwait(false);
+
+    protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, TurnToken turnToken, CancellationToken cancellationToken = default)
     {
+        AgentRunOptions? runOptions = context.GetAgentRunOptions(turnToken.RunOptions);
+        if (!ReferenceEquals(runOptions, turnToken.RunOptions))
+        {
+            turnToken = new TurnToken(turnToken.EmitEvents, runOptions);
+        }
+
         this._manager ??= this._managerFactory(this._agents);
 
         // The delta arriving here is either the initial user input (turn 0) or the most recent speaker's
@@ -86,7 +95,7 @@ internal sealed class GroupChatHost(
 
             this._manager.IterationCount++;
             this._currentSpeakerExecutorId = executor.Id;
-            await context.SendMessageAsync(new TurnToken(emitEvents), executor.Id, cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(turnToken, executor.Id, cancellationToken).ConfigureAwait(false);
             return;
         }
 

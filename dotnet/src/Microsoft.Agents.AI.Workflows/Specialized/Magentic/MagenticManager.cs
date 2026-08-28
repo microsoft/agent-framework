@@ -30,10 +30,13 @@ internal class MagenticManager(AIAgent managerAgent)
         return response.Messages[response.Messages.Count - 1];
     }
 
-    private ValueTask<ChatMessage> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, CancellationToken cancellationToken, AgentSession? session = null)
-        => CheckResponseAsync(managerAgent.RunAsync(messages, session, cancellationToken: cancellationToken), context, cancellationToken);
+    private ValueTask<ChatMessage> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, AgentRunOptions? runOptions, CancellationToken cancellationToken, AgentSession? session = null)
+        => CheckResponseAsync(managerAgent.RunAsync(messages, session, runOptions, cancellationToken), context, cancellationToken);
 
-    public async ValueTask<TaskLedger> UpdatePlanAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken)
+    public ValueTask<TaskLedger> UpdatePlanAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken)
+        => this.UpdatePlanAsync(taskContext, context, runOptions: null, cancellationToken);
+
+    public async ValueTask<TaskLedger> UpdatePlanAsync(MagenticTaskContext taskContext, IWorkflowContext context, AgentRunOptions? runOptions, CancellationToken cancellationToken)
     {
         // If we already have a TaskLedger, we need to update the facts based on the existing factset; otherwise, we use the initial facts construction
         bool isReplan = taskContext.TaskLedger != null;
@@ -44,6 +47,7 @@ internal class MagenticManager(AIAgent managerAgent)
         ChatMessage updatedFacts = await this.InvokeAgentAsync(
                                                 messages: [.. taskContext.ChatHistory, factsRequest],
                                                 context,
+                                                runOptions,
                                                 cancellationToken,
                                                 localSession)
                                              .ConfigureAwait(false);
@@ -54,6 +58,7 @@ internal class MagenticManager(AIAgent managerAgent)
                                                 // history, facts request, or updated facts in the messages list.
                                                 messages: [planRequest],
                                                 context,
+                                                runOptions,
                                                 cancellationToken,
                                                 localSession)
                                              .ConfigureAwait(false);
@@ -63,7 +68,10 @@ internal class MagenticManager(AIAgent managerAgent)
         return new(updatedFacts, updatedPlan);
     }
 
-    public async ValueTask UpdateProgressLedgerAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken)
+    public ValueTask UpdateProgressLedgerAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken)
+        => this.UpdateProgressLedgerAsync(taskContext, context, runOptions: null, cancellationToken);
+
+    public async ValueTask UpdateProgressLedgerAsync(MagenticTaskContext taskContext, IWorkflowContext context, AgentRunOptions? runOptions, CancellationToken cancellationToken)
     {
         ChatMessage progressRequest = new(ChatRole.User, taskContext.ToProgressLedgerPrompt());
 
@@ -74,6 +82,7 @@ internal class MagenticManager(AIAgent managerAgent)
             ChatMessage progressUpdateMessage = await this.InvokeAgentAsync(
                                                               messages: [.. taskContext.ChatHistory, progressRequest],
                                                               context,
+                                                              runOptions,
                                                               cancellationToken)
                                                            .ConfigureAwait(false);
 
@@ -105,10 +114,13 @@ internal class MagenticManager(AIAgent managerAgent)
         lastException?.Throw();
     }
 
-    public async ValueTask<ChatMessage> PrepareFinalAnswerAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken)
+    public ValueTask<ChatMessage> PrepareFinalAnswerAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken)
+        => this.PrepareFinalAnswerAsync(taskContext, context, runOptions: null, cancellationToken);
+
+    public async ValueTask<ChatMessage> PrepareFinalAnswerAsync(MagenticTaskContext taskContext, IWorkflowContext context, AgentRunOptions? runOptions, CancellationToken cancellationToken)
     {
         ChatMessage finalAnswerRequest = new(ChatRole.User, taskContext.ToFinalAnswerPrompt());
-        ChatMessage finalAnswer = await this.InvokeAgentAsync([.. taskContext.ChatHistory, finalAnswerRequest], context, cancellationToken)
+        ChatMessage finalAnswer = await this.InvokeAgentAsync([.. taskContext.ChatHistory, finalAnswerRequest], context, runOptions, cancellationToken)
                                             .ConfigureAwait(false);
 
         return new(ChatRole.Assistant, finalAnswer.Text)

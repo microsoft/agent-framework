@@ -160,7 +160,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
         ResponseMergeState mergeState = new();
 
-        await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
+        await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(options, cancellationToken)
                                                                      .ConfigureAwait(false)
                                                                      .WithCancellation(cancellationToken))
         {
@@ -186,7 +186,7 @@ internal sealed class WorkflowHostAgent : AIAgent
         WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
         ResponseMergeState mergeState = new();
 
-        await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
+        await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(options, cancellationToken)
                                                                       .ConfigureAwait(false)
                                                                       .WithCancellation(cancellationToken))
         {

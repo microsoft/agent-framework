@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Agents.AI.Workflows.InProc;
+using Microsoft.Agents.AI.Workflows.Sample;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Agents.AI.Workflows.Specialized.Magentic;
 using Microsoft.Extensions.AI;
@@ -355,6 +356,49 @@ public class HandoffOrchestrationTests
 
         GetMessageSequence(nonStreamingWorkflowSession.ChatHistoryProvider.GetAllMessages(nonStreamingWorkflowSession).Skip(1)).Should().Equal(expected);
         GetMessageSequence(streamingWorkflowSession.ChatHistoryProvider.GetAllMessages(streamingWorkflowSession).Skip(1)).Should().Equal(expected);
+    }
+
+    [Fact]
+    public async Task Handoffs_AsAgent_PropagatesRunOptionsAndPreservesHandoffToolsAsync()
+    {
+        // Arrange
+        HandoffTestEchoAgent firstAgent = new("first-agent", "FirstAgent");
+        HandoffTestEchoAgent secondAgent = new("second-agent", "SecondAgent");
+        AITool callerTool = AIFunctionFactory.CreateDeclaration(
+            "CallerTool",
+            description: null,
+            AIFunctionFactory.Create(() => { }).JsonSchema);
+        Func<IChatClient, IChatClient> chatClientFactory = static chatClient => chatClient;
+        AIAgent workflowAgent = AgentWorkflowBuilder.CreateHandoffBuilderWith(firstAgent)
+            .WithHandoff(firstAgent, secondAgent)
+            .Build()
+            .AsAIAgent();
+        ChatClientAgentRunOptions runOptions = new(new ChatOptions
+        {
+            ModelId = "test-model",
+            Instructions = "Caller instructions",
+            Tools = [callerTool],
+        })
+        {
+            AdditionalProperties = new() { ["test-property"] = "test-value" },
+            ChatClientFactory = chatClientFactory,
+        };
+
+        // Act
+        _ = await workflowAgent.RunAsync("Hello", options: runOptions);
+
+        // Assert
+        ChatClientAgentRunOptions firstAgentOptions = firstAgent.RecordedRunOptions.Should().ContainSingle()
+            .Which.Should().BeOfType<ChatClientAgentRunOptions>().Subject;
+        firstAgentOptions.Should().NotBeSameAs(runOptions);
+        firstAgentOptions.AdditionalProperties.Should().ContainKey("test-property").WhoseValue.Should().Be("test-value");
+        firstAgentOptions.ChatClientFactory.Should().BeSameAs(chatClientFactory);
+        firstAgentOptions.ChatOptions.Should().NotBeNull();
+        firstAgentOptions.ChatOptions!.ModelId.Should().Be("test-model");
+        firstAgentOptions.ChatOptions.Instructions.Should().EndWith("Caller instructions");
+        firstAgentOptions.ChatOptions.Tools.Should().Contain(callerTool);
+        firstAgentOptions.ChatOptions.Tools.Should().Contain(tool => tool.Name.StartsWith(HandoffWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal));
+        secondAgent.RecordedRunOptions.Should().ContainSingle().Which.Should().BeSameAs(runOptions);
     }
 
     [Fact]

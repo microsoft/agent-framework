@@ -68,6 +68,9 @@ internal sealed class HandoffStartExecutor(bool returnToPrevious) : ChatProtocol
         base.ConfigureProtocol(protocolBuilder).SendsMessage<HandoffState>();
 
     protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
+        => this.TakeTurnAsync(messages, context, new TurnToken(emitEvents), cancellationToken);
+
+    protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, TurnToken turnToken, CancellationToken cancellationToken = default)
     {
         return context.InvokeWithStateAsync(
             async (HandoffSharedState? sharedState, IWorkflowContext context, CancellationToken cancellationToken) =>
@@ -83,7 +86,7 @@ internal sealed class HandoffStartExecutor(bool returnToPrevious) : ChatProtocol
 
                 // If we are configured to return to the previous agent, include the previous agent id in the handoff state.
                 // If there was no previousAgent, it will still be null.
-                HandoffState turnState = new(new(emitEvents), null, returnToPrevious ? previousAgentId : null);
+                HandoffState turnState = new(turnToken, null, returnToPrevious ? previousAgentId : null);
 
                 await context.SendMessageAsync(turnState, cancellationToken).ConfigureAwait(false);
 

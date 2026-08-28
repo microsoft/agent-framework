@@ -93,6 +93,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
     private MagenticTaskContext? _taskContext;
     private PortBinding? _planReviewPort;
     private string? _currentSpeakerExecutorId;
+    private AgentRunOptions? _currentTurnRunOptions;
 
     protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
@@ -147,6 +148,8 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
             throw new InvalidOperationException("This Magentic orchestration has already terminated. To process new messages, create a new workflow instance.");
         }
 
+        this._currentTurnRunOptions = context.GetAgentRunOptions(this._currentTurnRunOptions);
+
         if (response.IsApproved)
         {
             await this.DelegateToTeamAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);
@@ -163,7 +166,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
     {
         bool isReplan = taskContext.TaskLedger != null;
 
-        taskContext.TaskLedger = await this._manager.UpdatePlanAsync(taskContext, context, cancellationToken)
+        taskContext.TaskLedger = await this._manager.UpdatePlanAsync(taskContext, context, this._currentTurnRunOptions, cancellationToken)
                                                     .ConfigureAwait(false);
 
         this._fullTaskLedgerMessage = new(ChatRole.User, taskContext.ToTaskLedgerFullPrompt());
@@ -184,7 +187,12 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
     }
 
     protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
+        => await this.TakeTurnAsync(messages, context, new TurnToken(emitEvents), cancellationToken).ConfigureAwait(false);
+
+    protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, TurnToken turnToken, CancellationToken cancellationToken = default)
     {
+        this._currentTurnRunOptions = context.GetAgentRunOptions(turnToken.RunOptions);
+
         if (this._taskContext?.IsTerminated == true)
         {
             throw new InvalidOperationException("This Magentic orchestration has already terminated. To process new messages, create a new workflow instance.");
@@ -193,7 +201,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         if (this._taskContext == null)
         {
             // First Turn: Initialize the task context and create the initial plan
-            this._taskContext = new(messages, team, limits, emitEvents, []) { ResponseLanguage = responseLanguage, PromptOverrides = promptOverrides };
+            this._taskContext = new(messages, team, limits, turnToken.EmitEvents, []) { ResponseLanguage = responseLanguage, PromptOverrides = promptOverrides };
             await this.UpdatePlanAndDelegateAsync(this._taskContext, context, cancellationToken).ConfigureAwait(false);
         }
         else
@@ -265,7 +273,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         // Update the Progress Ledger
         try
         {
-            await this._manager.UpdateProgressLedgerAsync(taskContext, context, cancellationToken).ConfigureAwait(false);
+            await this._manager.UpdateProgressLedgerAsync(taskContext, context, this._currentTurnRunOptions, cancellationToken).ConfigureAwait(false);
 
             await context.AddEventAsync(new MagenticProgressLedgerUpdatedEvent(taskContext.ProgressLedger), cancellationToken)
                          .ConfigureAwait(false);
@@ -333,7 +341,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
         }
 
         this._currentSpeakerExecutorId = nextExecutorId;
-        await context.SendMessageAsync(new TurnToken(taskContext.EmitUpdateEvents), nextExecutorId, cancellationToken).ConfigureAwait(false);
+        await context.SendMessageAsync(new TurnToken(taskContext.EmitUpdateEvents, this._currentTurnRunOptions), nextExecutorId, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask ResetAndReplanAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken)
@@ -348,7 +356,7 @@ internal class MagenticOrchestrator(AIAgent managerAgent, List<AIAgent> team, Ta
 
     private async ValueTask PrepareFinalAnswerAsync(MagenticTaskContext taskContext, IWorkflowContext context, CancellationToken cancellationToken)
     {
-        List<ChatMessage> messages = [await this._manager.PrepareFinalAnswerAsync(taskContext, context, cancellationToken).ConfigureAwait(false)];
+        List<ChatMessage> messages = [await this._manager.PrepareFinalAnswerAsync(taskContext, context, this._currentTurnRunOptions, cancellationToken).ConfigureAwait(false)];
         await context.YieldOutputAsync(messages, cancellationToken).ConfigureAwait(false);
         taskContext.IsTerminated = true;
         this._currentSpeakerExecutorId = null;
