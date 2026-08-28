@@ -966,6 +966,44 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         downstreamUpdate.RawRepresentation.Should().BeSameAs(downstreamRawRepresentation);
     }
 
+    [Fact]
+    public async Task Test_AsAgent_ResponseUpdatesOverwriteProviderExecutorIdAdditionalPropertyAsync()
+    {
+        // Arrange
+        const string ExistingMetadataKey = "provider-metadata";
+        const string ExecutorId = "authoritative-executor";
+        const string ProviderExecutorId = "provider-controlled-executor";
+        const string ResponseText = "from executor";
+
+        object rawRepresentation = new();
+        AttributionTestExecutor executor = new(
+            ExecutorId,
+            ResponseText,
+            new AdditionalPropertiesDictionary
+            {
+                [ExistingMetadataKey] = "provider metadata",
+                [WorkflowAgentAdditionalProperties.ExecutorId] = ProviderExecutorId,
+            },
+            rawRepresentation);
+
+        Workflow workflow = new WorkflowBuilder(executor.BindExecutor()).Build();
+
+        // Act
+        List<AgentResponseUpdate> updates = await workflow
+            .AsAIAgent("WorkflowAgent")
+            .RunStreamingAsync(new ChatMessage(ChatRole.User, "start"))
+            .ToListAsync();
+
+        // Assert
+        AgentResponseUpdate update = updates.Should().ContainSingle(item => item.Text == ResponseText).Subject;
+        update.AdditionalProperties.Should().NotBeNull();
+        update.AdditionalProperties.Should().ContainKey(ExistingMetadataKey)
+            .WhoseValue.Should().Be("provider metadata");
+        update.AdditionalProperties.Should().ContainKey(WorkflowAgentAdditionalProperties.ExecutorId)
+            .WhoseValue.Should().Be(ExecutorId);
+        update.RawRepresentation.Should().BeSameAs(rawRepresentation);
+    }
+
     // ----- Phase 5: Workflow-as-Agent intermediate forwarding -----------------
 
     [Collection(Futures.FuturesSerialCollection.Name)]
