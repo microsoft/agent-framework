@@ -222,6 +222,150 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
             endpointsMock.Object.MapAGUIServer((IHostedAgentBuilder)null!, "/api/agent"));
     }
 
+    [Fact]
+    public async Task GetMessagesForRun_WithStoredHistory_ReturnsOnlyNewMessagesAsync()
+    {
+        // Arrange
+        ChatClientAgent agent = new(new Mock<IChatClient>().Object);
+        AgentSession session = await agent.CreateSessionAsync();
+        session.SetInMemoryChatHistory(
+        [
+            new ChatMessage(ChatRole.User, "First question") { MessageId = "user-1" },
+            new ChatMessage(ChatRole.Assistant, "First answer") { MessageId = "assistant-1" },
+        ]);
+        List<ChatMessage> incomingMessages =
+        [
+            new ChatMessage(ChatRole.User, "First question") { MessageId = "user-1" },
+            new ChatMessage(ChatRole.Assistant, "First answer") { MessageId = "assistant-1" },
+            new ChatMessage(ChatRole.User, "Second question") { MessageId = "user-2" },
+        ];
+
+        // Act
+        IReadOnlyList<ChatMessage> messages = AGUIEndpointRouteBuilderExtensions.GetMessagesForRun(
+            agent,
+            session,
+            incomingMessages);
+
+        // Assert
+        ChatMessage message = Assert.Single(messages);
+        Assert.Equal("user-2", message.MessageId);
+    }
+
+    [Fact]
+    public async Task GetMessagesForRun_WithTruncatedStoredHistoryOverlap_ReturnsOnlyNewMessagesAsync()
+    {
+        // Arrange
+        ChatClientAgent agent = new(new Mock<IChatClient>().Object);
+        AgentSession session = await agent.CreateSessionAsync();
+        session.SetInMemoryChatHistory(
+        [
+            new ChatMessage(ChatRole.User, "First question") { MessageId = "user-1" },
+            new ChatMessage(ChatRole.Assistant, "First answer") { MessageId = "assistant-1" },
+        ]);
+        List<ChatMessage> incomingMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, "First answer") { MessageId = "assistant-1" },
+            new ChatMessage(ChatRole.User, "Second question") { MessageId = "user-2" },
+        ];
+
+        // Act
+        IReadOnlyList<ChatMessage> messages = AGUIEndpointRouteBuilderExtensions.GetMessagesForRun(
+            agent,
+            session,
+            incomingMessages);
+
+        // Assert
+        ChatMessage message = Assert.Single(messages);
+        Assert.Equal("user-2", message.MessageId);
+    }
+
+    [Fact]
+    public async Task GetMessagesForRun_WithIncrementalMessage_ReturnsMessageUnchangedAsync()
+    {
+        // Arrange
+        ChatClientAgent agent = new(new Mock<IChatClient>().Object);
+        AgentSession session = await agent.CreateSessionAsync();
+        session.SetInMemoryChatHistory(
+        [
+            new ChatMessage(ChatRole.User, "Repeat") { MessageId = "user-1" },
+            new ChatMessage(ChatRole.Assistant, "Okay") { MessageId = "assistant-1" },
+        ]);
+        List<ChatMessage> incomingMessages =
+        [
+            new ChatMessage(ChatRole.User, "Repeat") { MessageId = "user-2" },
+        ];
+
+        // Act
+        IReadOnlyList<ChatMessage> messages = AGUIEndpointRouteBuilderExtensions.GetMessagesForRun(
+            agent,
+            session,
+            incomingMessages);
+
+        // Assert
+        Assert.Same(incomingMessages, messages);
+    }
+
+    [Fact]
+    public async Task GetMessagesForRun_WithProviderConversation_ReturnsCurrentTurnMessagesAsync()
+    {
+        // Arrange
+        ChatClientAgent agent = new(new Mock<IChatClient>().Object);
+        JsonElement serializedSession = JsonSerializer.SerializeToElement(new
+        {
+            conversationId = "provider-conversation",
+        });
+        AgentSession session = await agent.DeserializeSessionAsync(serializedSession);
+        List<ChatMessage> incomingMessages =
+        [
+            new ChatMessage(ChatRole.User, "First question") { MessageId = "user-1" },
+            new ChatMessage(ChatRole.Assistant, "Call tools")
+            {
+                MessageId = "assistant-1",
+                Contents =
+                [
+                    new FunctionCallContent("call-1", "tool1"),
+                    new FunctionCallContent("call-2", "tool2"),
+                ],
+            },
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("call-1", "result-1")]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("call-2", "result-2")]),
+        ];
+
+        // Act
+        IReadOnlyList<ChatMessage> messages = AGUIEndpointRouteBuilderExtensions.GetMessagesForRun(
+            agent,
+            session,
+            incomingMessages);
+
+        // Assert
+        Assert.Equal(2, messages.Count);
+        Assert.All(messages, message => Assert.Equal(ChatRole.Tool, message.Role));
+    }
+
+    [Fact]
+    public async Task GetMessagesForRun_WithUnknownAgent_ReturnsMessagesUnchangedAsync()
+    {
+        // Arrange
+        AIAgent agent = new TestAgent();
+        ChatClientAgent sessionAgent = new(new Mock<IChatClient>().Object);
+        AgentSession session = await sessionAgent.CreateSessionAsync();
+        List<ChatMessage> incomingMessages =
+        [
+            new ChatMessage(ChatRole.User, "First question"),
+            new ChatMessage(ChatRole.Assistant, "First answer"),
+            new ChatMessage(ChatRole.User, "Second question"),
+        ];
+
+        // Act
+        IReadOnlyList<ChatMessage> messages = AGUIEndpointRouteBuilderExtensions.GetMessagesForRun(
+            agent,
+            session,
+            incomingMessages);
+
+        // Assert
+        Assert.Same(incomingMessages, messages);
+    }
+
     private sealed class TestAgent : AIAgent
     {
         protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) => throw new NotImplementedException();

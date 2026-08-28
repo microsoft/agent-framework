@@ -146,10 +146,11 @@ public static class AGUIEndpointRouteBuilderExtensions
             ctx.Input.ThreadId = threadId;
 
             var session = await hostAgent.GetOrCreateSessionAsync(threadId, cancellationToken).ConfigureAwait(false);
+            var messages = GetMessagesForRun(aiAgent, session, ctx.Messages);
 
             var events = hostAgent
                 .RunStreamingAsync(
-                    ctx.Messages,
+                    messages,
                     session: session,
                     options: new ChatClientAgentRunOptions { ChatOptions = ctx.ChatOptions },
                     cancellationToken: cancellationToken)
@@ -173,6 +174,92 @@ public static class AGUIEndpointRouteBuilderExtensions
 
         MarkFeatureUsed();
         return endpoint;
+    }
+
+    internal static IReadOnlyList<ChatMessage> GetMessagesForRun(
+        AIAgent agent,
+        AgentSession session,
+        List<ChatMessage> incomingMessages)
+    {
+        var chatClientAgent = agent.GetService<ChatClientAgent>();
+        var chatClientSession = session.GetService<ChatClientAgentSession>();
+        if (chatClientAgent is null || chatClientSession is null)
+        {
+            return incomingMessages;
+        }
+
+        if (chatClientAgent.ChatHistoryProvider is InMemoryChatHistoryProvider historyProvider &&
+            session.TryGetInMemoryChatHistory(out List<ChatMessage>? storedMessages, historyProvider.StateKeys[0]) &&
+            storedMessages.Count > 0)
+        {
+            return RemoveStoredHistory(incomingMessages, storedMessages);
+        }
+
+        if (!string.IsNullOrWhiteSpace(chatClientSession.ConversationId))
+        {
+            return GetCurrentTurnMessages(incomingMessages);
+        }
+
+        return incomingMessages;
+    }
+
+    private static List<ChatMessage> RemoveStoredHistory(
+        List<ChatMessage> incomingMessages,
+        List<ChatMessage> storedMessages)
+    {
+        string? lastStoredMessageId = storedMessages[^1].MessageId;
+        if (string.IsNullOrEmpty(lastStoredMessageId))
+        {
+            return incomingMessages;
+        }
+
+        // Leave at least one incoming message as the new turn, then match the preceding
+        // history backwards against the end of the stored conversation.
+        for (int historyEnd = incomingMessages.Count - 2; historyEnd >= 0; historyEnd--)
+        {
+            if (!string.Equals(lastStoredMessageId, incomingMessages[historyEnd].MessageId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            int incomingIndex = historyEnd;
+            int storedIndex = storedMessages.Count - 1;
+            while (incomingIndex >= 0 && storedIndex >= 0)
+            {
+                string? storedMessageId = storedMessages[storedIndex].MessageId;
+                string? incomingMessageId = incomingMessages[incomingIndex].MessageId;
+                if (string.IsNullOrEmpty(storedMessageId) ||
+                    !string.Equals(storedMessageId, incomingMessageId, StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                incomingIndex--;
+                storedIndex--;
+            }
+
+            if (incomingIndex < 0)
+            {
+                int newMessagesStart = historyEnd + 1;
+                return incomingMessages.GetRange(newMessagesStart, incomingMessages.Count - newMessagesStart);
+            }
+        }
+
+        return incomingMessages;
+    }
+
+    private static List<ChatMessage> GetCurrentTurnMessages(List<ChatMessage> incomingMessages)
+    {
+        for (int i = incomingMessages.Count - 1; i >= 0; i--)
+        {
+            if (incomingMessages[i].Role == ChatRole.Assistant)
+            {
+                int newMessagesStart = i + 1;
+                return incomingMessages.GetRange(newMessagesStart, incomingMessages.Count - newMessagesStart);
+            }
+        }
+
+        return incomingMessages;
     }
 
     private static void MarkFeatureUsed()
