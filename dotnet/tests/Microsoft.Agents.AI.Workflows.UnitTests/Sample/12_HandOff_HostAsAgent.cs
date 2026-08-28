@@ -13,8 +13,12 @@ namespace Microsoft.Agents.AI.Workflows.Sample;
 internal sealed class HandoffTestEchoAgent(string id, string name, string prefix = "")
     : TestEchoAgent(id, name, prefix)
 {
+    public List<AgentRunOptions?> RecordedRunOptions { get; } = [];
+
     protected override IEnumerable<ChatMessage> GetEpilogueMessages(AgentRunOptions? options = null)
     {
+        this.RecordedRunOptions.Add(options);
+
         if (options is ChatClientAgentRunOptions chatClientOptions &&
             chatClientOptions.ChatOptions != null)
         {

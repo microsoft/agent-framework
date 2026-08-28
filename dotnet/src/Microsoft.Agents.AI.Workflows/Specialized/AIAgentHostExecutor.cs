@@ -30,6 +30,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
     private readonly AIAgentHostOptions _options;
     private AgentSession? _session;
     private bool? _currentTurnEmitEvents;
+    private AgentRunOptions? _currentTurnRunOptions;
 
     private AIContentExternalHandler<ToolApprovalRequestContent, ToolApprovalResponseContent>? _userInputHandler;
     private AIContentExternalHandler<FunctionCallContent, FunctionResultContent>? _functionCallHandler;
@@ -77,6 +78,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
     {
         this._session = null;
         this._currentTurnEmitEvents = null;
+        this._currentTurnRunOptions = null;
     }
 
     private ValueTask HandleUserInputResponseAsync(
@@ -99,7 +101,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
                 MessageId = Guid.NewGuid().ToString("N"),
             });
 
-            await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct).ConfigureAwait(false);
+            await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ctx.GetAgentRunOptions(this._currentTurnRunOptions), ct).ConfigureAwait(false);
 
             // Clear the buffered turn messages because they were consumed by ContinueTurnAsync.
             return null;
@@ -127,7 +129,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
                 MessageId = Guid.NewGuid().ToString("N"),
             });
 
-            await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct).ConfigureAwait(false);
+            await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ctx.GetAgentRunOptions(this._currentTurnRunOptions), ct).ConfigureAwait(false);
 
             // Clear the buffered turn messages because they were consumed by ContinueTurnAsync.
             return null;
@@ -176,9 +178,10 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
                                         || (this._functionCallHandler?.HasPendingRequests == true);
 
     // While we save this on the instance, we are not cross-run shareable, but as AgentBinding uses the factory pattern this is not an issue
-    private async ValueTask ContinueTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool emitEvents, CancellationToken cancellationToken)
+    private async ValueTask ContinueTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool emitEvents, AgentRunOptions? runOptions, CancellationToken cancellationToken)
     {
         this._currentTurnEmitEvents = emitEvents;
+        this._currentTurnRunOptions = runOptions;
         if (this._options.ForwardIncomingMessages)
         {
             await context.SendMessageAsync(messages, cancellationToken).ConfigureAwait(false);
@@ -188,7 +191,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
                                                   ? messages.Select(m => m.ChatAssistantToUserIfNotFromNamed(this._agent.Name ?? this._agent.Id))
                                                   : messages;
 
-        AgentResponse response = await this.InvokeAgentAsync(filteredMessages, context, emitEvents, cancellationToken).ConfigureAwait(false);
+        AgentResponse response = await this.InvokeAgentAsync(filteredMessages, context, emitEvents, runOptions, cancellationToken).ConfigureAwait(false);
 
         // Filter out server-side artifacts (reasoning tokens, web search calls, etc.)
         // that are internal to this agent. Forwarding them to other agents in the workflow
@@ -204,8 +207,9 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         // If we have no outstanding requests, we can yield a turn token back to the workflow.
         if (!this.HasOutstandingRequests)
         {
-            await context.SendMessageAsync(new TurnToken(this._currentTurnEmitEvents), cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(new TurnToken(this._currentTurnEmitEvents, this._currentTurnRunOptions), cancellationToken).ConfigureAwait(false);
             this._currentTurnEmitEvents = null; // Possibly not actually necessary, but cleaning this up makes it clearer when debugging
+            this._currentTurnRunOptions = null;
         }
     }
 
@@ -213,9 +217,17 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
         => this.ContinueTurnAsync(messages,
                                   context,
                                   TurnExtensions.ShouldEmitStreamingEvents(turnTokenSetting: emitEvents, this._options.EmitAgentUpdateEvents),
+                                  runOptions: null,
                                   cancellationToken);
 
-    private async ValueTask<AgentResponse> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool emitUpdateEvents, CancellationToken cancellationToken = default)
+    protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, TurnToken turnToken, CancellationToken cancellationToken = default)
+        => this.ContinueTurnAsync(messages,
+                                  context,
+                                  turnToken.ShouldEmitStreamingEvents(this._options.EmitAgentUpdateEvents),
+                                  context.GetAgentRunOptions(turnToken.RunOptions),
+                                  cancellationToken);
+
+    private async ValueTask<AgentResponse> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool emitUpdateEvents, AgentRunOptions? runOptions, CancellationToken cancellationToken = default)
     {
         AgentResponse response;
         AIAgentUnservicedRequestsCollector collector = new(this._userInputHandler, this._functionCallHandler);
@@ -226,6 +238,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
             IAsyncEnumerable<AgentResponseUpdate> agentStream = this._agent.RunStreamingAsync(
                 messages,
                 await this.EnsureSessionAsync(context, cancellationToken).ConfigureAwait(false),
+                runOptions,
                 cancellationToken: cancellationToken);
 
             List<AgentResponseUpdate> updates = [];
@@ -281,6 +294,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
             // Otherwise, run the agent in non-streaming mode.
             response = await this._agent.RunAsync(messages,
                                                   await this.EnsureSessionAsync(context, cancellationToken).ConfigureAwait(false),
+                                                  runOptions,
                                                   cancellationToken: cancellationToken)
                                         .ConfigureAwait(false);
 

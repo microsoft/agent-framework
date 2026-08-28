@@ -19,6 +19,103 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 public class MagenticOrchestrationTests
 {
     [Fact]
+    public async Task Magentic_AsAgent_PropagatesRunOptionsToManagerAndParticipantsAsync()
+    {
+        // Arrange
+        RecordingReplayAgent manager = new(
+            [
+                CreatePlanResponse("Facts about the task"),
+                CreatePlanResponse("Ask Worker to complete the task"),
+                CreateProgressLedgerResponse(
+                    isRequestSatisfied: false,
+                    isInLoop: false,
+                    isProgressBeingMade: true,
+                    nextSpeaker: "Worker",
+                    instructionOrQuestion: "Complete the task"),
+                CreateProgressLedgerResponse(
+                    isRequestSatisfied: true,
+                    isInLoop: false,
+                    isProgressBeingMade: true,
+                    nextSpeaker: "Worker",
+                    instructionOrQuestion: "The task is complete"),
+                CreateFinalAnswerResponse("Task completed successfully!"),
+            ],
+            name: "Manager");
+        RecordingEchoAgent worker = new(name: "Worker");
+        AIAgent workflowAgent = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build()
+            .AsAIAgent();
+        AgentRunOptions runOptions = new() { AdditionalProperties = new() { ["test-property"] = "test-value" } };
+
+        // Act
+        _ = await workflowAgent.RunAsync("Do the task", options: runOptions);
+
+        // Assert
+        manager.RecordedRunOptions.Should().NotBeEmpty().And.OnlyContain(options => ReferenceEquals(options, runOptions));
+        worker.RecordedRunOptions.Should().NotBeEmpty().And.OnlyContain(options => ReferenceEquals(options, runOptions));
+    }
+
+    [Fact]
+    public async Task Magentic_AsAgent_CheckpointRecoveryUsesCurrentRunOptionsAsync()
+    {
+        // Arrange
+        RecordingReplayAgent manager = new(
+            [
+                CreatePlanResponse("Facts about the task"),
+                CreatePlanResponse("Ask Worker to complete the task"),
+                CreateProgressLedgerResponse(
+                    isRequestSatisfied: false,
+                    isInLoop: false,
+                    isProgressBeingMade: true,
+                    nextSpeaker: "Worker",
+                    instructionOrQuestion: "Complete the task"),
+                CreateProgressLedgerResponse(
+                    isRequestSatisfied: true,
+                    isInLoop: false,
+                    isProgressBeingMade: true,
+                    nextSpeaker: "Worker",
+                    instructionOrQuestion: "The task is complete"),
+                CreateFinalAnswerResponse("Task completed successfully!"),
+            ],
+            name: "Manager");
+        RecordingEchoAgent worker = new(name: "Worker");
+        Workflow workflow = new MagenticWorkflowBuilder(manager)
+            .AddParticipants(worker)
+            .RequirePlanSignoff(false)
+            .Build();
+        InProcessExecutionEnvironment environment =
+            InProcessExecution.Lockstep.WithCheckpointing(CheckpointManager.CreateInMemory());
+        AIAgent workflowAgent = workflow.AsAIAgent(executionEnvironment: environment);
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+        AgentRunOptions firstRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "first" } };
+        AgentRunOptions recoveryRunOptions = new() { AdditionalProperties = new() { ["invocation"] = "recovery" } };
+
+        CheckpointInfo checkpoint = await OrchestrationTestHelpers.RunWorkflowAgentUntilCheckpointAsync(
+            workflowAgent,
+            session,
+            firstRunOptions,
+            checkpointNumber: 2);
+        int managerCallsBeforeRecovery = manager.RecordedRunOptions.Count;
+        WorkflowSessionCheckpointRecovery recovery = session.GetService<WorkflowSessionCheckpointRecovery>()
+            ?? throw new InvalidOperationException("Workflow checkpoint recovery was not available.");
+        recovery.TryPrepare(checkpoint.CheckpointId).Should().BeTrue();
+
+        // Act
+        List<AgentResponseUpdate> recoveryUpdates = await workflowAgent
+            .RunStreamingAsync([], session, recoveryRunOptions)
+            .ToListAsync();
+
+        // Assert
+        recoveryUpdates.SelectMany(update => update.Contents.OfType<ErrorContent>()).Should().BeEmpty();
+        manager.RecordedRunOptions.Take(managerCallsBeforeRecovery)
+            .Should().OnlyContain(options => ReferenceEquals(options, firstRunOptions));
+        manager.RecordedRunOptions.Skip(managerCallsBeforeRecovery)
+            .Should().NotBeEmpty().And.OnlyContain(options => ReferenceEquals(options, recoveryRunOptions));
+    }
+
+    [Fact]
     public async Task Task_Completes_When_RequestSatisfiedAsync()
     {
         // Arrange: Manager reports task satisfied on first coordination round

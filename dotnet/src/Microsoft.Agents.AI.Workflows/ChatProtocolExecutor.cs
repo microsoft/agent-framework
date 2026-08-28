@@ -140,7 +140,7 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
 
         async ValueTask<List<ChatMessage>?> InvokeTakeTurnAsync(List<ChatMessage>? maybePendingMessages, IWorkflowContext context, CancellationToken cancellationToken)
         {
-            await this.TakeTurnAsync(maybePendingMessages ?? s_initFunction(), context, token.EmitEvents, cancellationToken)
+            await this.TakeTurnAsync(maybePendingMessages ?? s_initFunction(), context, token, cancellationToken)
                       .ConfigureAwait(false);
 
             if (this.AutoSendTurnToken)
@@ -153,6 +153,17 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
             return s_initFunction();
         }
     }
+
+    /// <summary>
+    /// When overridden in a derived class, processes the accumulated chat messages and the full turn token.
+    /// </summary>
+    /// <param name="messages">The list of chat messages accumulated since the last turn.</param>
+    /// <param name="context">The workflow context in which the executor executes.</param>
+    /// <param name="turnToken">The token containing turn configuration, including any agent run options.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
+    protected virtual ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, TurnToken turnToken, CancellationToken cancellationToken = default)
+        => this.TakeTurnAsync(messages, context, turnToken.EmitEvents, cancellationToken);
 
     /// <summary>
     /// Processes the current set of turn messages using the specified asynchronous processing function.
