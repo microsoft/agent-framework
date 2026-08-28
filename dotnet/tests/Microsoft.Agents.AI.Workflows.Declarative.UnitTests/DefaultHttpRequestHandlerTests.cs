@@ -45,7 +45,7 @@ public sealed class DefaultHttpRequestHandlerTests
     public void ConstructorWithNullHttpClientThrows()
     {
         // Act
-        Action act = () => _ = new DefaultHttpRequestHandler((HttpClient)null!);
+        static void act() => _ = new DefaultHttpRequestHandler((HttpClient)null!);
 
         // Assert
         Assert.Throws<ArgumentNullException>(act);
@@ -86,8 +86,8 @@ public sealed class DefaultHttpRequestHandlerTests
         await handler.DisposeAsync();
 
         // Assert - supplied client remains usable (not disposed)
-        Func<Task> act = async () => await suppliedClient.GetAsync(new Uri(TestUrl));
-        Assert.IsNotType<ObjectDisposedException>(await Record.ExceptionAsync(act));
+        async Task actAsync() => await suppliedClient.GetAsync(new Uri(TestUrl));
+        Assert.IsNotType<ObjectDisposedException>(await Record.ExceptionAsync(actAsync));
     }
 
     #endregion
@@ -101,10 +101,10 @@ public sealed class DefaultHttpRequestHandlerTests
         await using DefaultHttpRequestHandler handler = new();
 
         // Act
-        Func<Task> act = async () => await handler.SendAsync(null!);
+        async Task actAsync() => await handler.SendAsync(null!);
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(act);
+        await Assert.ThrowsAsync<ArgumentNullException>(actAsync);
     }
 
     [Fact]
@@ -115,10 +115,10 @@ public sealed class DefaultHttpRequestHandlerTests
         HttpRequestInfo request = new() { Method = "GET", Url = "" };
 
         // Act
-        Func<Task> act = async () => await handler.SendAsync(request);
+        async Task actAsync() => await handler.SendAsync(request);
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentException>(act);
+        await Assert.ThrowsAsync<ArgumentException>(actAsync);
     }
 
     [Fact]
@@ -129,10 +129,10 @@ public sealed class DefaultHttpRequestHandlerTests
         HttpRequestInfo request = new() { Method = "", Url = TestUrl };
 
         // Act
-        Func<Task> act = async () => await handler.SendAsync(request);
+        async Task actAsync() => await handler.SendAsync(request);
 
         // Assert
-        await Assert.ThrowsAsync<ArgumentException>(act);
+        await Assert.ThrowsAsync<ArgumentException>(actAsync);
     }
 
     #endregion
@@ -358,10 +358,10 @@ public sealed class DefaultHttpRequestHandlerTests
         };
 
         // Act
-        Func<Task> act = async () => await handler.SendAsync(request);
+        async Task actAsync() => await handler.SendAsync(request);
 
         // Assert
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(act);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(actAsync);
     }
 
     [Fact]
@@ -378,10 +378,10 @@ public sealed class DefaultHttpRequestHandlerTests
         HttpRequestInfo request = new() { Method = "GET", Url = "http://127.0.0.1:1/" };
 
         // Act - owned client will attempt real network and fail, but provider path should have been consulted first.
-        Func<Task> act = async () => await handler.SendAsync(request);
+        async Task actAsync() => await handler.SendAsync(request);
 
         // Assert
-        await Assert.ThrowsAnyAsync<Exception>(act);
+        await Assert.ThrowsAnyAsync<Exception>(actAsync);
         Assert.Equal(1, providerCallCount);
     }
 
@@ -396,10 +396,10 @@ public sealed class DefaultHttpRequestHandlerTests
         DefaultHttpRequestHandler handler = new();
 
         // Act
-        Func<Task> act = async () => await handler.DisposeAsync();
+        async Task actAsync() => await handler.DisposeAsync();
 
         // Assert
-        Assert.Null(await Record.ExceptionAsync(act));
+        Assert.Null(await Record.ExceptionAsync(actAsync));
     }
 
     [Fact]
@@ -410,10 +410,10 @@ public sealed class DefaultHttpRequestHandlerTests
 
         // Act
         await handler.DisposeAsync();
-        Func<Task> second = async () => await handler.DisposeAsync();
+        async Task secondAsync() => await handler.DisposeAsync();
 
         // Assert
-        Assert.Null(await Record.ExceptionAsync(second));
+        Assert.Null(await Record.ExceptionAsync(secondAsync));
     }
 
     #endregion

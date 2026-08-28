@@ -241,10 +241,10 @@ public sealed class RouteBuilderTests
         RouteBuilder routeBuilder = new(null);
 
         // Act
-        Action act = () => routeBuilder.AddHandler<PortableValue>((message, context) => { });
+        void act() => routeBuilder.AddHandler<PortableValue>((message, context) => { });
 
         // Assert
-        Assert.Contains("Use AddCatchAll()", (Assert.Throws<InvalidOperationException>(act)).Message);
+        Assert.Contains("Use AddCatchAll()", Assert.Throws<InvalidOperationException>(act).Message);
     }
 
     [Fact]
@@ -255,10 +255,10 @@ public sealed class RouteBuilderTests
         routeBuilder.AddHandler<string>((message, context) => { });
 
         // Act
-        Action act = () => routeBuilder.AddHandler<string>((message, context) => { });
+        void act() => routeBuilder.AddHandler<string>((message, context) => { });
 
         // Assert
-        Assert.Contains("already registered", (Assert.Throws<ArgumentException>(act)).Message);
+        Assert.Contains("already registered", Assert.Throws<ArgumentException>(act).Message);
     }
 
     [Fact]
@@ -268,10 +268,10 @@ public sealed class RouteBuilderTests
         RouteBuilder routeBuilder = new(null);
 
         // Act
-        Action act = () => routeBuilder.AddHandler<string>((message, context) => { }, overwrite: true);
+        void act() => routeBuilder.AddHandler<string>((message, context) => { }, overwrite: true);
 
         // Assert
-        Assert.Contains("has not yet been registered", (Assert.Throws<ArgumentException>(act)).Message);
+        Assert.Contains("has not yet been registered", Assert.Throws<ArgumentException>(act).Message);
     }
 
     [Fact]
@@ -299,10 +299,10 @@ public sealed class RouteBuilderTests
         routeBuilder.AddCatchAll((message, context) => { });
 
         // Act
-        Action act = () => routeBuilder.AddCatchAll((message, context) => { });
+        void act() => routeBuilder.AddCatchAll((message, context) => { });
 
         // Assert
-        Assert.Contains("already registered", (Assert.Throws<InvalidOperationException>(act)).Message);
+        Assert.Contains("already registered", Assert.Throws<InvalidOperationException>(act).Message);
     }
 
     [Fact]
@@ -329,10 +329,10 @@ public sealed class RouteBuilderTests
         RouteBuilder routeBuilder = new(null);
 
         // Act
-        Action act = () => routeBuilder.AddPortHandler<string, int>("port", (response, context, cancellationToken) => default, out _);
+        void act() => routeBuilder.AddPortHandler<string, int>("port", (response, context, cancellationToken) => default, out _);
 
         // Assert
-        Assert.Contains("external request context is required", (Assert.Throws<InvalidOperationException>(act)).Message);
+        Assert.Contains("external request context is required", Assert.Throws<InvalidOperationException>(act).Message);
     }
 
     [Fact]

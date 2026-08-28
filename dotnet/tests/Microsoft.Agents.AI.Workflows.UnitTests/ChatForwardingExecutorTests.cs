@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Extensions.AI;
@@ -66,8 +65,8 @@ public class ChatForwardingExecutorTests
         ChatForwardingExecutor executor = new(nameof(ChatForwardingExecutor));
 
         // Act
-        Func<Task<TestWorkflowContext>> action = () => this.RunForwardMessageTestAsync(executor, TestMessageContent);
-        await Assert.ThrowsAsync<NotSupportedException>(action);
+        Task<TestWorkflowContext> actionAsync() => this.RunForwardMessageTestAsync(executor, TestMessageContent);
+        await Assert.ThrowsAsync<NotSupportedException>((Func<Task<TestWorkflowContext>>)actionAsync);
     }
 
     [Theory]
@@ -86,19 +85,19 @@ public class ChatForwardingExecutorTests
         ChatForwardingExecutor executor = new(nameof(ChatForwardingExecutor), options);
 
         // Act
-        Func<Task<TestWorkflowContext>> action = () => this.RunForwardMessageTestAsync(executor, TestMessageContent);
+        Task<TestWorkflowContext> actionAsync() => this.RunForwardMessageTestAsync(executor, TestMessageContent);
 
         // Assert
         if (options.StringMessageChatRole is ChatRole chatRole)
         {
-            TestWorkflowContext testContext = await action();
+            TestWorkflowContext testContext = await actionAsync();
 
             ChatMessage sentMessage = Assert.IsType<ChatMessage>(Assert.Single(testContext.SentMessages));
             Assert.Equivalent(new ChatMessage(chatRole, TestMessageContent), sentMessage);
         }
         else
         {
-            await Assert.ThrowsAsync<NotSupportedException>(action);
+            await Assert.ThrowsAsync<NotSupportedException>((Func<Task<TestWorkflowContext>>)actionAsync);
         }
     }
 

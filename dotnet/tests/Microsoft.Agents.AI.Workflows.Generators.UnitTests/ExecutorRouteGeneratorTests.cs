@@ -335,7 +335,7 @@ public class ExecutorRouteGeneratorTests
         var generated = result.RunResult.GeneratedTrees[0];
 
         SyntaxTreeAssert.HaveHierarchy(generated, "OuterClass", "TestExecutor");
-                      SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "string");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "string");
     }
 
     [Fact]
@@ -371,7 +371,7 @@ public class ExecutorRouteGeneratorTests
         var generated = result.RunResult.GeneratedTrees[0];
 
         SyntaxTreeAssert.HaveHierarchy(generated, "Outer", "Inner", "TestExecutor");
-                      SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "string");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "string");
     }
 
     [Fact]
@@ -410,7 +410,7 @@ public class ExecutorRouteGeneratorTests
         var generated = result.RunResult.GeneratedTrees[0];
 
         SyntaxTreeAssert.HaveHierarchy(generated, "Level1", "Level2", "Level3", "TestExecutor");
-                      SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "int");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "int");
     }
 
     [Fact]
@@ -531,7 +531,7 @@ public class ExecutorRouteGeneratorTests
         // - 1 for TestExecutor class
         // - 1 for ConfigureProtocol method
         // = 4 pairs minimum
-        Assert.True((openBraces) >= (4));
+        Assert.True(openBraces >= 4);
     }
 
     #endregion
@@ -590,7 +590,7 @@ public class ExecutorRouteGeneratorTests
 
         // Should have both handlers registered
         SyntaxTreeAssert.AddHandler(generated, "this.HandleString", "string");
-                      SyntaxTreeAssert.AddHandler(generated, "this.HandleIntAsync", "int");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleIntAsync", "int");
 
         // Verify the generated code compiles with all three partials combined
         var compilationErrors = result.OutputCompilation.GetDiagnostics()
@@ -644,7 +644,7 @@ public class ExecutorRouteGeneratorTests
 
         // Both handlers from different files should be registered
         SyntaxTreeAssert.AddHandler(generated, "this.HandleFromFile1", "string");
-                      SyntaxTreeAssert.AddHandler(generated, "this.HandleFromFile2", "int");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleFromFile2", "int");
     }
 
     [Fact]
@@ -695,9 +695,9 @@ public class ExecutorRouteGeneratorTests
 
         // Verify SendsMessage and YieldsOutput from both partials are combined correctly
         SyntaxTreeAssert.RegisterSentMessageType(generated, "string");
-                      SyntaxTreeAssert.RegisterSentMessageType(generated, "int");
-                      SyntaxTreeAssert.RegisterYieldedOutputType(generated, "string");
-                      SyntaxTreeAssert.RegisterYieldedOutputType(generated, "int");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "int");
+        SyntaxTreeAssert.RegisterYieldedOutputType(generated, "string");
+        SyntaxTreeAssert.RegisterYieldedOutputType(generated, "int");
     }
 
     #endregion
@@ -919,8 +919,8 @@ public class ExecutorRouteGeneratorTests
         var generated = result.RunResult.GeneratedTrees[0];
 
         SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.MessageA");
-                      SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.MessageB");
-                      SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.MessageC");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.MessageB");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.MessageC");
     }
 
     [Theory]
@@ -1053,7 +1053,7 @@ public class ExecutorRouteGeneratorTests
         // Verify partial declarations are present
         SyntaxTreeAssert.HaveHierarchy(generated, "OuterClass", "TestExecutor");
         // Verify protocol types are generated
-                      SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.BroadcastMessage");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.BroadcastMessage");
     }
 
     [Fact]
@@ -1083,7 +1083,7 @@ public class ExecutorRouteGeneratorTests
         var generated = result.RunResult.GeneratedTrees[0];
 
         SyntaxTreeAssert.HaveHierarchy(generated, "GenericExecutor<T>");
-                      SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.BroadcastMessage");
+        SyntaxTreeAssert.RegisterSentMessageType(generated, "global::TestNamespace.BroadcastMessage");
     }
 
     [Fact]
@@ -1193,7 +1193,7 @@ public class ExecutorRouteGeneratorTests
         var generated = result.RunResult.GeneratedTrees[0];
 
         SyntaxTreeAssert.HaveHierarchy(generated, "GenericExecutor<T>");
-                      SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "T");
+        SyntaxTreeAssert.AddHandler(generated, "this.HandleMessage", "T");
     }
 
     #endregion

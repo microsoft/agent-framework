@@ -124,7 +124,7 @@ public class AgentEventsTests
         int startedIndex = events.IndexOf(firstStartedEvent!);
         int superStepIndex = events.IndexOf(firstSuperStepEvent!);
 
-        Assert.True((startedIndex) < (superStepIndex));
+        Assert.True(startedIndex < superStepIndex);
     }
 
     /// <summary>

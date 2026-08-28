@@ -197,7 +197,7 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         HandoffState state = new(new(false), null);
 
         // Act / Assert
-        Func<Task> runStreamingAsync = async () => await executor.HandleAsync(state, testContext);
+        async Task runStreamingAsync() => await executor.HandleAsync(state, testContext);
         Assert.Null(await Record.ExceptionAsync(runStreamingAsync));
     }
 }

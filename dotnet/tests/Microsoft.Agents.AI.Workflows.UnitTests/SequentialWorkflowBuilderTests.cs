@@ -117,7 +117,7 @@ public class SequentialWorkflowBuilderTests
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
         Assert.Single(designations, kvp => kvp.Value.Count == 0);
-        Assert.Equal(3, (designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate)))?.Count());
+        Assert.Equal(3, designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))?.Count());
     }
 
     [Fact]
@@ -148,8 +148,8 @@ public class SequentialWorkflowBuilderTests
         SequentialWorkflowBuilder builder = new SequentialWorkflowBuilder(participant)
             .WithIntermediateOutputFrom([stranger]);
 
-        Action build = () => builder.Build();
-        Assert.Contains("stranger", (Assert.Throws<InvalidOperationException>(build)).Message);
+        void build() => builder.Build();
+        Assert.Contains("stranger", Assert.Throws<InvalidOperationException>(build).Message);
     }
 
     [Fact]

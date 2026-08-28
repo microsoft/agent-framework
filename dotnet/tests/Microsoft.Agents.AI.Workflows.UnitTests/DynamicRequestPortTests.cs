@@ -90,8 +90,8 @@ public class DynamicRequestPortTests
         ExternalRequest request = context.Request;
         ExternalRequest fakeRequest = new(RequestPort.Create<string, int>("port2").ToPortInfo(), request.RequestId, request.Data);
 
-        Func<Task> act = async () => await context.InvokeExecutorWithResponseAsync(fakeRequest.CreateResponse(13));
-        TargetInvocationException exception = await Assert.ThrowsAsync<TargetInvocationException>(act);
+        async Task actAsync() => await context.InvokeExecutorWithResponseAsync(fakeRequest.CreateResponse(13));
+        TargetInvocationException exception = await Assert.ThrowsAsync<TargetInvocationException>(actAsync);
         Assert.IsType<InvalidOperationException>(exception.InnerException);
     }
 }

@@ -109,7 +109,7 @@ public class JsonCheckpointSerializationTests
 
         // The map shape is detectable in the serialized JSON: the property value starts with `{`, not `[`.
         int idx = json.IndexOf("\"outputExecutorIds\"", System.StringComparison.Ordinal);
-        Assert.True((idx) > (-1));
+        Assert.True(idx > (-1));
         int colon = json.IndexOf(':', idx);
         int firstNonSpace = colon + 1;
         while (firstNonSpace < json.Length && char.IsWhiteSpace(json[firstNonSpace]))

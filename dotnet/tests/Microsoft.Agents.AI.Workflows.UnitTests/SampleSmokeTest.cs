@@ -356,7 +356,7 @@ public class SampleSmokeTest
                 int agentBookmark = this._bookmarks[i];
                 int count = this._history.Count - agentBookmark;
 
-                Assert.True((count) >= (0));
+                Assert.True(count >= 0);
 
                 foreach (string input in this._history.Skip(agentBookmark).ToList())
                 {

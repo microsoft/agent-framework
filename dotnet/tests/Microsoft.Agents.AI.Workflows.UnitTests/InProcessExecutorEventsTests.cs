@@ -155,7 +155,7 @@ public class InProcessExecutorEventsTests
         Assert.Empty(run.OutgoingEvents.OfType<ExecutorFailedEvent>() ?? []);
 
         const int ExpectedSteps = TestFixture.StepsPerInputBatch;
-        Assert.Equal(ExpectedSteps, (run.OutgoingEvents.OfType<SuperStepCompletedEvent>())?.Count());
+        Assert.Equal(ExpectedSteps, run.OutgoingEvents.OfType<SuperStepCompletedEvent>()?.Count());
 
         int expectedCheckpoints = useCheckpointing ? ExpectedSteps : 0;
         Assert.Equal(expectedCheckpoints, run.Checkpoints.Count);

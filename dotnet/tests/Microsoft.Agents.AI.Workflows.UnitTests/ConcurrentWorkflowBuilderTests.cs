@@ -67,7 +67,7 @@ public class ConcurrentWorkflowBuilderTests
 
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
         Assert.Single(designations, kvp => kvp.Value.Count == 0);
-        Assert.Equal(6, (designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate)))?.Count());
+        Assert.Equal(6, designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))?.Count());
     }
 
     [Fact]
@@ -98,8 +98,8 @@ public class ConcurrentWorkflowBuilderTests
         ConcurrentWorkflowBuilder builder = new ConcurrentWorkflowBuilder(participant)
             .WithIntermediateOutputFrom([stranger]);
 
-        Action build = () => builder.Build();
-        Assert.Contains("stranger", (Assert.Throws<InvalidOperationException>(build)).Message);
+        void build() => builder.Build();
+        Assert.Contains("stranger", Assert.Throws<InvalidOperationException>(build).Message);
     }
 
     [Fact]

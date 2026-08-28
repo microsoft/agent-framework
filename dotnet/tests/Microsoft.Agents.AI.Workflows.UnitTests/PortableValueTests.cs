@@ -58,7 +58,7 @@ public class PortableValueTests
 
         Assert.False(portableValue.Is<Never>(out _));
         Assert.True(portableValue.Is(out object? obj));
-        Assert.False((obj) is T);
+        Assert.False(obj is T);
         PortableValue nestedPortableValue = Assert.IsType<PortableValue>(obj);
         Assert.Equal(value, nestedPortableValue.As<T>());
 
@@ -76,7 +76,7 @@ public class PortableValueTests
 
         Assert.False(portableValue.Is<Never>(out _));
         Assert.True(portableValue.Is(out object? obj));
-        Assert.False((obj) is ChatMessage);
+        Assert.False(obj is ChatMessage);
         PortableValue nestedPortableValue = Assert.IsType<PortableValue>(obj);
         Assert.Equal(value, nestedPortableValue.As<ChatMessage>());
 

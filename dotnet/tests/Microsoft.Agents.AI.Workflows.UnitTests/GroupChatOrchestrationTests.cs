@@ -118,7 +118,7 @@ public class GroupChatOrchestrationTests
 
         await using (StreamingRun firstRun = await env.RunStreamingAsync(workflow, new List<ChatMessage> { new(ChatRole.User, "hello") }))
         {
-            Assert.True((await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false))));
+            Assert.True(await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)));
 
             using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
             await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
@@ -142,7 +142,7 @@ public class GroupChatOrchestrationTests
 
         ToolApprovalRequestContent? approvalRequest = pendingRequest!.Data.As<ToolApprovalRequestContent>();
         Assert.NotNull(approvalRequest);
-        Assert.True((approvalRequest.ToolCall) is FunctionCallContent);
+        Assert.True(approvalRequest.ToolCall is FunctionCallContent);
         Assert.Equal(ApprovalToolName, ((FunctionCallContent)approvalRequest.ToolCall).Name);
 
         // Deny the request and continue the conversation.
@@ -169,7 +169,7 @@ public class GroupChatOrchestrationTests
         Assert.Empty(secondRunEvents.OfType<ExecutorFailedEvent>() ?? []);
 
         Assert.Equal(0, approvalToolCallCount);
-        Assert.True((agent1CallCount) >= (2));
+        Assert.True(agent1CallCount >= 2);
         Assert.Equal(1, agent2CallCount);
 
         Assert.NotNull(finalOutput);
@@ -235,7 +235,7 @@ public class GroupChatOrchestrationTests
 
         await using (StreamingRun firstRun = await env.RunStreamingAsync(workflow, new List<ChatMessage> { new(ChatRole.User, "hello") }))
         {
-            Assert.True((await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false))));
+            Assert.True(await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)));
 
             using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
             await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
@@ -281,7 +281,7 @@ public class GroupChatOrchestrationTests
         Assert.Empty(resumeEvents.OfType<WorkflowErrorEvent>() ?? []);
         Assert.Empty(resumeEvents.OfType<ExecutorFailedEvent>() ?? []);
 
-        Assert.True((agent1CallCount) >= (2));
+        Assert.True(agent1CallCount >= 2);
         Assert.Equal(1, agent2CallCount);
 
         Assert.NotNull(finalOutput);
@@ -312,7 +312,7 @@ public class GroupChatOrchestrationTests
         await using (StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
                                                       .RunStreamingAsync(workflow, inputMessages))
         {
-            Assert.True((await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false))));
+            Assert.True(await firstRun.TrySendMessageAsync(new TurnToken(emitEvents: false)));
 
             using CancellationTokenSource cts = new(TimeSpan.FromSeconds(30));
             await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
@@ -335,7 +335,7 @@ public class GroupChatOrchestrationTests
 
         ToolApprovalRequestContent? preCheckpoint = firstRunRequest!.Data.As<ToolApprovalRequestContent>();
         Assert.NotNull(preCheckpoint);
-        Assert.True((preCheckpoint!.ToolCall) is FunctionCallContent);
+        Assert.True(preCheckpoint!.ToolCall is FunctionCallContent);
 
         // Resume on a fresh handle and capture the re-emitted approval request.
         ExternalRequest? resumedRequest = null;
@@ -358,7 +358,7 @@ public class GroupChatOrchestrationTests
             ToolApprovalRequestContent? postResume = resumedRequest!.Data.As<ToolApprovalRequestContent>();
             Assert.NotNull(postResume);
             Assert.NotNull(postResume!.ToolCall);
-            Assert.True((postResume.ToolCall) is FunctionCallContent);
+            Assert.True(postResume.ToolCall is FunctionCallContent);
 
             ToolApprovalResponseContent approvalResponse = postResume.CreateResponse(approved: true);
             await resumed.SendResponseAsync(resumedRequest.CreateResponse(approvalResponse));

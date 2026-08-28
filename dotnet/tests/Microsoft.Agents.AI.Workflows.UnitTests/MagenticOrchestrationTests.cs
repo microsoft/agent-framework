@@ -351,7 +351,7 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: One plan created, one progress ledger per round, final answer
-        Assert.Equal(2, (collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>())?.Count());
+        Assert.Equal(2, collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>()?.Count());
         Assert.Single(collectedEvents.OfType<MagenticPlanCreatedEvent>());
         Assert.Empty(collectedEvents.OfType<MagenticReplannedEvent>() ?? []);
         Assert.NotNull(runResult.Result);
@@ -700,7 +700,7 @@ public class MagenticOrchestrationTests
         Assert.NotNull(runResult.Result);
         Assert.Contains("Task completed with instruction", runResult.Result![0].Text);
         // Verify the delegation happened (two progress ledger events for two rounds)
-        Assert.Equal(2, (collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>())?.Count());
+        Assert.Equal(2, collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>()?.Count());
     }
 
     [Fact]
@@ -1100,7 +1100,7 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: Three progress ledger updates, no stall-triggered reset
-        Assert.Equal(3, (collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>())?.Count());
+        Assert.Equal(3, collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>()?.Count());
 
         // One initial plan, no replans (agent returns go directly to coordination, no replan)
         Assert.Single(collectedEvents.OfType<MagenticPlanCreatedEvent>());
@@ -1167,7 +1167,7 @@ public class MagenticOrchestrationTests
             eventCollector: collectedEvents);
 
         // Assert: Two pre-reset coordination rounds + one post-reset round = 3 ledger events
-        Assert.Equal(3, (collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>())?.Count());
+        Assert.Equal(3, collectedEvents.OfType<MagenticProgressLedgerUpdatedEvent>()?.Count());
 
         // One initial plan + one stall-triggered reset replan (no normal re-entry replans anymore)
         Assert.Single(collectedEvents.OfType<MagenticPlanCreatedEvent>());
@@ -1272,7 +1272,7 @@ public class MagenticOrchestrationTests
 
         // Assert: Multiple replan events emitted, final answer produced
         Assert.NotEmpty(allEvents.OfType<MagenticPlanCreatedEvent>());
-        Assert.True((allEvents.OfType<MagenticReplannedEvent>()).Count() >= (2));
+        Assert.True(allEvents.OfType<MagenticReplannedEvent>().Count() >= 2);
         Assert.NotNull(fourthResult.Result);
         Assert.Contains("Completed after multiple revisions", fourthResult.Result![0].Text);
     }
@@ -1290,8 +1290,8 @@ public class MagenticOrchestrationTests
             .RequirePlanSignoff(false);
 
         // Act & Assert: Build() should throw because the team is empty.
-        Action buildAction = () => builder.Build();
-        Assert.Contains("participant", (Assert.Throws<InvalidOperationException>(buildAction)).Message);
+        void buildAction() => builder.Build();
+        Assert.Contains("participant", Assert.Throws<InvalidOperationException>(buildAction).Message);
     }
 
     [Fact]
@@ -1364,7 +1364,7 @@ public class MagenticOrchestrationTests
         Exception actual = errorEvent!.Exception is System.Reflection.TargetInvocationException tie && tie.InnerException != null
             ? tie.InnerException
             : errorEvent.Exception!;
-        Assert.True((actual) is InvalidOperationException);
+        Assert.True(actual is InvalidOperationException);
         Assert.Contains("terminated", actual.Message);
     }
 

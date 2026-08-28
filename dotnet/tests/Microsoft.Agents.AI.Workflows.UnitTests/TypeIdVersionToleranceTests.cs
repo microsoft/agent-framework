@@ -106,7 +106,7 @@ public class TypeIdVersionToleranceTests
         TypeId v2 = new($"{ProbeSimpleAssemblyName}, Version=2.0.0.0", ProbeTypeFullName);
 
         Assert.True(v1.Equals(v2));
-        Assert.True((v1 == v2));
+        Assert.True(v1 == v2);
         Assert.Equal(v2.GetHashCode(), v1.GetHashCode());
     }
 

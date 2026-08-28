@@ -216,7 +216,7 @@ public static partial class FuturesTests
             List<WorkflowEvent> events = await RunAsync(workflow, "go");
 
             WorkflowOutputEvent emitted = Assert.Single(events.OfType<WorkflowOutputEvent>());
-            Assert.False((emitted) is AgentResponseEvent);
+            Assert.False(emitted is AgentResponseEvent);
             Assert.Equivalent(new[] { OutputTag.Intermediate }, emitted.Tags);
             Assert.True(emitted.IsIntermediate());
         }

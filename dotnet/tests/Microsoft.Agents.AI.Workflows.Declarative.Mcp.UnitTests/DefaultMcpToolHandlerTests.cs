@@ -66,10 +66,10 @@ public sealed class DefaultMcpToolHandlerTests
         DefaultMcpToolHandler handler = new();
 
         // Act
-        Func<Task> act = async () => await handler.DisposeAsync();
+        async Task actAsync() => await handler.DisposeAsync();
 
         // Assert
-        Assert.Null(await Record.ExceptionAsync(act));
+        Assert.Null(await Record.ExceptionAsync(actAsync));
     }
 
     [Fact]
@@ -80,10 +80,10 @@ public sealed class DefaultMcpToolHandlerTests
 
         // Act
         await handler.DisposeAsync();
-        Func<Task> act = async () => await handler.DisposeAsync();
+        async Task actAsync() => await handler.DisposeAsync();
 
         // Assert - Second dispose should throw ObjectDisposedException from the semaphore
-        await Assert.ThrowsAsync<ObjectDisposedException>(act);
+        await Assert.ThrowsAsync<ObjectDisposedException>(actAsync);
     }
 
     #endregion
@@ -534,7 +534,7 @@ public sealed class DefaultMcpToolHandlerTests
         try
         {
             // Act
-            Func<Task> act = async () => await handler.InvokeToolAsync(
+            async Task actAsync() => await handler.InvokeToolAsync(
                 serverUrl: "http://localhost:12345/mcp",
                 serverLabel: "test",
                 toolName: DefaultMcpToolHandler.ListToolsToolName,
@@ -543,7 +543,7 @@ public sealed class DefaultMcpToolHandlerTests
                 connectionName: null);
 
             // Assert
-            ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(act);
+            ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(actAsync);
             Assert.Contains("does not accept tool arguments", exception.Message);
         }
         finally
@@ -1006,7 +1006,7 @@ public sealed class DefaultMcpToolHandlerTests
         request.Headers.TryAddWithoutValidation("Authorization", "Bearer secret-token");
 
         // Act
-        Action act = () => OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
+        void act() => OriginPinningHandler.StripCredentialHeadersOnCrossOrigin(request, new Uri("https://trusted.example.com"));
 
         // Assert — does not throw and leaves the credential in place
         Assert.Null(Record.Exception(act));

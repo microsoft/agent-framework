@@ -60,7 +60,7 @@ public class CheckpointVersionToleranceTests
         Assert.False(store.MutationApplied);
 
         // Resume against the mutated store, which rewrites every Version=X.Y.Z.W in the persisted JSON.
-        Func<Task> resume = async () =>
+        async Task resumeAsync()
         {
             await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager)
                                                         .ResumeStreamingAsync(workflow, checkpoint!);
@@ -68,9 +68,9 @@ public class CheckpointVersionToleranceTests
             await foreach (WorkflowEvent _ in resumed.WatchStreamAsync(blockOnPendingRequest: false, cts.Token))
             {
             }
-        };
+        }
 
-        Assert.Null(await Record.ExceptionAsync(resume));
+        Assert.Null(await Record.ExceptionAsync(resumeAsync));
         Assert.True(store.MutationApplied);
     }
 

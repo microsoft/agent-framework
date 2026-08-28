@@ -18,7 +18,7 @@ public class OutputTagTests
     public void Test_OutputTag_EqualityIsOrdinalOnValue()
     {
         Assert.Equal(OutputTag.Intermediate, OutputTag.Intermediate);
-        Assert.True((OutputTag.Intermediate == OutputTag.Intermediate));
+        Assert.True(OutputTag.Intermediate == OutputTag.Intermediate);
 
         // Same Value via independent construction (via JSON round-trip below) is equal.
         OutputTag rebuilt = JsonSerializer.Deserialize<OutputTag>("\"intermediate\"", WorkflowsJsonUtilities.DefaultOptions);

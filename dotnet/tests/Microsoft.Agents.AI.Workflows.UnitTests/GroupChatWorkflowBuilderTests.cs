@@ -177,7 +177,7 @@ public class GroupChatWorkflowBuilderTests
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
         Assert.Single(designations, kvp => kvp.Value.Count == 0);
-        Assert.Equal(3, (designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate)))?.Count());
+        Assert.Equal(3, designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))?.Count());
     }
 
     [Fact]
@@ -212,8 +212,8 @@ public class GroupChatWorkflowBuilderTests
             .AddParticipants(participant)
             .WithOutputFrom(stranger);
 
-        Action build = () => builder.Build();
-        Assert.Contains("stranger", (Assert.Throws<InvalidOperationException>(build)).Message);
+        void build() => builder.Build();
+        Assert.Contains("stranger", Assert.Throws<InvalidOperationException>(build).Message);
     }
 
     private sealed class RecordingAgent(string name) : AIAgent

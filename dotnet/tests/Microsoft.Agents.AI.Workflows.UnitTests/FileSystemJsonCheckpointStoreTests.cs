@@ -102,7 +102,7 @@ public sealed class FileSystemJsonCheckpointStoreTests
         long fileSizeBeforeDispose = indexFile.Length;
 
         // Data should already be on disk (file size > 0) before we dispose
-        Assert.True((fileSizeBeforeDispose) > (0));
+        Assert.True(fileSizeBeforeDispose > 0);
 
         // Dispose to release file lock before final verification
         store.Dispose();
@@ -225,8 +225,8 @@ public sealed class FileSystemJsonCheckpointStoreTests
 
         string runId = $"prefix_{invalidChars}_suffix";
 
-        Func<Task> createCheckpointAction = async () => await store.CreateCheckpointAsync(runId, TestData);
-        Assert.Null(await Record.ExceptionAsync(createCheckpointAction));
+        async Task createCheckpointActionAsync() => await store.CreateCheckpointAsync(runId, TestData);
+        Assert.Null(await Record.ExceptionAsync(createCheckpointActionAsync));
     }
 
     [Fact]

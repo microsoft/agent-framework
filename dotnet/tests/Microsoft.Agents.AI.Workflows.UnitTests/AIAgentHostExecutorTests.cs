@@ -179,18 +179,18 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         // Act
         await executor.Router.RouteMessageAsync(messages, testContext.BindWorkflowContext(executor.Id));
 
-        Func<Task> act = async () => await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+        async Task actAsync() => await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
 
         // Assert
         bool shouldThrow = includeOtherMessages && !executorSetting;
 
         if (shouldThrow)
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(act);
+            await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
         }
         else
         {
-            Assert.Null(await Record.ExceptionAsync(act));
+            Assert.Null(await Record.ExceptionAsync(actAsync));
         }
     }
 

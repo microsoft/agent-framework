@@ -89,7 +89,7 @@ public class CheckpointParentTests
         }
 
         // Assert: We should have at least 3 checkpoints
-        Assert.True(checkpoints.Count >= (3));
+        Assert.True(checkpoints.Count >= 3);
 
         // Verify the parent chain
         Checkpoint stored0 = await ((ICheckpointManager)checkpointManager)
@@ -141,7 +141,7 @@ public class CheckpointParentTests
             }
         }
 
-        Assert.True(firstRunCheckpoints.Count >= (2));
+        Assert.True(firstRunCheckpoints.Count >= 2);
         CheckpointInfo resumePoint = firstRunCheckpoints[0];
 
         // Dispose the first run to release workflow ownership before resuming.

@@ -66,7 +66,7 @@ public class RepresentationTests
         int expectedTests = workflowAssembly.GetTypes()
                                             .Count(type => type != bindingBaseType
                                                         && bindingBaseType.IsAssignableFrom(type));
-        Assert.True((expectedTests) > 0);
+        Assert.True(expectedTests > 0);
 
         if (expectedTests > testsRun + 1)
         {

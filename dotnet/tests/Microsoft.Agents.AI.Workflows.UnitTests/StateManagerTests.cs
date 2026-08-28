@@ -359,15 +359,15 @@ public class StateManagerTests
         await manager.WriteStateAsync(scopeSelfView, Key1, Value1);
         await manager.WriteStateAsync(scopeOtherView, Key1, Value2);
 
-        Func<Task> act = async () => await manager.PublishUpdatesAsync(tracer: null);
+        async Task actAsync() => await manager.PublishUpdatesAsync(tracer: null);
 
         if (isSharedScope)
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(act);
+            await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
         }
         else
         {
-            Assert.Null(await Record.ExceptionAsync(act));
+            Assert.Null(await Record.ExceptionAsync(actAsync));
         }
     }
 
@@ -391,15 +391,15 @@ public class StateManagerTests
         // Act: Update the key from one executor and delete it from another
         await manager.WriteStateAsync(scopeSelfView, Key1, "newValue");
         await manager.ClearStateAsync(scopeOtherView, Key1);
-        Func<Task> act = async () => await manager.PublishUpdatesAsync(tracer: null);
+        async Task actAsync() => await manager.PublishUpdatesAsync(tracer: null);
 
         if (isSharedScope)
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(act);
+            await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
         }
         else
         {
-            Assert.Null(await Record.ExceptionAsync(act));
+            Assert.Null(await Record.ExceptionAsync(actAsync));
         }
     }
 
@@ -423,16 +423,16 @@ public class StateManagerTests
         // Act: Update the key from one, and clear the entire scope from another
         await manager.WriteStateAsync(scopeSelfView, Key1, "newValue");
         await manager.ClearStateAsync(scopeOtherView);
-        Func<Task> act = async () => await manager.PublishUpdatesAsync(tracer: null);
+        async Task actAsync() => await manager.PublishUpdatesAsync(tracer: null);
 
         // Assert
         if (isSharedScope)
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(act);
+            await Assert.ThrowsAsync<InvalidOperationException>(actAsync);
         }
         else
         {
-            Assert.Null(await Record.ExceptionAsync(act));
+            Assert.Null(await Record.ExceptionAsync(actAsync));
         }
     }
 

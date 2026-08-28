@@ -29,7 +29,7 @@ public class HandoffWorkflowBuilderTests
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
         Assert.Single(designations, kvp => kvp.Value.Count == 0);
-        Assert.Equal(2, (designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate)))?.Count());
+        Assert.Equal(2, designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))?.Count());
     }
 
     [Fact]
@@ -64,8 +64,8 @@ public class HandoffWorkflowBuilderTests
             .WithHandoff(coordinator, specialist)
             .WithIntermediateOutputFrom([stranger]);
 
-        Action build = () => builder.Build();
-        Assert.Contains("stranger", (Assert.Throws<InvalidOperationException>(build)).Message);
+        void build() => builder.Build();
+        Assert.Contains("stranger", Assert.Throws<InvalidOperationException>(build).Message);
     }
 }
 #pragma warning restore MAAIW001

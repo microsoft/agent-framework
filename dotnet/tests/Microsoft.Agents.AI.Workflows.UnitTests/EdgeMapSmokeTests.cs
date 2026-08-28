@@ -82,8 +82,8 @@ public class EdgeMapSmokeTests
 
             ExternalResponse responseMessage = new(fakePort.ToPortInfo(), $"RequestFor[{portId}]", new(10));
 
-            Func<Task<DeliveryMapping?>> mappingTask = async () => await edgeMap.PrepareDeliveryForResponseAsync(responseMessage);
-            await Assert.ThrowsAsync<InvalidOperationException>(mappingTask);
+            async Task<DeliveryMapping?> mappingTaskAsync() => await edgeMap.PrepareDeliveryForResponseAsync(responseMessage);
+            await Assert.ThrowsAsync<InvalidOperationException>((Func<Task<DeliveryMapping?>>)mappingTaskAsync);
         }
     }
 

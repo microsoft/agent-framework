@@ -70,7 +70,7 @@ public class MagenticProgressLedgerTests
 """);
 
         // Act
-        Action action = () => _ = message.ExtractJson();
+        void action() => _ = message.ExtractJson();
 
         // Assert
         Assert.ThrowsAny<Exception>(action);
@@ -86,7 +86,7 @@ public class MagenticProgressLedgerTests
 """);
 
         // Act
-        Action action = () => _ = message.ExtractJson();
+        void action() => _ = message.ExtractJson();
 
         // Assert
         Assert.ThrowsAny<Exception>(action);

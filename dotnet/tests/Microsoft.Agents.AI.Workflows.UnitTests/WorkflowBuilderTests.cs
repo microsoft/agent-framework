@@ -27,27 +27,27 @@ public partial class WorkflowBuilderTests
     [Fact]
     public void Test_Validation_FailsWhenUnboundExecutors()
     {
-        Func<Workflow> act = () =>
+        static Workflow act()
         {
             return new WorkflowBuilder("start")
                        .AddEdge(new NoOpExecutor("start"), "unbound")
                        .Build();
-        };
+        }
 
-        Assert.Throws<InvalidOperationException>(act);
+        Assert.Throws<InvalidOperationException>((Func<Workflow>)act);
     }
 
     [Fact]
     public void Test_Validation_FailsWhenUnreachableExecutors()
     {
-        Func<Workflow> act = () =>
+        static Workflow act()
         {
             return new WorkflowBuilder("start")
                        .BindExecutor(new NoOpExecutor("start"))
                        .AddEdge(new NoOpExecutor("unreachable"), new NoOpExecutor("also-unreachable"))
                        .Build();
-        };
-        Assert.Throws<InvalidOperationException>(act);
+        }
+        Assert.Throws<InvalidOperationException>((Func<Workflow>)act);
     }
 
     [Fact]
@@ -104,14 +104,14 @@ public partial class WorkflowBuilderTests
         NoOpExecutor executor1 = new("start");
         SomeOtherNoOpExecutor executor2 = new("start");
 
-        Func<Workflow> act = () =>
+        Workflow act()
         {
             return new WorkflowBuilder("start")
                        .AddEdge(executor1, executor2)
                        .Build();
-        };
+        }
 
-        Assert.Throws<InvalidOperationException>(act);
+        Assert.Throws<InvalidOperationException>((Func<Workflow>)act);
     }
 
     [Fact]
@@ -291,11 +291,11 @@ public partial class WorkflowBuilderTests
         NoOpExecutor middle = new("middle");
 
         // Act
-        Action act = () => new WorkflowBuilder(source.Id)
+        void act() => new WorkflowBuilder(source.Id)
             .AddChain(source, [middle, source]);
 
         // Assert
-        Assert.Equal("executors", (Assert.Throws<ArgumentException>(act)).ParamName);
+        Assert.Equal("executors", Assert.Throws<ArgumentException>(act).ParamName);
     }
 
     [Fact]
@@ -636,7 +636,7 @@ public sealed class WorkflowFeatureUsageTests
         WorkflowBuilder builder = new("unbound");
 
         // Act
-        Action build = () => builder.Build();
+        void build() => builder.Build();
 
         // Assert
         Assert.Throws<InvalidOperationException>(build);

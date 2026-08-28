@@ -30,7 +30,7 @@ public class MagenticWorkflowBuilderTests
         Dictionary<string, HashSet<OutputTag>> designations = workflow.OutputExecutors;
 
         Assert.Single(designations, kvp => kvp.Value.Count == 0);
-        Assert.Equal(2, (designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate)))?.Count());
+        Assert.Equal(2, designations.Where(kvp => kvp.Value.Contains(OutputTag.Intermediate))?.Count());
     }
 
     [Fact]
@@ -66,8 +66,8 @@ public class MagenticWorkflowBuilderTests
             .RequirePlanSignoff(false)
             .WithIntermediateOutputFrom([stranger]);
 
-        Action build = () => builder.Build();
-        Assert.Contains("Stranger", (Assert.Throws<InvalidOperationException>(build)).Message);
+        void build() => builder.Build();
+        Assert.Contains("Stranger", Assert.Throws<InvalidOperationException>(build).Message);
     }
 
     [Fact]
@@ -111,10 +111,10 @@ public class MagenticWorkflowBuilderTests
             .WithPromptOverrides(new MagenticPromptOverrides { ProgressLedgerPrompt = "Answer for {task} with no schema placeholder" });
 
         // Act
-        Action build = () => builder.Build();
+        void build() => builder.Build();
 
         // Assert
-        Assert.Contains("{schema}", (Assert.Throws<InvalidOperationException>(build)).Message);
+        Assert.Contains("{schema}", Assert.Throws<InvalidOperationException>(build).Message);
     }
 
     [Fact]
@@ -130,7 +130,7 @@ public class MagenticWorkflowBuilderTests
             .WithPromptOverrides(new MagenticPromptOverrides { ProgressLedgerPrompt = "Answer for {task}\n{schema}" });
 
         // Act
-        Action build = () => builder.Build();
+        void build() => builder.Build();
 
         // Assert
         Assert.Null(Record.Exception(build));

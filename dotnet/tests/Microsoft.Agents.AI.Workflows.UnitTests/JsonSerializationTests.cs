@@ -851,7 +851,7 @@ public class JsonSerializationTests
 
         // Act & Assert - Without the option, deserialization should fail
         JsonElement reorderedElement = JsonDocument.Parse(reorderedJson).RootElement;
-        Action act = () => marshaller.Marshal<EdgeInfo>(reorderedElement);
+        void act() => marshaller.Marshal<EdgeInfo>(reorderedElement);
 
         Assert.Throws<JsonException>(act);
     }

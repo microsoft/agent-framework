@@ -107,18 +107,18 @@ public class MagenticManagerTests
         // Precondition check: ProgressLedger should be not "started"
         Assert.False(taskContext.ProgressLedger.IsStarted);
 
-        Func<Task> action = () => manager.UpdateProgressLedgerAsync(taskContext, workflowContext, CancellationToken.None).AsTask();
+        Task actionAsync() => manager.UpdateProgressLedgerAsync(taskContext, workflowContext, CancellationToken.None).AsTask();
 
         if (failures >= taskContext.TaskLimits.MaxProgressLedgerRetryCount)
         {
             // We expect to see an exception if the number of failures exceeds the maximum retry count
-            Exception? exception = await Record.ExceptionAsync(action);
+            Exception? exception = await Record.ExceptionAsync(actionAsync);
             Assert.NotNull(exception);
             Assert.False(taskContext.ProgressLedger.IsStarted);
         }
         else
         {
-            Assert.Null(await Record.ExceptionAsync(action));
+            Assert.Null(await Record.ExceptionAsync(actionAsync));
             Assert.True(taskContext.ProgressLedger.IsStarted);
             TestProgressLedgerState.Default.Validate(taskContext.ProgressLedger);
         }

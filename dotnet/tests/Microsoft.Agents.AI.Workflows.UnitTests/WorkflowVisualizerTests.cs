@@ -128,8 +128,8 @@ public class WorkflowVisualizerTests
         var fanInLine = fanInLines[0];
         var firstQuote = fanInLine.IndexOf('"');
         var secondQuote = fanInLine.IndexOf('"', firstQuote + 1);
-        Assert.True((firstQuote) > (-1));
-        Assert.True((secondQuote) > (-1));
+        Assert.True(firstQuote > (-1));
+        Assert.True(secondQuote > (-1));
         var fanInNodeId = fanInLine.Substring(firstQuote + 1, secondQuote - firstQuote - 1);
         Assert.False(string.IsNullOrEmpty(fanInNodeId));
 

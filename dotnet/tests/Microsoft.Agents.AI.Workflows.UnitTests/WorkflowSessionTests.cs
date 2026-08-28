@@ -93,7 +93,7 @@ public class WorkflowSessionTests
         ExternalRequest request = ExternalRequest.Create(port, new TestEnvelope());
 
         Assert.True(WorkflowSession.TryGetRequestEnvelope(request, ports, out IExternalRequestEnvelope? envelope));
-        Assert.True((envelope) is TestEnvelope);
+        Assert.True(envelope is TestEnvelope);
     }
 
     [Fact]

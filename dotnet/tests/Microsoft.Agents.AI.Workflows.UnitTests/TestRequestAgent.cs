@@ -200,7 +200,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             if (session.UnservicedRequests.TryGetValue(response.RequestId, out ToolApprovalRequestContent? request))
             {
                 Assert.True(response.Approved);
-                Assert.Equal((FunctionCallContent)request.ToolCall, ((FunctionCallContent)response.ToolCall));
+                Assert.Equal((FunctionCallContent)request.ToolCall, (FunctionCallContent)response.ToolCall);
                 session.ServicedRequests.Add(response.RequestId);
                 session.UnservicedRequests.Remove(response.RequestId);
             }

@@ -74,10 +74,10 @@ public class WorkflowAgentCheckpointIdentityTests
         // checkpoint against the reconstructed workflow.
         AgentSession resumedSession = await secondGeneration.DeserializeSessionAsync(serialized);
 
-        Func<Task> resumeAndRun = () => secondGeneration.RunAsync("Anything else?", resumedSession);
+        Task resumeAndRunAsync() => secondGeneration.RunAsync("Anything else?", resumedSession);
 
         // Assert: the second run throws because the reconstructed executor ids no longer match the checkpoint.
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(resumeAndRun);
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(resumeAndRunAsync);
         Assert.Equal("The specified checkpoint is not compatible with the workflow associated with this runner.", exception.Message);
     }
 
@@ -100,10 +100,10 @@ public class WorkflowAgentCheckpointIdentityTests
         // Act: deserialization succeeds; the incompatibility surfaces on the resuming run.
         AgentSession resumedSession = await secondGeneration.DeserializeSessionAsync(serialized);
 
-        Func<Task> resumeAndRun = () => secondGeneration.RunAsync("Anything else?", resumedSession);
+        Task resumeAndRunAsync() => secondGeneration.RunAsync("Anything else?", resumedSession);
 
         // Assert: changing a set name invalidates the executor identity even though the id is stable.
-        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(resumeAndRun);
+        InvalidDataException exception = await Assert.ThrowsAsync<InvalidDataException>(resumeAndRunAsync);
         Assert.Equal("The specified checkpoint is not compatible with the workflow associated with this runner.", exception.Message);
     }
 

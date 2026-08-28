@@ -77,8 +77,8 @@ public sealed class InputWaiterTests : IDisposable
 
         cts.Cancel();
 
-        Func<Task> act = () => waitTask;
-        await Assert.ThrowsAsync<OperationCanceledException>(act);
+        Task actAsync() => waitTask;
+        await Assert.ThrowsAsync<OperationCanceledException>(actAsync);
     }
 
     [Fact]

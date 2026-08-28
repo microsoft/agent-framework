@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Linq;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
@@ -35,8 +34,8 @@ public class MessageMergerTests
         Assert.Equal(TestAuthorName1, message.AuthorName);
         Assert.Equal(TestAgentId1, response.AgentId);
         Assert.NotNull(response.CreatedAt);
-        Assert.True((response.CreatedAt.Value) >= (creationTime));
-        Assert.True((response.CreatedAt.Value) >= ((creationTime) - (TimeSpan.FromSeconds(5))) && (response.CreatedAt.Value) <= ((creationTime) + (TimeSpan.FromSeconds(5))));
+        Assert.True(response.CreatedAt.Value >= creationTime);
+        Assert.True(response.CreatedAt.Value >= (creationTime - TimeSpan.FromSeconds(5)) && response.CreatedAt.Value <= (creationTime + TimeSpan.FromSeconds(5)));
         Assert.Equal(creationTime, message.CreatedAt);
         Assert.Single(message.Contents);
         Assert.Null(response.FinishReason);
