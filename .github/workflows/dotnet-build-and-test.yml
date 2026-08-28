@@ -397,6 +397,8 @@ jobs:
           language: CSharp
           label: code-coverage/dotnet
           fail-on-error: false
+      - name: Summarize GitHub coverage report
+        run: echo ".NET coverage is uploaded to GitHub's integrated coverage report with label \`code-coverage/dotnet\`." >> "$GITHUB_STEP_SUMMARY"
 
   # The Foundry hosted-agent IT is costly (it builds a container, pushes to ACR, and provisions
   # live agents on a separate Foundry project). Running it in its own job keeps the overall
