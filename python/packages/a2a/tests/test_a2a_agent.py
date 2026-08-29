@@ -465,6 +465,16 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
         pass
 
 
+async def test_context_manager_does_not_close_caller_supplied_http_client() -> None:
+    """A caller-supplied http_client (without client=) must survive __aexit__. See issue #7950."""
+    mock_http_client = AsyncMock()
+
+    async with A2AAgent(url="http://localhost:9999/", http_client=cast(Any, mock_http_client)):
+        pass
+
+    mock_http_client.aclose.assert_not_called()
+
+
 def test_prepare_message_for_a2a_with_multiple_contents() -> None:
     """Test conversion of Message with multiple contents."""
 
