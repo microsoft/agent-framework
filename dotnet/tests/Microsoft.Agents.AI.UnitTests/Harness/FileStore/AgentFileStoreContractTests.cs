@@ -185,7 +185,7 @@ public class AgentFileStoreContractTests
                 "one\ntwo\nthree\n",
                 [new FileLineEdit { LineNumber = 3, NewLine = "X\n", ExpectedLine = "two" }]));
 
-        Assert.Contains("does not contain the expected text", error.Message, StringComparison.Ordinal);
+        Assert.Contains("does not match the expected text", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

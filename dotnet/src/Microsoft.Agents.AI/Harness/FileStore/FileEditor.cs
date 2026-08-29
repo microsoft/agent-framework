@@ -91,7 +91,7 @@ internal static class FileEditor
                 if (!string.Equals(actual, TrimLineTerminator(edit.ExpectedLine), StringComparison.Ordinal))
                 {
                     throw new ArgumentException(
-                        $"line_number {edit.LineNumber} does not contain the expected text. " +
+                        $"line_number {edit.LineNumber} does not match the expected text. " +
                         "Re-read the file to get current line numbers.");
                 }
             }

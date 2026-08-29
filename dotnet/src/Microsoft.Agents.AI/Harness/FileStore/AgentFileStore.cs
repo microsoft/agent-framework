@@ -166,8 +166,15 @@ public abstract class AgentFileStore
     /// </para>
     /// </remarks>
     /// <param name="directory">The relative directory being searched. Use an empty string for the root.</param>
-    /// <param name="regexPattern">The pattern <see cref="SearchAsync"/> was called with, as a hint.</param>
-    /// <param name="globPattern">The optional glob, matched against each file's path relative to <paramref name="directory"/>.</param>
+    /// <param name="regexPattern">
+    /// The pattern <see cref="SearchAsync"/> was called with, as a hint. It is matched
+    /// case-insensitively, so an index that cannot search that way must widen rather than narrow:
+    /// returning only case-exact candidates drops matches the caller would have got.
+    /// </param>
+    /// <param name="globPattern">
+    /// The optional glob, matched against each file's path relative to <paramref name="directory"/>,
+    /// also case-insensitively. The same rule applies — widen when the backend cannot reproduce it.
+    /// </param>
     /// <param name="recursive">When <see langword="false"/> only direct children are in scope.</param>
     /// <param name="cancellationToken">A token to cancel the operation.</param>
     /// <returns>File paths relative to <paramref name="directory"/>, using forward slashes.</returns>
