@@ -20,8 +20,8 @@ from agent_framework import (
     WorkflowRunState,
     handler,
 )
-from agent_framework._workflows._const import EXECUTOR_STATE_KEY
-from agent_framework._workflows._edge import FanOutEdgeGroup, SingleEdgeGroup
+from agent_framework._workflows._const import EDGE_STATE_KEY, EXECUTOR_STATE_KEY
+from agent_framework._workflows._edge import FanInEdgeGroup, FanOutEdgeGroup, SingleEdgeGroup
 from agent_framework._workflows._runner import Runner
 from agent_framework._workflows._runner_context import (
     InProcRunnerContext,
@@ -564,6 +564,89 @@ async def test_runner_capture_and_restore_checkpoint_object_roundtrip():
     state.set("shared_key", restored_state)
     assert checkpoint.state["shared_key"] == {"history": ["shared_value"]}
     assert runner._previous_checkpoint_id == checkpoint.checkpoint_id  # pyright: ignore[reportPrivateUsage]
+
+
+class CollectingExecutor(Executor):
+    """A fan-in target that records every aggregated batch it receives."""
+
+    def __init__(self, id: str) -> None:
+        super().__init__(id=id)
+        self.batches: list[list[int]] = []
+
+    @handler
+    async def collect(self, messages: list[MockMessage], ctx: WorkflowContext[Any, int]) -> None:
+        self.batches.append([message.data for message in messages])
+
+
+def _fan_in_runner(target: CollectingExecutor) -> tuple[Runner, InProcRunnerContext]:
+    """Build a runner for a two-source fan-in into ``target``."""
+    source_a = MockExecutor(id="source_a")
+    source_b = MockExecutor(id="source_b")
+    edge_group = FanInEdgeGroup([source_a.id, source_b.id], target.id)
+    executors: dict[str, Executor] = {source_a.id: source_a, source_b.id: source_b, target.id: target}
+    ctx = InProcRunnerContext()
+
+    return Runner([edge_group], executors, State(), ctx, "test_name", graph_signature_hash="test_hash"), ctx
+
+
+async def test_runner_checkpoint_roundtrips_partially_filled_fan_in_buffer():
+    """A fan-in holding messages from a subset of its sources must checkpoint and restore them.
+
+    The runner context has already drained those messages, so the checkpoint is the only
+    place they still exist. A rebuilt workflow gets fresh ``EdgeGroup`` ids, so the restore
+    also has to find the buffer without relying on them.
+    """
+    target = CollectingExecutor(id="target")
+    runner, ctx = _fan_in_runner(target)
+
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source_a"))
+    await runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
+
+    # The fan-in is still waiting on source_b, so nothing has reached the target yet.
+    assert target.batches == []
+
+    checkpoint = await runner.build_checkpoint()
+    assert EDGE_STATE_KEY in checkpoint.state
+
+    # Resume on a fresh instance of the same workflow definition.
+    restored_target = CollectingExecutor(id="target")
+    restored_runner, restored_ctx = _fan_in_runner(restored_target)
+    await restored_runner.restore_checkpoint(checkpoint)
+
+    await restored_ctx.send_message(WorkflowMessage(data=MockMessage(data=2), source_id="source_b"))
+    await restored_runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
+
+    assert restored_target.batches == [[1, 2]]
+
+
+async def test_runner_restore_clears_fan_in_buffer_left_by_an_interrupted_run():
+    """Messages buffered after the restored checkpoint must not survive the restore.
+
+    Their sources are re-executed once the run resumes, so keeping them would deliver the
+    same message twice and could fire the fan-in before the resumed superstep produced all
+    of its messages.
+    """
+    target = CollectingExecutor(id="target")
+    runner, ctx = _fan_in_runner(target)
+
+    # Captured while the fan-in buffer is empty, so the checkpoint carries no edge state at all -
+    # the same shape as a checkpoint written before edge state was captured.
+    checkpoint = await runner.build_checkpoint()
+    assert EDGE_STATE_KEY not in checkpoint.state
+
+    # A superstep that fails after the fan-in buffered source_a leaves that message behind.
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source_a"))
+    await runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
+    assert target.batches == []
+
+    await runner.restore_checkpoint(checkpoint)
+
+    # Both sources are re-executed after the resume; the target must see each message once.
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=1), source_id="source_a"))
+    await ctx.send_message(WorkflowMessage(data=MockMessage(data=2), source_id="source_b"))
+    await runner._run_iteration()  # pyright: ignore[reportPrivateUsage]
+
+    assert target.batches == [[1, 2]]
 
 
 async def test_runner_build_checkpoint_includes_in_flight_messages():

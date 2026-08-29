@@ -731,6 +731,148 @@ async def test_sub_workflow_checkpoint_restore_preserves_sub_workflow_state() ->
     assert result.get_final_state() == WorkflowRunState.IDLE
 
 
+@dataclass
+class FanInResult:
+    """Result yielded by the fan-in sub-workflow."""
+
+    value: str
+
+
+class FanInSubWorkflowFast(Executor):
+    """Sub-workflow branch that reaches the fan-in immediately."""
+
+    def __init__(self) -> None:
+        super().__init__(id="fan_in_fast")
+
+    @handler
+    async def run(self, message: str, ctx: WorkflowContext[str]) -> None:
+        await ctx.send_message(f"{message}-fast")
+
+
+class FanInSubWorkflowAsk(Executor):
+    """Sub-workflow branch that pauses on a request before reaching the fan-in."""
+
+    def __init__(self) -> None:
+        super().__init__(id="fan_in_ask")
+
+    @handler
+    async def run(self, message: str, ctx: WorkflowContext) -> None:
+        await ctx.request_info(request_data=CheckpointRequest(prompt=message), response_type=str)
+
+    @response_handler
+    async def handle_response(
+        self,
+        original_request: CheckpointRequest,
+        response: str,
+        ctx: WorkflowContext[str],
+    ) -> None:
+        await ctx.send_message(response)
+
+
+class FanInSubWorkflowJoiner(Executor):
+    """Sub-workflow fan-in target."""
+
+    def __init__(self) -> None:
+        super().__init__(id="fan_in_joiner")
+
+    @handler
+    async def join(self, messages: list[str], ctx: WorkflowContext[Never, FanInResult]) -> None:  # type: ignore[valid-type]
+        await ctx.yield_output(FanInResult(value=", ".join(sorted(messages))))
+
+
+class FanInCheckpointCoordinator(Executor):
+    """Parent coordinator that forwards the sub-workflow's request and yields its result."""
+
+    def __init__(self) -> None:
+        super().__init__(id="fan_in_coordinator")
+        self._pending_requests: dict[str, SubWorkflowRequestMessage] = {}
+
+    @handler
+    async def start(self, value: str, ctx: WorkflowContext[str]) -> None:
+        await ctx.send_message(value)
+
+    @handler
+    async def handle_sub_workflow_request(self, request: SubWorkflowRequestMessage, ctx: WorkflowContext) -> None:
+        data = request.source_event.data
+        if isinstance(data, CheckpointRequest):
+            self._pending_requests[data.id] = request
+            await ctx.request_info(data, str)
+
+    @handler
+    async def handle_sub_workflow_result(self, result: FanInResult, ctx: WorkflowContext[Never, str]) -> None:  # type: ignore[valid-type]
+        await ctx.yield_output(result.value)
+
+    @response_handler
+    async def handle_response(
+        self,
+        original_request: CheckpointRequest,
+        response: str,
+        ctx: WorkflowContext[SubWorkflowResponseMessage],
+    ) -> None:
+        sub_request = self._pending_requests.pop(original_request.id, None)
+        if sub_request is None:
+            raise ValueError(f"No pending request for ID: {original_request.id}")
+        await ctx.send_message(sub_request.create_response(response))
+
+    async def on_checkpoint_save(self) -> dict[str, Any]:
+        return {"pending_requests": self._pending_requests}
+
+    async def on_checkpoint_restore(self, state: dict[str, Any]) -> None:
+        self._pending_requests = state.get("pending_requests", {})
+
+
+def _build_fan_in_sub_workflow(storage: InMemoryCheckpointStorage) -> Workflow:
+    """Build a parent workflow whose sub-workflow pauses with a half-filled fan-in."""
+    start = FanInSubWorkflowFast()
+    ask = FanInSubWorkflowAsk()
+    joiner = FanInSubWorkflowJoiner()
+    sub_workflow = (
+        WorkflowBuilder(start_executor=start).add_edge(start, ask).add_fan_in_edges([start, ask], joiner).build()
+    )
+    sub_workflow_executor = WorkflowExecutor(sub_workflow, id="fan_in_sub_workflow_executor")
+
+    coordinator = FanInCheckpointCoordinator()
+    return (
+        WorkflowBuilder(start_executor=coordinator, checkpoint_storage=storage)
+        .add_edge(coordinator, sub_workflow_executor)
+        .add_edge(sub_workflow_executor, coordinator)
+        .build()
+    )
+
+
+async def test_sub_workflow_checkpoint_restore_preserves_partially_filled_fan_in() -> None:
+    """A sub-workflow that pauses with a half-filled fan-in must keep those messages on resume.
+
+    The sub-workflow's own checkpoint is embedded in the parent checkpoint, so the fast
+    branch's message - already drained out of the sub-workflow's runner context and into the
+    fan-in buffer - only survives if the buffer travels with that checkpoint.
+    """
+    storage = InMemoryCheckpointStorage()
+
+    workflow1 = _build_fan_in_sub_workflow(storage)
+    request_id: str | None = None
+    async for event in workflow1.run("seed", stream=True):
+        if event.type == "request_info":
+            request_id = event.request_id
+    assert request_id is not None
+
+    checkpoints = await storage.list_checkpoints(workflow_name=workflow1.name)
+    checkpoint_id = max(checkpoints, key=lambda cp: cp.iteration_count).checkpoint_id
+
+    # Resume on a fresh instance, whose sub-workflow has new edge group ids, then answer the
+    # request so the second branch finally reaches the fan-in.
+    workflow2 = _build_fan_in_sub_workflow(storage)
+    resumed_request_id: str | None = None
+    async for event in workflow2.run(checkpoint_id=checkpoint_id, stream=True):
+        if event.type == "request_info":
+            resumed_request_id = event.request_id
+    assert resumed_request_id is not None
+
+    result = await workflow2.run(responses={resumed_request_id: "answered"})
+
+    assert result.get_outputs() == ["answered, seed-fast"]
+
+
 async def test_sub_workflow_intermediate_outputs_propagate_to_parent() -> None:
     """A child workflow's intermediate emissions must bubble up through the parent.
 

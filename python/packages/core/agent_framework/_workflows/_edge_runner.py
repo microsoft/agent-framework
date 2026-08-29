@@ -7,6 +7,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import Any, cast
 
+from ..exceptions import WorkflowCheckpointException
 from ..observability import EdgeGroupDeliveryStatus, OtelAttr, create_edge_group_processing_span
 from ._edge import (
     Edge,
@@ -56,6 +57,38 @@ class EdgeRunner(ABC):
                 False if the target executor cannot handle the message.
         """
         raise NotImplementedError
+
+    @property
+    def state_key(self) -> str:
+        """Return a topology-derived key identifying this runner across workflow instances.
+
+        ``EdgeGroup.id`` defaults to a random UUID, so it differs between two instances of the
+        same workflow definition and cannot key state that has to survive a rebuild. Checkpoint
+        compatibility is decided by graph topology, so the key is derived from topology too.
+        Builder validation rejects two edges that share a ``source -> target`` pair anywhere in
+        the workflow, so no two edge groups can produce the same key.
+        """
+        edges = sorted(f"{edge.source_id}->{edge.target_id}" for edge in self._edge_group.edges)
+        return f"{self._edge_group.__class__.__name__}:{','.join(edges)}"
+
+    def snapshot_state(self) -> dict[str, Any] | None:
+        """Capture in-flight delivery state so a checkpoint can restore it.
+
+        Returns:
+            A serializable snapshot, or None when the runner holds no state to checkpoint.
+        """
+        return None
+
+    def restore_state(self, state: dict[str, Any] | None) -> None:
+        """Reset in-flight delivery state, then apply ``state`` when one was checkpointed.
+
+        Called on every runner during checkpoint restoration, including with ``None``, so that
+        state left over from an interrupted run does not survive into the restored run.
+
+        Args:
+            state: A snapshot previously produced by :meth:`snapshot_state`, or None to only reset.
+        """
+        return
 
     def _can_handle(self, executor_id: str, message: WorkflowMessage) -> bool:
         """Check if an executor can handle the given message data."""
@@ -297,12 +330,55 @@ class FanOutEdgeRunner(EdgeRunner):
 class FanInEdgeRunner(EdgeRunner):
     """Runner for fan-in edge groups."""
 
+    _BUFFER_KEY = "buffer"
+
     def __init__(self, edge_group: FanInEdgeGroup, executors: dict[str, Executor]) -> None:
         super().__init__(edge_group, executors)
         self._edges = edge_group.edges
         # Buffer to hold messages before sending them to the target executor
         # Key is the source executor ID, value is a list of messages
         self._buffer: dict[str, list[WorkflowMessage]] = defaultdict(list)
+
+    def snapshot_state(self) -> dict[str, Any] | None:
+        """Capture the buffered messages that are still waiting for the remaining sources.
+
+        A fan-in only delivers once every source has produced a message, so a superstep
+        boundary can fall while the buffer holds a subset of them. Those messages have
+        already been drained from the runner context, so the checkpoint has to carry them.
+        """
+        buffered = {source_id: list(messages) for source_id, messages in self._buffer.items() if messages}
+        if not buffered:
+            return None
+        return {self._BUFFER_KEY: buffered}
+
+    def restore_state(self, state: dict[str, Any] | None) -> None:
+        """Reset the buffer, then refill it from the checkpointed snapshot when there is one.
+
+        The reset matters on its own: a run that failed mid-superstep can leave messages from
+        a subset of sources in the buffer, and the sources are re-executed after the restore.
+        Without the reset those messages would be delivered twice, and the second delivery
+        could fire the fan-in before the restored superstep produced all of its messages.
+        """
+        self._buffer.clear()
+        if state is None:
+            return
+
+        buffered: Any = state.get(self._BUFFER_KEY, {})
+        if not isinstance(buffered, dict):
+            raise WorkflowCheckpointException(
+                f"Fan-in buffer for edge group {self._edge_group.id} is not a dictionary. Unable to restore."
+            )
+
+        for source_id, messages in cast(dict[Any, Any], buffered).items():
+            if (
+                not isinstance(source_id, str)
+                or not isinstance(messages, list)
+                or not all(isinstance(message, WorkflowMessage) for message in cast(list[Any], messages))
+            ):
+                raise WorkflowCheckpointException(
+                    f"Fan-in buffer for edge group {self._edge_group.id} is malformed. Unable to restore."
+                )
+            self._buffer[source_id] = list(cast(list[WorkflowMessage], messages))
 
     async def send_message(
         self,
