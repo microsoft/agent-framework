@@ -27,7 +27,7 @@ Public modules must include a module-level docstring, including `__init__.py` fi
 
 ## Type Annotations
 
-We use typing as a helper, it is not a goal in and of itself, so be pragmatic about where and when to strictly type, versus when to use a targetted cast or ignore.
+We use typing as a helper, it is not a goal in and of itself, so be pragmatic about where and when to strictly type, versus when to use a targeted cast or ignore.
 In general, the public interfaces of our classes, are important to get right, internally it is okay to have loosely typed code, as long as tests cover the code itself.
 This includes making a conscious choice when to program defensively, you can always do `getattr(item, 'attribute')` but that might end up causing you issues down the road
 because the type of `item` in this case, should have that attribute and if it doesn't it points to a larger issue, so if the type is expected to have that attribute, you should
