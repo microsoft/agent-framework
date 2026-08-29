@@ -492,20 +492,27 @@ internal sealed class HandoffAgentExecutor :
 
         return new(response, LookupHandoffTarget(requestedHandoff));
 
-        ValueTask AddUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
+        async ValueTask AddUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
         {
             updates.Add(update);
 
             if (!emitUpdateEvents)
             {
-                return default;
+                return;
             }
 
             // Approval requests this executor raises through its request port are surfaced to the caller
             // with the workflow-facing request ID, so the agent-local copy is not emitted as output too.
-            return collector.FilterExternallyRaisedApprovals(update) is AgentResponseUpdate emittedUpdate
-                 ? context.YieldOutputAsync(emittedUpdate, cancellationToken)
-                 : default;
+            // An approval the agent answers itself is never raised, so it goes out ahead of its answer.
+            foreach (AgentResponseUpdate answered in collector.TakeApprovalsAnsweredBy(update))
+            {
+                await context.YieldOutputAsync(answered, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (collector.FilterExternallyRaisedApprovals(update) is AgentResponseUpdate emittedUpdate)
+            {
+                await context.YieldOutputAsync(emittedUpdate, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         string? LookupHandoffTarget(string? requestedHandoff)

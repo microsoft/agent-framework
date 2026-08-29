@@ -579,6 +579,15 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         updates.SelectMany(update => update.Contents.OfType<ToolApprovalRequestContent>())
                .Should().ContainSingle()
                .Which.RequestId.Should().Be(RequestId);
+
+        // The approval has to keep its place ahead of the answer to it.
+        List<AIContent> approvalContents =
+            [.. updates.SelectMany(update => update.Contents)
+                       .Where(content => content is ToolApprovalRequestContent or ToolApprovalResponseContent)];
+
+        approvalContents.Should().HaveCount(2);
+        approvalContents[0].Should().BeOfType<ToolApprovalRequestContent>();
+        approvalContents[1].Should().BeOfType<ToolApprovalResponseContent>();
     }
 
     /// <summary>

@@ -14,7 +14,8 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
 {
     private readonly Dictionary<string, ToolApprovalRequestContent> _userInputRequests = [];
     private readonly Dictionary<string, FunctionCallContent> _functionCalls = [];
-    private readonly Dictionary<string, AgentResponseUpdate> _withheldApprovalUpdates = [];
+    private readonly Dictionary<string, AgentResponseUpdate> _withheldApprovals = [];
+    private readonly HashSet<string> _emittedWithheldApprovals = new(StringComparer.Ordinal);
 
     public async Task SubmitAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {
@@ -28,11 +29,12 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
 
         await Task.WhenAll(userInputTask, functionCallTask).ConfigureAwait(false);
 
-        // An approval answered by the agent within the same run never becomes a request, so no workflow-facing
-        // copy of it will reach the caller. Emit the copy that was withheld from the output instead of dropping it.
-        foreach (KeyValuePair<string, AgentResponseUpdate> withheld in this._withheldApprovalUpdates)
+        // A withheld approval that was neither raised as a request nor already emitted alongside its answer would
+        // otherwise be lost, so emit it here rather than dropping it.
+        foreach (KeyValuePair<string, AgentResponseUpdate> withheld in this._withheldApprovals)
         {
-            if (!this._userInputRequests.ContainsKey(withheld.Key))
+            if (!this._userInputRequests.ContainsKey(withheld.Key)
+                && this._emittedWithheldApprovals.Add(withheld.Key))
             {
                 await context.YieldOutputAsync(withheld.Value, cancellationToken).ConfigureAwait(false);
             }
@@ -88,6 +90,35 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
     }
 
     /// <summary>
+    /// Returns the approvals withheld from earlier updates that <paramref name="update"/> answers, so they can be
+    /// emitted ahead of it. Returns an empty list when there are none.
+    /// </summary>
+    /// <remarks>
+    /// A withheld approval whose answer arrives later in the same run is never raised as a request, so it has to be
+    /// put back on the wire, and it has to go out before the answer or the caller sees the two in reverse order.
+    /// </remarks>
+    public IReadOnlyList<AgentResponseUpdate> TakeApprovalsAnsweredBy(AgentResponseUpdate update)
+    {
+        if (this._withheldApprovals.Count == 0)
+        {
+            return [];
+        }
+
+        List<AgentResponseUpdate>? answered = null;
+        foreach (AIContent content in update.Contents)
+        {
+            if (content is ToolApprovalResponseContent approvalResponse
+                && this._withheldApprovals.TryGetValue(approvalResponse.RequestId, out AgentResponseUpdate? withheld)
+                && this._emittedWithheldApprovals.Add(approvalResponse.RequestId))
+            {
+                (answered ??= []).Add(withheld);
+            }
+        }
+
+        return answered ?? (IReadOnlyList<AgentResponseUpdate>)[];
+    }
+
+    /// <summary>
     /// Returns the update to emit as workflow output, or <see langword="null"/> when the update carried nothing
     /// beyond approval requests that this collector raises to an external caller.
     /// </summary>
@@ -99,7 +130,9 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
     /// </para>
     /// <para>
     /// Whether the approval really is raised is only settled once the run ends, so each withheld copy is kept and
-    /// emitted by <see cref="SubmitAsync"/> if no request was raised for it after all.
+    /// put back on the wire by <see cref="TakeApprovalsAnsweredBy"/> or <see cref="SubmitAsync"/> if no request was
+    /// raised for it after all. An approval the same update already answers is left in place, since there is no
+    /// earlier position to restore it to.
     /// </para>
     /// <para>
     /// Function call content is left in place: a function call in an agent stream is normally terminated inline in
@@ -119,12 +152,22 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
             return update;
         }
 
+        HashSet<string>? answeredHere = null;
+        foreach (AIContent content in contents)
+        {
+            if (content is ToolApprovalResponseContent approvalResponse)
+            {
+                (answeredHere ??= new(StringComparer.Ordinal)).Add(approvalResponse.RequestId);
+            }
+        }
+
         List<AIContent> retained = [];
         foreach (AIContent content in contents)
         {
-            if (content is ToolApprovalRequestContent approvalRequest)
+            if (content is ToolApprovalRequestContent approvalRequest
+                && answeredHere?.Contains(approvalRequest.RequestId) != true)
             {
-                this._withheldApprovalUpdates[approvalRequest.RequestId] = CloneWithContents(update, [approvalRequest]);
+                this._withheldApprovals[approvalRequest.RequestId] = CloneWithContents(update, [approvalRequest]);
             }
             else
             {
@@ -148,7 +191,7 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
     public AgentResponse FilterExternallyRaisedApprovals(AgentResponse response)
     {
         if (userInputHandler?.RaisesExternalRequests != true
-            || (this._userInputRequests.Count == 0 && this._withheldApprovalUpdates.Count == 0))
+            || (this._userInputRequests.Count == 0 && this._withheldApprovals.Count == 0))
         {
             return response;
         }
@@ -179,7 +222,7 @@ internal sealed class AIAgentUnservicedRequestsCollector(AIContentExternalHandle
         bool IsRaisedApproval(AIContent content)
             => content is ToolApprovalRequestContent approvalRequest
             && (this._userInputRequests.ContainsKey(approvalRequest.RequestId)
-                || this._withheldApprovalUpdates.ContainsKey(approvalRequest.RequestId));
+                || this._withheldApprovals.ContainsKey(approvalRequest.RequestId));
     }
 
     private static AgentResponseUpdate CloneWithContents(AgentResponseUpdate update, IList<AIContent> contents) =>

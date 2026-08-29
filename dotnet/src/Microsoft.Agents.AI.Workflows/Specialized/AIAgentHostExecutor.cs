@@ -271,6 +271,12 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
 
                 // Approval requests this executor raises through its request port are surfaced to the caller
                 // with the workflow-facing request ID, so the agent-local copy is not emitted as output too.
+                // An approval the agent answers itself is never raised, so it goes out ahead of its answer.
+                foreach (AgentResponseUpdate answered in collector.TakeApprovalsAnsweredBy(update))
+                {
+                    await context.YieldOutputAsync(answered, cancellationToken).ConfigureAwait(false);
+                }
+
                 if (collector.FilterExternallyRaisedApprovals(update) is AgentResponseUpdate emittedUpdate)
                 {
                     await context.YieldOutputAsync(emittedUpdate, cancellationToken).ConfigureAwait(false);
