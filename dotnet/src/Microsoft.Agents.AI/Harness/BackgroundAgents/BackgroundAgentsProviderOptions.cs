@@ -13,6 +13,9 @@ namespace Microsoft.Agents.AI;
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class BackgroundAgentsProviderOptions
 {
+    internal static readonly TimeSpan DefaultWaitTimeout = TimeSpan.FromMinutes(5);
+    internal static readonly TimeSpan MaximumWaitTimeout = TimeSpan.FromMilliseconds(uint.MaxValue - 1L);
+
     /// <summary>
     /// Gets or sets custom instructions provided to the agent for using the background agent tools.
     /// </summary>
@@ -36,4 +39,14 @@ public sealed class BackgroundAgentsProviderOptions
     /// a formatted string describing the available background agents.
     /// </value>
     public Func<IReadOnlyDictionary<string, AIAgent>, string>? AgentListBuilder { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum amount of time the wait tool blocks for a background task to complete.
+    /// </summary>
+    /// <value>
+    /// The default is five minutes. The value must be greater than <see cref="TimeSpan.Zero"/> and must not
+    /// exceed 4,294,967,294 milliseconds, the maximum delay supported by the targeted .NET runtimes.
+    /// When the timeout elapses, the tool returns control to the agent and leaves the background tasks running.
+    /// </value>
+    public TimeSpan WaitTimeout { get; set; } = DefaultWaitTimeout;
 }

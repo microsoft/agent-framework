@@ -1360,6 +1360,7 @@ class TestStreaming:
                             "output_token_count": 2,
                             "total_token_count": 12,
                             "cache_read_input_token_count": 3,
+                            "cache_creation_input_token_count": 4,
                             "reasoning_output_token_count": 1,
                         })
                     ],
@@ -1373,6 +1374,7 @@ class TestStreaming:
                             "output_token_count": 4,
                             "total_token_count": 9,
                             "cache_read_input_token_count": 2,
+                            "cache_creation_input_token_count": 1,
                             "reasoning_output_token_count": 2,
                         })
                     ],
@@ -1393,7 +1395,7 @@ class TestStreaming:
         completed = events[-1]["data"]["response"]
         assert completed["usage"] == {
             "input_tokens": 15,
-            "input_tokens_details": {"cached_tokens": 5},
+            "input_tokens_details": {"cached_tokens": 5, "cache_write_tokens": 5},
             "output_tokens": 6,
             "output_tokens_details": {"reasoning_tokens": 3},
             "total_tokens": 21,
@@ -1839,6 +1841,13 @@ class TestOutputItemToMessage:
         assert msg.contents[0].type == "function_result"
         assert msg.contents[0].call_id == "call_1"
         assert msg.contents[0].result == "sunny"
+
+    async def test_function_call_output_without_call_id_raises(self) -> None:
+        from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
+
+        item = FunctionCallOutputItemParam({"type": "function_call_output", "output": "sunny"})
+        with pytest.raises(ValueError, match="missing a call_id"):
+            await _output_item_to_message(item)  # type: ignore[arg-type] # ty: ignore[invalid-argument-type]
 
     async def test_reasoning(self) -> None:
         from azure.ai.agentserver.responses.models import OutputItemReasoningItem, SummaryTextContent
@@ -2343,6 +2352,13 @@ class TestItemToMessage:
         assert msg is not None
         assert msg.role == "tool"
         assert msg.contents[0].result == "42"
+
+    async def test_function_call_output_without_call_id_raises(self) -> None:
+        from azure.ai.agentserver.responses.models import FunctionCallOutputItemParam
+
+        item = FunctionCallOutputItemParam({"type": "function_call_output", "output": "sunny"})
+        with pytest.raises(ValueError, match="missing a call_id"):
+            await _item_to_message(item)
 
     async def test_reasoning_with_summary(self) -> None:
         from azure.ai.agentserver.responses.models import ItemReasoningItem, SummaryTextContent
@@ -4390,7 +4406,7 @@ class TestResponseFailedSurfacing:
         failed_response = events[-1]["data"]["response"]
         assert failed_response["usage"] == {
             "input_tokens": 8,
-            "input_tokens_details": {"cached_tokens": 2},
+            "input_tokens_details": {"cached_tokens": 2, "cache_write_tokens": 0},
             "output_tokens": 3,
             "output_tokens_details": {"reasoning_tokens": 1},
             "total_tokens": 11,

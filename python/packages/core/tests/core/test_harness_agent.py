@@ -841,6 +841,24 @@ def test_create_harness_agent_background_agents_custom_instructions() -> None:
     assert "Helper" in bg_providers[0]._instructions
 
 
+def test_create_harness_agent_background_agents_custom_wait_timeout() -> None:
+    """Custom wait timeout should be passed to BackgroundAgentsProvider."""
+    from agent_framework._harness._background_agents import BackgroundAgentsProvider
+
+    bg_agent = _FakeBackgroundAgent("Helper", "A helper agent")
+    agent = create_harness_agent(
+        client=_FakeChatClient(),
+        max_context_window_tokens=128_000,
+        max_output_tokens=16_384,
+        disable_web_search=True,
+        background_agents=[bg_agent],  # type: ignore[list-item]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+        background_agents_wait_timeout_seconds=12,
+    )
+    providers = agent.context_providers or []
+    bg_provider = next(p for p in providers if isinstance(p, BackgroundAgentsProvider))
+    assert bg_provider._wait_timeout_seconds == 12
+
+
 def test_create_harness_agent_empty_background_agents_list() -> None:
     """An empty background_agents list should NOT add a BackgroundAgentsProvider."""
     from agent_framework._harness._background_agents import BackgroundAgentsProvider
