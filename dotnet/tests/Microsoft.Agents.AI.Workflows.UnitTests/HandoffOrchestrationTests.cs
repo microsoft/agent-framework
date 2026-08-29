@@ -737,6 +737,51 @@ public class HandoffOrchestrationTests
     }
 
     [Fact]
+    public async Task Handoffs_UserApproval_AsAgentStreamingSurfacesApprovalOnceAsync()
+    {
+        // Arrange
+        const string ApprovalFunctionCallId = "approval-call-id";
+        AIFunction approvalRequiredFunction = new ApprovalRequiredAIFunction(AIFunctionFactory.Create(ProtectedFunction));
+
+        var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>
+        {
+            string? transferFuncName = options?.Tools?.FirstOrDefault(t => t.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name;
+            Assert.NotNull(transferFuncName);
+
+            return new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", transferFuncName)]));
+        }), name: "initialAgent");
+
+        var secondAgent = new ChatClientAgent(
+            new MockChatClient((messages, options) =>
+                new(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent(ApprovalFunctionCallId, approvalRequiredFunction.Name)]))),
+            name: "secondAgent",
+            description: "The second agent",
+            tools: [approvalRequiredFunction]);
+
+        Workflow workflow = AgentWorkflowBuilder.CreateHandoffBuilderWith(initialAgent)
+            .WithHandoff(initialAgent, secondAgent)
+            .Build();
+
+        // Act
+        List<AgentResponseUpdate> updates = await workflow.AsAIAgent(name: "ApprovalHandoffWorkflow")
+                                                          .RunStreamingAsync("abc")
+                                                          .ToListAsync();
+
+        // Assert
+        AgentResponseUpdate approvalUpdate = updates
+            .Should().ContainSingle(update => update.Contents.Any(content => content is ToolApprovalRequestContent))
+            .Which;
+
+        approvalUpdate.RawRepresentation.Should().BeOfType<RequestInfoEvent>(
+            "the workflow-facing request carries the only request ID the caller can answer with");
+        approvalUpdate.Contents.OfType<ToolApprovalRequestContent>()
+                      .Should().ContainSingle()
+                      .Which.ToolCall.CallId.Should().Be(ApprovalFunctionCallId);
+
+        static bool ProtectedFunction() => true;
+    }
+
+    [Fact]
     public async Task Handoffs_TwoTransfers_SecondAgentToolCall_ResponseServedByThirdAgentAsync()
     {
         var initialAgent = new ChatClientAgent(new MockChatClient((messages, options) =>

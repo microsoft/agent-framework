@@ -269,7 +269,13 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
                     generatedMessageRole = null;
                 }
 
-                await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
+                // Approval requests this executor raises through its request port are surfaced to the caller
+                // with the workflow-facing request ID, so the agent-local copy is not emitted as output too.
+                if (collector.FilterExternallyRaisedApprovals(update) is AgentResponseUpdate emittedUpdate)
+                {
+                    await context.YieldOutputAsync(emittedUpdate, cancellationToken).ConfigureAwait(false);
+                }
+
                 collector.ProcessAgentResponseUpdate(update);
                 updates.Add(update);
             }
@@ -289,7 +295,7 @@ internal class AIAgentHostExecutor : ChatProtocolExecutor
 
         if (this._options.EmitAgentResponseEvents)
         {
-            await context.YieldOutputAsync(response, cancellationToken).ConfigureAwait(false);
+            await context.YieldOutputAsync(collector.FilterExternallyRaisedApprovals(response), cancellationToken).ConfigureAwait(false);
         }
 
         await collector.SubmitAsync(context, cancellationToken).ConfigureAwait(false);
