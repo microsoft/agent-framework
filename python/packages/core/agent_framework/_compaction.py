@@ -1579,15 +1579,34 @@ class CompactionProvider(ContextProvider):
         if not all_messages:
             return
 
+        # Track each original message's source before compaction
+        source_by_id: dict[int, str] = {
+            id(message): sid for sid, msgs in context.context_messages.items() for message in msgs
+        }
+
         annotate_message_groups(all_messages)
         if self.tokenizer is not None:
             annotate_token_counts(all_messages, tokenizer=self.tokenizer)
         await self.before_strategy(all_messages)
 
         projected = project_included_messages(all_messages)
-        projected_set = {id(m) for m in projected}
-        for sid in list(context.context_messages):
-            context.context_messages[sid] = [m for m in context.context_messages[sid] if id(m) in projected_set]
+        
+        # Rebuild provider message lists from the projected list, preserving source attribution
+        # and including new synthetic messages created by compaction strategies
+        rebuilt: dict[str, list[Message]] = {sid: [] for sid in context.context_messages}
+        fallback_sid = next(iter(rebuilt), self.source_id)
+        last_sid = fallback_sid
+        for message in projected:
+            # For new synthetic messages, use the last known source; for original messages, use their tracked source
+            sid = source_by_id.get(id(message), last_sid)
+            if sid not in rebuilt:
+                # If the source was somehow removed during compaction, fall back to the last known source
+                sid = last_sid
+            rebuilt[sid].append(message)
+            last_sid = sid
+        
+        context.context_messages.clear()
+        context.context_messages.update(rebuilt)
 
     async def after_run(
         self,
