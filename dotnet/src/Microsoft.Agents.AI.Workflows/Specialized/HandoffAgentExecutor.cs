@@ -446,9 +446,12 @@ internal sealed class HandoffAgentExecutor :
             {
                 bool isHandoffRequest = this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
 
-                // A stream that re-emits one handoff call must not read as two competing handoffs.
+                // A stream that re-emits one handoff call must not read as two competing handoffs. The name is
+                // compared alongside the ID so that two different targets sharing an ID stay visible below.
                 if (isHandoffRequest
-                    && !candidateRequests.Any(candidate => string.Equals(candidate.Request.CallId, candidateHandoffRequest.CallId, StringComparison.Ordinal)))
+                    && !candidateRequests.Any(candidate =>
+                        string.Equals(candidate.Request.CallId, candidateHandoffRequest.CallId, StringComparison.Ordinal)
+                        && string.Equals(candidate.Request.Name, candidateHandoffRequest.Name, StringComparison.Ordinal)))
                 {
                     candidateRequests.Add((candidateHandoffRequest, update.ResponseId));
                 }

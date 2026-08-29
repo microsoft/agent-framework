@@ -181,7 +181,7 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
     /// An agent that emits the workflow's handoff call once per update, modelling a stream that spreads one call
     /// over several updates.
     /// </summary>
-    private sealed class RepeatingHandoffAgent(int emissionCount) : AIAgent
+    private sealed class RepeatingHandoffAgent(int emissionCount, bool varyTarget = false) : AIAgent
     {
         private sealed class Session : AgentSession
         {
@@ -202,12 +202,20 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
 
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            string handoffFunctionName = (options as ChatClientAgentRunOptions)?.ChatOptions?.Tools?
-                .FirstOrDefault(tool => tool.Name.StartsWith("handoff_to_", StringComparison.Ordinal))?.Name
-                ?? throw new InvalidOperationException("No handoff tool was offered to the agent.");
+            List<string> handoffFunctionNames =
+                [.. (options as ChatClientAgentRunOptions)?.ChatOptions?.Tools?
+                    .Where(tool => tool.Name.StartsWith("handoff_to_", StringComparison.Ordinal))
+                    .Select(tool => tool.Name) ?? []];
+
+            if (handoffFunctionNames.Count == 0)
+            {
+                throw new InvalidOperationException("No handoff tool was offered to the agent.");
+            }
 
             for (int emission = 0; emission < emissionCount; emission++)
             {
+                // Every emission reuses one call ID; only the target varies, and only when asked.
+                string handoffFunctionName = handoffFunctionNames[varyTarget ? emission % handoffFunctionNames.Count : 0];
                 yield return new AgentResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("handoff-call", handoffFunctionName)]);
             }
         }
@@ -236,6 +244,32 @@ public class HandoffAgentExecutorTests : AIAgentHostingExecutorTestsBase
         // Assert
         runContext.Events.OfType<WorkflowWarningEvent>()
                   .Should().BeEmpty("one handoff call re-emitted across updates is a single handoff request");
+    }
+
+    [Fact]
+    public async Task Test_HandoffAgentExecutor_DifferentTargetsSharingACallIdStillWarnAsync()
+    {
+        // Arrange
+        AIAgent handoffAgent = new RepeatingHandoffAgent(emissionCount: 2, varyTarget: true);
+        HandoffTarget firstHandoff = new(new TestEchoAgent("firstTarget"));
+        HandoffTarget secondHandoff = new(new TestEchoAgent("secondTarget"));
+
+        HandoffAgentExecutorOptions options = new(handoffInstructions: null,
+                                                  emitAgentResponseEvents: false,
+                                                  emitAgentResponseUpdateEvents: true,
+                                                  HandoffToolCallFilteringBehavior.None);
+        HandoffAgentExecutor executor = new(handoffAgent, [firstHandoff, secondHandoff], options);
+
+        TestRunContext runContext = await PrepareHandoffSharedStateAsync();
+        runContext.ConfigureExecutor(executor);
+        IWorkflowContext testContext = runContext.BindWorkflowContext(executor.Id);
+
+        // Act
+        await executor.HandleAsync(new HandoffState(new(true), null), testContext);
+
+        // Assert
+        runContext.Events.OfType<WorkflowWarningEvent>()
+                  .Should().ContainSingle("two different handoff targets remain two competing handoffs even under one call ID");
     }
 
     [Fact]
