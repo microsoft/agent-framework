@@ -7,8 +7,9 @@ using Foundry.Hosting.IntegrationTests.Fixtures;
 namespace Foundry.Hosting.IntegrationTests;
 
 /// <summary>
-/// Basic round trip, streaming, and container-instruction behaviour for a hosted Responses agent.
-/// Store and session semantics live in <see cref="HostedResponsesStoreConfigTests"/>.
+/// Basic round trip, streaming, and container-instruction behaviour for a hosted Responses agent
+/// whose server is created by <c>AgentHost.CreateBuilder</c>. Store and session semantics live in
+/// <see cref="HostedResponsesStoreConfigTests"/>.
 /// </summary>
 [Trait("Category", "FoundryHostedAgents")]
 public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixture) : IClassFixture<HappyPathHostedAgentFixture>
@@ -16,7 +17,7 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
     private readonly HappyPathHostedAgentFixture _fixture = fixture;
 
     [Fact]
-    public async Task RunAsync_ReturnsNonEmptyTextAsync()
+    public async Task AgentHostBuilder_StartsAndHandlesRequestAsync()
     {
         // Arrange
         var agent = this._fixture.Agent;
@@ -26,6 +27,7 @@ public sealed class HappyPathHostedAgentTests(HappyPathHostedAgentFixture fixtur
 
         // Assert
         Assert.False(string.IsNullOrWhiteSpace(response.Text));
+        Assert.Contains("CONTAINER-OK", response.Text, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -51,6 +51,17 @@ AIAgent agent = scenario switch
     _ => throw new InvalidOperationException($"Unknown IT_SCENARIO '{scenario}'.")
 };
 
+if (scenario == "happy-path")
+{
+    var agentHostBuilder = AgentHost.CreateBuilder(args);
+    agentHostBuilder.Services.AddFoundryResponses(agent);
+    agentHostBuilder.RegisterProtocol("responses", endpoints => endpoints.MapFoundryResponses());
+
+    var agentHostApp = agentHostBuilder.Build();
+    agentHostApp.Run();
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 var port = Environment.GetEnvironmentVariable("PORT");
