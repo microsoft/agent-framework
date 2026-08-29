@@ -1,10 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponseUpdate, AgentSession, Content, Message, tool
+from agent_framework import AgentResponseUpdate, AgentSession, Content, MCPStdioTool, Message, tool
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import AgentInvalidRequestException
 
@@ -173,6 +174,31 @@ class TestClaudeAgentLifecycle:
 
         agent = ClaudeAgent(tools=[greet, farewell])
         assert len(agent._custom_tools) == 2  # type: ignore[reportPrivateUsage]
+
+    def test_mcp_tool_is_rejected_with_the_native_configuration(self) -> None:
+        """An MCP server cannot keep its framework behavior here, so it is refused, not dropped."""
+        with pytest.raises(TypeError, match="mcp_servers"):
+            ClaudeAgent(tools=[MCPStdioTool(name="weather", command="python")])
+
+    def test_mcp_tool_in_a_tuple_is_rejected(self) -> None:
+        """``tools`` takes any sequence, so a tuple must not slip past the refusal."""
+        with pytest.raises(TypeError, match="mcp_servers"):
+            ClaudeAgent(tools=(MCPStdioTool(name="weather", command="python"),))
+
+    def test_mcp_tool_inside_a_tool_collection_is_rejected(self) -> None:
+        """normalize_tools flattens collection wrappers, so the refusal has to run after it."""
+
+        toolbox = SimpleNamespace(tools=[MCPStdioTool(name="weather", command="python")])
+
+        with pytest.raises(TypeError, match="mcp_servers"):
+            ClaudeAgent(tools=[toolbox])
+
+    def test_builtin_tools_in_a_tuple_are_recognized(self) -> None:
+        """A tuple of built-in names must classify like the list form, not fall through as custom tools."""
+        agent = ClaudeAgent(tools=("Read", "Bash"))
+
+        assert agent._builtin_tools == ["Read", "Bash"]  # type: ignore[reportPrivateUsage]
+        assert agent._custom_tools == []  # type: ignore[reportPrivateUsage]
 
     def test_no_tools(self) -> None:
         """Test agent without tools."""

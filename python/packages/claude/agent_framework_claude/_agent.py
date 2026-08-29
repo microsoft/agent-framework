@@ -29,6 +29,7 @@ from agent_framework import (
     normalize_messages,
     normalize_tools,
 )
+from agent_framework._mcp import MCPTool
 from agent_framework._telemetry import mark_feature_used
 from agent_framework.exceptions import AgentException, AgentInvalidRequestException
 from agent_framework.observability import AgentTelemetryLayer
@@ -71,6 +72,15 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger("agent_framework.claude")
+
+_MCP_TOOL_MESSAGE = (
+    "MCP server '{name}' cannot be passed to ClaudeAgent as a tool: the Claude Agent SDK "
+    "connects to MCP servers itself, so a framework-managed MCPTool would keep none of its "
+    "framework behavior. Configure the server natively instead, for example "
+    "default_options={{'mcp_servers': {{'{name}': "
+    "{{'type': 'stdio', 'command': 'python', 'args': ['server.py']}}}}}}, or use a ChatAgent, "
+    "where the framework owns the connection."
+)
 
 FINISH_REASON_MAP: dict[str, str] = {
     "end_turn": "stop",
@@ -408,8 +418,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             return
 
         non_builtin_tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] = []
-        if not isinstance(tools, list):
-            tools = [tools]
+        # Same wrapping rule as normalize_tools: any other Sequence is a collection of tools.
+        if isinstance(tools, (str, bytes, bytearray, Mapping)) or not isinstance(tools, Sequence):
+            tools = [tools]  # type: ignore[assignment]
         for tool in tools:  # type: ignore[reportUnknownVariableType]
             if isinstance(tool, str):
                 self._builtin_tools.append(tool)
@@ -417,7 +428,12 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 non_builtin_tools.append(tool)  # type: ignore[union-attr, reportUnknownArgumentType]
         if not non_builtin_tools:
             return
-        self._custom_tools.extend(normalize_tools(non_builtin_tools))
+        # Check after normalizing: it flattens tool-collection wrappers, which can hide an MCPTool.
+        normalized = normalize_tools(non_builtin_tools)
+        for tool in normalized:
+            if isinstance(tool, MCPTool):
+                raise TypeError(_MCP_TOOL_MESSAGE.format(name=tool.name))
+        self._custom_tools.extend(normalized)
 
     async def __aenter__(self) -> RawClaudeAgent[OptionsT]:
         """Start the agent when entering async context."""
