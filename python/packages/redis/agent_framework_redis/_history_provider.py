@@ -153,13 +153,12 @@ class RedisHistoryProvider(HistoryProvider):
         """
         mark_feature_used(FeatureIndex.REDIS)
         key = self._redis_key(session_id)
-        # Older redis-py annotates ``lrange`` with a partially unknown type while newer releases
-        # type it precisely, so neither keeping nor dropping an ignore comment here is correct for
-        # the whole supported range. Going through an explicitly ``Any``-typed client makes the
-        # call site version-independent, and the cast pins the element type that
+        # ``lrange`` is annotated with a partially unknown return type across the supported redis
+        # range, so neither keeping nor dropping an ignore comment here is correct for all of it.
+        # Reaching the method through an explicitly ``Any``-typed client makes the call site
+        # version-independent, and the outer cast pins the element type that
         # ``decode_responses=True`` guarantees.
-        client: Any = self._redis_client
-        redis_messages = cast("list[str]", await _redis_result(client.lrange(key, 0, -1)))
+        redis_messages = cast("list[str]", await _redis_result(cast("Any", self._redis_client).lrange(key, 0, -1)))
         messages: list[Message] = []
         for serialized in redis_messages:
             messages.append(Message.from_dict(self._deserialize_json(serialized)))
