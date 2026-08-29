@@ -22,6 +22,7 @@ from agent_framework import (
 )
 from agent_framework._workflows._const import EDGE_STATE_KEY, EXECUTOR_STATE_KEY
 from agent_framework._workflows._edge import FanInEdgeGroup, FanOutEdgeGroup, SingleEdgeGroup
+from agent_framework._workflows._edge_runner import FanInEdgeRunner
 from agent_framework._workflows._runner import Runner
 from agent_framework._workflows._runner_context import (
     InProcRunnerContext,
@@ -587,6 +588,21 @@ def _fan_in_runner(target: CollectingExecutor) -> tuple[Runner, InProcRunnerCont
     ctx = InProcRunnerContext()
 
     return Runner([edge_group], executors, State(), ctx, "test_name", graph_signature_hash="test_hash"), ctx
+
+
+def test_edge_runner_state_key_distinguishes_ids_containing_separators():
+    """Executor ids are only required to be non-empty, so the key cannot join them with separators.
+
+    Both groups below hold three edges into ``t`` and differ only in where the source ids place
+    ``->`` and ``,``. Sharing a key would make one group's buffer overwrite the other's.
+    """
+    group_a = FanInEdgeGroup(["a", "b->t,c"], "t")
+    group_b = FanInEdgeGroup(["a->t,b", "c"], "t")
+
+    key_a = FanInEdgeRunner(group_a, {}).state_key
+    key_b = FanInEdgeRunner(group_b, {}).state_key
+
+    assert key_a != key_b
 
 
 async def test_runner_checkpoint_roundtrips_partially_filled_fan_in_buffer():

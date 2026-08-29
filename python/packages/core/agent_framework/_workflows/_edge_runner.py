@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import json
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -66,10 +67,12 @@ class EdgeRunner(ABC):
         same workflow definition and cannot key state that has to survive a rebuild. Checkpoint
         compatibility is decided by graph topology, so the key is derived from topology too.
         Builder validation rejects two edges that share a ``source -> target`` pair anywhere in
-        the workflow, so no two edge groups can produce the same key.
+        the workflow, so no two edge groups can produce the same key. Executor ids are only
+        required to be non-empty, so the pairs are JSON-encoded rather than joined with
+        separators an id could itself contain.
         """
-        edges = sorted(f"{edge.source_id}->{edge.target_id}" for edge in self._edge_group.edges)
-        return f"{self._edge_group.__class__.__name__}:{','.join(edges)}"
+        edges = sorted([edge.source_id, edge.target_id] for edge in self._edge_group.edges)
+        return f"{self._edge_group.__class__.__name__}:{json.dumps(edges, separators=(',', ':'))}"
 
     def snapshot_state(self) -> dict[str, Any] | None:
         """Capture in-flight delivery state so a checkpoint can restore it.
