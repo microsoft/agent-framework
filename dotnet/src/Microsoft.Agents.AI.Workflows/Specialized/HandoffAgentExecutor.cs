@@ -445,7 +445,10 @@ internal sealed class HandoffAgentExecutor :
             bool CollectHandoffRequestsFilter(FunctionCallContent candidateHandoffRequest)
             {
                 bool isHandoffRequest = this._handoffFunctionNames.Contains(candidateHandoffRequest.Name);
-                if (isHandoffRequest)
+
+                // A stream that re-emits one handoff call must not read as two competing handoffs.
+                if (isHandoffRequest
+                    && !candidateRequests.Any(candidate => string.Equals(candidate.Request.CallId, candidateHandoffRequest.CallId, StringComparison.Ordinal)))
                 {
                     candidateRequests.Add((candidateHandoffRequest, update.ResponseId));
                 }

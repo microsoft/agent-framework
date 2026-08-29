@@ -289,6 +289,83 @@ public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
         lastResponseEvent.Response.Text.Should().Be("Done");
     }
 
+    [Fact]
+    public async Task Test_AgentHostExecutor_ReusedApprovalRequestIdIsReportedAsync()
+    {
+        // Arrange
+        const string RequestId = "shared-request-id";
+        TestRunContext testContext = new();
+        RequestEmittingAgent agent = new(
+        [
+            new ToolApprovalRequestContent(RequestId, new McpServerToolCallContent("first-call", "firstTool", "http://localhost")),
+            new ToolApprovalRequestContent(RequestId, new McpServerToolCallContent("second-call", "secondTool", "http://localhost")),
+        ]);
+        AIAgentHostExecutor executor = new(agent, new() { InterceptUserInputRequests = false, EmitAgentUpdateEvents = true });
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        WorkflowWarningEvent warning = testContext.Events.OfType<WorkflowWarningEvent>().Should().ContainSingle().Which;
+        warning.Data.Should().BeOfType<string>().Which.Should().Contain(RequestId);
+
+        ToolApprovalRequestContent raised =
+            testContext.ExternalRequests.Should().ContainSingle().Which.Data.As<ToolApprovalRequestContent>()
+                       .Should().NotBeNull().And.Subject.As<ToolApprovalRequestContent>();
+        raised.ToolCall.CallId.Should().Be("first-call", "the first request recorded for an ID is the one raised");
+    }
+
+    [Fact]
+    public async Task Test_AgentHostExecutor_ReusedCallIdIsReportedAsync()
+    {
+        // Arrange
+        const string CallId = "shared-call-id";
+        TestRunContext testContext = new();
+        RequestEmittingAgent agent = new(
+        [
+            new FunctionCallContent(CallId, "firstFunction"),
+            new FunctionCallContent(CallId, "secondFunction"),
+        ]);
+        AIAgentHostExecutor executor = new(agent, new() { InterceptUnterminatedFunctionCalls = false, EmitAgentUpdateEvents = true });
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        WorkflowWarningEvent warning = testContext.Events.OfType<WorkflowWarningEvent>().Should().ContainSingle().Which;
+        warning.Data.Should().BeOfType<string>().Which.Should().Contain(CallId);
+
+        FunctionCallContent raised =
+            testContext.ExternalRequests.Should().ContainSingle().Which.Data.As<FunctionCallContent>()
+                       .Should().NotBeNull().And.Subject.As<FunctionCallContent>();
+        raised.Name.Should().Be("firstFunction", "the first request recorded for an ID is the one raised");
+    }
+
+    [Fact]
+    public async Task Test_AgentHostExecutor_ReEmittedRequestIsNotReportedAsync()
+    {
+        // Arrange
+        const string CallId = "re-emitted-call-id";
+        TestRunContext testContext = new();
+        RequestEmittingAgent agent = new(
+        [
+            new FunctionCallContent(CallId, "sameFunction"),
+            new FunctionCallContent(CallId, "sameFunction"),
+        ]);
+        AIAgentHostExecutor executor = new(agent, new() { InterceptUnterminatedFunctionCalls = false, EmitAgentUpdateEvents = true });
+        testContext.ConfigureExecutor(executor);
+
+        // Act
+        await executor.TakeTurnAsync(new(), testContext.BindWorkflowContext(executor.Id));
+
+        // Assert
+        testContext.Events.OfType<WorkflowWarningEvent>()
+                   .Should().BeEmpty("the same call repeated across updates is one request, not a displaced one");
+        testContext.ExternalRequests.Should().ContainSingle();
+    }
+
     #region FilterForwardableMessages tests
 
     /// <summary>
