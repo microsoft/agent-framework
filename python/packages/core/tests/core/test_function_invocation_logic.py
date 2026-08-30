@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import json
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal
 
 import pytest
+from pydantic import BaseModel
 
 from agent_framework import (
     Agent,
@@ -2599,6 +2601,122 @@ async def test_schema_supplied_tool_unexpected_key_names_the_key(chat_client_bas
     assert "todos_add" in error_result.result
     assert "todos" in error_result.result  # missing key named, not just "parsing failed"
     assert "Exception:" not in error_result.result  # no raw exception text by default
+
+
+async def test_schema_supplied_tool_enum_mismatch_does_not_echo_value_by_default(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """An enum-mismatch is the one schema-validation failure whose full message names the submitted
+    value (to say what it wasn't) rather than only field/tool names and the tool's own declared
+    constraints. That value must stay behind include_detailed_errors, not appear in the default message.
+    """
+
+    json_schema = {
+        "type": "object",
+        "properties": {"priority": {"type": "string", "enum": ["low", "medium", "high"]}},
+        "required": ["priority"],
+    }
+
+    @tool(name="set_priority", description="Set priority", schema=json_schema, approval_mode="never_require")
+    def set_priority(priority: str) -> str:
+        return priority
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1", name="set_priority", arguments='{"priority": "super-secret-value"}'
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [set_priority]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    assert "set_priority" in error_result.result
+    assert "priority" in error_result.result
+    assert "super-secret-value" not in error_result.result  # submitted value not echoed by default
+
+    # With include_detailed_errors=True, the full message (including the submitted value) is available.
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1", name="set_priority", arguments='{"priority": "super-secret-value"}'
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+    chat_client_base.function_invocation_configuration["include_detailed_errors"] = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+
+    detailed_response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [set_priority]}
+    )
+    detailed_error_result = next(
+        content for msg in detailed_response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert detailed_error_result.result is not None
+    assert "super-secret-value" in detailed_error_result.result
+
+
+async def test_pydantic_validation_error_caps_reported_field_count(chat_client_base: SupportsChatGetResponse):
+    """Regression: a large invalid container must not turn the error result into an unbounded message.
+
+    A pydantic ``ValidationError`` can carry one entry per invalid item, so an oversized submitted list
+    must not be echoed back to the model error-by-error - the summary is capped and reports an omitted
+    count instead of growing without bound.
+    """
+
+    class Item(BaseModel):
+        title: str
+
+    @tool(name="typed_list_tool", approval_mode="never_require")
+    def typed_list_tool(items: list[Item]) -> str:
+        return f"got {len(items)}"
+
+    # More invalid items than the cap, each missing the required 'title' field.
+    bad_items = [{"wrong_key": i} for i in range(20)]
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1", name="typed_list_tool", arguments=json.dumps({"items": bad_items})
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [typed_list_tool]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    assert "typed_list_tool" in error_result.result
+    assert "more error" in error_result.result  # omitted-count marker present
+    # The message should not grow one entry per invalid item; it stays well under a per-item accounting
+    # of 20 items.
+    assert error_result.result.count("title") < 10
 
 
 async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetResponse):

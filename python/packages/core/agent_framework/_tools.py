@@ -1082,6 +1082,21 @@ def _matches_json_schema_type(value: Any, schema_type: str) -> bool:
             return True
 
 
+class _ToolArgumentValidationError(TypeError):
+    """A schema-validation failure with a value-free default message.
+
+    ``str(exception)`` (used when ``include_detailed_errors`` is set) may include the
+    submitted value for debugging; ``safe_message`` is what a caller shows by default
+    and never echoes it - see the enum-mismatch case below, the only one of these
+    checks whose full message names a submitted value rather than only field/tool
+    names and the schema's own declared constraints.
+    """
+
+    def __init__(self, safe_message: str, detailed_message: str | None = None) -> None:
+        super().__init__(detailed_message or safe_message)
+        self.safe_message = safe_message
+
+
 def _validate_arguments_against_schema(
     *,
     arguments: Mapping[str, Any],
@@ -1094,13 +1109,17 @@ def _validate_arguments_against_schema(
     required_fields = [field for field in schema.get("required", []) if isinstance(field, str)]
     missing_fields = [field for field in required_fields if field not in parsed_arguments]
     if missing_fields:
-        raise TypeError(f"Missing required argument(s) for '{tool_name}': {', '.join(sorted(missing_fields))}")
+        raise _ToolArgumentValidationError(
+            f"Missing required argument(s) for '{tool_name}': {', '.join(sorted(missing_fields))}"
+        )
 
     properties: Mapping[str, Any] = schema.get("properties", {})
     if schema.get("additionalProperties") is False:
         unexpected_fields = sorted(field for field in parsed_arguments if field not in properties)
         if unexpected_fields:
-            raise TypeError(f"Unexpected argument(s) for '{tool_name}': {', '.join(unexpected_fields)}")
+            raise _ToolArgumentValidationError(
+                f"Unexpected argument(s) for '{tool_name}': {', '.join(unexpected_fields)}"
+            )
 
     for field_name, field_value in parsed_arguments.items():
         if not isinstance(properties.get(field_name), dict):
@@ -1108,14 +1127,15 @@ def _validate_arguments_against_schema(
 
         enum_values = properties.get(field_name, {}).get("enum")
         if isinstance(enum_values, list) and enum_values and field_value not in enum_values:
-            raise TypeError(
-                f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} is not in {enum_values!r}"
+            raise _ToolArgumentValidationError(
+                f"Invalid value for '{field_name}' in '{tool_name}': not one of {enum_values!r}",
+                f"Invalid value for '{field_name}' in '{tool_name}': {field_value!r} is not in {enum_values!r}",
             )
 
         schema_type = properties.get(field_name, {}).get("type")
         if isinstance(schema_type, str):
             if not _matches_json_schema_type(field_value, schema_type):
-                raise TypeError(
+                raise _ToolArgumentValidationError(
                     f"Invalid type for '{field_name}' in '{tool_name}': "
                     f"expected {schema_type}, got {type(field_value).__name__}"
                 )
@@ -1124,7 +1144,7 @@ def _validate_arguments_against_schema(
         if isinstance(schema_type, list):
             allowed_types: list[str] = [item for item in schema_type if isinstance(item, str)]  # type: ignore[reportUnknownVariableType]
             if allowed_types and not any(_matches_json_schema_type(field_value, item) for item in allowed_types):
-                raise TypeError(
+                raise _ToolArgumentValidationError(
                     f"Invalid type for '{field_name}' in '{tool_name}': expected one of "
                     f"{allowed_types}, got {type(field_value).__name__}"
                 )
@@ -1409,6 +1429,9 @@ def normalize_function_invocation_configuration(
     return normalized
 
 
+_MAX_VALIDATION_ERROR_DETAILS = 5
+
+
 def _format_argument_validation_error(exception: TypeError | ValidationError, tool_name: str) -> str:
     """Build a model-oriented summary of an argument-validation failure.
 
@@ -1416,22 +1439,29 @@ def _format_argument_validation_error(exception: TypeError | ValidationError, to
     output and the schema is already in its context as the tool declaration, so the
     offending/missing parameter names are safe to surface by default (see #7222):
     naming them gives a model that made a systematic shape error something to
-    correct against, instead of a livelock of identical retries. For the
-    ``ValidationError`` case this intentionally stays short and structured - no raw
-    exception repr, no echo of the submitted argument values - so it stays distinct
-    from ``include_detailed_errors``, which is about developer-oriented detail for
-    arbitrary tool-execution exceptions. The ``TypeError`` case forwards
-    ``_validate_arguments_against_schema``'s own message, which already names the
-    tool and the offending/missing keys (and, for an enum mismatch, the submitted
-    value - that message is pre-existing and out of scope here).
+    correct against, instead of a livelock of identical retries. This intentionally
+    stays short and structured - no raw exception repr, and no echo of the submitted
+    argument values - so it stays distinct from ``include_detailed_errors``, which is
+    about developer-oriented detail (including, e.g., the offending value for an
+    enum mismatch) for arbitrary tool-execution exceptions.
+
+    A ``ValidationError`` can carry one entry per invalid item in a large submitted
+    container, so the per-field detail is capped to keep this message from itself
+    becoming an unbounded addition to the next request's context.
     """
     if isinstance(exception, ValidationError):
+        raw_errors = exception.errors(include_url=False, include_context=False, include_input=False)
         offenses = [
             f"{'.'.join(str(segment) for segment in error['loc']) or tool_name} ({error['msg']})"
-            for error in exception.errors(include_url=False, include_context=False, include_input=False)
+            for error in raw_errors[:_MAX_VALIDATION_ERROR_DETAILS]
         ]
         detail = "; ".join(offenses) if offenses else str(exception)
+        omitted = len(raw_errors) - len(offenses)
+        if omitted > 0:
+            detail = f"{detail}; ({omitted} more error{'s' if omitted != 1 else ''} omitted)"
         return f"Error: invalid arguments for tool '{tool_name}': {detail}."
+    if isinstance(exception, _ToolArgumentValidationError):
+        return f"Error: {exception.safe_message}"
     return f"Error: {exception}"
 
 
