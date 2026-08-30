@@ -520,6 +520,7 @@ that manually replay messages own the equivalent rule: do not resend an approval
 | Rejected execution | Rejection is a normal terminal result, not an exception to the caller. | `test_unapproved_tool_execution_raises_exception` |
 | Approved tool exception | Generic and detailed error modes preserve one result and one execution. | `test_approved_function_call_with_error_without_detailed_errors`, `test_approved_function_call_with_error_with_detailed_errors` |
 | Approved validation error | Validation failure returns one result without invoking the function body. | `test_approved_function_call_with_validation_error` |
+| Actionable validation-error message | The default (non-detailed) argument-validation error names the tool and the offending/missing parameter key(s) — from the schema-validation `TypeError` or a structured `ValidationError` summary — without raw exception text or an echo of the submitted argument value; `include_detailed_errors` still appends the full exception text on top. A `ValidationError`'s per-field detail is capped with an omitted-count suffix so a large invalid container cannot produce an unbounded message. | `test_argument_validation_error_with_detailed_errors`, `test_argument_validation_error_without_detailed_errors`, `test_streaming_argument_validation_error_with_detailed_errors`, `test_streaming_argument_validation_error_without_detailed_errors`, `test_schema_supplied_tool_unexpected_key_names_the_key`, `test_schema_supplied_tool_enum_mismatch_does_not_echo_value_by_default`, `test_pydantic_validation_error_caps_reported_field_count` |
 | Approved success | Successful approved execution returns one result. | `test_approved_function_call_successful_execution` |
 | Consecutive error cap | Error threshold stops repeated failures, submits collected results, and makes only the required final no-tool model call. | `test_function_invocation_config_max_consecutive_errors`, `test_streaming_function_invocation_config_max_consecutive_errors`, `test_approval_resume_error_limit_forces_final_no_tool_response` |
 | Unknown call handling | Configured false returns an error result; configured true raises. | `test_function_invocation_config_terminate_on_unknown_calls_false`, `test_function_invocation_config_terminate_on_unknown_calls_true`, streaming equivalents |
@@ -627,5 +628,6 @@ Before accepting an update, reviewers must confirm:
 - #6851 — duplicate side effects after approval continuation
 - #7383 — bind approval responses to framework-issued requests after this foundation merges
 - #6963 / #7095 — opaque reasoning-signature replay
+- #7222 — actionable, value-safe default argument-validation error message
 - #6074 / #7233 — reasoning-paired tool-call replay
 - #6450 / #6794 — provider message and tool-result serialization
