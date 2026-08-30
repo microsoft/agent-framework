@@ -1409,6 +1409,32 @@ def normalize_function_invocation_configuration(
     return normalized
 
 
+def _format_argument_validation_error(exception: TypeError | ValidationError, tool_name: str) -> str:
+    """Build a model-oriented summary of an argument-validation failure.
+
+    Unlike a tool-execution exception, the failing data here is the model's own
+    output and the schema is already in its context as the tool declaration, so the
+    offending/missing parameter names are safe to surface by default (see #7222):
+    naming them gives a model that made a systematic shape error something to
+    correct against, instead of a livelock of identical retries. For the
+    ``ValidationError`` case this intentionally stays short and structured - no raw
+    exception repr, no echo of the submitted argument values - so it stays distinct
+    from ``include_detailed_errors``, which is about developer-oriented detail for
+    arbitrary tool-execution exceptions. The ``TypeError`` case forwards
+    ``_validate_arguments_against_schema``'s own message, which already names the
+    tool and the offending/missing keys (and, for an enum mismatch, the submitted
+    value - that message is pre-existing and out of scope here).
+    """
+    if isinstance(exception, ValidationError):
+        offenses = [
+            f"{'.'.join(str(segment) for segment in error['loc']) or tool_name} ({error['msg']})"
+            for error in exception.errors(include_url=False, include_context=False, include_input=False)
+        ]
+        detail = "; ".join(offenses) if offenses else str(exception)
+        return f"Error: invalid arguments for tool '{tool_name}': {detail}."
+    return f"Error: {exception}"
+
+
 def _function_execution_error_result(
     function_call: Content,
     tool_name: str,
@@ -1532,7 +1558,7 @@ async def _auto_invoke_function(
             tool_name=tool.name,
         )
     except (TypeError, ValidationError) as exc:
-        message = "Error: Argument parsing failed."
+        message = _format_argument_validation_error(exc, tool.name)
         if config.get("include_detailed_errors", False):
             message = f"{message} Exception: {exc}"
         return Content.from_function_result(

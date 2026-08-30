@@ -2510,12 +2510,13 @@ async def test_argument_validation_error_with_detailed_errors(chat_client_base: 
     )
     assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Argument parsing failed" in error_result.result
+    assert "invalid arguments for tool 'typed_function'" in error_result.result
+    assert "arg1" in error_result.result  # Offending key named
     assert "Exception:" in error_result.result  # Detailed error included
 
 
 async def test_argument_validation_error_without_detailed_errors(chat_client_base: SupportsChatGetResponse):
-    """Test that argument validation errors are generic when include_detailed_errors=False."""
+    """Test that argument validation errors name the offending key by default, without raw exception text."""
 
     @tool(name="typed_function", approval_mode="never_require")
     def typed_func(arg1: int) -> str:  # Expects int, not str
@@ -2540,14 +2541,64 @@ async def test_argument_validation_error_without_detailed_errors(chat_client_bas
         [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [typed_func]}
     )
 
-    # Should have generic validation error
+    # Should name the offending key without leaking raw exception text
     error_result = next(
         content for msg in response.messages for content in msg.contents if content.type == "function_result"
     )
     assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Argument parsing failed" in error_result.result
+    assert "invalid arguments for tool 'typed_function'" in error_result.result
+    assert "arg1" in error_result.result  # Offending key named even without detailed errors
     assert "Exception:" not in error_result.result  # No detailed error
+
+
+async def test_schema_supplied_tool_unexpected_key_names_the_key(chat_client_base: SupportsChatGetResponse):
+    """Regression for #7222: a model that mimics the wrong shape gets a key name to correct against.
+
+    A schema-supplied tool with a missing required field fails argument validation with a ``TypeError``
+    (not a pydantic ``ValidationError``), a distinct code path from the coercion-failure tests above. The
+    default result must still name the tool and the missing key, without requiring
+    ``include_detailed_errors``, matching the live trace in the issue where the model sent
+    ``{"items": [...]}`` for a tool declaring ``{"todos": [...]}`` and retried the identical call four
+    times against the previous generic ``Error: Argument parsing failed.`` message.
+    """
+
+    json_schema = {
+        "type": "object",
+        "properties": {"todos": {"type": "array"}},
+        "required": ["todos"],
+        "additionalProperties": False,
+    }
+
+    @tool(name="todos_add", description="Add todos", schema=json_schema, approval_mode="never_require")
+    def todos_add(todos: list[Any]) -> str:
+        return f"added {len(todos)}"
+
+    chat_client_base.run_responses = [  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="todos_add", arguments='{"items": [{"id": 4}]}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
+    ]
+
+    # Default configuration: include_detailed_errors is False.
+    response = await chat_client_base.get_response(
+        [Message(role="user", contents=["hello"])], options={"tool_choice": "auto", "tools": [todos_add]}
+    )
+
+    error_result = next(
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    )
+    assert error_result.result is not None
+    assert error_result.exception is not None
+    assert "todos_add" in error_result.result
+    assert "todos" in error_result.result  # missing key named, not just "parsing failed"
+    assert "Exception:" not in error_result.result  # no raw exception text by default
 
 
 async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetResponse):
@@ -3471,7 +3522,8 @@ async def test_approved_function_call_with_validation_error(chat_client_base: Su
     )
     assert error_result is not None
     assert error_result.result is not None
-    assert "Argument parsing failed" in error_result.result
+    assert "invalid arguments for tool 'typed_func'" in error_result.result
+    assert "arg1" in error_result.result  # Offending key named
 
 
 async def test_approved_function_call_successful_execution(chat_client_base: SupportsChatGetResponse):
@@ -4763,12 +4815,13 @@ async def test_streaming_argument_validation_error_with_detailed_errors(chat_cli
     )
     assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Argument parsing failed" in error_result.result
+    assert "invalid arguments for tool 'typed_function'" in error_result.result
+    assert "arg1" in error_result.result  # Offending key named
     assert "Exception:" in error_result.result  # Detailed error included
 
 
 async def test_streaming_argument_validation_error_without_detailed_errors(chat_client_base: SupportsChatGetResponse):
-    """Test that argument validation errors are generic when include_detailed_errors=False in streaming mode."""
+    """Test that argument validation errors name the offending key by default in streaming mode too."""
 
     @tool(name="typed_function", approval_mode="never_require")
     def typed_func(arg1: int) -> str:  # Expects int, not str
@@ -4797,13 +4850,14 @@ async def test_streaming_argument_validation_error_without_detailed_errors(chat_
     ):
         updates.append(update)
 
-    # Should have generic validation error
+    # Should name the offending key without leaking raw exception text
     error_result = next(
         content for update in updates for content in update.contents if content.type == "function_result"
     )
     assert error_result.result is not None
     assert error_result.exception is not None
-    assert "Argument parsing failed" in error_result.result
+    assert "invalid arguments for tool 'typed_function'" in error_result.result
+    assert "arg1" in error_result.result  # Offending key named even without detailed errors
     assert "Exception:" not in error_result.result  # No detailed error
 
 
