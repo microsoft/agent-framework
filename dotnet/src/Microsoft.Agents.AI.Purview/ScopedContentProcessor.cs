@@ -1,18 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.Json;
-using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Purview.Models.Common;
 using Microsoft.Agents.AI.Purview.Models.Jobs;
 using Microsoft.Agents.AI.Purview.Models.Requests;
 using Microsoft.Agents.AI.Purview.Models.Responses;
-using Microsoft.Agents.AI.Purview.Serialization;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Purview;
@@ -25,7 +21,6 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
     private readonly IPurviewClient _purviewClient;
     private readonly ICacheProvider _cacheProvider;
     private readonly IChannelHandler _channelHandler;
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<ProtectionScopesResponse>> _scopeRetrievals = new();
 
     /// <summary>
     /// Create a new instance of <see cref="ScopedContentProcessor"/>.
@@ -202,87 +197,12 @@ internal sealed class ScopedContentProcessor : IScopedContentProcessor
 
         if (cacheResponse == null)
         {
-            cacheResponse = await this.GetAndCacheProtectionScopesAsync(psRequest, cacheKey, cancellationToken).ConfigureAwait(false);
+            pcRequest.ProcessInline = true;
+            this._channelHandler.QueueJob(new ScopeRetrievalJob(psRequest, cacheKey, pcRequest));
+            return await this.CallProcessContentAsync(pcRequest, cacheKey, dlpActions: null, cancellationToken).ConfigureAwait(false);
         }
 
         return await this.ProcessWithCachedScopesAsync(pcRequest, cacheResponse, cacheKey, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// Retrieve and cache protection scopes while sharing concurrent retrievals for the same cache key.
-    /// </summary>
-    private async Task<ProtectionScopesResponse> GetAndCacheProtectionScopesAsync(
-        ProtectionScopesRequest psRequest,
-        ProtectionScopesCacheKey cacheKey,
-        CancellationToken cancellationToken)
-    {
-        JsonTypeInfo<ProtectionScopesCacheKey> keyTypeInfo =
-            (JsonTypeInfo<ProtectionScopesCacheKey>)PurviewSerializationUtils.SerializationSettings.GetTypeInfo(typeof(ProtectionScopesCacheKey));
-        string serializedCacheKey = JsonSerializer.Serialize(cacheKey, keyTypeInfo);
-        TaskCompletionSource<ProtectionScopesResponse> candidate = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        TaskCompletionSource<ProtectionScopesResponse> retrieval = this._scopeRetrievals.GetOrAdd(serializedCacheKey, candidate);
-        if (ReferenceEquals(candidate, retrieval))
-        {
-            _ = this.PopulateProtectionScopesAsync(candidate, psRequest, cacheKey, cancellationToken);
-        }
-
-        try
-        {
-            return await retrieval.Task.ConfigureAwait(false);
-        }
-        finally
-        {
-            _ = ((ICollection<KeyValuePair<string, TaskCompletionSource<ProtectionScopesResponse>>>)this._scopeRetrievals)
-                .Remove(new KeyValuePair<string, TaskCompletionSource<ProtectionScopesResponse>>(serializedCacheKey, retrieval));
-        }
-    }
-
-    /// <summary>
-    /// Complete a shared protection scopes retrieval without allowing exceptions to escape a fire-and-forget task.
-    /// </summary>
-    private async Task PopulateProtectionScopesAsync(
-        TaskCompletionSource<ProtectionScopesResponse> completionSource,
-        ProtectionScopesRequest psRequest,
-        ProtectionScopesCacheKey cacheKey,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            ProtectionScopesResponse response = await this.RetrieveAndCacheProtectionScopesAsync(psRequest, cacheKey, cancellationToken).ConfigureAwait(false);
-            completionSource.TrySetResult(response);
-        }
-        catch (OperationCanceledException ex)
-        {
-            completionSource.TrySetCanceled(ex.CancellationToken);
-        }
-        catch (Exception ex)
-        {
-            completionSource.TrySetException(ex);
-        }
-    }
-
-    /// <summary>
-    /// Retrieve protection scopes and cache either the response or a payment-required result.
-    /// </summary>
-    private async Task<ProtectionScopesResponse> RetrieveAndCacheProtectionScopesAsync(
-        ProtectionScopesRequest psRequest,
-        ProtectionScopesCacheKey cacheKey,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            ProtectionScopesResponse response = await this._purviewClient.GetProtectionScopesAsync(psRequest, cancellationToken).ConfigureAwait(false);
-            await this._cacheProvider.SetAsync(cacheKey, response, cancellationToken).ConfigureAwait(false);
-            return response;
-        }
-        catch (PurviewPaymentRequiredException ex)
-        {
-            await this._cacheProvider.SetAsync(
-                new PaymentRequiredCacheKey(psRequest.TenantId),
-                new PaymentRequiredCacheEntry(ex.Message),
-                cancellationToken).ConfigureAwait(false);
-            throw;
-        }
     }
 
     /// <summary>
