@@ -1985,7 +1985,7 @@ class RawOpenAIChatClient(
                         "output": self._to_local_shell_output_payload(content),
                     }
                 # call_id for the result needs to be the same as the call_id for the function call
-                output: str | list[dict[str, Any]] = content.result or ""
+                output: str | list[dict[str, Any]] = content.result if content.result is not None else ""
                 if (
                     self.SUPPORTS_RICH_FUNCTION_OUTPUT
                     and content.items

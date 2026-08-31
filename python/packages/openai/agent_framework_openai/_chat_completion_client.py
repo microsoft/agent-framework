@@ -933,17 +933,17 @@ class RawOpenAIChatCompletionClient(
             total_token_count=usage.total_tokens,
         )
         if usage.completion_tokens_details:
-            if tokens := usage.completion_tokens_details.accepted_prediction_tokens:
+            if (tokens := usage.completion_tokens_details.accepted_prediction_tokens) is not None:
                 details["completion/accepted_prediction_tokens"] = tokens
-            if tokens := usage.completion_tokens_details.audio_tokens:
+            if (tokens := usage.completion_tokens_details.audio_tokens) is not None:
                 details["completion/audio_tokens"] = tokens
             if (tokens := usage.completion_tokens_details.reasoning_tokens) is not None:
                 details["completion/reasoning_tokens"] = tokens
                 details["reasoning_output_token_count"] = tokens
-            if tokens := usage.completion_tokens_details.rejected_prediction_tokens:
+            if (tokens := usage.completion_tokens_details.rejected_prediction_tokens) is not None:
                 details["completion/rejected_prediction_tokens"] = tokens
         if usage.prompt_tokens_details:
-            if tokens := usage.prompt_tokens_details.audio_tokens:
+            if (tokens := usage.prompt_tokens_details.audio_tokens) is not None:
                 details["prompt/audio_tokens"] = tokens
             cache_write_tokens = cast("int | None", getattr(usage.prompt_tokens_details, "cache_write_tokens", None))
             if cache_write_tokens is not None:
@@ -1122,10 +1122,12 @@ class RawOpenAIChatCompletionClient(
                         continue
                     args["content"] = [{"type": "text", "text": content.text}]
                 case _:
-                    if "content" not in args:
-                        args["content"] = []
-                    # this is a list to allow multi-modal content
-                    args["content"].append(self._prepare_content_for_openai(content))  # type: ignore
+                    prepared_content = self._prepare_content_for_openai(content)
+                    if prepared_content:
+                        if "content" not in args:
+                            args["content"] = []
+                        # this is a list to allow multi-modal content
+                        args["content"].append(prepared_content)  # type: ignore
             if "content" in args or "tool_calls" in args:
                 if pending_reasoning is not None:
                     args["reasoning_details"] = pending_reasoning
@@ -1211,8 +1213,8 @@ class RawOpenAIChatCompletionClient(
                 elif content.media_type and "mp3" in content.media_type:
                     audio_format = "mp3"
                 else:
-                    # Fallback to default to_dict for unsupported audio formats
-                    return content.to_dict(exclude_none=True)
+                    logger.debug("Unsupported audio media type: %s", content.media_type)
+                    return {}
 
                 # Extract base64 data from data URI
                 audio_data = content.uri
@@ -1248,8 +1250,8 @@ class RawOpenAIChatCompletionClient(
                     content,
                 )
             case _:
-                # Default fallback for all other content types
-                return content.to_dict(exclude_none=True)
+                logger.debug("Unsupported content type passed (type: %s)", content.type)
+                return {}
 
     @override
     def service_url(self) -> str:
