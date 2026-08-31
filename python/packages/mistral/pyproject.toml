@@ -24,9 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.13.0,<2",
-    # Talks to the Mistral REST API directly; the mistralai SDK is not used because its
-    # pinned OpenTelemetry requirements conflict with the rest of the framework.
-    "httpx>=0.23.1,<1",
+    "mistralai>=2.9.2,<3",
 ]
 
 [tool.uv]

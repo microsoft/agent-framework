@@ -2,7 +2,6 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using FluentAssertions;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -45,30 +44,30 @@ public record TestProgressLedgerState(Slot<bool?>? is_request_satisfied = null,
 
     public void Validate(MagenticProgressLedger state)
     {
-        state.IsRequestSatisfied.Should().Be(this.is_request_satisfied!.answer!.Value);
-        state.IsInLoop.Should().Be(this.is_in_loop!.answer!.Value);
-        state.IsProgressBeingMade.Should().Be(this.is_progress_being_made!.answer!.Value);
-        state.InstructionOrQuestion.Should().Be(this.instruction_or_question!.answer);
-        state.NextSpeaker.Should().Be(this.next_speaker!.answer);
+        Assert.Equal(this.is_request_satisfied!.answer!.Value, state.IsRequestSatisfied);
+        Assert.Equal(this.is_in_loop!.answer!.Value, state.IsInLoop);
+        Assert.Equal(this.is_progress_being_made!.answer!.Value, state.IsProgressBeingMade);
+        Assert.Equal(this.instruction_or_question!.answer, state.InstructionOrQuestion);
+        Assert.Equal(this.next_speaker!.answer, state.NextSpeaker);
 
         if (this.custom1 != null)
         {
-            TryGetCustom1(state, out bool custom1Value).Should().BeTrue();
-            custom1Value.Should().Be(this.custom1.answer!.Value);
+            Assert.True(TryGetCustom1(state, out bool custom1Value));
+            Assert.Equal(this.custom1.answer!.Value, custom1Value);
         }
         else
         {
-            TryGetCustom1(state, out _).Should().BeFalse();
+            Assert.False(TryGetCustom1(state, out _));
         }
 
         if (this.custom2 != null)
         {
-            TryGetCustom2(state, out string? custom2Value).Should().BeTrue();
-            custom2Value.Should().Be(this.custom2.answer);
+            Assert.True(TryGetCustom2(state, out string? custom2Value));
+            Assert.Equal(this.custom2.answer, custom2Value);
         }
         else
         {
-            TryGetCustom2(state, out _).Should().BeFalse();
+            Assert.False(TryGetCustom2(state, out _));
         }
     }
 
