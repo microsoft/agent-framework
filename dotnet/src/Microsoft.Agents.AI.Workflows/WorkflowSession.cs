@@ -199,6 +199,7 @@ internal sealed class WorkflowSession : AgentSession
             RawRepresentation = raw
         }, executorId);
     }
+    
     private static AgentResponseUpdate SetExecutorId(AgentResponseUpdate update, string? executorId)
     {
         if (!string.IsNullOrEmpty(executorId))
