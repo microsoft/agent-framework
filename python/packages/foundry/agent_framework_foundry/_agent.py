@@ -439,26 +439,16 @@ class RawFoundryAgentChatClient(
         options: dict[str, Any],
         function_call_ids: dict[int, tuple[str, str]],
         seen_reasoning_delta_item_ids: set[str] | None = None,
-        output_text_logprobs: dict[str, list[Any]] | None = None,
     ) -> ChatResponseUpdate:
         """Parse streaming events while preserving hosted-agent session state."""
         update = try_parse_oauth_consent_event(event, self.model)
         if update is None:
-            if output_text_logprobs is None:
-                update = super()._parse_chunk_from_openai(
-                    event,
-                    options,
-                    function_call_ids,
-                    seen_reasoning_delta_item_ids,
-                )
-            else:
-                update = super()._parse_chunk_from_openai(
-                    event,
-                    options,
-                    function_call_ids,
-                    seen_reasoning_delta_item_ids,
-                    output_text_logprobs,
-                )
+            update = super()._parse_chunk_from_openai(
+                event,
+                options,
+                function_call_ids,
+                seen_reasoning_delta_item_ids,
+            )
         if agent_session_id := _extract_foundry_hosted_agent_session_id(getattr(event, "response", None)):
             if update.additional_properties is None:
                 update.additional_properties = {}
