@@ -536,6 +536,11 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                     }
 
                     evt = enumerator.Current;
+                    if (evt is ResponseCompletedEvent)
+                    {
+                        consentCts.Token.ThrowIfCancellationRequested();
+                    }
+
                     shutdownDetected =
                         context.IsShutdownRequested && !emittedTerminal;
                 }

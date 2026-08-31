@@ -14,7 +14,7 @@ from agent_framework._sessions import AgentSession, SessionContext
 
 from agent_framework_redis._context_provider import RedisContextProvider
 from agent_framework_redis._feature_usage import FeatureIndex
-from agent_framework_redis._history_provider import RedisHistoryProvider
+from agent_framework_redis._history_provider import RedisHistoryProvider, _redis_result
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -508,6 +508,31 @@ class TestRedisHistoryProviderGetMessages:
         messages = await provider.get_messages("s1")
         assert [m.text for m in messages] == ["written by old version", "written by new version"]
 
+    async def test_returns_messages_when_lrange_is_synchronous(self, mock_redis_client: MagicMock):
+        """redis-py types several commands as returning a value or an awaitable; handle both."""
+        msg = Message(role="user", contents=["Hello"])
+        # scoped key holds the message; the pre-scoping legacy key is empty
+        mock_redis_client.lrange = MagicMock(side_effect=[[json.dumps(msg.to_dict())], []])
+
+        with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
+            mock_from_url.return_value = mock_redis_client
+            provider = RedisHistoryProvider("mem", redis_url="redis://localhost:6379")
+
+        messages = await provider.get_messages("s1")
+        assert len(messages) == 1
+        assert messages[0].text == "Hello"
+
+
+class TestRedisResultHelper:
+    async def test_awaits_an_awaitable_result(self):
+        async def _coro() -> int:
+            return 7
+
+        assert await _redis_result(_coro()) == 7
+
+    async def test_passes_through_a_plain_result(self):
+        assert await _redis_result(7) == 7
+
 
 class TestRedisHistoryProviderSaveMessages:
     async def test_saves_serialized_messages(self, mock_redis_client: MagicMock):
@@ -735,7 +760,7 @@ class TestRedisHistoryProviderDeduplication:
         msg_old = Message(role="user", contents=["old"])
         msg_new = Message(role="assistant", contents=["new"])
 
-        mock_redis_client.lrange = AsyncMock(return_value=[json.dumps(msg_new.to_dict())])
+        mock_redis_client.lrange = AsyncMock(side_effect=[[json.dumps(msg_new.to_dict())], []])
 
         with patch("agent_framework_redis._history_provider.redis.from_url") as mock_from_url:
             mock_from_url.return_value = mock_redis_client
