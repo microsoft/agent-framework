@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 
 AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # ruff:ignore[hardcoded-password-string] # nosec B105
+_SUPPRESSED_AZURE_API_KEY = "<missing API key>"
 
 
 RESPONSE_TYPE = Union[
@@ -298,6 +299,8 @@ def load_openai_service_settings(
     if api_version := azure_settings.get("api_version"):
         client_args["api_version"] = api_version
     if credential:
+        # Both supported SDK majors recognize this sentinel and skip API-key auth without consulting the environment.
+        client_args["api_key"] = _SUPPRESSED_AZURE_API_KEY
         client_args["azure_ad_token_provider"] = _resolve_azure_credential_to_token_provider(credential)
     elif api_key_callable:
         client_args["api_key"] = api_key_callable
